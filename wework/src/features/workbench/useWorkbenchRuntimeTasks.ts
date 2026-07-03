@@ -6,7 +6,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
-  LocalTaskSummary,
+  RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeGoalSetRequest,
   RuntimeDeviceWorkspace,
@@ -38,8 +38,8 @@ import {
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
 import type {
-  ArchiveRuntimeLocalTaskOptions,
-  ArchiveRuntimeLocalTaskResult,
+  ArchiveRuntimeTaskOptions,
+  ArchiveRuntimeTaskResult,
   ArchiveRuntimeConversationsResult,
 } from './workbenchContextTypes'
 
@@ -165,7 +165,7 @@ export function useWorkbenchRuntimeTasks({
     [services.chatStream]
   )
 
-  const openRuntimeLocalTask = useCallback(
+  const openRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
       if (isSameRuntimeTaskIdentity(currentRuntimeTaskRef.current, address)) {
         return
@@ -175,7 +175,7 @@ export function useWorkbenchRuntimeTasks({
         item.deviceWorkspaces.some(
           workspace =>
             workspace.deviceId === address.deviceId &&
-            workspace.localTasks.some(task => task.localTaskId === address.localTaskId)
+            workspace.tasks.some(task => task.taskId === address.taskId)
         )
       )
       const project = runtimeProjectWork
@@ -207,7 +207,7 @@ export function useWorkbenchRuntimeTasks({
   const prepareWorktreeArchive = useCallback(
     async (
       worktreeTargets: RuntimeTaskWorktreeTarget[],
-      options: ArchiveRuntimeLocalTaskOptions = {}
+      options: ArchiveRuntimeTaskOptions = {}
     ): Promise<'ready' | 'dirty_worktree' | 'failed'> => {
       if (options.force || worktreeTargets.length === 0) return 'ready'
 
@@ -261,11 +261,11 @@ export function useWorkbenchRuntimeTasks({
     [dispatch, executorClient, t]
   )
 
-  const archiveRuntimeLocalTask = useCallback(
+  const archiveRuntimeTask = useCallback(
     async (
       address: RuntimeTaskAddress,
-      options: ArchiveRuntimeLocalTaskOptions = {}
-    ): Promise<ArchiveRuntimeLocalTaskResult> => {
+      options: ArchiveRuntimeTaskOptions = {}
+    ): Promise<ArchiveRuntimeTaskResult> => {
       const worktreeTarget = findRuntimeTaskWorktree(state.runtimeWork, address)
       const worktreeTargets = worktreeTarget ? [worktreeTarget] : []
       const prepareResult = await prepareWorktreeArchive(worktreeTargets, options)
@@ -296,7 +296,7 @@ export function useWorkbenchRuntimeTasks({
     ]
   )
 
-  const renameRuntimeLocalTask = useCallback(
+  const renameRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress, title: string) => {
       const response = await executorClient.runtime.renameRuntimeTask({ address, title })
       if (!response.accepted) {
@@ -311,7 +311,7 @@ export function useWorkbenchRuntimeTasks({
   const archiveProjectConversations = useCallback(
     async (
       runtimeProjectKey: string,
-      options: ArchiveRuntimeLocalTaskOptions = {}
+      options: ArchiveRuntimeTaskOptions = {}
     ): Promise<ArchiveRuntimeConversationsResult> => {
       const addresses = projectTaskAddresses(state.runtimeWork, [runtimeProjectKey])
       const worktreeTargets = findRuntimeTaskWorktrees(state.runtimeWork, addresses)
@@ -345,7 +345,7 @@ export function useWorkbenchRuntimeTasks({
   const archiveProjectsConversations = useCallback(
     async (
       runtimeProjectKeys: string[],
-      options: ArchiveRuntimeLocalTaskOptions = {}
+      options: ArchiveRuntimeTaskOptions = {}
     ): Promise<ArchiveRuntimeConversationsResult> => {
       const uniqueProjectKeys = [...new Set(runtimeProjectKeys.filter(Boolean))]
       if (uniqueProjectKeys.length === 0) return { status: 'archived' }
@@ -389,7 +389,7 @@ export function useWorkbenchRuntimeTasks({
   const archiveChatConversations = useCallback(
     async (
       addresses: RuntimeTaskAddress[],
-      options: ArchiveRuntimeLocalTaskOptions = {}
+      options: ArchiveRuntimeTaskOptions = {}
     ): Promise<ArchiveRuntimeConversationsResult> => {
       if (addresses.length === 0) return { status: 'archived' }
 
@@ -448,9 +448,9 @@ export function useWorkbenchRuntimeTasks({
       }
 
       await refreshWorkLists()
-      await openRuntimeLocalTask(response.target)
+      await openRuntimeTask(response.target)
     },
-    [dispatch, executorClient, openRuntimeLocalTask, refreshWorkLists, state.currentRuntimeTask]
+    [dispatch, executorClient, openRuntimeTask, refreshWorkLists, state.currentRuntimeTask]
   )
 
   const getRuntimeGoal = useCallback(
@@ -492,9 +492,9 @@ export function useWorkbenchRuntimeTasks({
     clearCurrentRuntimeTaskView,
     loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream,
-    openRuntimeLocalTask,
-    renameRuntimeLocalTask,
-    archiveRuntimeLocalTask,
+    openRuntimeTask,
+    renameRuntimeTask,
+    archiveRuntimeTask,
     archiveProjectConversations,
     archiveProjectsConversations,
     archiveChatConversations,
@@ -506,7 +506,7 @@ export function useWorkbenchRuntimeTasks({
   }
 }
 
-type RuntimeTaskWorktreeTarget = { workspace: RuntimeDeviceWorkspace; task: LocalTaskSummary }
+type RuntimeTaskWorktreeTarget = { workspace: RuntimeDeviceWorkspace; task: RuntimeTaskSummary }
 
 function findRuntimeTaskWorktree(
   runtimeWork: WorkbenchState['runtimeWork'],
@@ -523,7 +523,7 @@ function findRuntimeTaskWorktree(
     if (address.workspacePath?.trim() && workspace.workspacePath !== address.workspacePath.trim()) {
       continue
     }
-    const task = workspace.localTasks.find(item => item.localTaskId === address.localTaskId)
+    const task = workspace.tasks.find(item => item.taskId === address.taskId)
     if (!task || !isRuntimeTaskWorktree(workspace, task)) continue
     return { workspace, task }
   }
@@ -554,7 +554,7 @@ function uniqueRuntimeTaskWorktreeTargets(
   return uniqueTargets
 }
 
-function isRuntimeTaskWorktree(workspace: RuntimeDeviceWorkspace, task: LocalTaskSummary): boolean {
+function isRuntimeTaskWorktree(workspace: RuntimeDeviceWorkspace, task: RuntimeTaskSummary): boolean {
   return (
     workspace.workspaceKind === 'worktree' ||
     Boolean(workspace.worktreeId) ||

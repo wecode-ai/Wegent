@@ -5,6 +5,7 @@
 use std::{error::Error, future::Future, pin::Pin, time::Duration};
 
 use reqwest::Client;
+use serde_json::{Map, Number, Value};
 
 use crate::{emitter::EventEnvelope, logging::log_executor_event, runner::EventSink};
 
@@ -51,9 +52,15 @@ impl EventSink for CallbackSink {
                 log_executor_event("callback request started", &fields);
             }
 
+            let callback_payload = callback_payload(&event).inspect_err(|error| {
+                let mut failed_fields = fields.clone();
+                failed_fields.push(("error", error.clone()));
+                log_executor_event("callback payload rejected", &failed_fields);
+            })?;
+
             let response = client
                 .post(callback_url)
-                .json(&event)
+                .json(&callback_payload)
                 .send()
                 .await
                 .map_err(|error| {
@@ -121,6 +128,51 @@ fn callback_fields(callback_url: &str, event: &EventEnvelope) -> Vec<(&'static s
             event.executor_namespace.clone().unwrap_or_default(),
         ),
     ]
+}
+
+fn callback_payload(event: &EventEnvelope) -> Result<Value, String> {
+    let mut object = Map::new();
+    object.insert(
+        "event_type".to_owned(),
+        Value::String(event.event_type.clone()),
+    );
+    object.insert("task_id".to_owned(), numeric_callback_id(&event.task_id)?);
+    object.insert(
+        "subtask_id".to_owned(),
+        numeric_callback_id(&event.subtask_id)?,
+    );
+    object.insert("data".to_owned(), event.data.clone());
+    if let Some(message_id) = event.message_id {
+        object.insert(
+            "message_id".to_owned(),
+            Value::Number(Number::from(message_id)),
+        );
+    }
+    if let Some(executor_name) = &event.executor_name {
+        object.insert(
+            "executor_name".to_owned(),
+            Value::String(executor_name.clone()),
+        );
+    }
+    if let Some(executor_namespace) = &event.executor_namespace {
+        object.insert(
+            "executor_namespace".to_owned(),
+            Value::String(executor_namespace.clone()),
+        );
+    }
+    Ok(Value::Object(object))
+}
+
+fn numeric_callback_id(value: &str) -> Result<Value, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("callback task identity is empty".to_owned());
+    }
+    trimmed
+        .parse::<i64>()
+        .map(Number::from)
+        .map(Value::Number)
+        .map_err(|_| format!("callback task identity is not numeric: {trimmed}"))
 }
 
 fn log_callback_transport_error(fields: &[(&'static str, String)], error: &reqwest::Error) {

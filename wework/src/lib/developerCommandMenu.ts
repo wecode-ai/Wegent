@@ -1,5 +1,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import {
+  clearWorkbenchDebugLogs,
+  getWorkbenchDebugSnapshot,
+  type WorkbenchDebugSnapshot,
+} from './debugPanel'
+import {
   isPerformanceDiagnosticsEnabled,
   isPerformanceDiagnosticsShortcut,
   setPerformanceDiagnosticsEnabled,
@@ -7,6 +12,7 @@ import {
 import { isTauriRuntime } from './runtime-environment'
 
 const MENU_ID = 'wework-developer-command-menu'
+const DEBUG_PANEL_ID = 'wework-debug-panel'
 const INSPECTOR_COMMAND = 'open_main_webview_devtools'
 const OPEN_LOG_DIRECTORY_COMMAND = 'open_app_log_directory'
 
@@ -111,6 +117,12 @@ function getDeveloperCommands(): DeveloperCommand[] {
   const diagnosticsEnabled = isPerformanceDiagnosticsEnabled()
   return [
     {
+      id: 'open-debug-panel',
+      label: 'Debug Panel',
+      description: 'Inspect the active runtime task state and recent console.debug logs.',
+      run: () => openDebugPanel(),
+    },
+    {
       id: 'reload',
       label: 'Reload App',
       description: 'Reload the current WebView.',
@@ -169,6 +181,293 @@ function getDeveloperCommands(): DeveloperCommand[] {
       },
     },
   ]
+}
+
+function openDebugPanel() {
+  closeDebugPanel()
+
+  const root = document.createElement('div')
+  root.id = DEBUG_PANEL_ID
+  document.body.appendChild(root)
+  renderDebugPanelShell(root, true)
+}
+
+function closeDebugPanel() {
+  document.getElementById(DEBUG_PANEL_ID)?.remove()
+}
+
+function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
+  const snapshot = getWorkbenchDebugSnapshot()
+  root.innerHTML = ''
+  root.className = expanded
+    ? 'fixed inset-0 z-[2147483647] flex items-stretch justify-center bg-black/30 p-4'
+    : 'fixed bottom-4 right-4 z-[2147483647]'
+  root.setAttribute('role', 'presentation')
+
+  if (!expanded) {
+    root.onclick = null
+    root.onkeydown = null
+    root.appendChild(createCollapsedDebugPanel(snapshot, () => renderDebugPanelShell(root, true)))
+    return
+  }
+
+  const dialog = document.createElement('div')
+  dialog.className =
+    'flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-background text-text-primary shadow-2xl'
+  dialog.setAttribute('role', 'dialog')
+  dialog.setAttribute('aria-modal', 'true')
+  dialog.setAttribute('aria-label', 'Debug panel')
+
+  const header = document.createElement('div')
+  header.className =
+    'flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3'
+
+  const title = document.createElement('div')
+  title.innerHTML =
+    '<div class="text-sm font-semibold">Debug Panel</div><div class="mt-1 text-xs text-text-muted">Active task state and console.debug logs</div>'
+
+  const body = document.createElement('div')
+  body.className = 'grid min-h-0 flex-1 grid-cols-1 gap-0 overflow-hidden lg:grid-cols-[1fr_1fr]'
+  renderDebugPanelBody(body, snapshot)
+
+  const actions = document.createElement('div')
+  actions.className = 'flex items-center gap-2'
+  actions.append(
+    createDebugPanelButton('Refresh', () =>
+      renderDebugPanelBody(body, getWorkbenchDebugSnapshot())
+    ),
+    createDebugPanelButton('Copy Snapshot', () => copyDebugSnapshot(getWorkbenchDebugSnapshot())),
+    createDebugPanelButton('Clear Logs', () => {
+      clearWorkbenchDebugLogs()
+      renderDebugPanelBody(body, getWorkbenchDebugSnapshot())
+    }),
+    createDebugPanelButton('Collapse', () => renderDebugPanelShell(root, false)),
+    createDebugPanelButton('Close', closeDebugPanel)
+  )
+
+  header.append(title, actions)
+  dialog.append(header, body)
+  root.appendChild(dialog)
+
+  root.onclick = event => {
+    if (event.target === root) renderDebugPanelShell(root, false)
+  }
+  root.onkeydown = event => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    renderDebugPanelShell(root, false)
+  }
+}
+
+function renderDebugPanelBody(container: HTMLElement, snapshot: WorkbenchDebugSnapshot) {
+  container.innerHTML = ''
+  container.append(
+    createDebugPanelSection(
+      `Active Task State (${formatRunningStateLabel(snapshot)})`,
+      formatDebugJson(snapshot)
+    ),
+    createMessageStyleComparisonSection(snapshot),
+    createDebugPanelSection(
+      `Debug Logs (${snapshot.logs.length}/${snapshot.logLimit})`,
+      formatDebugLogs(snapshot)
+    )
+  )
+}
+
+function createCollapsedDebugPanel(snapshot: WorkbenchDebugSnapshot, onExpand: () => void) {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.dataset.testid = 'debug-panel-collapsed'
+  button.className =
+    'flex max-w-[min(420px,calc(100vw-2rem))] items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-left text-xs text-text-primary shadow-2xl hover:bg-muted focus:bg-muted focus:outline-none'
+  button.setAttribute('aria-label', 'Expand debug panel')
+  button.addEventListener('click', onExpand)
+
+  const dot = document.createElement('span')
+  dot.className = snapshot.workbench?.runningState.activeTaskRunning
+    ? 'h-2 w-2 shrink-0 rounded-full bg-primary'
+    : 'h-2 w-2 shrink-0 rounded-full bg-border'
+
+  const text = document.createElement('span')
+  text.className = 'min-w-0 truncate'
+  text.textContent = `Debug Panel collapsed - ${formatRunningStateLabel(snapshot)}`
+
+  const hint = document.createElement('span')
+  hint.className = 'shrink-0 text-text-muted'
+  hint.textContent = 'Expand'
+
+  button.append(dot, text, hint)
+  return button
+}
+
+function formatRunningStateLabel(snapshot: WorkbenchDebugSnapshot): string {
+  const workbenchRunning = snapshot.workbench?.runningState
+  const paneStatus = snapshot.pane?.status
+  if (!workbenchRunning?.hasCurrentRuntimeTask) return 'no active runtime task'
+
+  return [
+    `taskKnown=${workbenchRunning.activeTaskKnown}`,
+    `taskRunning=${String(workbenchRunning.activeTaskRunning)}`,
+    `taskStatus=${workbenchRunning.activeTaskStatus ?? 'null'}`,
+    `paneRunning=${String(paneStatus?.taskExecution.running ?? null)}`,
+    `paneBusy=${String(paneStatus?.isBusy ?? null)}`,
+    `sendPhase=${paneStatus?.sendPhase ?? 'null'}`,
+  ].join(' / ')
+}
+
+function createDebugPanelSection(title: string, content: string): HTMLElement {
+  const section = document.createElement('section')
+  section.className = 'flex min-h-0 flex-col border-b border-border lg:border-b-0 lg:border-r'
+
+  const heading = document.createElement('div')
+  heading.className = 'border-b border-border px-4 py-2 text-xs font-medium text-text-secondary'
+  heading.textContent = title
+
+  const pre = document.createElement('pre')
+  pre.className =
+    'min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-[11px] leading-5 text-text-primary'
+  pre.textContent = content
+
+  section.append(heading, pre)
+  return section
+}
+
+function createMessageStyleComparisonSection(snapshot: WorkbenchDebugSnapshot): HTMLElement {
+  const comparison = snapshot.pane?.messageStyleComparison ?? null
+  const section = document.createElement('section')
+  section.className = 'flex min-h-0 flex-col border-b border-border lg:border-b-0 lg:border-r'
+
+  const heading = document.createElement('div')
+  heading.className = 'border-b border-border px-4 py-2 text-xs font-medium text-text-secondary'
+  heading.textContent = 'Transcript vs Streaming Style'
+
+  const content = document.createElement('div')
+  content.className = 'min-h-0 flex-1 overflow-auto p-4'
+
+  if (!comparison) {
+    const empty = document.createElement('div')
+    empty.className = 'text-xs text-text-muted'
+    empty.textContent = 'No pane snapshot has been captured yet.'
+    content.appendChild(empty)
+  } else {
+    const cards = document.createElement('div')
+    cards.className = 'grid gap-3 xl:grid-cols-2'
+    cards.append(
+      createMessageStyleSampleCard('Transcript Loaded', comparison.transcriptLoaded),
+      createMessageStyleSampleCard('Current Streaming', comparison.currentStreaming)
+    )
+
+    const diff = document.createElement('pre')
+    diff.className =
+      'mt-3 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-surface p-3 font-mono text-[11px] leading-5 text-text-primary'
+    diff.textContent = JSON.stringify(
+      {
+        fieldDiff: comparison.fieldDiff,
+        renderingRules: comparison.renderingRules,
+      },
+      null,
+      2
+    )
+
+    content.append(cards, diff)
+  }
+
+  section.append(heading, content)
+  return section
+}
+
+function createMessageStyleSampleCard(
+  title: string,
+  sample: NonNullable<WorkbenchDebugSnapshot['pane']>['messageStyleComparison']['transcriptLoaded']
+): HTMLElement {
+  const card = document.createElement('div')
+  card.className = 'rounded-md border border-border bg-background p-3'
+
+  const heading = document.createElement('div')
+  heading.className = 'text-xs font-semibold text-text-primary'
+  heading.textContent = title
+
+  if (!sample) {
+    const empty = document.createElement('div')
+    empty.className = 'mt-2 text-xs leading-5 text-text-muted'
+    empty.textContent = 'No matching message in the current pane.'
+    card.append(heading, empty)
+    return card
+  }
+
+  const meta = document.createElement('div')
+  meta.className = 'mt-2 grid gap-1 text-[11px] leading-5 text-text-secondary'
+  ;[
+    `id: ${sample.id}`,
+    `status: ${sample.status}`,
+    `runtimeStatus: ${sample.runtimeStatus ?? 'null'}`,
+    `runtimeMessageIndex: ${sample.runtimeMessageIndex ?? 'null'}`,
+    `subtaskId: ${sample.subtaskId ?? 'null'}`,
+    `blocks: ${sample.blockCount} (${sample.runningBlockCount} running)`,
+    `completedAt: ${sample.completedAt ?? 'null'}`,
+  ].forEach(line => {
+    const item = document.createElement('div')
+    item.textContent = line
+    meta.appendChild(item)
+  })
+
+  const preview = document.createElement('div')
+  preview.className =
+    'mt-3 max-h-32 overflow-auto rounded-md border border-border bg-surface px-3 py-2 text-[12px] leading-5 text-text-primary'
+  preview.textContent = sample.contentPreview
+
+  const uiList = document.createElement('ul')
+  uiList.className = 'mt-3 list-disc space-y-1 pl-4 text-[11px] leading-5 text-text-secondary'
+  sample.expectedUi.forEach(rule => {
+    const item = document.createElement('li')
+    item.textContent = rule
+    uiList.appendChild(item)
+  })
+
+  card.append(heading, meta, preview, uiList)
+  return card
+}
+
+function createDebugPanelButton(label: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className =
+    'h-8 rounded-md border border-border px-3 text-xs transition-colors hover:bg-muted focus:bg-muted focus:outline-none'
+  button.textContent = label
+  button.addEventListener('click', onClick)
+  return button
+}
+
+function formatDebugJson(snapshot: WorkbenchDebugSnapshot): string {
+  return JSON.stringify(
+    {
+      updatedAt: snapshot.updatedAt,
+      workbench: snapshot.workbench,
+      pane: snapshot.pane,
+    },
+    null,
+    2
+  )
+}
+
+function formatDebugLogs(snapshot: WorkbenchDebugSnapshot): string {
+  if (snapshot.logs.length === 0) return 'No console.debug logs captured yet.'
+
+  return snapshot.logs
+    .map(log => {
+      const message = log.args.join(' ')
+      return `[${log.timestamp}] ${message}`
+    })
+    .join('\n')
+}
+
+async function copyDebugSnapshot(snapshot: WorkbenchDebugSnapshot) {
+  const text = JSON.stringify(snapshot, null, 2)
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch (error) {
+    console.warn('[Wework dev] Failed to copy debug snapshot', error)
+  }
 }
 
 function escapeHtml(value: string): string {

@@ -70,8 +70,8 @@ fn openai_request_conversion_preserves_executor_metadata_and_messages() {
 
     let execution = request.to_execution_request();
 
-    assert_eq!(execution.task_id, 123);
-    assert_eq!(execution.subtask_id, 456);
+    assert_eq!(execution.task_id, "123");
+    assert_eq!(execution.subtask_id, "456");
     assert_eq!(execution.system_prompt, "system prompt");
     assert_eq!(execution.prompt, json!("second user message"));
     assert_eq!(
@@ -189,8 +189,8 @@ fn execution_request_deserializes_backend_task_dispatch_payload() {
     }))
     .unwrap();
 
-    assert_eq!(request.task_id, 10);
-    assert_eq!(request.subtask_id, 11);
+    assert_eq!(request.task_id, "10");
+    assert_eq!(request.subtask_id, "11");
     assert_eq!(request.message_id, Some(12));
     assert_eq!(request.task_type.as_deref(), Some("online"));
     assert_eq!(request.executor_name.as_deref(), Some("local"));

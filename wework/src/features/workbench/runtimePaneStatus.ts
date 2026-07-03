@@ -1,6 +1,6 @@
-import type { LocalTaskSummary, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeTaskSummary, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
-import { findRuntimeLocalTask } from './workbenchRuntimeHelpers'
+import { findRuntimeTask } from './workbenchRuntimeHelpers'
 
 export type RuntimePaneSendPhase = 'idle' | 'submitting' | 'awaiting_assistant'
 
@@ -27,7 +27,7 @@ export function getRuntimePaneTaskExecution(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress | null | undefined
 ): RuntimePaneTaskExecution {
-  const task = findRuntimeLocalTask(runtimeWork, address)
+  const task = findRuntimeTask(runtimeWork, address)
   if (!task) {
     return { known: false, running: false, status: null }
   }
@@ -50,7 +50,10 @@ export function deriveRuntimePaneStatus({
   currentRuntimeTask: RuntimeTaskAddress | null
   taskExecution: RuntimePaneTaskExecution
 }): RuntimePaneStatus {
-  const activeAssistantMessage = findActiveAssistantMessage(messages) ?? null
+  const messageStreamingCanDriveExecution = !taskExecution.known || taskExecution.running
+  const activeAssistantMessage = messageStreamingCanDriveExecution
+    ? (findActiveAssistantMessage(messages) ?? null)
+    : null
   const isSubmitting = sendPhase === 'submitting'
   const isAwaitingAssistant = sendPhase === 'awaiting_assistant'
   const isAssistantStreaming = Boolean(activeAssistantMessage)
@@ -85,6 +88,6 @@ export function hasSettledAssistantMessage(messages: WorkbenchMessage[]): boolea
   )
 }
 
-function normalizeTaskStatus(task: LocalTaskSummary): string | null {
+function normalizeTaskStatus(task: RuntimeTaskSummary): string | null {
   return task.status?.trim().toLowerCase() || null
 }

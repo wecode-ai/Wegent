@@ -6,25 +6,23 @@ describe('runtime task navigation', () => {
     const route = buildRuntimeTaskRoute({
       deviceId: 'axb-mac.local',
       workspacePath: '/Users/axb-mac/work/Wegent github',
-      localTaskId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+      taskId: '12345',
     })
 
-    expect(route).toBe(
-      '/runtime-tasks?deviceId=axb-mac.local&localTaskId=019ee7f6-456a-78a1-96b1-66451afc310e'
-    )
+    expect(route).toBe('/runtime-tasks?deviceId=axb-mac.local&taskId=12345')
     expect(route).not.toContain('workspacePath')
     expect(route).not.toContain('%2FUsers%2Faxb-mac%2Fwork%2FWegent')
   })
 
-  test('parses runtime task routes from device and local task ids only', () => {
+  test('parses runtime task routes from device and task ids only', () => {
     expect(
       parseRuntimeTaskRoute(
         '/runtime-tasks',
-        '?deviceId=axb-mac.local&localTaskId=019ee7f6-456a-78a1-96b1-66451afc310e'
+        '?deviceId=axb-mac.local&taskId=12345'
       )
     ).toEqual({
       deviceId: 'axb-mac.local',
-      localTaskId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+      taskId: '12345',
     })
   })
 })

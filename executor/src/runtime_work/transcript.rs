@@ -7,7 +7,7 @@ use std::{collections::HashSet, path::Path};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    bool_field, codex_wrapped_item_payload, extract_text, integer_field,
+    bool_field, codex_wrapped_item_payload, extract_text, id_field, integer_field,
     is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
     is_likely_codex_tool_item_type, is_likely_codex_tool_output_item_type, item_id, item_type,
     normalize_workspace_path, now_ms, raw_string_field, reasoning_content, string_field,
@@ -67,7 +67,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         &mut assistant_segment_index,
                         AssistantEmitContext {
                             turn_id: &turn_id,
-                            subtask_id,
+                            subtask_id: &subtask_id,
                             created_at,
                             completed_at,
                             status: assistant_status,
@@ -79,7 +79,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         &mut messages,
                         &item,
                         created_at,
-                        &turn_id,
+                        &subtask_id,
                         &mut seen_user_messages,
                     );
                     if is_guidance && pushed_user {
@@ -91,11 +91,18 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 }
                 "reasoning" => push_reasoning_block(&mut assistant.blocks, &item, created_at),
                 "plan" => assistant.blocks.push(plan_block(&item, created_at)),
-                "commandexecution" => assistant.blocks.push(command_block(&item, created_at)),
-                "functioncall" | "customtoolcall" | "dynamictoolcall" | "mcptoolcall"
-                | "mcpcall" | "toolsearchcall" | "websearchcall" | "websearch"
+                "commandexecution" | "functioncall" | "customtoolcall" | "dynamictoolcall"
+                | "mcptoolcall" | "mcpcall" | "toolsearchcall" | "websearchcall" | "websearch"
                 | "imagegeneration" | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
-                    assistant.blocks.push(tool_block(&item, created_at))
+                    if let Some(block) = workbench_block_from_codex_item(
+                        &item,
+                        &turn_id,
+                        device_id,
+                        &workspace_path,
+                        created_at,
+                    ) {
+                        assistant.blocks.push(block);
+                    }
                 }
                 "functioncalloutput"
                 | "customtoolcalloutput"
@@ -111,9 +118,15 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         &workspace_path,
                     ) {
                         if fold_commentary {
-                            assistant
-                                .blocks
-                                .push(file_changes_block(&item, &summary, created_at));
+                            if let Some(block) = workbench_block_from_codex_item(
+                                &item,
+                                &turn_id,
+                                device_id,
+                                &workspace_path,
+                                created_at,
+                            ) {
+                                assistant.blocks.push(block);
+                            }
                         }
                         assistant.file_changes =
                             merge_file_changes(assistant.file_changes.take(), summary);
@@ -127,19 +140,30 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         &workspace_path,
                     ) {
                         if fold_commentary {
-                            assistant
-                                .blocks
-                                .push(file_changes_block(&item, &summary, created_at));
+                            if let Some(block) = workbench_block_from_codex_item(
+                                &item,
+                                &turn_id,
+                                device_id,
+                                &workspace_path,
+                                created_at,
+                            ) {
+                                assistant.blocks.push(block);
+                            }
                         }
                         assistant.file_changes =
                             merge_file_changes(assistant.file_changes.take(), summary);
                     }
                 }
                 item_type if is_codex_context_compaction_item_type(item_type) => {
-                    assistant.blocks.push(context_compaction_block(
+                    if let Some(block) = workbench_block_from_codex_item(
                         &item,
-                        item_timestamp(&item).unwrap_or(created_at),
-                    ));
+                        &turn_id,
+                        device_id,
+                        &workspace_path,
+                        created_at,
+                    ) {
+                        assistant.blocks.push(block);
+                    }
                 }
                 "agentmessage" => {
                     collect_assistant_message(
@@ -175,7 +199,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             &mut assistant_segment_index,
                             AssistantEmitContext {
                                 turn_id: &turn_id,
-                                subtask_id,
+                                subtask_id: &subtask_id,
                                 created_at,
                                 completed_at,
                                 status: assistant_status,
@@ -187,7 +211,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             &mut messages,
                             &item,
                             created_at,
-                            &turn_id,
+                            &subtask_id,
                             &mut seen_user_messages,
                         );
                         if is_guidance && pushed_user {
@@ -233,7 +257,15 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                     if is_default_tool_output_item(&item) {
                         merge_tool_output(&mut assistant.blocks, &item, created_at);
                     } else if is_default_tool_item(&item) {
-                        assistant.blocks.push(tool_block(&item, created_at));
+                        if let Some(block) = workbench_block_from_codex_item(
+                            &item,
+                            &turn_id,
+                            device_id,
+                            &workspace_path,
+                            created_at,
+                        ) {
+                            assistant.blocks.push(block);
+                        }
                     }
                 }
             }
@@ -243,7 +275,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
             &mut assistant_segment_index,
             AssistantEmitContext {
                 turn_id: &turn_id,
-                subtask_id,
+                subtask_id: &subtask_id,
                 created_at,
                 completed_at,
                 status: assistant_status,
@@ -304,17 +336,65 @@ fn unique_id(base: String, used: &mut HashSet<String>) -> String {
     }
 }
 
-pub(crate) fn tool_block_from_notification(params: &Value, status: &str) -> Option<Value> {
+pub(crate) fn workbench_block_from_notification(
+    params: &Value,
+    turn_id: &str,
+    device_id: &str,
+    workspace_path: &str,
+    status: Option<&str>,
+) -> Option<Value> {
     let item = notification_item(params);
-    let item_type = item_type(&item);
-    if !is_likely_codex_tool_item_type(&item_type) {
-        return None;
-    }
-    let mut block = tool_block(&item, now_ms());
-    if let Some(object) = block.as_object_mut() {
-        object.insert("status".to_owned(), Value::String(status.to_owned()));
+    let mut block =
+        workbench_block_from_codex_item(&item, turn_id, device_id, workspace_path, now_ms())?;
+    if let Some(status) = status {
+        if let Some(object) = block.as_object_mut() {
+            object.insert("status".to_owned(), Value::String(status.to_owned()));
+        }
     }
     Some(block)
+}
+
+pub(crate) fn completed_workbench_block_from_notification(
+    params: &Value,
+    turn_id: &str,
+    device_id: &str,
+    workspace_path: &str,
+) -> Option<Value> {
+    let block =
+        workbench_block_from_notification(params, turn_id, device_id, workspace_path, None)?;
+    block
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|block_type| block_type == "file_changes")
+        .then_some(block)
+}
+
+pub(crate) fn workbench_block_from_codex_item(
+    item: &Value,
+    turn_id: &str,
+    device_id: &str,
+    workspace_path: &str,
+    fallback_timestamp: i64,
+) -> Option<Value> {
+    let item_type = item_type(item);
+    if item_type == "filechange" {
+        return file_changes_from_file_change_item(item, turn_id, device_id, workspace_path)
+            .map(|summary| file_changes_block(item, &summary, fallback_timestamp));
+    }
+    if item_type == "patchapplyend" {
+        return file_changes_from_patch_apply_end(item, turn_id, device_id, workspace_path)
+            .map(|summary| file_changes_block(item, &summary, fallback_timestamp));
+    }
+    if is_codex_context_compaction_item_type(&item_type) {
+        return Some(context_compaction_block(
+            item,
+            item_timestamp(item).unwrap_or(fallback_timestamp),
+        ));
+    }
+    if is_likely_codex_tool_item_type(&item_type) || is_default_tool_item(item) {
+        return Some(tool_block(item, fallback_timestamp));
+    }
+    None
 }
 
 pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, Value)> {
@@ -497,11 +577,10 @@ fn turn_completed_at(turn: &Value, started_at: i64) -> Option<i64> {
         .filter(|completed_at| *completed_at >= started_at)
 }
 
-fn turn_subtask_id(turn: &Value, turn_id: &str) -> i64 {
-    integer_field(turn, "subtaskId")
-        .or_else(|| integer_field(turn, "subtask_id"))
-        .filter(|value| *value != 0)
-        .unwrap_or_else(|| synthetic_turn_subtask_id(turn_id))
+fn turn_subtask_id(turn: &Value, turn_id: &str) -> String {
+    id_field(turn, "subtaskId")
+        .or_else(|| id_field(turn, "subtask_id"))
+        .unwrap_or_else(|| turn_id.to_owned())
 }
 
 fn turn_should_fold_commentary(turn: &Value) -> bool {
@@ -637,16 +716,6 @@ fn is_final_assistant_message(item: &Value) -> bool {
     }
 }
 
-fn synthetic_turn_subtask_id(turn_id: &str) -> i64 {
-    let mut hash = 2_166_136_261_u32;
-    for byte in turn_id.as_bytes() {
-        hash ^= u32::from(*byte);
-        hash = hash.wrapping_mul(16_777_619);
-    }
-    let value = i64::from(hash & 0x7fff_ffff);
-    -value.max(1)
-}
-
 fn apply_turn_completed_at(blocks: &mut [Value], completed_at: Option<i64>) {
     let Some(completed_at) = completed_at else {
         return;
@@ -694,7 +763,7 @@ impl AssistantTurnAccumulation {
 
 struct AssistantEmitContext<'a> {
     turn_id: &'a str,
-    subtask_id: i64,
+    subtask_id: &'a str,
     created_at: i64,
     completed_at: Option<i64>,
     status: &'a str,
@@ -725,7 +794,6 @@ fn push_accumulated_assistant(
     };
     messages.push(synthetic_assistant_message(AssistantMessageDraft {
         turn_id: &synthetic_turn_id,
-        source_turn_id: context.turn_id,
         subtask_id: context.subtask_id,
         created_at: context.created_at,
         completed_at: context.completed_at,
@@ -753,7 +821,7 @@ fn push_user_message(messages: &mut Vec<Value>, item: &Value, created_at: i64, t
         "content": content,
         "status": "done",
         "createdAt": item_timestamp(item).unwrap_or(created_at),
-        "turnId": turn_id,
+        "subtaskId": turn_id,
     });
     if !attachments.is_empty() {
         if let Some(object) = message.as_object_mut() {
@@ -1062,8 +1130,7 @@ fn item_timestamp(item: &Value) -> Option<i64> {
 
 struct AssistantMessageDraft<'a> {
     turn_id: &'a str,
-    source_turn_id: &'a str,
-    subtask_id: i64,
+    subtask_id: &'a str,
     created_at: i64,
     completed_at: Option<i64>,
     status: &'a str,
@@ -1081,10 +1148,7 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "content": draft.assistant_parts.join("\n\n"),
         "status": draft.status,
         "subtaskId": draft.subtask_id,
-        "subtask_id": draft.subtask_id,
-        "turn_id": draft.subtask_id,
         "createdAt": draft.created_at,
-        "turnId": draft.source_turn_id,
         "blocks": draft.blocks,
     });
     if draft.status != "streaming" {

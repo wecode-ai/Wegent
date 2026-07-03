@@ -108,8 +108,8 @@ async fn responses_endpoint_accepts_openai_background_requests() {
 
     let submitted = runner.submitted();
     assert_eq!(submitted.len(), 1);
-    assert_eq!(submitted[0].task_id, 123);
-    assert_eq!(submitted[0].subtask_id, 456);
+    assert_eq!(submitted[0].task_id, "123");
+    assert_eq!(submitted[0].subtask_id, "456");
     assert_eq!(submitted[0].prompt, json!("run this task"));
 }
 

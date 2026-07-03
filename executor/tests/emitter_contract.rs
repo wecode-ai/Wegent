@@ -7,7 +7,7 @@ use wegent_executor::emitter::{EventEnvelope, ResponsesEventBuilder};
 
 #[test]
 fn response_created_event_matches_callback_envelope_contract() {
-    let builder = ResponsesEventBuilder::new(123, 456, "claude-sonnet-4")
+    let builder = ResponsesEventBuilder::new("123", "456", "claude-sonnet-4")
         .with_response_id("resp_test")
         .with_executor_info(Some("executor-1"), Some("default"));
 
@@ -17,8 +17,8 @@ fn response_created_event_matches_callback_envelope_contract() {
         event,
         EventEnvelope {
             event_type: "response.created".to_owned(),
-            task_id: 123,
-            subtask_id: 456,
+            task_id: "123".to_owned(),
+            subtask_id: "456".to_owned(),
             message_id: None,
             executor_name: Some("executor-1".to_owned()),
             executor_namespace: Some("default".to_owned()),
@@ -40,7 +40,7 @@ fn response_created_event_matches_callback_envelope_contract() {
 
 #[test]
 fn response_completed_event_contains_message_output() {
-    let builder = ResponsesEventBuilder::new(1, 2, "gpt-5").with_response_id("resp_done");
+    let builder = ResponsesEventBuilder::new("1", "2", "gpt-5").with_response_id("resp_done");
 
     let event = builder.response_completed("finished");
 
@@ -57,7 +57,7 @@ fn response_completed_event_contains_message_output() {
 #[test]
 fn response_waiting_for_user_input_event_marks_silent_exit() {
     let builder =
-        ResponsesEventBuilder::new(1, 2, "claude-sonnet-4").with_response_id("resp_waiting");
+        ResponsesEventBuilder::new("1", "2", "claude-sonnet-4").with_response_id("resp_waiting");
 
     let event = builder.response_waiting_for_user_input("tool_deferred");
 
@@ -78,7 +78,7 @@ fn response_waiting_for_user_input_event_marks_silent_exit() {
 
 #[test]
 fn error_event_uses_openai_error_shape() {
-    let builder = ResponsesEventBuilder::new(1, 2, "");
+    let builder = ResponsesEventBuilder::new("1", "2", "");
 
     let event = builder.error("failed", "runtime_error");
 

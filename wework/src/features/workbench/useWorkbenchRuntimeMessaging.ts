@@ -24,7 +24,7 @@ import {
 import type {
   Attachment,
   ChatSendPayload,
-  LocalTaskSummary,
+  RuntimeTaskSummary,
   ModelOptions,
   RuntimeDeviceWorkspace,
   RuntimeSendRequest,
@@ -44,14 +44,15 @@ import {
   STANDALONE_PROJECT_ID,
   buildRuntimeTaskTitle,
   createConversationWorkspace,
-  createRuntimeLocalTaskId,
+  createRuntimeTaskId,
+  createRuntimeTaskIdFromSeed,
   findProjectDeviceWorkspace,
   getCommandStdoutObject,
   isRecord,
   isSameRuntimeTaskIdentity,
 } from './workbenchRuntimeHelpers'
 import type { WorkbenchRuntimeTasks } from './useWorkbenchRuntimeTasks'
-import { findFileChangesByTurnId } from './runtimePaneMessages'
+import { findFileChangesBySubtaskId } from './runtimePaneMessages'
 import { findActiveAssistantMessage } from './runtimePaneStatus'
 import {
   inferRuntimeName,
@@ -141,9 +142,23 @@ export function useWorkbenchRuntimeMessaging({
         if (!response.accepted) {
           throw new Error(response.error || '发送失败')
         }
-        await refreshWorkLists()
+        try {
+          await refreshWorkLists()
+        } catch (error) {
+          console.warn('[Wework] Runtime send accepted but work list refresh failed', {
+            taskId: response.taskId ?? request.address.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
         return true
       } catch (error) {
+        console.warn('[Wework] Runtime send failed', {
+          taskId: request.address.taskId,
+          deviceId: request.address.deviceId,
+          workspacePath: request.address.workspacePath ?? null,
+          addressKeys: Object.keys(request.address as unknown as Record<string, unknown>).sort(),
+          error: error instanceof Error ? error.message : String(error),
+        })
         dispatch({
           type: 'error_set',
           error: error instanceof Error ? error.message : '发送失败',
@@ -289,7 +304,8 @@ export function useWorkbenchRuntimeMessaging({
         modelSelection.selectedModel ??
         resolveAutomaticModel(modelSelection.models)
       const runtime = inferRuntimeName(selectedModel)
-      const localTaskId = createRuntimeLocalTaskId(runtime)
+      const taskSeed = createRuntimeTaskId(runtime)
+      const taskId = createRuntimeTaskIdFromSeed(taskSeed)
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         projectId,
@@ -323,7 +339,8 @@ export function useWorkbenchRuntimeMessaging({
             workspacePath = await createConversationWorkspace(
               executorClient.commands,
               activeDeviceId,
-              displayMessage
+              displayMessage,
+              taskId
             )
           } catch (error) {
             reportSendBlocked(error instanceof Error ? error.message : '创建对话工作区失败')
@@ -351,7 +368,7 @@ export function useWorkbenchRuntimeMessaging({
 
       const createRequest: RuntimeTaskCreateRequest = {
         ...runtimeTaskTarget,
-        localTaskId,
+        taskId,
         teamId: payload.team_id,
         runtime,
         message: payload.message,
@@ -366,7 +383,7 @@ export function useWorkbenchRuntimeMessaging({
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
       }
       debugRuntimeCreateFlow('create-request-built', {
-        localTaskId,
+        taskId,
         runtime,
         modelId: createRequest.modelId ?? null,
         modelType: createRequest.modelType ?? null,
@@ -374,9 +391,9 @@ export function useWorkbenchRuntimeMessaging({
       })
       const optimisticAddress: RuntimeTaskAddress = {
         deviceId: optimisticDeviceId,
+        taskId,
         workspacePath:
           'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined,
-        localTaskId,
       }
       const optimisticWorkspacePath =
         ('workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined) ??
@@ -397,7 +414,7 @@ export function useWorkbenchRuntimeMessaging({
 
       if (optimisticAddress.deviceId) rememberExecutionDevice(optimisticAddress.deviceId)
       debugRuntimeCreateFlow('create-optimistic-open', {
-        localTaskId,
+        taskId,
         runtime,
         projectId,
         optimisticAddress: runtimeAddressLog(optimisticAddress),
@@ -415,11 +432,14 @@ export function useWorkbenchRuntimeMessaging({
         }
         const address: RuntimeTaskAddress = {
           deviceId: response.deviceId || optimisticAddress.deviceId,
+          taskId: response.taskId || optimisticAddress.taskId,
           workspacePath: response.workspacePath || optimisticAddress.workspacePath,
-          localTaskId: response.localTaskId || optimisticAddress.localTaskId,
+          ...(response.taskId || optimisticAddress.taskId
+            ? { taskId: response.taskId || optimisticAddress.taskId }
+            : {}),
         }
         debugRuntimeCreateFlow('create-resolved', {
-          localTaskId,
+          taskId: address.taskId,
           runtime,
           projectId,
           accepted: response.accepted,
@@ -427,7 +447,7 @@ export function useWorkbenchRuntimeMessaging({
           resolvedAddress: runtimeAddressLog(address),
           sameIdentity: isSameRuntimeTaskIdentity(optimisticAddress, address),
           responseHasWorkspacePath: Boolean(response.workspacePath),
-          responseHasLocalTaskId: Boolean(response.localTaskId),
+          responseHasTaskId: Boolean(response.taskId),
         })
         const resolvedWorkspacePath = address.workspacePath ?? optimisticWorkspacePath
         if (resolvedWorkspacePath) {
@@ -442,7 +462,7 @@ export function useWorkbenchRuntimeMessaging({
               projectId,
             }),
             task: buildOptimisticRuntimeTask({
-              localTaskId: address.localTaskId,
+              taskId: address.taskId,
               workspacePath: resolvedWorkspacePath,
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
               runtime,
@@ -452,7 +472,7 @@ export function useWorkbenchRuntimeMessaging({
         if (!isSameRuntimeTaskIdentity(optimisticAddress, address)) {
           if (address.deviceId) rememberExecutionDevice(address.deviceId)
           debugRuntimeCreateFlow('create-final-open', {
-            localTaskId,
+            taskId: address.taskId,
             runtime,
             previousAddress: runtimeAddressLog(optimisticAddress),
             finalAddress: runtimeAddressLog(address),
@@ -700,10 +720,10 @@ export function useWorkbenchRuntimeMessaging({
   )
 
   const loadTurnFileChangesDiff = useCallback(
-    async (turnId: number, messagesOverride?: WorkbenchMessage[]) => {
+    async (subtaskId: string, messagesOverride?: WorkbenchMessage[]) => {
       const messageSource = messagesOverride ?? []
       const runtimeFileChanges = state.currentRuntimeTask
-        ? findFileChangesByTurnId(messageSource, turnId)
+        ? findFileChangesBySubtaskId(messageSource, subtaskId)
         : undefined
       if (runtimeFileChanges?.diff) return runtimeFileChanges.diff
       if (runtimeFileChanges) {
@@ -738,7 +758,7 @@ export function useWorkbenchRuntimeMessaging({
 
       const loadDiff = services.taskApi.getTurnFileChangesDiff
       if (!loadDiff) throw new Error('File changes review is unavailable')
-      const response = await loadDiff(turnId)
+      const response = await loadDiff(subtaskId)
       return response.diff
     },
     [executorClient, services.taskApi, state.currentRuntimeTask]
@@ -746,12 +766,12 @@ export function useWorkbenchRuntimeMessaging({
 
   const revertTurnFileChanges = useCallback(
     async (
-      turnId: number,
+      subtaskId: string,
       messagesOverride?: WorkbenchMessage[]
     ): Promise<TurnFileChangesSummary> => {
       const messageSource = messagesOverride ?? []
       const runtimeFileChanges = state.currentRuntimeTask
-        ? findFileChangesByTurnId(messageSource, turnId)
+        ? findFileChangesBySubtaskId(messageSource, subtaskId)
         : undefined
       if (runtimeFileChanges && state.currentRuntimeTask) {
         try {
@@ -790,7 +810,7 @@ export function useWorkbenchRuntimeMessaging({
       const revert = services.taskApi.revertTurnFileChanges
       if (!revert) throw new Error('File changes revert is unavailable')
       try {
-        const response = await revert(turnId)
+        const response = await revert(subtaskId)
         const fileChanges = normalizeTurnFileChanges(response.file_changes)
         if (!fileChanges) {
           throw new Error('Invalid file changes response')
@@ -862,24 +882,25 @@ function buildOptimisticRuntimeWorkspace({
     workspaceKind: baseWorkspace?.workspaceKind ?? (projectId ? 'workspace' : 'chat'),
     mapped: baseWorkspace?.mapped ?? Boolean(projectId),
     available: baseWorkspace?.available ?? (device ? device.status !== 'offline' : true),
-    localTasks: [],
+    tasks: [],
   }
 }
 
 function buildOptimisticRuntimeTask({
-  localTaskId,
+  taskId,
   workspacePath,
   title,
   runtime,
 }: {
-  localTaskId: string
+  taskId: string
   workspacePath: string
   title: string
-  runtime: LocalTaskSummary['runtime']
-}): LocalTaskSummary {
+  runtime: RuntimeTaskSummary['runtime']
+}): RuntimeTaskSummary {
   const now = new Date().toISOString()
   return {
-    localTaskId,
+    taskId,
+    ...(taskId ? { taskId } : {}),
     workspacePath,
     title,
     runtime,
@@ -893,7 +914,7 @@ function buildOptimisticRuntimeTask({
 function runtimeAddressLog(address: RuntimeTaskAddress): Record<string, unknown> {
   return {
     deviceId: address.deviceId,
-    localTaskId: address.localTaskId,
+    taskId: address.taskId,
     workspacePath: address.workspacePath ?? null,
     hasRuntimeHandle: Boolean(address.runtimeHandle),
     runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],

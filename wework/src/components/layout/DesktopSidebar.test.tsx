@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { DesktopSidebar } from './DesktopSidebar'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
@@ -57,11 +57,8 @@ function project(overrides: Partial<ProjectWithTasks> = {}): ProjectWithTasks {
   }
 }
 
-function renderSidebar(
-  overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {},
-  cloudConnection?: Partial<CloudConnectionContextValue>
-) {
-  const props: Parameters<typeof DesktopSidebar>[0] = {
+function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {}) {
+  return {
     user: { id: 1, user_name: 'alice', email: 'alice@example.com' },
     projects: [project()],
     devices: [localDevice()],
@@ -79,6 +76,13 @@ function renderSidebar(
     onLogout: vi.fn(),
     ...overrides,
   }
+}
+
+function renderSidebar(
+  overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {},
+  cloudConnection?: Partial<CloudConnectionContextValue>
+) {
+  const props: Parameters<typeof DesktopSidebar>[0] = createSidebarProps(overrides)
 
   const tree = <DesktopSidebar {...props} />
   if (cloudConnection) {
@@ -111,6 +115,10 @@ describe('DesktopSidebar', () => {
     localStorage.clear()
     enableTauri()
     Element.prototype.scrollIntoView = vi.fn()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   test('keeps section header actions out of the flex layout while hidden', () => {
@@ -150,7 +158,7 @@ describe('DesktopSidebar', () => {
   })
 
   test('does not render non-chat runtime workspace groups', async () => {
-    const onOpenRuntimeLocalTask = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
 
     renderSidebar({
       projects: [],
@@ -163,9 +171,9 @@ describe('DesktopSidebar', () => {
             deviceStatus: 'online',
             available: true,
             workspacePath: '/tmp/spike',
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'claude-1',
+                taskId: 'claude-1',
                 workspacePath: '/tmp/spike',
                 title: 'Spike runtime task',
                 runtime: 'claude_code',
@@ -173,9 +181,9 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
-      onOpenRuntimeLocalTask,
+      onOpenRuntimeTask,
     })
 
     expect(screen.queryByTestId('non-chat-runtime-section')).not.toBeInTheDocument()
@@ -195,7 +203,7 @@ describe('DesktopSidebar', () => {
       'false'
     )
     expect(screen.queryByTestId('runtime-chat-empty')).not.toBeInTheDocument()
-    expect(onOpenRuntimeLocalTask).not.toHaveBeenCalled()
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
   })
 
   test('opens runtime search from the sidebar', async () => {
@@ -415,7 +423,7 @@ describe('DesktopSidebar', () => {
   })
 
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {
-    const onOpenRuntimeLocalTask = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
 
     renderSidebar({
@@ -430,9 +438,9 @@ describe('DesktopSidebar', () => {
             available: true,
             workspacePath: chatPath,
             workspaceKind: 'chat',
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'chat-1',
+                taskId: 'chat-1',
                 workspacePath: chatPath,
                 workspaceKind: 'chat',
                 title: 'hi',
@@ -446,9 +454,9 @@ describe('DesktopSidebar', () => {
             deviceStatus: 'online',
             available: true,
             workspacePath: '/tmp/spike',
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'workspace-1',
+                taskId: 'workspace-1',
                 workspacePath: '/tmp/spike',
                 title: 'Spike runtime task',
                 runtime: 'claude_code',
@@ -456,9 +464,9 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        totalLocalTasks: 2,
+        totalTasks: 2,
       },
-      onOpenRuntimeLocalTask,
+      onOpenRuntimeTask,
     })
 
     expect(screen.getByTestId('runtime-chat-section')).toHaveTextContent('对话')
@@ -480,17 +488,58 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('runtime-chat-section-toggle'))
     await userEvent.click(screen.getByTestId('runtime-local-task-row-chat-1'))
 
-    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
       workspacePath: chatPath,
-      localTaskId: 'chat-1',
+      taskId: 'chat-1',
     })
+  })
+
+  test('refreshes relative runtime task time while the sidebar stays mounted', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-03T12:01:00.000Z'))
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            deviceName: 'Local Mac',
+            deviceStatus: 'online',
+            available: true,
+            workspacePath: '/workspace/chats/chat-time',
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'chat-time',
+                workspacePath: '/workspace/chats/chat-time',
+                workspaceKind: 'chat',
+                title: 'Time sensitive chat',
+                runtime: 'codex',
+                updatedAt: '2026-07-03T12:00:00.000Z',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+    })
+
+    expect(screen.getByTestId('runtime-local-task-time-chat-time')).toHaveTextContent('1m')
+
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+
+    expect(screen.getByTestId('runtime-local-task-time-chat-time')).toHaveTextContent('2m')
   })
 
   test('renames a runtime conversation from double click dialog', async () => {
     const user = userEvent.setup()
-    const onOpenRuntimeLocalTask = vi.fn()
-    const onRenameRuntimeLocalTask = vi.fn().mockResolvedValue(undefined)
+    const onOpenRuntimeTask = vi.fn()
+    const onRenameRuntimeTask = vi.fn().mockResolvedValue(undefined)
 
     renderSidebar({
       projects: [],
@@ -504,9 +553,9 @@ describe('DesktopSidebar', () => {
             available: true,
             workspacePath: '/workspace/chats/chat-rename',
             workspaceKind: 'chat',
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'codex-rename',
+                taskId: 'codex-rename',
                 workspacePath: '/workspace/chats/chat-rename',
                 workspaceKind: 'chat',
                 title: '对齐需求核心点',
@@ -515,10 +564,10 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
-      onOpenRuntimeLocalTask,
-      onRenameRuntimeLocalTask,
+      onOpenRuntimeTask,
+      onRenameRuntimeTask,
     })
 
     await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-rename'))
@@ -533,11 +582,11 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('confirm-rename-runtime-local-task-codex-rename'))
 
     await waitFor(() => {
-      expect(onRenameRuntimeLocalTask).toHaveBeenCalledWith(
+      expect(onRenameRuntimeTask).toHaveBeenCalledWith(
         {
           deviceId: 'local-device',
           workspacePath: '/workspace/chats/chat-rename',
-          localTaskId: 'codex-rename',
+          taskId: 'codex-rename',
         },
         '对齐方案'
       )
@@ -545,14 +594,14 @@ describe('DesktopSidebar', () => {
   })
 
   test('renders project runtime tasks directly under projects and opens by address', async () => {
-    const onOpenRuntimeLocalTask = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
 
     renderSidebar({
       runtimeWork: {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 1,
+            totalTasks: 1,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -562,9 +611,9 @@ describe('DesktopSidebar', () => {
                 available: true,
                 workspacePath: '/repo/Wegent',
                 label: 'Wegent local',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/repo/Wegent',
                     title: 'Fix reconnect',
                     runtime: 'codex',
@@ -576,9 +625,9 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
-      onOpenRuntimeLocalTask,
+      onOpenRuntimeTask,
     })
 
     await userEvent.click(screen.getByTestId('project-item-button'))
@@ -592,10 +641,10 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(screen.getByTestId('runtime-local-task-row-codex-1'))
 
-    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
       workspacePath: '/repo/Wegent',
-      localTaskId: 'codex-1',
+      taskId: 'codex-1',
     })
   })
 
@@ -608,7 +657,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 1,
+            totalTasks: 1,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -617,9 +666,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/repo/Wegent',
                     title: 'Fix reconnect',
                     runtime: 'codex',
@@ -631,7 +680,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
     })
 
@@ -657,7 +706,7 @@ describe('DesktopSidebar', () => {
                 workspacePath: '/home/ubuntu/workspace/Wegent',
                 workspaceSource: 'remote',
                 remoteHostId: 'remote-ssh-discovered:10.201.3.200',
-                localTasks: [],
+                tasks: [],
               },
             ],
           },
@@ -672,13 +721,13 @@ describe('DesktopSidebar', () => {
                 available: true,
                 workspacePath: '/Users/alice/Wegent',
                 workspaceSource: 'local',
-                localTasks: [],
+                tasks: [],
               },
             ],
           },
         ],
         chats: [],
-        totalLocalTasks: 0,
+        totalTasks: 0,
       },
     })
 
@@ -695,7 +744,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 2,
+            totalTasks: 2,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -704,9 +753,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-running',
+                    taskId: 'codex-running',
                     workspacePath: '/repo/Wegent',
                     title: 'Investigate stream',
                     runtime: 'codex',
@@ -714,7 +763,7 @@ describe('DesktopSidebar', () => {
                     updatedAt: '2026-06-20T03:00:00Z',
                   },
                   {
-                    localTaskId: 'codex-idle',
+                    taskId: 'codex-idle',
                     workspacePath: '/repo/Wegent',
                     title: 'Finished fix',
                     runtime: 'codex',
@@ -727,7 +776,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 2,
+        totalTasks: 2,
       },
     })
 
@@ -741,12 +790,12 @@ describe('DesktopSidebar', () => {
   })
 
   test('persists unread dot when a runtime task finishes while the app is closed', async () => {
-    const onOpenRuntimeLocalTask = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
     const runningRuntimeWork = {
       projects: [
         {
           project: { id: 7, name: 'Wegent' },
-          totalLocalTasks: 1,
+          totalTasks: 1,
           deviceWorkspaces: [
             {
               id: 91,
@@ -755,9 +804,9 @@ describe('DesktopSidebar', () => {
               deviceStatus: 'online',
               available: true,
               workspacePath: '/repo/Wegent',
-              localTasks: [
+              tasks: [
                 {
-                  localTaskId: 'codex-background',
+                  taskId: 'codex-background',
                   workspacePath: '/repo/Wegent',
                   title: 'Background task',
                   runtime: 'codex' as const,
@@ -770,7 +819,7 @@ describe('DesktopSidebar', () => {
         },
       ],
       chats: [],
-      totalLocalTasks: 1,
+      totalTasks: 1,
     }
     const completedRuntimeWork = {
       ...runningRuntimeWork,
@@ -780,9 +829,9 @@ describe('DesktopSidebar', () => {
           deviceWorkspaces: [
             {
               ...runningRuntimeWork.projects[0].deviceWorkspaces[0],
-              localTasks: [
+              tasks: [
                 {
-                  ...runningRuntimeWork.projects[0].deviceWorkspaces[0].localTasks[0],
+                  ...runningRuntimeWork.projects[0].deviceWorkspaces[0].tasks[0],
                   running: false,
                   updatedAt: '2026-06-20T03:02:00Z',
                 },
@@ -795,7 +844,7 @@ describe('DesktopSidebar', () => {
 
     const firstRender = renderSidebar({
       runtimeWork: runningRuntimeWork,
-      onOpenRuntimeLocalTask,
+      onOpenRuntimeTask,
     })
     await waitFor(() => {
       expect(localStorage.getItem('wework.desktop.sidebar.runningRuntimeTaskKeys.1')).toContain(
@@ -806,7 +855,7 @@ describe('DesktopSidebar', () => {
 
     renderSidebar({
       runtimeWork: completedRuntimeWork,
-      onOpenRuntimeLocalTask,
+      onOpenRuntimeTask,
     })
 
     await userEvent.click(screen.getByTestId('project-item-button'))
@@ -819,7 +868,7 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(screen.getByTestId('runtime-local-task-row-codex-background'))
 
-    expect(onOpenRuntimeLocalTask).toHaveBeenCalledTimes(1)
+    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(1)
     await waitFor(() => {
       expect(
         screen.queryByTestId('runtime-local-task-unread-dot-codex-background')
@@ -848,7 +897,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 2,
+            totalTasks: 2,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -857,11 +906,11 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'local-task',
+                    taskId: 'local-task',
                     workspacePath: '/repo/Wegent',
-                    title: 'Local task',
+                    title: 'Runtime task',
                     runtime: 'codex',
                     updatedAt: '2026-06-20T02:00:00Z',
                   },
@@ -874,9 +923,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'cloud-task',
+                    taskId: 'cloud-task',
                     workspacePath: '/repo/Wegent',
                     title: 'Cloud task',
                     runtime: 'codex',
@@ -888,7 +937,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 2,
+        totalTasks: 2,
       },
     })
 
@@ -908,7 +957,7 @@ describe('DesktopSidebar', () => {
 
   test('shows hover actions and an undo notice before archiving project runtime tasks', async () => {
     const user = userEvent.setup()
-    const onArchiveRuntimeLocalTask = vi.fn().mockResolvedValue(undefined)
+    const onArchiveRuntimeTask = vi.fn().mockResolvedValue(undefined)
     const originalSetTimeout = window.setTimeout
     const originalClearTimeout = window.clearTimeout
     const archiveTimerId = 2200
@@ -936,7 +985,7 @@ describe('DesktopSidebar', () => {
           projects: [
             {
               project: { id: 7, name: 'Wegent' },
-              totalLocalTasks: 1,
+              totalTasks: 1,
               deviceWorkspaces: [
                 {
                   id: 91,
@@ -945,9 +994,9 @@ describe('DesktopSidebar', () => {
                   deviceStatus: 'online',
                   available: true,
                   workspacePath: '/repo/Wegent',
-                  localTasks: [
+                  tasks: [
                     {
-                      localTaskId: 'codex-1',
+                      taskId: 'codex-1',
                       workspacePath: '/repo/Wegent',
                       title: 'Fix reconnect',
                       runtime: 'codex',
@@ -959,9 +1008,9 @@ describe('DesktopSidebar', () => {
             },
           ],
           chats: [],
-          totalLocalTasks: 1,
+          totalTasks: 1,
         },
-        onArchiveRuntimeLocalTask,
+        onArchiveRuntimeTask,
       })
 
       await user.click(screen.getByTestId('project-item-button'))
@@ -997,14 +1046,14 @@ describe('DesktopSidebar', () => {
 
       await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
 
-      expect(onArchiveRuntimeLocalTask).not.toHaveBeenCalled()
+      expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
       expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
         '撤销'
       )
 
       await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
 
-      expect(onArchiveRuntimeLocalTask).not.toHaveBeenCalled()
+      expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
       expect(archiveTimerCallback).toBeNull()
       expect(
         screen.queryByTestId('runtime-local-task-archive-toast-codex-1')
@@ -1021,10 +1070,10 @@ describe('DesktopSidebar', () => {
       })
 
       await waitFor(() =>
-        expect(onArchiveRuntimeLocalTask).toHaveBeenCalledWith({
+        expect(onArchiveRuntimeTask).toHaveBeenCalledWith({
           deviceId: 'local-device',
           workspacePath: '/repo/Wegent',
-          localTaskId: 'codex-1',
+          taskId: 'codex-1',
         })
       )
       expect(
@@ -1038,7 +1087,7 @@ describe('DesktopSidebar', () => {
 
   test('offers force archive when a worktree task has uncommitted changes', async () => {
     const user = userEvent.setup()
-    const onArchiveRuntimeLocalTask = vi
+    const onArchiveRuntimeTask = vi
       .fn()
       .mockResolvedValueOnce({ status: 'dirty_worktree' })
       .mockResolvedValueOnce({ status: 'archived' })
@@ -1069,7 +1118,7 @@ describe('DesktopSidebar', () => {
           projects: [
             {
               project: { id: 7, name: 'Wegent' },
-              totalLocalTasks: 1,
+              totalTasks: 1,
               deviceWorkspaces: [
                 {
                   id: 91,
@@ -1080,9 +1129,9 @@ describe('DesktopSidebar', () => {
                   workspacePath: '/repo/worktrees/9/Wegent',
                   workspaceKind: 'worktree',
                   worktreeId: '9',
-                  localTasks: [
+                  tasks: [
                     {
-                      localTaskId: 'codex-1',
+                      taskId: 'codex-1',
                       workspacePath: '/repo/worktrees/9/Wegent',
                       workspaceKind: 'worktree',
                       worktreeId: '9',
@@ -1096,9 +1145,9 @@ describe('DesktopSidebar', () => {
             },
           ],
           chats: [],
-          totalLocalTasks: 1,
+          totalTasks: 1,
         },
-        onArchiveRuntimeLocalTask,
+        onArchiveRuntimeTask,
       })
 
       await user.click(screen.getByTestId('project-item-button'))
@@ -1113,24 +1162,24 @@ describe('DesktopSidebar', () => {
       const dialog = await screen.findByTestId('runtime-local-task-force-archive-dialog-codex-1')
       expect(dialog).toHaveTextContent('工作树有未提交代码')
       expect(dialog).toHaveTextContent('强制归档会删除这个工作树目录')
-      expect(onArchiveRuntimeLocalTask).toHaveBeenCalledTimes(1)
-      expect(onArchiveRuntimeLocalTask).toHaveBeenNthCalledWith(1, {
+      expect(onArchiveRuntimeTask).toHaveBeenCalledTimes(1)
+      expect(onArchiveRuntimeTask).toHaveBeenNthCalledWith(1, {
         deviceId: 'local-device',
         workspacePath: '/repo/worktrees/9/Wegent',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       })
 
       await user.click(
         screen.getByTestId('runtime-local-task-force-archive-dialog-codex-1-confirm-button')
       )
 
-      await waitFor(() => expect(onArchiveRuntimeLocalTask).toHaveBeenCalledTimes(2))
-      expect(onArchiveRuntimeLocalTask).toHaveBeenNthCalledWith(
+      await waitFor(() => expect(onArchiveRuntimeTask).toHaveBeenCalledTimes(2))
+      expect(onArchiveRuntimeTask).toHaveBeenNthCalledWith(
         2,
         {
           deviceId: 'local-device',
           workspacePath: '/repo/worktrees/9/Wegent',
-          localTaskId: 'codex-1',
+          taskId: 'codex-1',
         },
         { force: true }
       )
@@ -1145,14 +1194,14 @@ describe('DesktopSidebar', () => {
 
   test('marks and unmarks runtime tasks without opening the task', async () => {
     const user = userEvent.setup()
-    const onOpenRuntimeLocalTask = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
 
     renderSidebar({
       runtimeWork: {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 1,
+            totalTasks: 1,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -1161,9 +1210,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/repo/Wegent',
                     title: 'Fix reconnect',
                     runtime: 'codex',
@@ -1175,9 +1224,9 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
-      onOpenRuntimeLocalTask,
+      onOpenRuntimeTask,
     })
 
     await user.click(screen.getByTestId('project-item-button'))
@@ -1195,7 +1244,7 @@ describe('DesktopSidebar', () => {
     expect(taskRow.className).toContain('color-sidebar-marked')
     expect(pinIcon).toHaveClass('fill-current')
     expect(markButton).toHaveAttribute('aria-label', '取消标记')
-    expect(onOpenRuntimeLocalTask).not.toHaveBeenCalled()
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
 
     await user.click(markButton)
 
@@ -1214,7 +1263,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 1,
+            totalTasks: 1,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -1223,9 +1272,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/repo/Wegent',
                     title: taskTitle,
                     runtime: 'codex',
@@ -1237,7 +1286,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
     })
 
@@ -1261,7 +1310,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 3,
+            totalTasks: 3,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -1270,23 +1319,23 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'new-task',
+                    taskId: 'new-task',
                     workspacePath: '/repo/Wegent',
                     title: 'New task',
                     runtime: 'codex',
                     updatedAt: '2026-06-22T00:00:00Z',
                   },
                   {
-                    localTaskId: 'middle-task',
+                    taskId: 'middle-task',
                     workspacePath: '/repo/Wegent',
                     title: 'Middle task',
                     runtime: 'codex',
                     updatedAt: '2026-06-21T00:00:00Z',
                   },
                   {
-                    localTaskId: 'old-task',
+                    taskId: 'old-task',
                     workspacePath: '/repo/Wegent',
                     title: 'Old task',
                     runtime: 'codex',
@@ -1298,7 +1347,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 3,
+        totalTasks: 3,
       },
     })
 
@@ -1338,7 +1387,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 6,
+            totalTasks: 6,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -1347,8 +1396,8 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: Array.from({ length: 6 }, (_, index) => ({
-                  localTaskId: `task-${index + 1}`,
+                tasks: Array.from({ length: 6 }, (_, index) => ({
+                  taskId: `task-${index + 1}`,
                   workspacePath: '/repo/Wegent',
                   title: `Task ${index + 1}`,
                   runtime: 'codex',
@@ -1359,7 +1408,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 6,
+        totalTasks: 6,
       },
     })
 
@@ -1381,7 +1430,7 @@ describe('DesktopSidebar', () => {
       projects: [
         {
           project: { id: 7, name: 'Wegent' },
-          totalLocalTasks: 3,
+          totalTasks: 3,
           deviceWorkspaces: [
             {
               id: 91,
@@ -1390,23 +1439,23 @@ describe('DesktopSidebar', () => {
               deviceStatus: 'online',
               available: true,
               workspacePath: '/repo/Wegent',
-              localTasks: [
+              tasks: [
                 {
-                  localTaskId: 'old-task',
+                  taskId: 'old-task',
                   workspacePath: '/repo/Wegent',
                   title: 'Old task',
                   runtime: 'codex',
                   updatedAt: '2026-06-20T00:00:00Z',
                 },
                 {
-                  localTaskId: 'new-task',
+                  taskId: 'new-task',
                   workspacePath: '/repo/Wegent',
                   title: 'New task',
                   runtime: 'codex',
                   updatedAt: '2026-06-22T00:00:00Z',
                 },
                 {
-                  localTaskId: 'middle-task',
+                  taskId: 'middle-task',
                   workspacePath: '/repo/Wegent',
                   title: 'Middle task',
                   runtime: 'codex',
@@ -1418,7 +1467,7 @@ describe('DesktopSidebar', () => {
         },
       ],
       chats: [],
-      totalLocalTasks: 3,
+      totalTasks: 3,
     }
     const rowTestIds = () =>
       screen.getAllByTestId(/^runtime-local-task-row-/).map(row => row.getAttribute('data-testid'))
@@ -1463,7 +1512,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, key: 'project:7', name: 'Wegent' },
-            totalLocalTasks: 2,
+            totalTasks: 2,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -1472,15 +1521,15 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/repo/Wegent',
                     title: 'Fix reconnect',
                     runtime: 'codex',
                   },
                   {
-                    localTaskId: 'codex-2',
+                    taskId: 'codex-2',
                     workspacePath: '/repo/Wegent',
                     title: 'Follow up',
                     runtime: 'codex',
@@ -1491,7 +1540,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 2,
+        totalTasks: 2,
       },
       onArchiveProjectConversations,
     })
@@ -1543,7 +1592,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, key: 'project:7', name: 'Wegent' },
-            totalLocalTasks: 1,
+            totalTasks: 1,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -1552,9 +1601,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/repo/Wegent',
                     title: 'Fix reconnect',
                     runtime: 'codex',
@@ -1565,7 +1614,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
       onUpdateProjectName,
       onRemoveProject,
@@ -1797,7 +1846,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, key: 'project:7', name: 'Wegent' },
-            totalLocalTasks: 1,
+            totalTasks: 1,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -1806,9 +1855,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/repo/Wegent',
                     title: 'Fix reconnect',
                     runtime: 'codex',
@@ -1827,9 +1876,9 @@ describe('DesktopSidebar', () => {
             available: true,
             workspacePath: '/workspace/chats/chat-1',
             workspaceKind: 'chat',
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'chat-1',
+                taskId: 'chat-1',
                 workspacePath: '/workspace/chats/chat-1',
                 workspaceKind: 'chat',
                 title: 'Hello',
@@ -1838,7 +1887,7 @@ describe('DesktopSidebar', () => {
             ],
           },
         ],
-        totalLocalTasks: 2,
+        totalTasks: 2,
       },
     })
 
@@ -1885,7 +1934,7 @@ describe('DesktopSidebar', () => {
           {
             deviceId: 'local-device',
             workspacePath: '/workspace/chats/chat-1',
-            localTaskId: 'chat-1',
+            taskId: 'chat-1',
           },
         ],
         undefined
@@ -1896,14 +1945,14 @@ describe('DesktopSidebar', () => {
   test('shows a subscribed runtime task notification toggle outside hover actions', async () => {
     const user = userEvent.setup()
     const onToggleRuntimeTaskNotification = vi.fn()
-    const onOpenRuntimeLocalTask = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
 
     renderSidebar({
       runtimeWork: {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 1,
+            totalTasks: 1,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -1912,9 +1961,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/repo/Wegent',
                     title: 'Fix reconnect',
                     runtime: 'codex',
@@ -1926,7 +1975,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
       imNotificationSettings: {
         global: {
@@ -1939,13 +1988,13 @@ describe('DesktopSidebar', () => {
             address: {
               deviceId: 'local-device',
               workspacePath: '/repo/Wegent',
-              localTaskId: 'codex-1',
+              taskId: 'codex-1',
             },
             sessionKeys: ['session-telegram'],
           },
         ],
       },
-      onOpenRuntimeLocalTask,
+      onOpenRuntimeTask,
       onToggleRuntimeTaskNotification,
     })
 
@@ -1964,20 +2013,20 @@ describe('DesktopSidebar', () => {
       {
         deviceId: 'local-device',
         workspacePath: '/repo/Wegent',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       },
       true
     )
-    expect(onOpenRuntimeLocalTask).not.toHaveBeenCalled()
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
   })
 
-  test('shows an empty task state when a project has no local tasks', async () => {
+  test('shows an empty task state when a project has no runtime tasks', async () => {
     renderSidebar({
       runtimeWork: {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 0,
+            totalTasks: 0,
             deviceWorkspaces: [
               {
                 id: 92,
@@ -1987,13 +2036,13 @@ describe('DesktopSidebar', () => {
                 available: true,
                 workspacePath: '/repo/Wegent',
                 label: 'Duplicated project label should not hide the path',
-                localTasks: [],
+                tasks: [],
               },
             ],
           },
         ],
         chats: [],
-        totalLocalTasks: 0,
+        totalTasks: 0,
       },
     })
 
@@ -2004,14 +2053,14 @@ describe('DesktopSidebar', () => {
   })
 
   test('shows managed worktree tasks directly under the source project with device marker', async () => {
-    const onOpenRuntimeLocalTask = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
 
     renderSidebar({
       runtimeWork: {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 1,
+            totalTasks: 1,
             deviceWorkspaces: [
               {
                 id: null,
@@ -2020,9 +2069,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/workspace/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-worktree',
+                    taskId: 'codex-worktree',
                     workspacePath: '/workspace/worktrees/42/Wegent',
                     workspaceKind: 'worktree',
                     worktreeId: '42',
@@ -2035,9 +2084,9 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
-      onOpenRuntimeLocalTask,
+      onOpenRuntimeTask,
     })
 
     await userEvent.click(screen.getByTestId('project-item-button'))
@@ -2061,10 +2110,10 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(screen.getByTestId('runtime-local-task-row-codex-worktree'))
 
-    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
       workspacePath: '/workspace/worktrees/42/Wegent',
-      localTaskId: 'codex-worktree',
+      taskId: 'codex-worktree',
     })
   })
 
@@ -2074,7 +2123,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 6,
+            totalTasks: 6,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -2083,44 +2132,44 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'task-oldest',
+                    taskId: 'task-oldest',
                     workspacePath: '/repo/Wegent',
                     title: 'Oldest hidden task',
                     runtime: 'codex',
                     updatedAt: '2026-06-20T01:00:00Z',
                   },
                   {
-                    localTaskId: 'task-third',
+                    taskId: 'task-third',
                     workspacePath: '/repo/Wegent',
                     title: 'Third task',
                     runtime: 'codex',
                     updatedAt: '2026-06-20T04:00:00Z',
                   },
                   {
-                    localTaskId: 'task-newest',
+                    taskId: 'task-newest',
                     workspacePath: '/repo/Wegent',
                     title: 'Newest task',
                     runtime: 'codex',
                     updatedAt: '2026-06-20T06:00:00Z',
                   },
                   {
-                    localTaskId: 'task-fifth',
+                    taskId: 'task-fifth',
                     workspacePath: '/repo/Wegent',
                     title: 'Fifth task',
                     runtime: 'codex',
                     updatedAt: '2026-06-20T02:00:00Z',
                   },
                   {
-                    localTaskId: 'task-second',
+                    taskId: 'task-second',
                     workspacePath: '/repo/Wegent',
                     title: 'Second task',
                     runtime: 'codex',
                     updatedAt: '2026-06-20T05:00:00Z',
                   },
                   {
-                    localTaskId: 'task-fourth',
+                    taskId: 'task-fourth',
                     workspacePath: '/repo/Wegent',
                     title: 'Fourth task',
                     runtime: 'codex',
@@ -2132,7 +2181,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 6,
+        totalTasks: 6,
       },
     })
 
@@ -2169,7 +2218,7 @@ describe('DesktopSidebar', () => {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 26,
+            totalTasks: 26,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -2178,8 +2227,8 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: Array.from({ length: 26 }, (_, index) => ({
-                  localTaskId: `task-${index + 1}`,
+                tasks: Array.from({ length: 26 }, (_, index) => ({
+                  taskId: `task-${index + 1}`,
                   workspacePath: '/repo/Wegent',
                   title: `Task ${index + 1}`,
                   runtime: 'codex',
@@ -2190,7 +2239,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 26,
+        totalTasks: 26,
       },
     })
 
@@ -2202,13 +2251,13 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(15)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toHaveTextContent('展开显示')
-    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toHaveTextContent('折叠显示')
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(25)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
-    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
 
@@ -2220,6 +2269,53 @@ describe('DesktopSidebar', () => {
 
     expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(5)
     expect(screen.getByTestId('project-runtime-tasks-expand-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
+  })
+
+  test('shows one project runtime task action after the task list grows past the current limit', async () => {
+    const runtimeWorkWithTaskCount = (count: number) => ({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          totalTasks: count,
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'local-device',
+              deviceName: 'Local Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/repo/Wegent',
+              tasks: Array.from({ length: count }, (_, index) => ({
+                taskId: `task-${index + 1}`,
+                workspacePath: '/repo/Wegent',
+                title: `Task ${index + 1}`,
+                runtime: 'codex',
+                updatedAt: '2026-06-20T06:00:00Z',
+              })),
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: count,
+    })
+
+    const view = renderSidebar({ runtimeWork: runtimeWorkWithTaskCount(6) })
+
+    await userEvent.click(screen.getByTestId('project-item-button'))
+    await userEvent.click(screen.getByTestId('project-runtime-tasks-expand-7'))
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)
+    expect(screen.queryByTestId('project-runtime-tasks-expand-7')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-runtime-tasks-collapse-7')).toBeInTheDocument()
+
+    view.rerender(
+      <DesktopSidebar {...createSidebarProps({ runtimeWork: runtimeWorkWithTaskCount(16) })} />
+    )
+
+    expect(screen.getAllByTestId(/^runtime-local-task-row-/)).toHaveLength(6)
+    expect(screen.getByTestId('project-runtime-tasks-expand-7')).toHaveTextContent('展开显示')
     expect(screen.queryByTestId('project-runtime-tasks-collapse-7')).not.toBeInTheDocument()
   })
 
@@ -2295,13 +2391,13 @@ describe('DesktopSidebar', () => {
       currentRuntimeTask: {
         deviceId: 'local-device',
         workspacePath: '/repo/Wegent',
-        localTaskId: 'codex-active',
+        taskId: 'codex-active',
       },
       runtimeWork: {
         projects: [
           {
             project: { id: 7, name: 'Wegent' },
-            totalLocalTasks: 1,
+            totalTasks: 1,
             deviceWorkspaces: [
               {
                 id: 91,
@@ -2310,9 +2406,9 @@ describe('DesktopSidebar', () => {
                 deviceStatus: 'online',
                 available: true,
                 workspacePath: '/repo/Wegent',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-active',
+                    taskId: 'codex-active',
                     workspacePath: '/repo/Wegent',
                     title: 'Active fix',
                     runtime: 'codex',
@@ -2324,7 +2420,7 @@ describe('DesktopSidebar', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
     })
 
@@ -2357,7 +2453,7 @@ describe('DesktopSidebar', () => {
               key: 'local:/Users/alice/hello 20',
               name: 'hello 20',
             },
-            totalLocalTasks: 0,
+            totalTasks: 0,
             deviceWorkspaces: [
               {
                 id: null,
@@ -2369,13 +2465,13 @@ describe('DesktopSidebar', () => {
                 workspacePath: '/Users/alice/hello 20',
                 workspaceKind: 'workspace',
                 mapped: true,
-                localTasks: [],
+                tasks: [],
               },
             ],
           },
         ],
         chats: [],
-        totalLocalTasks: 0,
+        totalTasks: 0,
       },
     })
 

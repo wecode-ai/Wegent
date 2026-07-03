@@ -109,7 +109,7 @@ where
 }
 
 async fn sync_attachments(Json(request): Json<ExecutionRequest>) -> Result<Json<Value>, HttpError> {
-    let mut fields = task_fields(request.task_id, request.subtask_id);
+    let mut fields = task_fields(&request.task_id, &request.subtask_id);
     let attachment_count = request
         .extra
         .get("attachments")
@@ -614,7 +614,7 @@ where
     let background = request.background();
     let execution_request = request.to_execution_request();
     let response_id = format!("resp_{}", execution_request.subtask_id);
-    let mut fields = task_fields(execution_request.task_id, execution_request.subtask_id);
+    let mut fields = task_fields(&execution_request.task_id, &execution_request.subtask_id);
     fields.push((
         "agent",
         format!("{:?}", execution_request.resolved_agent_kind()),

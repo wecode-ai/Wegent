@@ -46,7 +46,9 @@ import {
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import {
   CachedWorkbenchPaneStack,
+  getRunningRuntimeWorkbenchPaneKeys,
   getWorkbenchPaneKey,
+  useWorkbenchPaneActive,
   WorkbenchPaneActiveOnly,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneStack'
@@ -57,7 +59,7 @@ import {
   type DesktopReviewMetadata,
   type DesktopReviewState,
 } from './desktopWorkbenchPaneTypes'
-import { findRuntimeLocalTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
@@ -65,7 +67,7 @@ import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
-  'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width,max-width]'
+  'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
 const DESKTOP_CHAT_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
 const DESKTOP_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} -translate-y-12`
 const DESKTOP_FLOATING_COMPOSER_CLASS =
@@ -86,7 +88,7 @@ const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
   'transition-[width,opacity] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width,opacity]'
 const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
-const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
+const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 2
 const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
 const TAURI_TITLEBAR_ACTIONS_CLEARANCE_CLASS = 'max-w-[calc(100%-22rem)]'
 
@@ -98,10 +100,17 @@ interface DesktopWorkbenchMainProps {
 }
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
+  const { state } = useWorkbenchPaneContext()
+  const pinnedPaneKeys = useMemo(
+    () => getRunningRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
+
   return (
     <CachedWorkbenchPaneStack
       activePane={props.activePane}
       maxPanes={MAX_CACHED_DESKTOP_WORKBENCH_TABS}
+      pinnedKeys={pinnedPaneKeys}
       activeTestId="desktop-workbench-main"
       renderPane={pane => (
         <DesktopWorkbenchPane
@@ -149,6 +158,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
   const paneKey = getWorkbenchPaneKey(pane)
+  const paneActive = useWorkbenchPaneActive()
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const projectWork = useWorkbenchProjectWorkControls({
     pane,
@@ -251,7 +261,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   const bottomPanelWorkspaceKey = [
     currentRuntimeTask
-      ? `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}:${
+      ? `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}:${
           currentRuntimeTask.workspacePath ?? workspaceTarget?.path ?? ''
         }`
       : 'workspace',
@@ -322,11 +332,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsResponseStreaming = paneSession.status.isAssistantStreaming
-  const latestPreviousTurnTurnId = useMemo(() => {
+  const latestPreviousTurnSubtaskId = useMemo(() => {
     for (let index = paneMessages.length - 1; index >= 0; index -= 1) {
       const message = paneMessages[index]
-      if (message.fileChanges && typeof message.turnId === 'number') {
-        return message.turnId
+      if (message.fileChanges && typeof message.subtaskId === 'string') {
+        return message.subtaskId
       }
     }
 
@@ -597,12 +607,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         id: 'previous-turn',
         label: tChat('file_changes.previous_turn_label'),
         active: reviewState.reviewMode === 'previous-turn',
-        disabled: latestPreviousTurnTurnId === null && !hasPreviousTurnReview,
+        disabled: latestPreviousTurnSubtaskId === null && !hasPreviousTurnReview,
         onSelect: () => {
           const previousTurn =
-            latestPreviousTurnTurnId !== null
+            latestPreviousTurnSubtaskId !== null
               ? {
-                  loadDiff: () => loadTurnFileChangesDiff(latestPreviousTurnTurnId, paneMessages),
+                  loadDiff: () => loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessages),
                   defaultFileTreeVisible: false,
                 }
               : previousTurnReviewRef.current
@@ -617,7 +627,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ],
     [
       hasPreviousTurnReview,
-      latestPreviousTurnTurnId,
+      latestPreviousTurnSubtaskId,
       loadEnvironmentDiff,
       loadTurnFileChangesDiff,
       openEnvironmentChangesReview,
@@ -667,7 +677,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
   const runtimeTaskTitle =
-    findRuntimeLocalTask(runtimeWork, currentRuntimeTask)?.title.trim() || null
+    findRuntimeTask(runtimeWork, currentRuntimeTask)?.title.trim() || null
   const paneTaskTitle = runtimeTaskTitle ? (
     <div
       data-testid="workbench-pane-task-title"
@@ -804,7 +814,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       ref={workbenchMainRef}
       className={cn(
         'absolute inset-0 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
-        'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[margin]',
+        'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         sidebarResizing && 'transition-none',
         !isTauri && 'mt-1.5'
       )}
@@ -886,7 +896,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onLoadTranscriptGap={paneSession.loadTranscriptGap}
                 conversationKey={
                   currentRuntimeTask
-                    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
+                    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
                     : null
                 }
                 className="h-full"
@@ -904,8 +914,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onSwitchModelForFailedMessage={() =>
                   setModelSelectorOpenSignal(signal => signal + 1)
                 }
-                onLoadFileChangesDiff={turnId => loadTurnFileChangesDiff(turnId, paneMessages)}
-                onRevertFileChanges={turnId => revertTurnFileChanges(turnId, paneMessages)}
+                onLoadFileChangesDiff={subtaskId => loadTurnFileChangesDiff(subtaskId, paneMessages)}
+                onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
                 onOpenFileChangesReview={({
                   loadDiff,
                   reviewTitle,
@@ -1107,7 +1117,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
-              visible={rightPanelOpen}
+              visible={paneActive && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={rightPanelTabs}
               currentProject={workspaceProject}
@@ -1154,7 +1164,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       })}
       <WorkbenchPaneActiveOnly>
         <TaskForkDialog
-          key={forkDialogOpen ? `open-${currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}
+          key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
           open={forkDialogOpen}
           source={currentRuntimeTask}
           runtimeWork={runtimeWork}

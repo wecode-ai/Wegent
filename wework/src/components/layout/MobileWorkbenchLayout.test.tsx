@@ -127,7 +127,7 @@ type LegacyMobileWorkbenchLayoutProps = {
   onInputChange?: (input: string) => void
   onSend?: () => void | Promise<void>
   onStartStandaloneChat?: () => void
-  onOpenRuntimeLocalTask?: (...args: unknown[]) => Promise<void> | void
+  onOpenRuntimeTask?: (...args: unknown[]) => Promise<void> | void
   onListImPrivateSessions?: () => Promise<unknown>
   onBindRuntimeTaskToImSessions?: (...args: unknown[]) => Promise<unknown>
   onUpdateProjectName?: (...args: unknown[]) => Promise<void> | void
@@ -254,12 +254,12 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     startNewChat: vi.fn(),
     startStandaloneChat: props.onStartStandaloneChat ?? vi.fn(),
     startNewProjectChat: vi.fn(),
-    openRuntimeLocalTask: props.onOpenRuntimeLocalTask ?? vi.fn().mockResolvedValue(undefined),
+    openRuntimeTask: props.onOpenRuntimeTask ?? vi.fn().mockResolvedValue(undefined),
     searchRuntimeWork: vi.fn().mockResolvedValue({ items: [] }),
     loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [] }),
     subscribeRuntimeTaskStream: vi.fn(() => vi.fn()),
-    renameRuntimeLocalTask: vi.fn().mockResolvedValue(undefined),
-    archiveRuntimeLocalTask: vi.fn().mockResolvedValue(undefined),
+    renameRuntimeTask: vi.fn().mockResolvedValue(undefined),
+    archiveRuntimeTask: vi.fn().mockResolvedValue(undefined),
     archiveProjectConversations: vi.fn().mockResolvedValue(undefined),
     archiveProjectsConversations: vi.fn().mockResolvedValue(undefined),
     archiveChatConversations: vi.fn().mockResolvedValue(undefined),
@@ -390,12 +390,12 @@ function runtimeWork(
           available: true,
           workspacePath: item.workspacePath ?? `/workspace/${item.name}`,
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
       ],
     })),
     chats: [],
-    totalLocalTasks: 0,
+    totalTasks: 0,
   }
 }
 
@@ -515,7 +515,7 @@ describe('MobileWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-empty',
+            taskId: 'runtime-empty',
           },
         }}
         messages={[]}
@@ -540,7 +540,7 @@ describe('MobileWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-plan',
+            taskId: 'runtime-plan',
           },
         }}
         messages={[createPendingRequestUserInputMessage()]}
@@ -571,7 +571,7 @@ describe('MobileWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-plan',
+            taskId: 'runtime-plan',
           },
         }}
         messages={[createPendingRequestUserInputMessage()]}
@@ -919,7 +919,7 @@ describe('MobileWorkbenchLayout', () => {
       ...baseState,
       currentRuntimeTask: {
         deviceId: 'device-1',
-        localTaskId: 'runtime-3',
+        taskId: 'runtime-3',
       },
     }
 
@@ -999,7 +999,7 @@ describe('MobileWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-1',
+            taskId: 'runtime-1',
           },
         }}
         messages={[
@@ -1084,7 +1084,7 @@ describe('MobileWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-1',
+            taskId: 'runtime-1',
           },
         }}
         messages={[
@@ -1161,7 +1161,7 @@ describe('MobileWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-1',
+            taskId: 'runtime-1',
           },
         }}
         messages={[
@@ -1244,8 +1244,8 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('project-create-dialog').parentElement).toHaveClass('items-end')
   })
 
-  test('opens runtime local tasks from the mobile project drawer', async () => {
-    const onOpenRuntimeLocalTask = vi.fn()
+  test('opens runtime tasks from the mobile project drawer', async () => {
+    const onOpenRuntimeTask = vi.fn()
 
     render(
       <MobileWorkbenchLayout
@@ -1255,7 +1255,7 @@ describe('MobileWorkbenchLayout', () => {
             projects: [
               {
                 project: { id: 1, name: 'github_wegent' },
-                totalLocalTasks: 1,
+                totalTasks: 1,
                 deviceWorkspaces: [
                   {
                     id: 91,
@@ -1265,9 +1265,9 @@ describe('MobileWorkbenchLayout', () => {
                     available: true,
                     workspacePath: '/repo/Wegent',
                     label: 'Wegent local',
-                    localTasks: [
+                    tasks: [
                       {
-                        localTaskId: 'codex-1',
+                        taskId: 'codex-1',
                         workspacePath: '/repo/Wegent',
                         title: 'Fix reconnect',
                         runtime: 'codex',
@@ -1278,11 +1278,11 @@ describe('MobileWorkbenchLayout', () => {
               },
             ],
             chats: [],
-            totalLocalTasks: 1,
+            totalTasks: 1,
           },
         }}
         messages={[]}
-        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+        onOpenRuntimeTask={onOpenRuntimeTask}
         onSelectProject={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
@@ -1298,10 +1298,10 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.queryByText('Local Mac · Wegent local')).not.toBeInTheDocument()
     await userEvent.click(screen.getByText('Fix reconnect'))
 
-    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
       workspacePath: '/repo/Wegent',
-      localTaskId: 'codex-1',
+      taskId: 'codex-1',
     })
   })
 
@@ -1314,7 +1314,7 @@ describe('MobileWorkbenchLayout', () => {
             projects: [
               {
                 project: { id: 1, name: 'github_wegent' },
-                totalLocalTasks: 1,
+                totalTasks: 1,
                 deviceWorkspaces: [
                   {
                     id: 91,
@@ -1323,9 +1323,9 @@ describe('MobileWorkbenchLayout', () => {
                     deviceStatus: 'online',
                     available: true,
                     workspacePath: '/repo/Wegent',
-                    localTasks: [
+                    tasks: [
                       {
-                        localTaskId: 'codex-1',
+                        taskId: 'codex-1',
                         workspacePath: '/repo/Wegent',
                         title: 'Fix reconnect',
                         runtime: 'codex',
@@ -1337,7 +1337,7 @@ describe('MobileWorkbenchLayout', () => {
               },
             ],
             chats: [],
-            totalLocalTasks: 1,
+            totalTasks: 1,
           },
         }}
         messages={[]}
@@ -1357,7 +1357,7 @@ describe('MobileWorkbenchLayout', () => {
   })
 
   test('renders chat runtime tasks as conversations in the mobile drawer', async () => {
-    const onOpenRuntimeLocalTask = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'
 
     render(
@@ -1374,9 +1374,9 @@ describe('MobileWorkbenchLayout', () => {
                 available: true,
                 workspacePath: chatPath,
                 workspaceKind: 'chat',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'chat-1',
+                    taskId: 'chat-1',
                     workspacePath: chatPath,
                     workspaceKind: 'chat',
                     title: 'hi',
@@ -1385,11 +1385,11 @@ describe('MobileWorkbenchLayout', () => {
                 ],
               },
             ],
-            totalLocalTasks: 1,
+            totalTasks: 1,
           },
         }}
         messages={[]}
-        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+        onOpenRuntimeTask={onOpenRuntimeTask}
         onSelectProject={vi.fn()}
         onInputChange={vi.fn()}
         onSend={vi.fn()}
@@ -1403,10 +1403,10 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.queryByText('未映射工作区')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('mobile-chat-runtime-task-button'))
 
-    expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+    expect(onOpenRuntimeTask).toHaveBeenCalledWith({
       deviceId: 'local-device',
       workspacePath: chatPath,
-      localTaskId: 'chat-1',
+      taskId: 'chat-1',
     })
   })
 
@@ -1419,7 +1419,7 @@ describe('MobileWorkbenchLayout', () => {
             projects: [
               {
                 project: { id: 1, name: 'github_wegent' },
-                totalLocalTasks: 6,
+                totalTasks: 6,
                 deviceWorkspaces: [
                   {
                     id: 91,
@@ -1428,44 +1428,44 @@ describe('MobileWorkbenchLayout', () => {
                     deviceStatus: 'online',
                     available: true,
                     workspacePath: '/repo/Wegent',
-                    localTasks: [
+                    tasks: [
                       {
-                        localTaskId: 'task-oldest',
+                        taskId: 'task-oldest',
                         workspacePath: '/repo/Wegent',
                         title: 'Oldest hidden task',
                         runtime: 'codex',
                         updatedAt: '2026-06-20T01:00:00Z',
                       },
                       {
-                        localTaskId: 'task-third',
+                        taskId: 'task-third',
                         workspacePath: '/repo/Wegent',
                         title: 'Third task',
                         runtime: 'codex',
                         updatedAt: '2026-06-20T04:00:00Z',
                       },
                       {
-                        localTaskId: 'task-newest',
+                        taskId: 'task-newest',
                         workspacePath: '/repo/Wegent',
                         title: 'Newest task',
                         runtime: 'codex',
                         updatedAt: '2026-06-20T06:00:00Z',
                       },
                       {
-                        localTaskId: 'task-fifth',
+                        taskId: 'task-fifth',
                         workspacePath: '/repo/Wegent',
                         title: 'Fifth task',
                         runtime: 'codex',
                         updatedAt: '2026-06-20T02:00:00Z',
                       },
                       {
-                        localTaskId: 'task-second',
+                        taskId: 'task-second',
                         workspacePath: '/repo/Wegent',
                         title: 'Second task',
                         runtime: 'codex',
                         updatedAt: '2026-06-20T05:00:00Z',
                       },
                       {
-                        localTaskId: 'task-fourth',
+                        taskId: 'task-fourth',
                         workspacePath: '/repo/Wegent',
                         title: 'Fourth task',
                         runtime: 'codex',
@@ -1477,7 +1477,7 @@ describe('MobileWorkbenchLayout', () => {
               },
             ],
             chats: [],
-            totalLocalTasks: 6,
+            totalTasks: 6,
           },
         }}
         messages={[]}
@@ -1527,7 +1527,7 @@ describe('MobileWorkbenchLayout', () => {
             projects: [
               {
                 project: { id: 1, name: 'github_wegent' },
-                totalLocalTasks: 26,
+                totalTasks: 26,
                 deviceWorkspaces: [
                   {
                     id: 91,
@@ -1536,8 +1536,8 @@ describe('MobileWorkbenchLayout', () => {
                     deviceStatus: 'online',
                     available: true,
                     workspacePath: '/repo/Wegent',
-                    localTasks: Array.from({ length: 26 }, (_, index) => ({
-                      localTaskId: `task-${index + 1}`,
+                    tasks: Array.from({ length: 26 }, (_, index) => ({
+                      taskId: `task-${index + 1}`,
                       workspacePath: '/repo/Wegent',
                       title: `Task ${index + 1}`,
                       runtime: 'codex',
@@ -1548,7 +1548,7 @@ describe('MobileWorkbenchLayout', () => {
               },
             ],
             chats: [],
-            totalLocalTasks: 26,
+            totalTasks: 26,
           },
         }}
         messages={[]}
@@ -1569,15 +1569,13 @@ describe('MobileWorkbenchLayout', () => {
     expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toHaveTextContent(
       '展开显示'
     )
-    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toHaveTextContent(
-      '折叠显示'
-    )
+    expect(screen.queryByTestId('mobile-project-runtime-tasks-collapse-1')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
 
     expect(screen.getAllByTestId('mobile-runtime-task-button')).toHaveLength(25)
     expect(screen.getByTestId('mobile-project-runtime-tasks-expand-1')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-project-runtime-tasks-collapse-1')).toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-project-runtime-tasks-collapse-1')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-project-runtime-tasks-expand-1'))
 

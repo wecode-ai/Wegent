@@ -48,7 +48,7 @@ import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-proje
 import { cn } from '@/lib/utils'
 import type {
   DeviceInfo,
-  LocalTaskSummary,
+  RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
   RuntimeIMNotificationSettingsResponse,
@@ -61,8 +61,8 @@ import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
 import type { CloudWorkStatus } from '@/types/workbench'
 import type {
   ArchiveRuntimeConversationsResult,
-  ArchiveRuntimeLocalTaskOptions,
-  ArchiveRuntimeLocalTaskResult,
+  ArchiveRuntimeTaskOptions,
+  ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import {
@@ -80,6 +80,7 @@ import {
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
   type RuntimeSidebarTaskItem,
 } from './runtimeTaskSidebarHelpers'
+import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
@@ -105,23 +106,23 @@ interface DesktopSidebarProps {
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
-  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
-  onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
-  onArchiveRuntimeLocalTask?: (
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onRenameRuntimeTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
+  onArchiveRuntimeTask?: (
     address: RuntimeTaskAddress,
-    options?: ArchiveRuntimeLocalTaskOptions
-  ) => Promise<ArchiveRuntimeLocalTaskResult | void> | ArchiveRuntimeLocalTaskResult | void
+    options?: ArchiveRuntimeTaskOptions
+  ) => Promise<ArchiveRuntimeTaskResult | void> | ArchiveRuntimeTaskResult | void
   onArchiveProjectConversations?: (
     runtimeProjectKey: string,
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onArchiveProjectsConversations?: (
     runtimeProjectKeys: string[],
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onArchiveChatConversations?: (
     addresses: RuntimeTaskAddress[],
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,
@@ -234,7 +235,7 @@ function standaloneRuntimeProjectWork(
         workspaceKind: 'workspace',
         worktreeId: null,
         mapped: true,
-        localTasks: [],
+        tasks: [],
       },
     ],
   }
@@ -511,23 +512,6 @@ function SidebarSectionHeader({
   )
 }
 
-function formatRelativeSidebarTime(value?: string | number) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const elapsedMs = Math.max(0, Date.now() - date.getTime())
-  const minutes = Math.floor(elapsedMs / 60000)
-  if (minutes < 60) return `${Math.max(1, minutes)}m`
-
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d`
-
-  return `${Math.floor(days / 7)}w`
-}
-
 type SidebarDeviceStatus = DeviceInfo['status'] | 'unavailable'
 
 interface SidebarDeviceState {
@@ -648,16 +632,16 @@ function getSidebarDeviceStatusLabel(
 }
 
 function getRuntimeNotificationKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}\0${address.localTaskId}\0${address.workspacePath ?? ''}`
+  return `${address.deviceId}\0${address.taskId}\0${address.workspacePath ?? ''}`
 }
 
-function getRuntimeTaskPinKey(workspace: RuntimeDeviceWorkspace, task: LocalTaskSummary): string {
+function getRuntimeTaskPinKey(workspace: RuntimeDeviceWorkspace, task: RuntimeTaskSummary): string {
   return getRuntimeNotificationKey(getRuntimeTaskAddress(workspace, task))
 }
 
 function getRuntimeTaskUnreadKey(
   workspace: RuntimeDeviceWorkspace,
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
 ): string {
   return getRuntimeNotificationKey(getRuntimeTaskAddress(workspace, task))
 }
@@ -999,7 +983,7 @@ function getDeviceUnavailableActionTitle(
   )
 }
 
-function RuntimeLocalTaskRow({
+function RuntimeTaskRow({
   workspace,
   task,
   selected,
@@ -1008,29 +992,29 @@ function RuntimeLocalTaskRow({
   indentClassName = 'pl-12',
   imNotificationSettings,
   showDeviceMarker,
-  onOpenRuntimeLocalTask,
+  onOpenRuntimeTask,
   onMarkRuntimeTaskRead,
   onToggleMark,
-  onRenameRuntimeLocalTask,
-  onArchiveRuntimeLocalTask,
+  onRenameRuntimeTask,
+  onArchiveRuntimeTask,
   onToggleRuntimeTaskNotification,
 }: {
   workspace: RuntimeDeviceWorkspace
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
   selected: boolean
   unread?: boolean
   marked?: boolean
   indentClassName?: string
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   showDeviceMarker: boolean
-  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onMarkRuntimeTaskRead?: (address: RuntimeTaskAddress) => void
   onToggleMark?: (address: RuntimeTaskAddress) => void
-  onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
-  onArchiveRuntimeLocalTask?: (
+  onRenameRuntimeTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
+  onArchiveRuntimeTask?: (
     address: RuntimeTaskAddress,
-    options?: ArchiveRuntimeLocalTaskOptions
-  ) => Promise<ArchiveRuntimeLocalTaskResult | void> | ArchiveRuntimeLocalTaskResult | void
+    options?: ArchiveRuntimeTaskOptions
+  ) => Promise<ArchiveRuntimeTaskResult | void> | ArchiveRuntimeTaskResult | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,
     subscribed: boolean
@@ -1047,9 +1031,9 @@ function RuntimeLocalTaskRow({
   const worktreeTask = isRuntimeWorktreeTask(task)
   const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
   const deviceColor = getRuntimeWorkspaceDeviceColor(workspace)
-  const disabled = !workspace.available || !onOpenRuntimeLocalTask
+  const disabled = !workspace.available || !onOpenRuntimeTask
   const archiveDisabled =
-    !workspace.available || !onArchiveRuntimeLocalTask || archiving || archivePending
+    !workspace.available || !onArchiveRuntimeTask || archiving || archivePending
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   const notificationsSubscribed = isRuntimeTaskNotificationSubscribed(
     imNotificationSettings,
@@ -1060,7 +1044,7 @@ function RuntimeLocalTaskRow({
   const handleOpen = () => {
     if (disabled) return
     onMarkRuntimeTaskRead?.(taskAddress)
-    void onOpenRuntimeLocalTask?.(taskAddress)
+    void onOpenRuntimeTask?.(taskAddress)
   }
   const handleToggleMark = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -1078,13 +1062,13 @@ function RuntimeLocalTaskRow({
       }
     }
   }, [])
-  const runArchive = async (options?: ArchiveRuntimeLocalTaskOptions) => {
+  const runArchive = async (options?: ArchiveRuntimeTaskOptions) => {
     setArchiving(true)
     try {
       const result = await Promise.resolve(
         options
-          ? onArchiveRuntimeLocalTask?.(taskAddress, options)
-          : onArchiveRuntimeLocalTask?.(taskAddress)
+          ? onArchiveRuntimeTask?.(taskAddress, options)
+          : onArchiveRuntimeTask?.(taskAddress)
       )
       if (result?.status === 'dirty_worktree') {
         setForceArchiveConfirmOpen(true)
@@ -1160,7 +1144,7 @@ function RuntimeLocalTaskRow({
   return (
     <>
       <div
-        data-testid={`runtime-local-task-row-${task.localTaskId}`}
+        data-testid={`runtime-local-task-row-${task.taskId}`}
         data-marked={marked ? 'true' : undefined}
         role="button"
         tabIndex={disabled ? -1 : 0}
@@ -1168,7 +1152,7 @@ function RuntimeLocalTaskRow({
         onClick={handleOpen}
         onDoubleClick={event => {
           event.stopPropagation()
-          if (!disabled && onRenameRuntimeLocalTask) {
+          if (!disabled && onRenameRuntimeTask) {
             setRenameOpen(true)
           }
         }}
@@ -1188,29 +1172,29 @@ function RuntimeLocalTaskRow({
           {task.title}
         </span>
         <span
-          data-testid={`runtime-local-task-trailing-${task.localTaskId}`}
+          data-testid={`runtime-local-task-trailing-${task.taskId}`}
           className="relative ml-1 flex h-8 min-w-[32px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[104px]"
         >
           <span
-            data-testid={`runtime-local-task-time-${task.localTaskId}`}
+            data-testid={`runtime-local-task-time-${task.taskId}`}
             className={SIDEBAR_ROW_METADATA_CLASS}
           >
             {worktreeTask && (
               <GitCompareArrows
-                data-testid={`runtime-local-task-worktree-icon-${task.localTaskId}`}
+                data-testid={`runtime-local-task-worktree-icon-${task.taskId}`}
                 className="h-3.5 w-3.5 shrink-0 text-[rgb(var(--color-sidebar-text-muted))]"
                 aria-label="Worktree"
               />
             )}
             {notificationsSubscribed &&
               renderNotificationButton(
-                `runtime-local-task-notify-${task.localTaskId}`,
-                `runtime-local-task-notify-icon-${task.localTaskId}`
+                `runtime-local-task-notify-${task.taskId}`,
+                `runtime-local-task-notify-icon-${task.taskId}`
               )}
             <span className="flex h-8 w-8 items-center justify-center">
               {task.running ? (
                 <span
-                  data-testid={`runtime-local-task-running-${task.localTaskId}`}
+                  data-testid={`runtime-local-task-running-${task.taskId}`}
                   role="status"
                   title={t('workbench.runtime_task_running')}
                   aria-label={t('workbench.runtime_task_running')}
@@ -1220,7 +1204,7 @@ function RuntimeLocalTaskRow({
                 </span>
               ) : unread ? (
                 <span
-                  data-testid={`runtime-local-task-unread-dot-${task.localTaskId}`}
+                  data-testid={`runtime-local-task-unread-dot-${task.taskId}`}
                   aria-label={t('workbench.runtime_task_unread', '未读')}
                   title={t('workbench.runtime_task_unread', '未读')}
                   className="h-1.5 w-1.5 rounded-full bg-primary"
@@ -1231,7 +1215,7 @@ function RuntimeLocalTaskRow({
             </span>
             {showDeviceMarker && (
               <span
-                data-testid={`runtime-local-task-device-marker-${task.localTaskId}`}
+                data-testid={`runtime-local-task-device-marker-${task.taskId}`}
                 title={workspaceTitle}
                 aria-label={workspaceTitle}
                 className="h-3.5 w-0.5 shrink-0 rounded-full"
@@ -1240,20 +1224,20 @@ function RuntimeLocalTaskRow({
             )}
           </span>
           <span
-            data-testid={`runtime-local-task-hover-actions-${task.localTaskId}`}
+            data-testid={`runtime-local-task-hover-actions-${task.taskId}`}
             className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[104px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
           >
             {renderNotificationButton(
               notificationsSubscribed
-                ? `runtime-local-task-notify-hover-${task.localTaskId}`
-                : `runtime-local-task-notify-${task.localTaskId}`,
+                ? `runtime-local-task-notify-hover-${task.taskId}`
+                : `runtime-local-task-notify-${task.taskId}`,
               notificationsSubscribed
-                ? `runtime-local-task-notify-hover-icon-${task.localTaskId}`
-                : `runtime-local-task-notify-icon-${task.localTaskId}`
+                ? `runtime-local-task-notify-hover-icon-${task.taskId}`
+                : `runtime-local-task-notify-icon-${task.taskId}`
             )}
             <button
               type="button"
-              data-testid={`runtime-local-task-mark-${task.localTaskId}`}
+              data-testid={`runtime-local-task-mark-${task.taskId}`}
               onClick={handleToggleMark}
               className={cn(
                 'flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
@@ -1271,13 +1255,13 @@ function RuntimeLocalTaskRow({
               }
             >
               <Pin
-                data-testid={`runtime-local-task-pin-icon-${task.localTaskId}`}
+                data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
                 className={cn('h-4 w-4', marked && 'fill-current')}
               />
             </button>
             <button
               type="button"
-              data-testid={`runtime-local-task-archive-${task.localTaskId}`}
+              data-testid={`runtime-local-task-archive-${task.taskId}`}
               disabled={archiveDisabled}
               onClick={handleArchive}
               className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
@@ -1288,7 +1272,7 @@ function RuntimeLocalTaskRow({
                 <RotateCw className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <Archive
-                  data-testid={`runtime-local-task-archive-icon-${task.localTaskId}`}
+                  data-testid={`runtime-local-task-archive-icon-${task.taskId}`}
                   className="h-4 w-4"
                 />
               )}
@@ -1304,22 +1288,22 @@ function RuntimeLocalTaskRow({
         initialValue={task.title}
         confirmLabel={t('workbench.save', '保存')}
         cancelLabel={t('workbench.cancel', '取消')}
-        inputTestId={`rename-runtime-local-task-input-${task.localTaskId}`}
-        confirmTestId={`confirm-rename-runtime-local-task-${task.localTaskId}`}
+        inputTestId={`rename-runtime-local-task-input-${task.taskId}`}
+        confirmTestId={`confirm-rename-runtime-local-task-${task.taskId}`}
         onClose={() => setRenameOpen(false)}
-        onSubmit={title => onRenameRuntimeLocalTask?.(taskAddress, title)}
+        onSubmit={title => onRenameRuntimeTask?.(taskAddress, title)}
       />
       {archiveNoticeOpen &&
         createPortal(
           <div
-            data-testid={`runtime-local-task-archive-toast-${task.localTaskId}`}
+            data-testid={`runtime-local-task-archive-toast-${task.taskId}`}
             role="status"
             aria-live="polite"
             className="fixed left-1/2 top-5 z-[200] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-surface px-4 py-2 text-sm text-text-primary shadow-lg"
           >
             <button
               type="button"
-              data-testid={`runtime-local-task-archive-undo-${task.localTaskId}`}
+              data-testid={`runtime-local-task-archive-undo-${task.taskId}`}
               onClick={handleUndoArchive}
               className="font-medium text-primary hover:underline"
             >
@@ -1328,7 +1312,7 @@ function RuntimeLocalTaskRow({
             <span>{t('workbench.archive_runtime_task_pending', '，稍后将归档')}</span>
             <button
               type="button"
-              data-testid={`runtime-local-task-archive-toast-close-${task.localTaskId}`}
+              data-testid={`runtime-local-task-archive-toast-close-${task.taskId}`}
               onClick={handleDismissArchiveNotice}
               className="ml-2 flex h-5 w-5 items-center justify-center rounded-full text-text-muted hover:bg-muted hover:text-text-primary"
               title={t('workbench.archive_runtime_task_notice_close', '关闭归档提示')}
@@ -1346,7 +1330,7 @@ function RuntimeLocalTaskRow({
         confirmLabel={t('workbench.archive_runtime_task_force_confirm')}
         cancelLabel={t('workbench.cancel')}
         submitting={archiving}
-        testId={`runtime-local-task-force-archive-dialog-${task.localTaskId}`}
+        testId={`runtime-local-task-force-archive-dialog-${task.taskId}`}
         onClose={handleCloseForceArchiveConfirm}
         onConfirm={handleConfirmForceArchive}
       />
@@ -1369,10 +1353,10 @@ function ProjectItem({
   onStartNewProjectChat,
   onRemoveProject,
   onRenameProject,
-  onOpenRuntimeLocalTask,
+  onOpenRuntimeTask,
   onMarkRuntimeTaskRead,
-  onRenameRuntimeLocalTask,
-  onArchiveRuntimeLocalTask,
+  onRenameRuntimeTask,
+  onArchiveRuntimeTask,
   onArchiveProjectConversations,
   onToggleRuntimeTaskNotification,
 }: {
@@ -1390,16 +1374,16 @@ function ProjectItem({
   onStartNewProjectChat: (projectId: number) => void
   onRemoveProject: (projectId: number) => Promise<void>
   onRenameProject: (project: ProjectWithTasks) => void
-  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onMarkRuntimeTaskRead?: (address: RuntimeTaskAddress) => void
-  onRenameRuntimeLocalTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
-  onArchiveRuntimeLocalTask?: (
+  onRenameRuntimeTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
+  onArchiveRuntimeTask?: (
     address: RuntimeTaskAddress,
-    options?: ArchiveRuntimeLocalTaskOptions
-  ) => Promise<ArchiveRuntimeLocalTaskResult | void> | ArchiveRuntimeLocalTaskResult | void
+    options?: ArchiveRuntimeTaskOptions
+  ) => Promise<ArchiveRuntimeTaskResult | void> | ArchiveRuntimeTaskResult | void
   onArchiveProjectConversations?: (
     runtimeProjectKey: string,
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult | void> | ArchiveRuntimeConversationsResult | void
   onToggleRuntimeTaskNotification?: (
     address: RuntimeTaskAddress,
@@ -1482,7 +1466,7 @@ function ProjectItem({
       setArchiveConfirmOpen(false)
     }
   }
-  const runArchiveProjectConversations = async (options?: ArchiveRuntimeLocalTaskOptions) => {
+  const runArchiveProjectConversations = async (options?: ArchiveRuntimeTaskOptions) => {
     const runtimeProjectKey = runtimeProjectWork?.project.key
     if (!runtimeProjectKey || !onArchiveProjectConversations) return
     setProjectArchiving(true)
@@ -1645,8 +1629,8 @@ function ProjectItem({
             ) : (
               <>
                 {visibleRuntimeTaskItems.map(({ workspace, task }) => (
-                  <RuntimeLocalTaskRow
-                    key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                  <RuntimeTaskRow
+                    key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
                     workspace={workspace}
                     task={task}
                     selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
@@ -1655,17 +1639,17 @@ function ProjectItem({
                     indentClassName="pl-9"
                     imNotificationSettings={imNotificationSettings}
                     showDeviceMarker={showDeviceMarker}
-                    onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+                    onOpenRuntimeTask={onOpenRuntimeTask}
                     onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
                     onToggleMark={toggleRuntimeTaskPin}
-                    onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
-                    onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+                    onRenameRuntimeTask={onRenameRuntimeTask}
+                    onArchiveRuntimeTask={onArchiveRuntimeTask}
                     onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
                   />
                 ))}
                 {(hasHiddenRuntimeTasks || canCollapseRuntimeTasks) && (
                   <div className="ml-9 flex h-8 items-center gap-2">
-                    {hasHiddenRuntimeTasks && (
+                    {hasHiddenRuntimeTasks ? (
                       <button
                         type="button"
                         data-testid={`project-runtime-tasks-expand-${project.id}`}
@@ -1681,8 +1665,7 @@ function ProjectItem({
                       >
                         {t('workbench.expand_display', '展开显示')}
                       </button>
-                    )}
-                    {canCollapseRuntimeTasks && (
+                    ) : (
                       <button
                         type="button"
                         data-testid={`project-runtime-tasks-collapse-${project.id}`}
@@ -1765,9 +1748,9 @@ export function DesktopSidebar({
   onOpenSearch,
   onSelectProject,
   onStartNewProjectChat,
-  onOpenRuntimeLocalTask,
-  onRenameRuntimeLocalTask,
-  onArchiveRuntimeLocalTask,
+  onOpenRuntimeTask,
+  onRenameRuntimeTask,
+  onArchiveRuntimeTask,
   onArchiveProjectConversations,
   onArchiveProjectsConversations,
   onArchiveChatConversations,
@@ -1795,6 +1778,7 @@ export function DesktopSidebar({
   onPointerEnter,
   onPointerLeave,
 }: DesktopSidebarProps) {
+  useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const { sidebarWidth, resizing, handleResizeStart } = useResizableSidebar({
     onCollapse: onResizeCollapse,
@@ -1961,7 +1945,7 @@ export function DesktopSidebar({
     if (currentRuntimeTask) {
       const projectWork = filteredRuntimeProjects.find(item =>
         item.deviceWorkspaces.some(workspace =>
-          workspace.localTasks.some(task =>
+          workspace.tasks.some(task =>
             isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
           )
         )
@@ -2023,7 +2007,7 @@ export function DesktopSidebar({
       : 'projects-section-force-archive-dialog'
   const runArchiveSectionConversations = async (
     mode: 'projects' | 'chats',
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => {
     if (mode === 'projects') {
       if (!onArchiveProjectsConversations || projectSectionArchiveKeys.length === 0) return
@@ -2226,7 +2210,7 @@ export function DesktopSidebar({
     if (!currentRuntimeTask) return
 
     const taskRow = document.querySelector(
-      `[data-testid="runtime-local-task-row-${currentRuntimeTask.localTaskId}"]`
+      `[data-testid="runtime-local-task-row-${currentRuntimeTask.taskId}"]`
     )
 
     taskRow?.scrollIntoView({ block: 'nearest' })
@@ -2425,10 +2409,10 @@ export function DesktopSidebar({
                       onStartNewProjectChat={onStartNewProjectChat}
                       onRemoveProject={onRemoveProject}
                       onRenameProject={setRenamingProject}
-                      onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+                      onOpenRuntimeTask={onOpenRuntimeTask}
                       onMarkRuntimeTaskRead={markRuntimeTaskRead}
-                      onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
-                      onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+                      onRenameRuntimeTask={onRenameRuntimeTask}
+                      onArchiveRuntimeTask={onArchiveRuntimeTask}
                       onArchiveProjectConversations={onArchiveProjectConversations}
                       onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
                     />
@@ -2489,8 +2473,8 @@ export function DesktopSidebar({
                     </div>
                   ) : (
                     chatTaskItems.map(({ workspace, task }) => (
-                      <RuntimeLocalTaskRow
-                        key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                      <RuntimeTaskRow
+                        key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
                         workspace={workspace}
                         task={task}
                         selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
@@ -2500,10 +2484,10 @@ export function DesktopSidebar({
                         indentClassName="pl-2.5"
                         imNotificationSettings={imNotificationSettings}
                         showDeviceMarker={false}
-                        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+                        onOpenRuntimeTask={onOpenRuntimeTask}
                         onMarkRuntimeTaskRead={markRuntimeTaskRead}
-                        onRenameRuntimeLocalTask={onRenameRuntimeLocalTask}
-                        onArchiveRuntimeLocalTask={onArchiveRuntimeLocalTask}
+                        onRenameRuntimeTask={onRenameRuntimeTask}
+                        onArchiveRuntimeTask={onArchiveRuntimeTask}
                         onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
                       />
                     ))

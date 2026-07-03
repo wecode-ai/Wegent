@@ -51,7 +51,7 @@ function fulfilledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
   return {
     deviceId: address.deviceId,
-    localTaskId: address.localTaskId,
+    taskId: address.taskId,
     workspacePath: address.workspacePath ?? null,
   }
 }
@@ -161,8 +161,8 @@ function removeCurrentAppCloudRuntimeWork(
       return {
         ...projectWork,
         deviceWorkspaces,
-        totalLocalTasks: deviceWorkspaces.reduce(
-          (total, workspace) => total + workspace.localTasks.length,
+        totalTasks: deviceWorkspaces.reduce(
+          (total, workspace) => total + workspace.tasks.length,
           0
         ),
       }
@@ -175,9 +175,9 @@ function removeCurrentAppCloudRuntimeWork(
   return {
     projects,
     chats,
-    totalLocalTasks:
-      projects.reduce((total, projectWork) => total + (projectWork.totalLocalTasks ?? 0), 0) +
-      chats.reduce((total, workspace) => total + workspace.localTasks.length, 0),
+    totalTasks:
+      projects.reduce((total, projectWork) => total + (projectWork.totalTasks ?? 0), 0) +
+      chats.reduce((total, workspace) => total + workspace.tasks.length, 0),
   }
 }
 

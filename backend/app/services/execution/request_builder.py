@@ -219,6 +219,8 @@ class TaskRequestBuilder:
             force_override=force_override,
             task_id=task.id,
             team_id=team.id,
+            team_name=team.name,
+            team_namespace=team.namespace,
             runtime_model_config=runtime_model_config,
         )
 
@@ -846,6 +848,8 @@ class TaskRequestBuilder:
         force_override: bool,
         task_id: int,
         team_id: int,
+        team_name: str = "",
+        team_namespace: str | None = None,
         runtime_model_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Get model configuration for the bot.
@@ -865,6 +869,8 @@ class TaskRequestBuilder:
             force_override: Whether override takes priority
             task_id: Task ID for placeholder replacement
             team_id: Team ID for placeholder replacement
+            team_name: Team (agent) name for identity header placeholder replacement
+            team_namespace: Team (agent) namespace for identity header replacement
             runtime_model_config: Optional already-resolved runtime model config
 
         Returns:
@@ -897,6 +903,8 @@ class TaskRequestBuilder:
         task_data = ExecutionRequest(
             task_id=task_id,
             team_id=team_id,
+            team_name=team_name,
+            team_namespace=team_namespace,
             user=user_info,
         )
 
@@ -919,6 +927,8 @@ class TaskRequestBuilder:
                 user_name=user_name,
                 task_id=task_id,
                 team_id=team_id,
+                team_name=team_name,
+                team_namespace=team_namespace,
             )
             if secondary_model_config:
                 model_config["secondary_model_config"] = secondary_model_config
@@ -932,6 +942,8 @@ class TaskRequestBuilder:
         user_name: str,
         task_id: int,
         team_id: int,
+        team_name: str = "",
+        team_namespace: str | None = None,
     ) -> dict[str, Any] | None:
         """Get secondary model configuration from bot's secondaryModelRef.
 
@@ -944,6 +956,8 @@ class TaskRequestBuilder:
             user_name: User name for placeholder replacement
             task_id: Task ID for placeholder replacement
             team_id: Team ID for placeholder replacement
+            team_name: Team (agent) name for identity header placeholder replacement
+            team_namespace: Team (agent) namespace for identity header replacement
 
         Returns:
             Secondary model configuration dictionary or None if not configured
@@ -988,6 +1002,8 @@ class TaskRequestBuilder:
         task_data = ExecutionRequest(
             task_id=task_id,
             team_id=team_id,
+            team_name=team_name,
+            team_namespace=team_namespace,
             user=user_info,
         )
 
@@ -1963,6 +1979,15 @@ Response template:
                                 server_entry["args"] = server_config["args"]
                             if "env" in server_config:
                                 server_entry["env"] = server_config["env"]
+                            for timeout_key in (
+                                "timeout",
+                                "timeoutSeconds",
+                                "timeout_seconds",
+                            ):
+                                if timeout_key in server_config:
+                                    server_entry[timeout_key] = server_config[
+                                        timeout_key
+                                    ]
                             bot_mcp_servers.append(server_entry)
 
         # Merge system and bot MCP servers (bot takes precedence)

@@ -235,8 +235,8 @@ export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
 
 export interface RuntimeTaskAddress {
   deviceId: string
+  taskId: string
   workspacePath?: string | null
-  localTaskId: string
   runtimeHandle?: Record<string, unknown> | null
 }
 
@@ -257,8 +257,7 @@ export interface NormalizedRuntimeMessage {
   content: string
   messageIndex?: number | null
   message_index?: number | null
-  turnId?: number | null
-  subtask_id?: number | null
+  subtaskId?: string | null
   status?: string | null
   createdAt?: string | null
   completedAt?: string | number | null
@@ -312,8 +311,8 @@ export interface CodexMemoryCitation {
   thread_ids?: string[]
 }
 
-export interface LocalTaskSummary {
-  localTaskId: string
+export interface RuntimeTaskSummary {
+  taskId: string
   workspacePath: string
   workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
   worktreeId?: string | null
@@ -399,20 +398,20 @@ export interface RuntimeDeviceWorkspace {
   repoUrl?: string | null
   repoRootFingerprint?: string | null
   mapped?: boolean
-  localTasks: LocalTaskSummary[]
+  tasks: RuntimeTaskSummary[]
   error?: string | null
 }
 
 export interface RuntimeProjectWork {
   project: RuntimeProjectRef
   deviceWorkspaces: RuntimeDeviceWorkspace[]
-  totalLocalTasks?: number
+  totalTasks?: number
 }
 
 export interface RuntimeWorkListResponse {
   projects: RuntimeProjectWork[]
   chats: RuntimeDeviceWorkspace[]
-  totalLocalTasks: number
+  totalTasks: number
 }
 
 export interface RuntimeWorkSearchRequest {
@@ -448,7 +447,7 @@ export interface RuntimeWorkSearchResponse {
 }
 
 export interface RuntimeTranscriptResponse {
-  localTaskId: string
+  taskId?: string
   workspacePath: string
   runtime: RuntimeName
   title?: string | null
@@ -473,7 +472,6 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
-  message_id?: number
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: ModelOptions
@@ -499,7 +497,7 @@ export interface RequestUserInputResponse {
 
 export interface RuntimeSendResponse {
   accepted: boolean
-  localTaskId: string
+  taskId: string
   error?: string | null
 }
 
@@ -534,7 +532,7 @@ export interface RuntimeGoalGetRequest {
 
 export interface RuntimeGoalGetResponse {
   accepted: boolean
-  localTaskId: string
+  taskId: string
   goal: RuntimeGoal | null
   error?: string | null
 }
@@ -548,7 +546,7 @@ export interface RuntimeGoalSetRequest {
 
 export interface RuntimeGoalSetResponse {
   accepted: boolean
-  localTaskId: string
+  taskId: string
   goal: RuntimeGoal
   error?: string | null
 }
@@ -559,7 +557,7 @@ export interface RuntimeGoalClearRequest {
 
 export interface RuntimeGoalClearResponse {
   accepted: boolean
-  localTaskId: string
+  taskId: string
   cleared: boolean
   error?: string | null
 }
@@ -649,7 +647,7 @@ export interface RuntimeTaskIMNotificationSubscriptionResponse {
 
 export interface RuntimeTaskArchiveResponse {
   accepted: boolean
-  localTaskId: string
+  taskId: string
   workspacePath?: string | null
   error?: string | null
 }
@@ -666,7 +664,7 @@ export interface ArchivedConversationsListRequest {
 
 export interface ArchivedConversationItem {
   id: string
-  localTaskId: string
+  taskId: string
   title: string
   projectId?: number | null
   projectKey?: string | null
@@ -720,7 +718,7 @@ export interface RuntimeTaskRenameRequest {
 
 export interface RuntimeTaskCancelResponse {
   accepted: boolean
-  localTaskId: string
+  taskId?: string
   workspacePath?: string | null
   error?: string | null
 }
@@ -730,11 +728,10 @@ export interface RuntimeTaskCreateRequest {
   deviceWorkspaceId?: number
   deviceId?: string
   workspacePath?: string
-  localTaskId?: string
+  taskId?: string
   teamId: number
   runtime: RuntimeName
   message: string
-  message_id?: number
   title?: string
   modelId?: string
   modelType?: ModelType | null
@@ -749,7 +746,7 @@ export interface RuntimeTaskCreateRequest {
 export interface RuntimeTaskCreateResponse {
   accepted: boolean
   deviceId: string
-  localTaskId: string
+  taskId: string
   workspacePath: string
   runtime: RuntimeName
   error?: string | null
@@ -816,7 +813,7 @@ export interface IMPrivateSession {
   display_name: string
   mode: 'chat' | 'task'
   state: 'idle' | 'pending_new_flow' | 'pending_task_switch' | 'pending_task_creation'
-  active_task_id?: number | null
+  active_task_id?: string | null
   last_seen_at: string
 }
 
@@ -851,7 +848,7 @@ export interface TaskArchiveBatchResponse {
 
 export interface TaskArchiveResponse {
   message: string
-  task_id: number
+  task_id: string
 }
 
 export interface DeviceCommandRequest {
@@ -934,7 +931,7 @@ export interface TaskContextData {
 
 export interface Subtask {
   id: number
-  task_id?: number
+  task_id?: string
   role: string
   prompt?: string
   result?: unknown
@@ -976,12 +973,12 @@ export interface TurnFileChangesSummary {
 }
 
 export interface TurnFileChangesDiffResponse {
-  subtask_id: number
+  subtask_id: string
   diff: string
 }
 
 export interface TurnFileChangesRevertResponse {
-  subtask_id: number
+  subtask_id: string
   file_changes: TurnFileChangesSummary
 }
 
@@ -1013,7 +1010,7 @@ export interface TaskForkRequest {
 }
 
 export interface TaskForkResponse {
-  task_id: number
+  task_id: string
   task: TaskDetail
 }
 
@@ -1024,7 +1021,7 @@ export interface CreateProjectConversationRequest {
 }
 
 export interface CreateProjectConversationResponse {
-  task_id: number
+  task_id: string
   project_id: number
   task: unknown
 }
@@ -1041,7 +1038,7 @@ export interface ProjectDeviceSessionResponse {
 }
 
 export interface ChatSendPayload {
-  task_id?: number
+  task_id?: string
   team_id: number
   message: string
   title?: string
@@ -1066,13 +1063,13 @@ export interface ChatSendPayload {
 
 export interface ChatSendAck {
   success?: boolean
-  task_id?: number
+  task_id?: string
   error?: string
 }
 
 export interface ChatGuidePayload {
-  task_id: number
-  subtask_id: number
+  task_id: string
+  subtask_id: string
   team_id: number
   message: string
   guidance?: string
@@ -1086,7 +1083,7 @@ export interface ChatGuideAck {
 }
 
 export interface ChatCancelPayload {
-  subtask_id: number
+  subtask_id: string
   partial_content?: string
   shell_type?: string
 }
@@ -1097,58 +1094,49 @@ export interface ChatCancelAck {
 }
 
 export interface ChatStartPayload {
-  task_id?: number
-  subtask_id: number
+  taskId?: string
+  subtaskId?: string
   bot_name?: string
-  shell_type?: string
-  message_id?: number
-  device_id?: string
-  local_task_id?: string
+  shellType?: string
+  deviceId?: string
 }
 
 export type ChatResultPayload = Record<string, unknown> & {
   value?: string
   error?: string
-  reasoning_chunk?: string
+  reasoningChunk?: string
   blocks?: ChatBlock[]
-  file_changes?: TurnFileChangesSummary
+  fileChanges?: TurnFileChangesSummary
 }
 
 export interface ChatChunkPayload {
-  task_id?: number
-  subtask_id: number
-  message_id?: number
+  taskId?: string
+  subtaskId?: string
   content: string
   offset: number
   result?: ChatResultPayload
-  device_id?: string
-  local_task_id?: string
+  deviceId?: string
 }
 
 export interface ChatDonePayload {
-  task_id?: number
-  subtask_id: number
+  taskId?: string
+  subtaskId?: string
   offset: number
   result: ChatResultPayload
-  message_id?: number
-  device_id?: string
-  local_task_id?: string
+  deviceId?: string
 }
 
 export interface ChatErrorPayload {
-  task_id?: number
-  subtask_id: number
+  taskId?: string
+  subtaskId?: string
   error: string
   type?: string
-  message_id?: number
-  device_id?: string
-  local_task_id?: string
+  deviceId?: string
 }
 
 export interface ChatMessagePayload {
-  task_id?: number
-  subtask_id: number
-  message_id?: number
+  task_id?: string
+  subtask_id: string
   role: string
   content: string
   sender?: Record<string, unknown>
@@ -1156,13 +1144,12 @@ export interface ChatMessagePayload {
   attachments?: Attachment[]
   source?: RuntimeMessageSource | null
   device_id?: string
-  local_task_id?: string
   runtime?: RuntimeName
 }
 
 export interface TaskJoinResponse {
   streaming?: {
-    subtask_id: number
+    subtask_id: string
     offset: number
     cached_content: string
     blocks?: ChatBlock[]
@@ -1533,55 +1520,47 @@ export interface ChatBlock {
 }
 
 export interface ChatBlockCreatedPayload {
-  task_id?: number
-  subtask_id: number
-  message_id?: number
+  taskId?: string
+  subtaskId?: string
   block: ChatBlock
-  device_id?: string
-  local_task_id?: string
+  deviceId?: string
 }
 
 export interface ChatBlockUpdatedPayload {
-  task_id?: number
-  subtask_id: number
-  message_id?: number
-  block_id: string
+  taskId?: string
+  subtaskId?: string
+  blockId: string
   content?: string
-  tool_output?: unknown
-  tool_input?: Record<string, unknown>
+  toolOutput?: unknown
+  toolInput?: Record<string, unknown>
   status?: ChatBlock['status'] | 'running'
-  device_id?: string
-  local_task_id?: string
+  deviceId?: string
 }
 
 export interface RuntimeSubagentActivityPayload {
-  task_id?: number
-  subtask_id: number
-  message_id?: number
-  device_id?: string
-  local_task_id?: string
-  agent_path: string
-  agent_id?: string
-  agent_name?: string
-  agent_thread_id?: string
+  taskId?: string
+  subtaskId?: string
+  deviceId?: string
+  agentPath: string
+  agentId?: string
+  agentName?: string
+  agentThreadId?: string
   kind?: string
   status?: string
-  occurred_at_ms?: number
+  occurredAtMs?: number
 }
 
 export interface RuntimeGoalEventPayload {
-  task_id?: number
-  subtask_id: number
-  message_id?: number
-  device_id?: string
-  local_task_id?: string
-  thread_id?: string
+  taskId?: string
+  subtaskId?: string
+  deviceId?: string
+  threadId?: string
   goal?: RuntimeGoal | null
 }
 
 export interface ChatGuidanceQueuedPayload {
-  task_id: number
-  subtask_id: number
+  task_id: string
+  subtask_id: string
   team_id?: number
   user_id?: number
   guidance_id: string
@@ -1592,16 +1571,16 @@ export interface ChatGuidanceQueuedPayload {
 }
 
 export interface ChatGuidanceAppliedPayload {
-  task_id: number
-  subtask_id: number
+  task_id: string
+  subtask_id: string
   guidance_id: string
   client_guidance_id?: string
   applied_at: string
 }
 
 export interface ChatGuidanceExpiredPayload {
-  task_id: number
-  subtask_id: number
+  task_id: string
+  subtask_id: string
   guidance_ids: string[]
 }
 
@@ -1669,9 +1648,11 @@ export interface Attachment {
   mime_type: string
   status: AttachmentStatus
   text_length?: number | null
+  text_preview?: string | null
+  text_content?: string | null
   error_message?: string | null
   error_code?: string | null
-  subtask_id?: number | null
+  subtask_id?: string | null
   file_extension: string
   created_at: string
   local_preview_url?: string

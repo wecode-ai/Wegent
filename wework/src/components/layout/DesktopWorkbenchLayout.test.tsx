@@ -661,7 +661,7 @@ describe('DesktopWorkbenchLayout', () => {
     onStartStandaloneChat?: () => void
     onStartNewProjectChat?: (projectId: number) => void
     onOpenStandaloneWorkspace?: (...args: unknown[]) => Promise<void> | void
-    onOpenRuntimeLocalTask?: (...args: unknown[]) => Promise<void> | void
+    onOpenRuntimeTask?: (...args: unknown[]) => Promise<void> | void
     onSearchRuntimeWork?: (...args: unknown[]) => Promise<unknown>
     onListImPrivateSessions?: () => Promise<unknown>
     onBindRuntimeTaskToImSessions?: (...args: unknown[]) => Promise<unknown>
@@ -747,13 +747,13 @@ describe('DesktopWorkbenchLayout', () => {
               available: true,
               mapped: true,
               workspacePath,
-              localTasks: [],
+              tasks: [],
             },
           ],
         },
       ],
       chats: [],
-      totalLocalTasks: 0,
+      totalTasks: 0,
     }
     derivedRuntimeWorkCache.set(cacheKey, runtimeWork)
     return runtimeWork
@@ -843,12 +843,12 @@ describe('DesktopWorkbenchLayout', () => {
       startNewChat: baseProps.onNewChat,
       startStandaloneChat: props.onStartStandaloneChat ?? vi.fn(),
       startNewProjectChat: props.onStartNewProjectChat ?? baseProps.onStartNewProjectChat,
-      openRuntimeLocalTask: props.onOpenRuntimeLocalTask ?? vi.fn().mockResolvedValue(undefined),
+      openRuntimeTask: props.onOpenRuntimeTask ?? vi.fn().mockResolvedValue(undefined),
       searchRuntimeWork: props.onSearchRuntimeWork ?? vi.fn().mockResolvedValue({ items: [] }),
       loadRuntimeTranscriptForPane: vi.fn().mockResolvedValue({ messages: [] }),
       subscribeRuntimeTaskStream: vi.fn(() => vi.fn()),
-      renameRuntimeLocalTask: vi.fn().mockResolvedValue(undefined),
-      archiveRuntimeLocalTask: vi.fn().mockResolvedValue(undefined),
+      renameRuntimeTask: vi.fn().mockResolvedValue(undefined),
+      archiveRuntimeTask: vi.fn().mockResolvedValue(undefined),
       archiveProjectConversations: vi.fn().mockResolvedValue(undefined),
       archiveProjectsConversations: vi.fn().mockResolvedValue(undefined),
       archiveChatConversations: vi.fn().mockResolvedValue(undefined),
@@ -1034,6 +1034,94 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }
 
+  function createLocalRuntimeTaskPanelFixture() {
+    const runtimeProject = {
+      id: 35,
+      name: 'Wegent',
+      tasks: [],
+    }
+    const localDevice = {
+      id: 43,
+      device_id: 'local-device',
+      name: 'Mac',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'local' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const runtimeWork = {
+      projects: [
+        {
+          project: {
+            id: runtimeProject.id,
+            key: 'project:wegent',
+            name: runtimeProject.name,
+          },
+          deviceWorkspaces: [
+            {
+              id: 44,
+              deviceId: localDevice.device_id,
+              deviceStatus: 'online' as const,
+              available: true,
+              workspacePath: '/Users/me/Wegent',
+              workspaceSource: 'local' as const,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/Users/me/Wegent/.worktrees/a',
+                  title: 'Task A',
+                  runtime: 'codex',
+                },
+                {
+                  taskId: 'runtime-b',
+                  workspacePath: '/Users/me/Wegent/.worktrees/b',
+                  title: 'Task B',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 2,
+    }
+    const taskA = {
+      deviceId: localDevice.device_id,
+      workspacePath: '/Users/me/Wegent/.worktrees/a',
+      taskId: 'runtime-a',
+    }
+    const taskB = {
+      deviceId: localDevice.device_id,
+      workspacePath: '/Users/me/Wegent/.worktrees/b',
+      taskId: 'runtime-b',
+    }
+    const propsForTask = (task: typeof taskA) => ({
+      ...baseProps,
+      state: {
+        ...baseProps.state,
+        currentProject: runtimeProject,
+        currentRuntimeTask: task,
+        projects: [runtimeProject],
+        devices: [localDevice],
+        runtimeWork,
+      },
+      projectWork: {
+        ...baseProps.projectWork,
+        projects: [runtimeProject],
+        devices: [localDevice],
+        runtimeWork,
+        currentProject: runtimeProject,
+        currentProjectId: runtimeProject.id,
+        selectedDeviceWorkspaceId: 44,
+        executionMode: 'current_workspace' as const,
+      },
+    })
+
+    return { localDevice, propsForTask, runtimeWork, runtimeProject, taskA, taskB }
+  }
+
   test('submits implementation plan confirmation as a user message response', async () => {
     const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
 
@@ -1045,7 +1133,7 @@ describe('DesktopWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-plan',
+            taskId: 'runtime-plan',
           },
         }}
         messages={[createPendingRequestUserInputMessage()]}
@@ -1076,7 +1164,7 @@ describe('DesktopWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-plan',
+            taskId: 'runtime-plan',
           },
         }}
         messages={[createPendingRequestUserInputMessage()]}
@@ -1140,7 +1228,7 @@ describe('DesktopWorkbenchLayout', () => {
             blocks: [
               {
                 id: 'plan-1',
-                turnId: 1,
+                subtaskId: 1,
                 type: 'plan',
                 content: [
                   '# Wegent 体验计划',
@@ -1218,10 +1306,13 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
-      'overflow-x-hidden',
       'overflow-y-auto',
       'scrollbar-soft',
       'pb-[var(--desktop-floating-composer-clearance)]'
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
+      'overflow-x-hidden',
+      'overflow-x-clip'
     )
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
@@ -1299,9 +1390,9 @@ describe('DesktopWorkbenchLayout', () => {
                 deviceName: 'Runtime Device',
                 workspacePath: '/workspace/project-alpha',
                 workspaceKind: 'workspace',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'runtime-empty',
+                    taskId: 'runtime-empty',
                     workspacePath: '/workspace/project-alpha',
                     title: 'Fix pane title',
                     runtime: 'codex',
@@ -1312,12 +1403,12 @@ describe('DesktopWorkbenchLayout', () => {
                 ],
               },
             ],
-            totalLocalTasks: 1,
+            totalTasks: 1,
           },
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-empty',
+            taskId: 'runtime-empty',
           },
         }}
         messages={[]}
@@ -1365,7 +1456,7 @@ describe('DesktopWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-1',
+            taskId: 'runtime-1',
           },
         }}
         messages={[
@@ -1397,7 +1488,7 @@ describe('DesktopWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-1',
+            taskId: 'runtime-1',
           },
         }}
         messages={[
@@ -1437,7 +1528,7 @@ describe('DesktopWorkbenchLayout', () => {
             currentRuntimeTask: {
               deviceId: 'device-1',
               workspacePath: '/workspace/project-alpha',
-              localTaskId: 'runtime-1',
+              taskId: 'runtime-1',
             },
           }}
           messages={[
@@ -1527,7 +1618,7 @@ describe('DesktopWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-1',
+            taskId: 'runtime-1',
           },
         }}
         messages={[
@@ -1602,7 +1693,7 @@ describe('DesktopWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-1',
+            taskId: 'runtime-1',
           },
         }}
         messages={[
@@ -1852,11 +1943,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(getDesktopWorkbenchMainElement()).toHaveClass('mt-1.5')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
-    expect(getDesktopWorkbenchMainElement()).toHaveClass(
-      'transition-[margin]',
-      'duration-[300ms]',
-      'will-change-[margin]'
-    )
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('transition-[margin]', 'duration-[300ms]')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('will-change-[margin]')
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
       'w-[min(46rem,calc(100%_-_2rem))]',
       'max-w-[calc(100%_-_2rem)]'
@@ -1939,9 +2027,9 @@ describe('DesktopWorkbenchLayout', () => {
                 deviceName: 'Runtime Device',
                 workspacePath: '/workspace/project-alpha',
                 workspaceKind: 'workspace',
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'runtime-empty',
+                    taskId: 'runtime-empty',
                     workspacePath: '/workspace/project-alpha',
                     title:
                       'wework的聊天链路现在代码逻辑比较混乱，尤其是状态方面，经常出现消息结束了但是发送按钮还显示运行中',
@@ -1953,12 +2041,12 @@ describe('DesktopWorkbenchLayout', () => {
                 ],
               },
             ],
-            totalLocalTasks: 1,
+            totalTasks: 1,
           },
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-empty',
+            taskId: 'runtime-empty',
           },
         }}
         messages={[]}
@@ -2986,7 +3074,7 @@ describe('DesktopWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-a',
+            taskId: 'runtime-a',
           },
           input: '继续修',
         }}
@@ -3707,6 +3795,41 @@ describe('DesktopWorkbenchLayout', () => {
     }
   })
 
+  test('does not show inactive runtime task right workspace tabs in the Tauri titlebar', async () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+
+    try {
+      mockDesktopWorkbenchMainWidth(1000)
+      const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+      expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
+
+      rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+      expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
+    } finally {
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+    }
+  })
+
   test('right workspace panel restores the previous tab after closing and reopening', async () => {
     renderWorkspacePanelLayout()
 
@@ -4016,7 +4139,7 @@ describe('DesktopWorkbenchLayout', () => {
             blocks: [
               {
                 id: 'edit-file-1',
-                turnId: 101,
+                subtaskId: 101,
                 type: 'tool',
                 toolName: 'edit_file',
                 toolInput: {
@@ -4983,7 +5106,7 @@ describe('DesktopWorkbenchLayout', () => {
           currentRuntimeTask: {
             deviceId: 'runtime-device',
             workspacePath: '/workspace/project-alpha',
-            localTaskId: 'runtime-1',
+            taskId: 'runtime-1',
           },
           projects: [
             {
@@ -5015,9 +5138,9 @@ describe('DesktopWorkbenchLayout', () => {
                     workspacePath: '/workspace/project-alpha',
                     available: true,
                     mapped: true,
-                    localTasks: [
+                    tasks: [
                       {
-                        localTaskId: 'runtime-1',
+                        taskId: 'runtime-1',
                         workspacePath: '/workspace/worktrees/8/project-alpha',
                         title: 'Runtime task',
                         runtime: 'codex',
@@ -5028,7 +5151,7 @@ describe('DesktopWorkbenchLayout', () => {
               },
             ],
             chats: [],
-            totalLocalTasks: 1,
+            totalTasks: 1,
           },
         }}
       />
@@ -5153,13 +5276,13 @@ describe('DesktopWorkbenchLayout', () => {
               available: true,
               mapped: true,
               workspacePath: '/repo',
-              localTasks: [],
+              tasks: [],
             },
           ],
         },
       ],
       chats: [],
-      totalLocalTasks: 0,
+      totalTasks: 0,
     }
     const { rerender } = render(
       <DesktopWorkbenchLayout
@@ -5420,13 +5543,13 @@ describe('DesktopWorkbenchLayout', () => {
                     available: true,
                     workspacePath: '/Users/me/Wegent',
                     workspaceSource: 'local',
-                    localTasks: [],
+                    tasks: [],
                   },
                 ],
               },
             ],
             chats: [],
-            totalLocalTasks: 0,
+            totalTasks: 0,
           },
         }}
         projectWork={{
@@ -5449,13 +5572,13 @@ describe('DesktopWorkbenchLayout', () => {
                     available: true,
                     workspacePath: '/Users/me/Wegent',
                     workspaceSource: 'local',
-                    localTasks: [],
+                    tasks: [],
                   },
                 ],
               },
             ],
             chats: [],
-            totalLocalTasks: 0,
+            totalTasks: 0,
           },
           currentProject: runtimeProject,
           currentProjectId: runtimeProject.id,
@@ -5478,96 +5601,13 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('preserves bottom terminal state per runtime task', async () => {
-    const runtimeProject = {
-      id: 35,
-      name: 'Wegent',
-      tasks: [],
-    }
-    const localDevice = {
-      id: 43,
-      device_id: 'local-device',
-      name: 'Mac',
-      status: 'online' as const,
-      is_default: false,
-      device_type: 'local' as const,
-      bind_shell: 'claudecode',
-      executor_version: '1.8.5',
-    }
-    const runtimeWork = {
-      projects: [
-        {
-          project: {
-            id: runtimeProject.id,
-            key: 'project:wegent',
-            name: runtimeProject.name,
-          },
-          deviceWorkspaces: [
-            {
-              id: 44,
-              deviceId: localDevice.device_id,
-              deviceStatus: 'online' as const,
-              available: true,
-              workspacePath: '/Users/me/Wegent',
-              workspaceSource: 'local' as const,
-              localTasks: [
-                {
-                  localTaskId: 'runtime-a',
-                  workspacePath: '/Users/me/Wegent/.worktrees/a',
-                  title: 'Task A',
-                  runtime: 'codex',
-                },
-                {
-                  localTaskId: 'runtime-b',
-                  workspacePath: '/Users/me/Wegent/.worktrees/b',
-                  title: 'Task B',
-                  runtime: 'codex',
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalLocalTasks: 2,
-    }
-    const taskA = {
-      deviceId: localDevice.device_id,
-      workspacePath: '/Users/me/Wegent/.worktrees/a',
-      localTaskId: 'runtime-a',
-    }
-    const taskB = {
-      deviceId: localDevice.device_id,
-      workspacePath: '/Users/me/Wegent/.worktrees/b',
-      localTaskId: 'runtime-b',
-    }
+    const { localDevice, propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
     localPathExistsMock.mockResolvedValue(true)
     startLocalTerminalMock
       .mockResolvedValueOnce('local-terminal-a')
       .mockResolvedValueOnce('local-terminal-b')
-
-    const propsForTask = (task: typeof taskA) => ({
-      ...baseProps,
-      state: {
-        ...baseProps.state,
-        currentProject: runtimeProject,
-        currentRuntimeTask: task,
-        projects: [runtimeProject],
-        devices: [localDevice],
-        runtimeWork,
-      },
-      projectWork: {
-        ...baseProps.projectWork,
-        projects: [runtimeProject],
-        devices: [localDevice],
-        runtimeWork,
-        currentProject: runtimeProject,
-        currentProjectId: runtimeProject.id,
-        selectedDeviceWorkspaceId: 44,
-        executionMode: 'current_workspace' as const,
-      },
-    })
     const visibleLocalTerminals = () =>
       within(screen.getByTestId('desktop-workbench-main'))
         .queryAllByTestId('embedded-local-terminal')

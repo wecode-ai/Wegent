@@ -17,7 +17,7 @@ export type SyncCompletionEvent =
   | { type: 'done'; syncUpdatedAt?: string }
   | {
       type: 'streaming'
-      turnId: number
+      subtaskId: number
       cursor: number
       startedAt?: string
       lastActivityAt?: string
@@ -79,7 +79,7 @@ export function syncMessagesFromJoinPayload({
       state: nextState,
       completion: {
         type: 'streaming',
-        turnId: activeStreamSubtaskId,
+        subtaskId: activeStreamSubtaskId,
         cursor: isRecoveredStream
           ? (streamRecovery.offset ?? streamRecovery.cached_content?.length ?? 0)
           : 0,
@@ -103,13 +103,13 @@ export function finalizeStaleStreamingMessagesForNoStream(
   let nextMessages: Map<string, UnifiedMessage> | null = null
 
   for (const msg of state.messages.values()) {
-    if (msg.type !== 'ai' || msg.status !== 'streaming' || !msg.turnId) {
+    if (msg.type !== 'ai' || msg.status !== 'streaming' || !msg.subtaskId) {
       continue
     }
 
-    const staleSubtask = subtasks?.find(s => s.id === msg.turnId)
+    const staleSubtask = subtasks?.find(s => s.id === msg.subtaskId)
     const finalStatus: MessageStatus = staleSubtask?.status === 'COMPLETED' ? 'completed' : 'error'
-    const staleMsgId = generateMessageId('ai', msg.turnId)
+    const staleMsgId = generateMessageId('ai', msg.subtaskId)
     const staleMsg = state.messages.get(staleMsgId)
 
     if (!staleMsg) {
@@ -149,7 +149,7 @@ function applyStreamRecoveryMessage(
       status: 'streaming',
       content: streamRecovery.cached_content || '',
       timestamp: Date.now(),
-      turnId: streamRecovery.subtask_id,
+      subtaskId: streamRecovery.subtask_id,
       result: streamRecovery.blocks?.length ? { blocks: streamRecovery.blocks } : undefined,
     })
     return { ...state, messages: newMessages }
@@ -192,7 +192,7 @@ function applyStreamRecoveryMessage(
 function getActiveStreamSubtaskId(state: TaskMachineInternalState): number | null {
   for (const msg of state.messages.values()) {
     if (msg.type === 'ai' && msg.status === 'streaming') {
-      return msg.turnId || null
+      return msg.subtaskId || null
     }
   }
 

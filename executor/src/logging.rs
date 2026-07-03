@@ -116,10 +116,10 @@ pub fn init_executor_logging(config: &DeviceConfig) {
     }
 }
 
-pub fn task_fields(task_id: i64, subtask_id: i64) -> Vec<(&'static str, String)> {
+pub fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {
     vec![
-        ("task_id", task_id.to_string()),
-        ("subtask_id", subtask_id.to_string()),
+        ("task_id", task_id.to_owned()),
+        ("subtask_id", subtask_id.to_owned()),
     ]
 }
 

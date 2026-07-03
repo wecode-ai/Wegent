@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   createRuntimeTaskStreamHandlers,
   runtimeMessagesToWorkbenchMessages,
@@ -7,10 +7,138 @@ import type { RuntimePaneMessageAction } from './runtimePaneMessages'
 import type { RuntimeTaskAddress } from '@/types/api'
 
 describe('createRuntimeTaskStreamHandlers', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  test('uses task and subtask identity for runtime assistant messages', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      content: 'partial',
+      offset: 0,
+      result: {},
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_chunk',
+      subtaskId: 'subtask-9',
+      content: 'partial',
+    })
+    expect('messageId' in actions[0]).toBe(false)
+  })
+
+  test('streams camelCase reasoning chunks into assistant messages', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      content: '',
+      offset: 0,
+      result: { reasoningChunk: '正在分析' },
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'assistant_chunk',
+      subtaskId: 'subtask-9',
+      content: '',
+      reasoningChunk: '正在分析',
+    })
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  test('warns instead of silently dropping empty runtime chunks', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      content: '',
+      offset: 0,
+      result: {},
+    })
+
+    expect(actions).toHaveLength(0)
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Dropped empty runtime stream chunk',
+      expect.objectContaining({
+        event: 'chat:chunk',
+        taskId: 'runtime-task-1',
+        deviceId: 'device-1',
+        subtaskId: 'subtask-9',
+        reason: 'empty_chunk',
+      })
+    )
+  })
+
+  test('warns when snake case reasoning chunks reach the pane layer', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      content: '',
+      offset: 0,
+      result: { reasoning_chunk: '正在分析' },
+    })
+
+    expect(actions).toHaveLength(0)
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Dropped empty runtime stream chunk',
+      expect.objectContaining({
+        event: 'chat:chunk',
+        taskId: 'runtime-task-1',
+        deviceId: 'device-1',
+        subtaskId: 'subtask-9',
+        resultKeys: ['reasoning_chunk'],
+      })
+    )
+  })
+
   test('passes context compaction through regular block created actions', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
-      localTaskId: 'local-task-1',
+      taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
     const handlers = createRuntimeTaskStreamHandlers(address, {
@@ -18,11 +146,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     handlers.onBlockCreated?.({
-      task_id: 1,
-      subtask_id: 9,
-      message_id: 42,
-      local_task_id: 'local-task-1',
-      device_id: 'device-1',
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
       block: {
         id: 'ctx-1',
         type: 'tool',
@@ -47,7 +173,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
   test('preserves request user input render payload on block created events', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
-      localTaskId: 'local-task-1',
+      taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
     const handlers = createRuntimeTaskStreamHandlers(address, {
@@ -66,11 +192,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
     }
 
     handlers.onBlockCreated?.({
-      task_id: 1,
-      subtask_id: 9,
-      message_id: 42,
-      local_task_id: 'local-task-1',
-      device_id: 'device-1',
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
       block: {
         id: 'request-42',
         type: 'tool',
@@ -95,7 +219,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
   test('strips Codex UI directives from completed assistant content', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
-      localTaskId: 'local-task-1',
+      taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
     const handlers = createRuntimeTaskStreamHandlers(address, {
@@ -103,11 +227,9 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     handlers.onChatDone?.({
-      task_id: 1,
-      subtask_id: 9,
-      message_id: 42,
-      local_task_id: 'local-task-1',
-      device_id: 'device-1',
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
       offset: 0,
       result: {
         value: [
@@ -121,7 +243,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions).toHaveLength(1)
     expect(actions[0]).toMatchObject({
       type: 'assistant_done',
-      turnId: 9,
+      subtaskId: 'subtask-9',
       content: '当前分支比 origin/main ahead 1，可以直接 push。',
     })
   })
@@ -129,7 +251,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
   test('settles runtime streams without forwarding empty final content', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
-      localTaskId: 'local-task-1',
+      taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
     const handlers = createRuntimeTaskStreamHandlers(address, {
@@ -137,12 +259,10 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     handlers.onChatDone?.({
-      task_id: 1,
-      subtask_id: 9,
-      message_id: 42,
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
       offset: 0,
-      local_task_id: 'local-task-1',
-      device_id: 'device-1',
+      deviceId: 'device-1',
       result: {
         value: '',
       },
@@ -151,7 +271,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions).toHaveLength(1)
     expect(actions[0]).toMatchObject({
       type: 'assistant_done',
-      turnId: 9,
+      subtaskId: 'subtask-9',
     })
     expect(
       (actions[0] as Extract<RuntimePaneMessageAction, { type: 'assistant_done' }>).content
@@ -161,7 +281,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
   test('treats interrupted runtime errors as cancellation events', () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
-      localTaskId: 'local-task-1',
+      taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
     const handlers = createRuntimeTaskStreamHandlers(address, {
@@ -169,25 +289,24 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     handlers.onChatError?.({
-      task_id: 1,
-      subtask_id: 9,
-      message_id: 42,
-      local_task_id: 'local-task-1',
-      device_id: 'device-1',
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
       error: 'interrupted',
     })
 
     expect(actions).toHaveLength(1)
     expect(actions[0]).toMatchObject({
       type: 'assistant_cancelled',
-      turnId: 9,
+      subtaskId: 'subtask-9',
     })
   })
 
-  test('ignores runtime stream message events without a message id', () => {
+  test('warns before dropping runtime stream message events without task identity', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {
       deviceId: 'device-1',
-      localTaskId: 'local-task-1',
+      taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
     const handlers = createRuntimeTaskStreamHandlers(address, {
@@ -195,20 +314,156 @@ describe('createRuntimeTaskStreamHandlers', () => {
     })
 
     handlers.onChatChunk?.({
-      task_id: 1,
-      subtask_id: 9,
-      local_task_id: 'local-task-1',
-      device_id: 'device-1',
+      taskId: 'runtime-task-1',
+      deviceId: 'device-1',
       content: 'partial',
       offset: 0,
       result: {},
-    })
+    } as Parameters<NonNullable<typeof handlers.onChatChunk>>[0])
 
     expect(actions).toHaveLength(0)
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Dropped runtime stream event without task identity',
+      expect.objectContaining({
+        event: 'chat:chunk',
+        taskId: 'runtime-task-1',
+        deviceId: 'device-1',
+        subtaskId: undefined,
+        hasContent: true,
+      })
+    )
+  })
+
+  test('maps zero subtask ids to subtask ids for runtime block events', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+    })
+
+    handlers.onBlockUpdated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: '0',
+      deviceId: 'device-1',
+      blockId: 'text-local-task-1-0-1',
+      content: 'partial',
+      status: 'streaming',
+    })
+
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      type: 'block_updated',
+      subtaskId: '0',
+      blockId: 'text-local-task-1-0-1',
+      updates: {
+        content: 'partial',
+        status: 'streaming',
+      },
+    })
+    expect(warn).not.toHaveBeenCalled()
   })
 })
 
 describe('runtimeMessagesToWorkbenchMessages', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  test('uses explicit camelCase subtask identity for restored runtime blocks', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-runtime',
+        role: 'assistant',
+        content: '',
+        subtaskId: '10000110751749',
+        status: 'streaming',
+        blocks: [
+          {
+            id: 'text-1',
+            type: 'text',
+            content: 'streamed process text',
+            status: 'done',
+          },
+        ],
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      subtaskId: '10000110751749',
+      blocks: [
+        {
+          id: 'text-1',
+          subtaskId: '10000110751749',
+          type: 'text',
+        },
+      ],
+    })
+  })
+
+  test('warns instead of creating fallback ids for restored runtime messages without subtask identity', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-runtime',
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        blocks: [
+          {
+            id: 'text-1',
+            type: 'text',
+            content: 'streamed process text',
+            status: 'done',
+          },
+        ],
+      },
+    ])
+
+    expect(messages[0].subtaskId).toBeUndefined()
+    expect(messages[0].blocks).toBeUndefined()
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Runtime transcript message missing valid subtask identity',
+      expect.objectContaining({
+        messageId: 'assistant-runtime',
+        status: 'streaming',
+        blockCount: 1,
+      })
+    )
+  })
+
+  test('warns instead of creating fallback block ids for restored runtime blocks', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-runtime',
+        role: 'assistant',
+        content: '',
+        subtaskId: '10000110751749',
+        status: 'streaming',
+        blocks: [
+          {
+            type: 'text',
+            content: 'streamed process text',
+            status: 'done',
+          },
+        ],
+      },
+    ])
+
+    expect(messages[0].blocks).toBeUndefined()
+    expect(warn).toHaveBeenCalledWith(
+      '[Wework] Dropped runtime transcript block without block identity',
+      expect.objectContaining({
+        subtaskId: '10000110751749',
+        blockType: 'text',
+      })
+    )
+  })
+
   test('strips Codex UI directives from restored assistant transcript content', () => {
     const messages = runtimeMessagesToWorkbenchMessages([
       {

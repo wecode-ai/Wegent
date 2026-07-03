@@ -62,21 +62,17 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .extra
             .insert("collaborationMode".to_owned(), collaboration_mode);
     }
-    if let Some(message_id) = integer_field(payload, "message_id") {
-        request.message_id = Some(message_id);
-    }
-    if let Some(turn_id) = integer_field(payload, "turn_id") {
+    if let Some(turn_id) = id_field(payload, "turn_id") {
         request.subtask_id = turn_id;
     }
 }
 
 pub(crate) fn runtime_task_id(payload: &Value) -> Option<String> {
-    string_field(payload, "localTaskId")
-        .or_else(|| string_field(payload, "local_task_id"))
+    id_field(payload, "taskId")
+        .or_else(|| id_field(payload, "task_id"))
         .or_else(|| {
             payload.get("address").and_then(|address| {
-                string_field(address, "localTaskId")
-                    .or_else(|| string_field(address, "local_task_id"))
+                id_field(address, "taskId").or_else(|| id_field(address, "task_id"))
             })
         })
 }
@@ -116,6 +112,14 @@ pub(crate) fn string_field(value: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+pub(crate) fn id_field(value: &Value, key: &str) -> Option<String> {
+    match value.get(key)? {
+        Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 pub(crate) fn raw_string_field(value: &Value, key: &str) -> Option<String> {

@@ -39,12 +39,12 @@ export function applyPendingChunksToState({
   let nextState = state
 
   for (const chunk of pendingChunks) {
-    const aiMessageId = generateMessageId('ai', chunk.turnId)
+    const aiMessageId = generateMessageId('ai', chunk.subtaskId)
     const existingMessage = nextState.messages.get(aiMessageId)
 
     if (!existingMessage) {
       console.warn('[TaskStateMachine] Pending chunk skipped - message not found', {
-        turnId: chunk.turnId,
+        subtaskId: chunk.subtaskId,
         taskId: nextState.taskId,
       })
       continue
@@ -104,7 +104,7 @@ export function applyPendingChunksToState({
     const runtime: TaskRuntimeState = {
       ...nextState.runtime,
       phase: 'streaming',
-      activeStreamSubtaskId: chunk.turnId,
+      activeStreamSubtaskId: chunk.subtaskId,
       localStreamCursor: updatedMessage.content.length,
       localLastChunkAt: Date.now(),
     }

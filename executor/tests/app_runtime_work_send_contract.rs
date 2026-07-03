@@ -102,7 +102,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-1",
+                "taskId": "local-task-1",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
                 "executionRequest": {
@@ -124,7 +124,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(created["accepted"], true);
     wait_for_thread_mapping(&handler, "local-task-1", "thread-1").await;
     wait_for_turn_count(&log_path, 1).await;
-    wait_for_response_event(&mut events, "response.completed", 2001).await;
+    wait_for_response_event(&mut events, "response.completed", "2001").await;
     wait_until_task_idle(&handler, "local-task-1").await;
     drain_events(&mut events);
 
@@ -155,7 +155,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                 "address": {
                     "deviceId": "device-1",
                     "workspacePath": "/tmp/project",
-                    "localTaskId": "local-task-1"
+                    "taskId": "local-task-1"
                 },
                 "content": "continue from content",
                 "collaborationMode": "default",
@@ -321,7 +321,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "local-task-1"
+                "taskId": "local-task-1"
             }
         }))
         .await
@@ -367,7 +367,7 @@ async fn runtime_tasks_create_sets_initial_goal_before_first_turn() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-goal",
+                "taskId": "local-task-goal",
                 "workspacePath": "/tmp/project",
                 "message": "ship goal-first",
                 "initialGoal": {
@@ -435,7 +435,7 @@ async fn runtime_tasks_reuse_one_codex_process_across_follow_up_turns() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-persistent",
+                "taskId": "local-task-persistent",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
                 "executionRequest": {
@@ -462,7 +462,7 @@ async fn runtime_tasks_reuse_one_codex_process_across_follow_up_turns() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.send",
             "payload": {
-                "localTaskId": "local-task-persistent",
+                "taskId": "local-task-persistent",
                 "workspacePath": "/tmp/project",
                 "message": "second turn",
                 "executionRequest": {
@@ -585,7 +585,7 @@ async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-fail-once",
+                "taskId": "local-task-fail-once",
                 "workspacePath": "/tmp/project",
                 "message": "first turn fails",
                 "executionRequest": {
@@ -605,14 +605,14 @@ async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure
         .await
         .expect("failed turn create should still be accepted");
     assert_eq!(failed["accepted"], true);
-    wait_for_response_event(&mut events, "response.failed", 6201).await;
+    wait_for_response_event(&mut events, "response.failed", "6201").await;
     wait_until_task_idle(&handler, "local-task-fail-once").await;
 
     let recovered = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-after-failure",
+                "taskId": "local-task-after-failure",
                 "workspacePath": "/tmp/project",
                 "message": "second turn succeeds",
                 "executionRequest": {
@@ -632,7 +632,7 @@ async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure
         .await
         .expect("second create should be accepted on the same shared app-server");
     assert_eq!(recovered["accepted"], true);
-    wait_for_response_event(&mut events, "response.completed", 6202).await;
+    wait_for_response_event(&mut events, "response.completed", "6202").await;
     wait_until_task_idle(&handler, "local-task-after-failure").await;
 
     let calls = read_json_lines(&log_path);
@@ -681,7 +681,7 @@ async fn runtime_tasks_route_interleaved_codex_notifications_by_thread_id() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-a",
+                "taskId": "local-task-a",
                 "workspacePath": "/tmp/project",
                 "message": "task a",
                 "executionRequest": {
@@ -706,7 +706,7 @@ async fn runtime_tasks_route_interleaved_codex_notifications_by_thread_id() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-b",
+                "taskId": "local-task-b",
                 "workspacePath": "/tmp/project",
                 "message": "task b",
                 "executionRequest": {
@@ -728,22 +728,22 @@ async fn runtime_tasks_route_interleaved_codex_notifications_by_thread_id() {
 
     let routed_events = recv_events_until(&mut events, |received| {
         find_runtime_event(received, "response.output_text.delta", |event| {
-            event["payload"]["local_task_id"] == "local-task-a"
+            event["payload"]["taskId"] == "local-task-a"
                 && event["payload"]["data"]["delta"] == "alpha"
         })
         .is_some()
             && find_runtime_event(received, "response.output_text.delta", |event| {
-                event["payload"]["local_task_id"] == "local-task-b"
+                event["payload"]["taskId"] == "local-task-b"
                     && event["payload"]["data"]["delta"] == "beta"
             })
             .is_some()
             && find_runtime_event(received, "response.completed", |event| {
-                event["payload"]["local_task_id"] == "local-task-a"
+                event["payload"]["taskId"] == "local-task-a"
                     && event["payload"]["data"]["value"] == "alpha"
             })
             .is_some()
             && find_runtime_event(received, "response.completed", |event| {
-                event["payload"]["local_task_id"] == "local-task-b"
+                event["payload"]["taskId"] == "local-task-b"
                     && event["payload"]["data"]["value"] == "beta"
             })
             .is_some()
@@ -752,7 +752,7 @@ async fn runtime_tasks_route_interleaved_codex_notifications_by_thread_id() {
 
     assert!(
         find_runtime_event(&routed_events, "response.output_text.delta", |event| {
-            event["payload"]["local_task_id"] == "local-task-a"
+            event["payload"]["taskId"] == "local-task-a"
                 && event["payload"]["data"]["delta"] == "beta"
         })
         .is_none(),
@@ -760,7 +760,7 @@ async fn runtime_tasks_route_interleaved_codex_notifications_by_thread_id() {
     );
     assert!(
         find_runtime_event(&routed_events, "response.output_text.delta", |event| {
-            event["payload"]["local_task_id"] == "local-task-b"
+            event["payload"]["taskId"] == "local-task-b"
                 && event["payload"]["data"]["delta"] == "alpha"
         })
         .is_none(),
@@ -798,7 +798,7 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-goal-loop",
+                "taskId": "local-task-goal-loop",
                 "workspacePath": "/tmp/project",
                 "message": "ship goal",
                 "initialGoal": {
@@ -827,7 +827,7 @@ async fn runtime_tasks_keep_shared_codex_alive_for_goal_continuation() {
     wait_for_thread_mapping(&handler, "local-task-goal-loop", "thread-goal").await;
     let goal_events = recv_events_until(&mut events, |received| {
         find_runtime_event(received, "response.completed", |event| {
-            event["payload"]["subtask_id"] == 6002
+            event["payload"]["subtaskId"] == "6002"
         })
         .is_some()
             && find_runtime_event(received, "runtime.goal.updated", |event| {
@@ -889,7 +889,7 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-input",
+                "taskId": "local-task-input",
                 "workspacePath": "/tmp/project",
                 "message": "ask me",
                 "executionRequest": {
@@ -934,7 +934,7 @@ async fn runtime_tasks_send_answers_pending_request_user_input_while_running() {
                 "address": {
                     "deviceId": "device-1",
                     "workspacePath": "/tmp/project",
-                    "localTaskId": "local-task-input"
+                    "taskId": "local-task-input"
                 },
                 "message": "Work goal",
                 "requestUserInputResponse": {
@@ -989,7 +989,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-text",
+                "taskId": "local-task-text",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
                 "executionRequest": {
@@ -1010,7 +1010,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
         .expect("create should be accepted");
     wait_for_thread_mapping(&handler, "local-task-text", "thread-1").await;
     wait_for_turn_count(&log_path, 1).await;
-    wait_for_response_event(&mut events, "response.completed", 2002).await;
+    wait_for_response_event(&mut events, "response.completed", "2002").await;
     wait_until_task_idle(&handler, "local-task-text").await;
     drain_events(&mut events);
 
@@ -1033,7 +1033,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
                 "address": {
                     "deviceId": "device-1",
                     "workspacePath": "/tmp/project",
-                    "localTaskId": "local-task-text"
+                    "taskId": "local-task-text"
                 },
                 "content": "我贴的是啥",
                 "executionRequest": codex_execution_request("我贴的是啥", "/tmp/project", "gpt-4.1"),
@@ -1087,7 +1087,7 @@ async fn runtime_tasks_create_rejects_missing_execution_request() {
             "method": "runtime.tasks.create",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "local-task-1",
+                "taskId": "local-task-1",
                 "message": "first turn",
                 "modelId": "gpt-5.5"
             }
@@ -1121,7 +1121,7 @@ async fn runtime_tasks_send_rejects_missing_execution_request() {
             "method": "runtime.tasks.send",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "local-task-1",
+                "taskId": "local-task-1",
                 "message": "second turn",
                 "modelId": "gpt-5.5"
             }
@@ -1155,7 +1155,7 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-1",
+                "taskId": "local-task-1",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
                 "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
@@ -1170,7 +1170,7 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
             "method": "runtime.tasks.send",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "local-task-1",
+                "taskId": "local-task-1",
                 "message": "second turn"
             }
         }))
@@ -1190,7 +1190,7 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
             "method": "runtime.tasks.cancel",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "local-task-1"
+                "taskId": "local-task-1"
             }
         }))
         .await
@@ -1221,7 +1221,7 @@ async fn runtime_tasks_cancel_interrupts_running_codex_turn_without_killing_app_
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-cancel",
+                "taskId": "local-task-cancel",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
                 "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
@@ -1236,7 +1236,7 @@ async fn runtime_tasks_cancel_interrupts_running_codex_turn_without_killing_app_
             "method": "runtime.tasks.cancel",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "local-task-cancel"
+                "taskId": "local-task-cancel"
             }
         }))
         .await
@@ -1270,7 +1270,7 @@ async fn runtime_tasks_cancel_does_not_kill_shared_app_server_process_group() {
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-task-cancel-group",
+                "taskId": "local-task-cancel-group",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
                 "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
@@ -1286,7 +1286,7 @@ async fn runtime_tasks_cancel_does_not_kill_shared_app_server_process_group() {
             "method": "runtime.tasks.cancel",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "local-task-cancel-group"
+                "taskId": "local-task-cancel-group"
             }
         }))
         .await
@@ -1322,7 +1322,7 @@ async fn runtime_tasks_send_after_cancel_resumes_started_thread_not_local_task_i
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.create",
             "payload": {
-                "localTaskId": "local-visible-task",
+                "taskId": "local-visible-task",
                 "workspacePath": "/tmp/project",
                 "message": "first turn",
                 "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
@@ -1337,7 +1337,7 @@ async fn runtime_tasks_send_after_cancel_resumes_started_thread_not_local_task_i
             "method": "runtime.tasks.cancel",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "local-visible-task"
+                "taskId": "local-visible-task"
             }
         }))
         .await
@@ -1348,7 +1348,7 @@ async fn runtime_tasks_send_after_cancel_resumes_started_thread_not_local_task_i
             "method": "runtime.tasks.send",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "local-visible-task",
+                "taskId": "local-visible-task",
                 "message": "second turn",
                 "executionRequest": codex_execution_request("second turn", "/tmp/project", "gpt-5.5")
             }
@@ -1393,7 +1393,7 @@ async fn runtime_tasks_send_uses_nested_address_runtime_handle_without_local_ind
                 "address": {
                     "deviceId": "device-1",
                     "workspacePath": "/tmp/project",
-                    "localTaskId": "local-visible-task",
+                    "taskId": "local-visible-task",
                     "runtimeHandle": {
                         "threadId": "thread-1"
                     }
@@ -2007,10 +2007,9 @@ async fn wait_for_thread_mapping(
             .as_array()
             .into_iter()
             .flatten()
-            .flat_map(|workspace| workspace["localTasks"].as_array().into_iter().flatten())
+            .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
             .any(|task| {
-                task["localTaskId"] == local_task_id
-                    && task["runtimeHandle"]["threadId"] == thread_id
+                task["taskId"] == local_task_id && task["runtimeHandle"]["threadId"] == thread_id
             });
         if mapped {
             return;
@@ -2089,8 +2088,8 @@ async fn wait_until_task_running(handler: &RuntimeWorkRpcHandler, local_task_id:
             .as_array()
             .into_iter()
             .flatten()
-            .flat_map(|workspace| workspace["localTasks"].as_array().into_iter().flatten())
-            .any(|task| task["localTaskId"] == local_task_id && task["running"] == true);
+            .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+            .any(|task| task["taskId"] == local_task_id && task["running"] == true);
         if running {
             return;
         }
@@ -2112,8 +2111,8 @@ async fn wait_until_task_idle(handler: &RuntimeWorkRpcHandler, local_task_id: &s
             .as_array()
             .into_iter()
             .flatten()
-            .flat_map(|workspace| workspace["localTasks"].as_array().into_iter().flatten())
-            .any(|task| task["localTaskId"] == local_task_id && task["running"] == true);
+            .flat_map(|workspace| workspace["tasks"].as_array().into_iter().flatten())
+            .any(|task| task["taskId"] == local_task_id && task["running"] == true);
         if !running {
             return;
         }
@@ -2169,11 +2168,11 @@ where
 async fn wait_for_response_event(
     events: &mut broadcast::Receiver<Value>,
     event_name: &str,
-    subtask_id: i64,
+    subtask_id: &str,
 ) {
     recv_events_until(events, |received| {
         find_runtime_event(received, event_name, |event| {
-            event["payload"]["subtask_id"] == subtask_id
+            event["payload"]["subtaskId"] == subtask_id
         })
         .is_some()
     })

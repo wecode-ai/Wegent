@@ -52,15 +52,15 @@ export type ProjectMutationOptions = {
   refreshWorkLists?: boolean
 }
 
-export type ArchiveRuntimeLocalTaskOptions = {
+export type ArchiveRuntimeTaskOptions = {
   force?: boolean
 }
 
-export type ArchiveRuntimeLocalTaskResult = {
+export type ArchiveRuntimeTaskResult = {
   status: 'archived' | 'dirty_worktree' | 'failed'
 }
 
-export type ArchiveRuntimeConversationsResult = ArchiveRuntimeLocalTaskResult
+export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
   codeCommentContexts?: CodeCommentContext[]
@@ -119,29 +119,29 @@ export interface WorkbenchContextValue {
   startNewChat: () => void
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
-  openRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
+  openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
   subscribeRuntimeTaskStream: (
     address: RuntimeTaskAddress,
     handlers: RuntimeTaskStreamHandlers
   ) => () => void
-  renameRuntimeLocalTask: (address: RuntimeTaskAddress, title: string) => Promise<void>
-  archiveRuntimeLocalTask: (
+  renameRuntimeTask: (address: RuntimeTaskAddress, title: string) => Promise<void>
+  archiveRuntimeTask: (
     address: RuntimeTaskAddress,
-    options?: ArchiveRuntimeLocalTaskOptions
-  ) => Promise<ArchiveRuntimeLocalTaskResult>
+    options?: ArchiveRuntimeTaskOptions
+  ) => Promise<ArchiveRuntimeTaskResult>
   archiveProjectConversations: (
     runtimeProjectKey: string,
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
   archiveProjectsConversations: (
     runtimeProjectKeys: string[],
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
   archiveChatConversations: (
     addresses: RuntimeTaskAddress[],
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
   forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
@@ -222,11 +222,11 @@ export interface WorkbenchContextValue {
   retryFailedMessage: (messageId: string, messagesOverride?: WorkbenchMessage[]) => Promise<void>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
-    turnId: number,
+    subtaskId: string,
     messagesOverride?: WorkbenchMessage[]
   ) => Promise<string>
   revertTurnFileChanges: (
-    turnId: number,
+    subtaskId: string,
     messagesOverride?: WorkbenchMessage[]
   ) => Promise<TurnFileChangesSummary>
 }

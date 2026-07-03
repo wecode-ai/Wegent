@@ -109,7 +109,7 @@ cargo test --test manual_runtime_perf -- --ignored --nocapture
 POST /api/runtime-work/send
 ```
 
-Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Codex 任务使用保存的 `threadId` 调用 app-server `thread/resume`，再通过 `turn/start` 发送本轮输入；消息和状态以 Codex 自己的 thread transcript 为准，executor JSON 索引只保存任务链接元数据。流式 Responses 事件只携带 `local_task_id` 和运行时信息，不携带 `workspacePath`。
+Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque runtime handle 继续运行时会话。Codex 任务使用保存的 `threadId` 调用 app-server `thread/resume`，再通过 `turn/start` 发送本轮输入；消息和状态以 Codex 自己的 thread transcript 为准，executor JSON 索引只保存任务链接元数据。流式 Responses 事件携带当前 LocalTask 的 `local_task_id`、本轮 `task_id` 和 `subtask_id`；Wework 入口层把本地任务映射成统一的 task 身份，把 `subtask_id` 当作本轮 turn 身份，后续消息 reducer 不再使用单独的 `message_id`。这些事件不携带 `workspacePath`。
 
 每一次继续 LocalTask 的请求都必须携带当前模型选择。Wework 的模型选择器是本轮发送的事实来源：用户本轮选择哪个模型，`runtime.tasks.send` 就传哪个 `modelId`、`modelType` 和模型选项。executor 不从上一次请求恢复模型，也不缓存模型选择；如果请求没有完整 `executionRequest` 且没有 `modelId`，executor 必须返回 `bad_request`，而不是回退到默认模型。打包本地 app 的 `createLocalAppServices()` 是本机 Codex 模型名规范化的唯一边界：UI 可以展示 `codex-gpt-5.5`，但发送到 Codex app-server 前必须统一转换成真实模型 id `gpt-5.5`。新建任务和继续任务都必须复用同一套规范化逻辑。
 
@@ -143,7 +143,7 @@ executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unar
 
 如果被归档的 LocalTask 使用 Git worktree，Wework 会先在该任务的 `deviceId + workspacePath` 上执行 `git status --porcelain`。工作树干净时，归档成功后会通过设备命令执行 `git worktree remove --force` 删除对应 worktree 目录；存在未提交代码时，前端先提示用户，默认不归档也不删除目录。用户选择强制归档后，Wework 会继续归档并强制删除该 worktree，因此未提交变更不会被保留。这个清理只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。
 
-在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到当前工作区的 `.wegent/attachments` 目录，并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 Tauri asset protocol 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
+在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到当前工作区的 `.wegent/attachments` 目录，并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 Tauri asset protocol 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Tauri App 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 Tauri `convertFileSrc` 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 

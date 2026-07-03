@@ -13,9 +13,6 @@ from llama_index.core.base.embeddings.base import BaseEmbedding
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.services.chat.config.model_resolver import (
-    build_default_headers_with_placeholders,
-)
 from knowledge_engine.embedding.capabilities import (
     embedding_supports_image_input,
     normalize_additional_input_modalities,

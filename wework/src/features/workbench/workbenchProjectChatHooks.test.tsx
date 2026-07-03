@@ -475,4 +475,41 @@ describe('workbench project chat hooks', () => {
     expect(result.current.attachments).toEqual([attachment])
     expect(result.current.errors.size).toBe(0)
   })
+
+  test('adds text preview metadata for pasted text attachments', async () => {
+    const attachment: Attachment = {
+      id: 44,
+      filename: 'clipboard-text-1783070360990.txt',
+      file_size: 1200,
+      mime_type: 'text/plain',
+      status: 'ready',
+      file_extension: '.txt',
+      created_at: '2026-05-27T00:00:00.000Z',
+    }
+    const upload = vi.fn().mockResolvedValue(attachment)
+
+    const { result } = renderHook(() =>
+      useWorkbenchAttachments({
+        uploadAttachment: upload,
+        deleteAttachment: vi.fn(),
+      })
+    )
+
+    const file = new File(
+      ['{\n  "event_type": "http_exchange",\n  "id": "e9972aac"\n}'],
+      'clipboard-text-1783070360990.txt',
+      { type: 'text/plain' }
+    )
+    await act(async () => {
+      await result.current.handleFileSelect(file)
+    })
+
+    expect(result.current.attachments[0]).toEqual(
+      expect.objectContaining({
+        text_preview: '{ "event_type": "http_exchange", "id": "e9972aac" }',
+        text_content: '{\n  "event_type": "http_exchange",\n  "id": "e9972aac"\n}',
+        text_length: 55,
+      })
+    )
+  })
 })

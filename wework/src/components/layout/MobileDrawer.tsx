@@ -45,6 +45,7 @@ import {
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
+import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 
 const MOBILE_RUNNING_SPINNER_CLASS = 'h-3.5 w-3.5 shrink-0 animate-spin'
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
@@ -79,26 +80,8 @@ interface MobileDrawerProps {
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   onRemoveProject?: (projectId: number) => Promise<void>
   onSelectProject: (projectId: number) => void
-  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onRefreshWorkLists?: () => Promise<void>
-}
-
-function formatRelativeTime(value?: string | number) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-
-  const elapsedMs = Math.max(0, Date.now() - date.getTime())
-  const minutes = Math.floor(elapsedMs / 60000)
-  if (minutes < 60) return `${Math.max(1, minutes)}m`
-
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d`
-
-  return `${Math.floor(days / 7)}w`
 }
 
 export function MobileDrawer({
@@ -126,9 +109,10 @@ export function MobileDrawer({
   onUpdateProjectName,
   onRemoveProject,
   onSelectProject,
-  onOpenRuntimeLocalTask,
+  onOpenRuntimeTask,
   onRefreshWorkLists,
 }: MobileDrawerProps) {
+  useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const {
     scrollRef,
@@ -363,17 +347,17 @@ export function MobileDrawer({
                         workspace,
                         task
                       )
-                      const disabled = !workspace.available || !onOpenRuntimeLocalTask
+                      const disabled = !workspace.available || !onOpenRuntimeTask
                       const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
                       return (
                         <button
-                          key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                          key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
                           type="button"
                           data-testid="mobile-chat-runtime-task-button"
                           disabled={disabled}
                           onClick={() => {
                             if (disabled) return
-                            void onOpenRuntimeLocalTask?.(getRuntimeTaskAddress(workspace, task))
+                            void onOpenRuntimeTask?.(getRuntimeTaskAddress(workspace, task))
                             onClose()
                           }}
                           className={[
@@ -386,7 +370,7 @@ export function MobileDrawer({
                           <span className="min-w-0 flex-1 truncate">{task.title}</span>
                           {task.running ? (
                             renderRuntimeTaskRunningStatus(
-                              `mobile-chat-runtime-task-running-${task.localTaskId}`
+                              `mobile-chat-runtime-task-running-${task.taskId}`
                             )
                           ) : (
                             <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
@@ -398,7 +382,7 @@ export function MobileDrawer({
                               >
                                 <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
                               </span>
-                              <span>{formatRelativeTime(getRuntimeTaskTime(task))}</span>
+                              <span>{formatRelativeSidebarTime(getRuntimeTaskTime(task))}</span>
                             </span>
                           )}
                         </button>
@@ -519,17 +503,17 @@ export function MobileDrawer({
                                   workspace,
                                   task
                                 )
-                                const disabled = !workspace.available || !onOpenRuntimeLocalTask
+                                const disabled = !workspace.available || !onOpenRuntimeTask
                                 const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
                                 return (
                                   <button
-                                    key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                                    key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
                                     type="button"
                                     data-testid="mobile-runtime-task-button"
                                     disabled={disabled}
                                     onClick={() => {
                                       if (disabled) return
-                                      void onOpenRuntimeLocalTask?.(
+                                      void onOpenRuntimeTask?.(
                                         getRuntimeTaskAddress(workspace, task)
                                       )
                                       onClose()
@@ -544,7 +528,7 @@ export function MobileDrawer({
                                     <span className="min-w-0 flex-1 truncate">{task.title}</span>
                                     {task.running ? (
                                       renderRuntimeTaskRunningStatus(
-                                        `mobile-runtime-task-running-${task.localTaskId}`
+                                        `mobile-runtime-task-running-${task.taskId}`
                                       )
                                     ) : (
                                       <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
@@ -562,7 +546,9 @@ export function MobileDrawer({
                                             aria-label="Worktree"
                                           />
                                         )}
-                                        <span>{formatRelativeTime(getRuntimeTaskTime(task))}</span>
+                                        <span>
+                                          {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
+                                        </span>
                                       </span>
                                     )}
                                   </button>
@@ -570,7 +556,7 @@ export function MobileDrawer({
                               })}
                               {(hasHiddenTasks || canCollapseTasks) && (
                                 <div className="flex h-10 items-center gap-2">
-                                  {hasHiddenTasks && (
+                                  {hasHiddenTasks ? (
                                     <button
                                       type="button"
                                       data-testid={`mobile-project-runtime-tasks-expand-${project.id}`}
@@ -587,8 +573,7 @@ export function MobileDrawer({
                                     >
                                       {t('workbench.expand_display', '展开显示')}
                                     </button>
-                                  )}
-                                  {canCollapseTasks && (
+                                  ) : (
                                     <button
                                       type="button"
                                       data-testid={`mobile-project-runtime-tasks-collapse-${project.id}`}
