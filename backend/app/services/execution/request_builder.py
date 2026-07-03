@@ -1969,7 +1969,9 @@ Response template:
                                 "timeout_seconds",
                             ):
                                 if timeout_key in server_config:
-                                    server_entry[timeout_key] = server_config[timeout_key]
+                                    server_entry[timeout_key] = server_config[
+                                        timeout_key
+                                    ]
                             bot_mcp_servers.append(server_entry)
 
         # Merge system and bot MCP servers (bot takes precedence)
