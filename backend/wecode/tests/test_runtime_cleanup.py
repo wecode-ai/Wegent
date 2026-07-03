@@ -719,3 +719,85 @@ async def test_cleanup_orphan_pods_task_id_below_threshold_skipped():
     assert result["failed"] == []
     assert len(result["skipped"]) == 2
     assert all(s["reason"] == "task_id_below_threshold" for s in result["skipped"])
+
+
+def _mock_distributed_lock(async_redis_client):
+    lock = Mock()
+    lock.async_redis_client = async_redis_client
+    return patch(
+        "app.core.distributed_lock.distributed_lock",
+        lock,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orphan_cleanup_due_when_no_timestamp():
+    """First run (no recorded timestamp) is always due."""
+    from wecode.service.jobs import _orphan_cleanup_due
+
+    redis_client = Mock()
+    redis_client.get = AsyncMock(return_value=None)
+
+    with _mock_distributed_lock(redis_client):
+        assert await _orphan_cleanup_due(10800) is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orphan_cleanup_not_due_within_interval():
+    """A run recorded less than one interval ago is not due (global rate limit)."""
+    from wecode.service.jobs import _orphan_cleanup_due
+
+    recent = datetime.now().timestamp() - 100
+    redis_client = Mock()
+    redis_client.get = AsyncMock(return_value=str(recent))
+
+    with _mock_distributed_lock(redis_client):
+        assert await _orphan_cleanup_due(10800) is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orphan_cleanup_due_after_interval():
+    """A run recorded more than one interval ago is due again."""
+    from wecode.service.jobs import _orphan_cleanup_due
+
+    stale = datetime.now().timestamp() - 20000
+    redis_client = Mock()
+    redis_client.get = AsyncMock(return_value=str(stale))
+
+    with _mock_distributed_lock(redis_client):
+        assert await _orphan_cleanup_due(10800) is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orphan_cleanup_due_when_redis_unavailable():
+    """Fail open: run when Redis is unavailable, matching lock behavior."""
+    from wecode.service.jobs import _orphan_cleanup_due
+
+    with _mock_distributed_lock(None):
+        assert await _orphan_cleanup_due(10800) is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_mark_orphan_cleanup_ran_writes_timestamp():
+    """Recording a run stores the current epoch seconds under the last-run key."""
+    from wecode.service.jobs import (
+        ORPHAN_POD_CLEANUP_LAST_RUN_KEY,
+        _mark_orphan_cleanup_ran,
+    )
+
+    redis_client = Mock()
+    redis_client.set = AsyncMock()
+
+    with _mock_distributed_lock(redis_client):
+        await _mark_orphan_cleanup_ran()
+
+    redis_client.set.assert_awaited_once()
+    key_arg = redis_client.set.call_args.args[0]
+    value_arg = redis_client.set.call_args.args[1]
+    assert key_arg == ORPHAN_POD_CLEANUP_LAST_RUN_KEY
+    assert float(value_arg) == pytest.approx(datetime.now().timestamp(), abs=5)
