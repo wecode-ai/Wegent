@@ -1517,6 +1517,96 @@ class TestOpenAPIResponsesDelete:
         )
         assert get_response.status_code == 404
 
+    def test_delete_response_cleans_runtime_by_task_id_when_binding_missing(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """Deleting an executor response should clean runtime even before executor binding is persisted."""
+        task_json = {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Task",
+            "metadata": {
+                "name": "task-runtime-binding-missing",
+                "namespace": "default",
+                "labels": {"source": "api"},
+            },
+            "spec": {
+                "title": "Running task",
+                "prompt": "Hello",
+                "teamRef": {"name": "test-team", "namespace": "default"},
+                "workspaceRef": {"name": "workspace-1", "namespace": "default"},
+            },
+            "status": {
+                "status": "RUNNING",
+                "progress": 10,
+                "result": None,
+                "errorMessage": "",
+                "createdAt": datetime.now().isoformat(),
+                "updatedAt": datetime.now().isoformat(),
+            },
+        }
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="task-runtime-binding-missing",
+            namespace="default",
+            json=task_json,
+            is_active=True,
+        )
+        test_db.add(task)
+        test_db.flush()
+
+        running_subtask = Subtask(
+            user_id=test_user.id,
+            task_id=task.id,
+            team_id=test_team.id,
+            title="Assistant response",
+            bot_ids=[1],
+            role=SubtaskRole.ASSISTANT,
+            executor_namespace="",
+            executor_name="",
+            prompt="",
+            status=SubtaskStatus.RUNNING,
+            progress=10,
+            message_id=1,
+            parent_id=0,
+            error_message="",
+            completed_at=datetime(1970, 1, 1, 0, 0, 0),
+            result=None,
+            sender_type=SenderType.TEAM,
+            sender_user_id=0,
+        )
+        test_db.add(running_subtask)
+        test_db.commit()
+        test_db.refresh(task)
+
+        runtime_client = MagicMock()
+        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        runtime_client.delete_sandbox = AsyncMock(return_value=(True, None))
+        runtime_client.cleanup_sandbox_by_task_id = AsyncMock(
+            return_value={"deleted": True}
+        )
+
+        with patch(
+            "app.services.execution.get_executor_runtime_client",
+            return_value=runtime_client,
+        ):
+            response = test_client.delete(
+                f"/api/v1/responses/resp_{task.id}",
+                headers={"X-API-Key": test_api_key[0]},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["deleted"] is True
+        runtime_client.cleanup_sandbox_by_task_id.assert_awaited_once_with(
+            task_id=task.id,
+            archive_before_delete=False,
+        )
+
     def test_delete_response_user_isolation(
         self,
         test_client: TestClient,

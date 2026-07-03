@@ -537,6 +537,83 @@ class SandboxManager(metaclass=SingletonMeta):
 
         return result
 
+    async def cleanup_sandbox_by_task_id(
+        self,
+        *,
+        task_id: int,
+        dry_run: bool = False,
+        archive_before_delete: bool = True,
+    ) -> Dict[str, Any]:
+        """Clean up one sandbox runtime by task ID without an age threshold."""
+        sandbox_id = str(task_id)
+        sandbox = self._repository.load_sandbox(sandbox_id)
+        result: Dict[str, Any] = {
+            "target": "sandbox",
+            "task_id": task_id,
+            "sandbox_id": sandbox_id,
+            "dry_run": dry_run,
+            "archive_before_delete": archive_before_delete,
+            "sandbox_found": sandbox is not None,
+            "deleted": False,
+            "redis_cleared": False,
+            "archived": False,
+            "delete_attempts": [],
+        }
+
+        if sandbox is not None:
+            result["container_name"] = sandbox.container_name
+            result["status"] = sandbox.status.value
+
+        if dry_run:
+            return {**result, "skipped": True, "reason": "dry_run"}
+
+        try:
+            executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+            direct_delete_status = None
+            if sandbox is not None and sandbox.container_name:
+                direct_delete_status = executor.delete_executor(sandbox.container_name)
+                result["delete_attempts"].append(
+                    {
+                        "mode": "container_name",
+                        "container_name": sandbox.container_name,
+                        "result": direct_delete_status,
+                    }
+                )
+
+            if (
+                not direct_delete_status
+                or direct_delete_status.get("status") != "success"
+            ):
+                fallback_delete_status = executor.delete_executor_by_task_id(sandbox_id)
+                result["delete_attempts"].append(
+                    {
+                        "mode": "task_id",
+                        "task_id": sandbox_id,
+                        "result": fallback_delete_status,
+                    }
+                )
+                delete_status = fallback_delete_status
+            else:
+                delete_status = direct_delete_status
+
+            result["delete_result"] = delete_status
+            result["deleted"] = delete_status.get("status") == "success"
+        except Exception as e:
+            result["delete_result"] = {"status": "failed", "error_msg": str(e)}
+
+        result["redis_cleared"] = self._repository.delete_sandbox(sandbox_id)
+        if result["deleted"]:
+            result["skipped"] = False
+            result["reason"] = "sandbox_deleted"
+        elif result["redis_cleared"]:
+            result["skipped"] = False
+            result["reason"] = "sandbox_metadata_cleared"
+        else:
+            result["skipped"] = True
+            result["reason"] = "delete_failed"
+
+        return result
+
     def _normalize_sandbox_id(self, sandbox_id: Any) -> str:
         """Normalize Redis sandbox IDs to strings."""
         if isinstance(sandbox_id, bytes):

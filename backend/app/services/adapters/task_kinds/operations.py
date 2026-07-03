@@ -547,6 +547,31 @@ class TaskOperationsMixin:
             workspace.json = workspace_crd.model_dump()
             flag_modified(workspace, "json")
 
+    def _cleanup_executor_runtime_by_task_id(
+        self, runtime_client: Any, task_id: int
+    ) -> None:
+        """Delete executor runtime by task_id when binding is missing."""
+        from app.core.async_utils import execute_async_safely
+
+        cleanup_result = execute_async_safely(
+            runtime_client.cleanup_sandbox_by_task_id,
+            task_id=task_id,
+            archive_before_delete=False,
+            timeout=180.0,
+        )
+        if cleanup_result is None:
+            logger.info(
+                "[delete_task] Runtime cleanup by task_id timed out or failed task_id=%s",
+                task_id,
+            )
+            return
+
+        logger.info(
+            "[delete_task] Runtime cleanup by task_id result task_id=%s result=%s",
+            task_id,
+            cleanup_result,
+        )
+
     def delete_task(
         self,
         db: Session,
@@ -649,6 +674,13 @@ class TaskOperationsMixin:
 
         if cleanup_mode in {"executor", "fallback"}:
             # Stop running subtasks on executor
+            executor_cleanup_succeeded = False
+            if not unique_executor_keys:
+                logger.info(
+                    "[delete_task] No executor cleanup targets found for task_id=%s mode=%s",
+                    task_id,
+                    cleanup_mode,
+                )
             for executor_namespace, executor_name in unique_executor_keys:
                 try:
                     logger.info(
@@ -657,10 +689,13 @@ class TaskOperationsMixin:
                     executor_kinds_service.delete_executor_task_sync(
                         executor_name, executor_namespace
                     )
+                    executor_cleanup_succeeded = True
                 except Exception as e:
                     logger.warning(
                         f"Failed to delete executor task ns={executor_namespace} name={executor_name}: {str(e)}"
                     )
+            if not executor_cleanup_succeeded and not device_ids:
+                self._cleanup_executor_runtime_by_task_id(runtime_client, task_id)
 
         # Close device sessions for device tasks
         for device_id in device_ids:

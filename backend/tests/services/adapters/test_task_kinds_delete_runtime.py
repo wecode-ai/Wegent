@@ -145,3 +145,63 @@ def test_delete_task_falls_back_to_executor_cleanup_when_no_sandbox():
         "wb-plat-ide",
     )
     db.commit.assert_called_once()
+
+
+@pytest.mark.unit
+def test_delete_task_cleans_runtime_by_task_id_when_executor_binding_missing():
+    service = TaskKindsService(Kind)
+    db = Mock(spec=Session)
+    task = _create_mock_task_resource(102, 1)
+    subtask = Mock(spec=Subtask)
+    subtask.task_id = 102
+    subtask.executor_name = None
+    subtask.executor_namespace = None
+    subtask.executor_deleted_at = False
+
+    task_query = MagicMock()
+    task_query.filter.return_value = task_query
+    task_query.first.return_value = task
+
+    subtask_query = MagicMock()
+    subtask_query.filter.return_value = subtask_query
+    subtask_query.all.return_value = [subtask]
+    subtask_query.update.return_value = 1
+
+    def query_side_effect(model):
+        if model == TaskResource:
+            return task_query
+        if model == Subtask:
+            return subtask_query
+        raise AssertionError(f"Unexpected model query: {model}")
+
+    db.query.side_effect = query_side_effect
+
+    with (
+        patch.object(service, "_cleanup_task_memories"),
+        patch("app.services.adapters.task_kinds.operations.flag_modified"),
+        patch(
+            "app.services.execution.get_executor_runtime_client"
+        ) as runtime_client_factory,
+        patch(
+            "app.services.adapters.task_kinds.operations.executor_kinds_service"
+        ) as executor_service,
+    ):
+        runtime_client = MagicMock()
+        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        runtime_client.delete_sandbox = AsyncMock(return_value=(True, None))
+        runtime_client.cleanup_sandbox_by_task_id = AsyncMock(
+            return_value={"deleted": True}
+        )
+        runtime_client_factory.return_value = runtime_client
+        executor_service.delete_executor_task_sync.return_value = {"status": "success"}
+
+        service.delete_task(db=db, task_id=102, user_id=1)
+
+    runtime_client.get_sandbox.assert_awaited_once_with("102")
+    runtime_client.delete_sandbox.assert_not_awaited()
+    executor_service.delete_executor_task_sync.assert_not_called()
+    runtime_client.cleanup_sandbox_by_task_id.assert_awaited_once_with(
+        task_id=102,
+        archive_before_delete=False,
+    )
+    db.commit.assert_called_once()

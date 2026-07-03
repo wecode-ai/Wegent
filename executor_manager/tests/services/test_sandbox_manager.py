@@ -454,6 +454,36 @@ class TestSandboxManager:
         mock_redis_client.zrem.assert_called()
         mock_redis_client.delete.assert_called()
 
+    @pytest.mark.asyncio
+    async def test_cleanup_sandbox_by_task_id_deletes_executor_without_metadata(
+        self,
+        sandbox_manager_with_mock_redis,
+        mocker,
+    ):
+        """Test targeted cleanup deletes by task_id when sandbox metadata is missing."""
+        manager = sandbox_manager_with_mock_redis
+        mocker.patch.object(manager._repository, "load_sandbox", return_value=None)
+        mocker.patch.object(manager._repository, "delete_sandbox", return_value=False)
+        mock_executor = MagicMock()
+        mock_executor.delete_executor_by_task_id.return_value = {
+            "status": "success",
+            "deleted_containers": ["wegent-task-12345"],
+        }
+        mocker.patch(
+            "executor_manager.services.sandbox.manager.ExecutorDispatcher.get_executor",
+            return_value=mock_executor,
+        )
+
+        result = await manager.cleanup_sandbox_by_task_id(
+            task_id=12345,
+            archive_before_delete=False,
+        )
+
+        assert result["deleted"] is True
+        assert result["sandbox_found"] is False
+        assert result["reason"] == "sandbox_deleted"
+        mock_executor.delete_executor_by_task_id.assert_called_once_with("12345")
+
     # ----- keep_alive Tests -----
 
     @pytest.mark.asyncio

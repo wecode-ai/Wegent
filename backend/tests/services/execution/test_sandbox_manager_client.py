@@ -168,6 +168,48 @@ async def test_delete_sandbox_uses_task_scoped_endpoint():
 
 
 @pytest.mark.asyncio
+async def test_cleanup_sandbox_by_task_id_uses_targeted_endpoint():
+    """Targeted cleanup should call the task-scoped cleanup endpoint."""
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {
+        "target": "sandbox",
+        "task_id": 1385,
+        "deleted": True,
+        "redis_cleared": True,
+    }
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.__aexit__.return_value = None
+    client.post.return_value = response
+
+    with (
+        patch(
+            "app.core.config.settings",
+            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+        ),
+        patch("httpx.AsyncClient", return_value=client),
+    ):
+        result = await get_executor_runtime_client().cleanup_sandbox_by_task_id(
+            task_id=1385,
+            archive_before_delete=False,
+        )
+
+    assert result["deleted"] is True
+    client.post.assert_awaited_once()
+    assert (
+        client.post.await_args.args[0]
+        == "http://localhost:8001/executor-manager/sandboxes/cleanup-by-task"
+    )
+    assert client.post.await_args.kwargs["json"] == {
+        "task_id": 1385,
+        "dry_run": False,
+        "archive_before_delete": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_get_sandbox_returns_none_on_not_found():
     """Sandbox lookup should treat 404 as no sandbox instead of an error."""
     response = MagicMock()
