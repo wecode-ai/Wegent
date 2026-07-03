@@ -1375,29 +1375,33 @@ impl RuntimeWorkRpcHandler {
             );
 
             handler.ensure_notification_router().await;
-            if let Some(thread_id) = resume_thread_id.as_deref() {
-                handler.register_thread_event_route(
-                    thread_id,
-                    turn_local_task_id.clone(),
-                    request.clone(),
-                    true,
-                );
-            } else {
-                handler.register_pending_thread_event_route(
-                    turn_local_task_id.clone(),
-                    request.clone(),
-                );
-            }
+            let (notification_tx, mut notification_rx) = mpsc::unbounded_channel::<Value>();
+            let mapper_handler = handler.clone();
+            let mapper_local_task_id = turn_local_task_id.clone();
+            let mapper_request = request.clone();
+            let mapper_handle = tokio::spawn(async move {
+                let mut event_mapper = CodexNotificationEventMapper::default();
+                let mut cache_mapper = CodexNotificationCacheMapper::default();
+                while let Some(message) = notification_rx.recv().await {
+                    cache_mapper.map(
+                        &mapper_handler.store,
+                        &mapper_local_task_id,
+                        &mapper_request,
+                        &message,
+                    );
+                    event_mapper.map(
+                        &mapper_handler.event_tx,
+                        &mapper_handler.device_id,
+                        &mapper_local_task_id,
+                        &mapper_request,
+                        message,
+                    );
+                }
+            });
             let route_handler = handler.clone();
             let route_local_task_id = turn_local_task_id.clone();
-            let route_request = request.clone();
             let thread_started: CodexThreadStartedCallback = Box::new(move |thread_id| {
-                route_handler.register_thread_event_route(
-                    &thread_id,
-                    route_local_task_id,
-                    route_request,
-                    true,
-                );
+                route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
             });
             let result = handler
                 .codex_app_server
@@ -1407,7 +1411,7 @@ impl RuntimeWorkRpcHandler {
                         resume_thread_id,
                         initial_thread_name,
                         initial_thread_goal,
-                        notifications: None,
+                        notifications: Some(notification_tx),
                         cancellation: Some(cancel_rx),
                         request_user_input_answers: Some(request_user_input_rx),
                         thread_started: Some(thread_started),
@@ -1416,6 +1420,7 @@ impl RuntimeWorkRpcHandler {
                 .await;
 
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                let _ = mapper_handle.await;
                 handler.clear_active_turn_cancellation(&turn_local_task_id);
                 handler.unmark_active_local_task(&turn_local_task_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
@@ -1426,6 +1431,7 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
 
+            let _ = mapper_handle.await;
             handler.handle_turn_result(&turn_local_task_id, &request, result);
             if let Ok(mut requests) = handler.active_request_user_inputs.lock() {
                 requests.remove(&turn_local_task_id);
@@ -1451,6 +1457,12 @@ impl RuntimeWorkRpcHandler {
                     ExecutionOutcome::Running => "running",
                 };
                 let thread_id = turn.thread_id.clone();
+                self.register_thread_event_route(
+                    &thread_id,
+                    local_task_id.to_owned(),
+                    request.clone(),
+                    false,
+                );
                 self.finish_local_task(local_task_id, Some(thread_id.clone()), status);
                 self.mark_thread_event_route_idle(&thread_id);
                 self.register_codex_thread_workspace_root(&thread_id, request);
@@ -1636,6 +1648,9 @@ impl RuntimeWorkRpcHandler {
             debug_unrouted_codex_notification(&message, "missing_route");
             return;
         };
+        if self.is_active_local_task(&route.local_task_id) {
+            return;
+        }
 
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
             self.register_codex_thread_workspace_root(&started_thread_id, &route.request);
@@ -1688,6 +1703,7 @@ impl RuntimeWorkRpcHandler {
         routes.insert(thread_id.to_owned(), route);
     }
 
+    #[cfg(test)]
     fn register_pending_thread_event_route(
         &self,
         local_task_id: String,
@@ -1707,6 +1723,17 @@ impl RuntimeWorkRpcHandler {
             pending_id,
             RuntimeThreadEventRoute::new(local_task_id, request, true),
         );
+    }
+
+    fn record_local_task_thread(&self, local_task_id: &str, thread_id: &str) {
+        if thread_id.trim().is_empty() {
+            return;
+        }
+        self.store.update_task(local_task_id, |link| {
+            link.thread_id = Some(thread_id.to_owned());
+            link.updated_at = now_ms();
+        });
+        self.thread_list_cache.invalidate();
     }
 
     fn register_thread_event_route_for_link(&self, link: &RuntimeTaskLink, active: bool) {
@@ -3579,6 +3606,63 @@ mod tests {
             .local_task_link(&local_task_id)
             .expect("local task should be stored");
         assert_eq!(link.thread_id.as_deref(), Some("thread-1"));
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn active_local_task_skips_global_notification_route() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let index_path = temp_runtime_work_index_path("active-local-task-route");
+        let mut handler =
+            RuntimeWorkRpcHandler::with_event_sender("device-1", "/bin/false", event_tx);
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-task-1";
+        let request = ExecutionRequest {
+            task_id: local_task_id.to_owned(),
+            subtask_id: "runtime-subtask-1".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut link = RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        handler.upsert_local_task(link);
+        handler.mark_active_local_task(local_task_id);
+        handler.register_thread_event_route("thread-1", local_task_id.to_owned(), request, true);
+
+        handler.route_codex_notification(json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "delta": "Hi",
+                "itemId": "msg-1",
+                "threadId": "thread-1",
+                "turnId": "turn-1"
+            }
+        }));
+
+        assert!(event_rx.try_recv().is_err());
+
+        handler.unmark_active_local_task(local_task_id);
+        handler.route_codex_notification(json!({
+            "method": "item/agentMessage/delta",
+            "params": {
+                "delta": "Hi",
+                "itemId": "msg-1",
+                "threadId": "thread-1",
+                "turnId": "turn-1"
+            }
+        }));
+
+        let event = event_rx
+            .try_recv()
+            .expect("idle route should emit notification");
+        assert_eq!(event["event"], "response.output_text.delta");
+        assert_eq!(event["payload"]["taskId"], local_task_id);
+        assert_eq!(event["payload"]["subtaskId"], "runtime-subtask-1");
+        assert_eq!(event["payload"]["data"]["delta"], "Hi");
 
         let _ = fs::remove_file(index_path);
     }
