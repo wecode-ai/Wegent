@@ -201,10 +201,11 @@ export function RemoteTerminal({
 
   return (
     <div
-      ref={containerRef}
       data-testid={testIdsEnabled ? 'remote-terminal' : undefined}
-      className="h-full min-h-0 w-full flex-1 overflow-hidden bg-background px-2 py-2"
+      className="h-full min-h-0 w-full flex-1 overflow-hidden bg-background px-2 pb-4 pt-2"
       hidden={!active}
-    />
+    >
+      <div ref={containerRef} className="h-full min-h-0 w-full overflow-hidden" />
+    </div>
   )
 }

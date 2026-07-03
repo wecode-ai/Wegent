@@ -179,7 +179,7 @@ describe('pendingRequestUserInputPayload', () => {
         blocks: [
           {
             id: 'plan-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'plan',
             content: '# 整理环境计划\n\n- 整理下载目录。',
             status: 'done',
@@ -218,7 +218,7 @@ describe('pendingRequestUserInputPayload', () => {
         blocks: [
           {
             id: 'plan-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'plan',
             content: '# 整理环境计划',
             status: 'done',
@@ -247,7 +247,7 @@ describe('pendingRequestUserInputPayload', () => {
         blocks: [
           {
             id: 'plan-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'plan',
             content: '# 整理环境计划',
             status: 'done',

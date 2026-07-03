@@ -63,9 +63,9 @@ where
     Silent,
     Streaming {
         sink: S,
-        builder: ResponsesEventBuilder,
-        task_id: i64,
-        subtask_id: i64,
+        builder: Box<ResponsesEventBuilder>,
+        task_id: String,
+        subtask_id: String,
     },
 }
 
@@ -86,9 +86,9 @@ where
                     spec,
                     timeout_seconds,
                     sink.clone(),
-                    builder.clone(),
-                    *task_id,
-                    *subtask_id,
+                    builder.as_ref().clone(),
+                    task_id.clone(),
+                    subtask_id.clone(),
                 )
                 .await
             }
@@ -257,8 +257,8 @@ impl AgentEngine for StreamProcessEngine {
                 timeout_seconds,
                 sink.clone(),
                 builder.clone(),
-                request.task_id,
-                request.subtask_id,
+                request.task_id.clone(),
+                request.subtask_id.clone(),
             )
             .await
             {
@@ -269,9 +269,9 @@ impl AgentEngine for StreamProcessEngine {
                     }
                     let follow_up_runner = FollowUpCommandRunner::Streaming {
                         sink,
-                        builder,
-                        task_id: request.task_id,
-                        subtask_id: request.subtask_id,
+                        builder: Box::new(builder),
+                        task_id: request.task_id.clone(),
+                        subtask_id: request.subtask_id.clone(),
                     };
                     let summary = handle_retryable_api_errors(
                         spec.clone(),
@@ -309,7 +309,7 @@ async fn handle_retryable_api_errors(
     timeout_seconds: u64,
     runner: FollowUpCommandRunner<impl EventSink>,
 ) -> crate::stream::ClaudeStreamSummary {
-    let fields = task_fields(request.task_id, request.subtask_id);
+    let fields = task_fields(&request.task_id, &request.subtask_id);
     let mut retry_count = 0;
     while summary.retryable_api_error && retry_count < MAX_API_ERROR_RETRIES {
         let Some(session_id) = summary.session_id.clone() else {
@@ -358,7 +358,7 @@ async fn handle_deferred_mcp_loop(
     let mcp_servers = mcp_servers_from_spec(&base_spec).unwrap_or(Value::Null);
     let mut retry_count = 0;
     let mut stale_answer_defer_drained = false;
-    let fields = task_fields(request.task_id, request.subtask_id);
+    let fields = task_fields(&request.task_id, &request.subtask_id);
 
     loop {
         let Some(deferred_tool_use) = summary.deferred_tool_use.clone() else {
@@ -605,8 +605,8 @@ async fn run_streaming_command_output<S>(
     timeout_seconds: u64,
     sink: S,
     builder: ResponsesEventBuilder,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: String,
+    subtask_id: String,
 ) -> CommandOutcome
 where
     S: EventSink,
@@ -633,7 +633,7 @@ where
     let mut fields = command_log_fields(&spec);
     fields.push(("timeout_seconds", timeout_seconds.to_string()));
     let debug_stdout_path =
-        debug_claude_stdout_path_for_spec(&spec, Some(task_id), Some(subtask_id));
+        debug_claude_stdout_path_for_spec(&spec, Some(&task_id), Some(&subtask_id));
     if let Some(path) = debug_stdout_path.as_ref() {
         fields.push(("debug_stdout_path", path.display().to_string()));
     }
@@ -646,8 +646,8 @@ where
             spec.stdin.clone(),
             sink,
             builder,
-            task_id,
-            subtask_id,
+            task_id.clone(),
+            subtask_id.clone(),
             debug_stdout_path,
         ),
     )
@@ -662,7 +662,8 @@ where
     };
     fields.push(("elapsed_ms", started.elapsed().as_millis().to_string()));
     fields.extend(command_outcome_fields(&outcome));
-    if let Some(path) = debug_claude_stdout_path_for_spec(&spec, Some(task_id), Some(subtask_id)) {
+    if let Some(path) = debug_claude_stdout_path_for_spec(&spec, Some(&task_id), Some(&subtask_id))
+    {
         fields.push(("debug_stdout_path", path.display().to_string()));
     }
     log_executor_event("process finished", &fields);
@@ -674,8 +675,8 @@ async fn run_prepared_streaming_command<S>(
     stdin: Option<String>,
     sink: S,
     builder: ResponsesEventBuilder,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: String,
+    subtask_id: String,
     debug_stdout_path: Option<PathBuf>,
 ) -> CommandOutcome
 where
@@ -745,8 +746,8 @@ async fn read_streaming_stdout<R, S>(
     stdout: R,
     sink: S,
     builder: ResponsesEventBuilder,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: String,
+    subtask_id: String,
     debug_stdout_path: Option<PathBuf>,
 ) -> String
 where
@@ -770,11 +771,11 @@ where
         };
         if let Some(reasoning) = extract_reasoning(&value) {
             if !reasoning.is_empty() {
-                emit_reasoning_chunks(&sink, &builder, &reasoning, task_id, subtask_id).await;
+                emit_reasoning_chunks(&sink, &builder, &reasoning, &task_id, &subtask_id).await;
             }
         }
         for tool_use in extract_claude_tool_uses(&value) {
-            emit_claude_tool_use(&sink, &builder, &tool_use, task_id, subtask_id).await;
+            emit_claude_tool_use(&sink, &builder, &tool_use, &task_id, &subtask_id).await;
             tool_uses.insert(tool_use.id.clone(), tool_use);
         }
         for tool_result in extract_claude_tool_results(&value) {
@@ -791,8 +792,8 @@ where
                 &tool_use,
                 tool_result.content.as_deref(),
                 tool_result.is_error,
-                task_id,
-                subtask_id,
+                &task_id,
+                &subtask_id,
             )
             .await;
         }
@@ -803,7 +804,7 @@ where
             continue;
         }
         let emitted =
-            emit_text_chunks(&sink, &builder, &text, &mut offset, task_id, subtask_id).await;
+            emit_text_chunks(&sink, &builder, &text, &mut offset, &task_id, &subtask_id).await;
         let fields = vec![
             ("task_id", task_id.to_string()),
             ("subtask_id", subtask_id.to_string()),
@@ -819,8 +820,8 @@ async fn emit_claude_tool_use<S>(
     sink: &S,
     builder: &ResponsesEventBuilder,
     tool_use: &ClaudeToolUse,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: &str,
+    subtask_id: &str,
 ) where
     S: EventSink,
 {
@@ -842,8 +843,8 @@ async fn emit_claude_tool_result<S>(
     tool_use: &ClaudeToolUse,
     output: Option<&str>,
     is_error: bool,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: &str,
+    subtask_id: &str,
 ) where
     S: EventSink,
 {
@@ -864,8 +865,8 @@ async fn emit_reasoning_chunks<S>(
     sink: &S,
     builder: &ResponsesEventBuilder,
     reasoning: &str,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: &str,
+    subtask_id: &str,
 ) where
     S: EventSink,
 {
@@ -901,8 +902,8 @@ async fn emit_text_chunks<S>(
     builder: &ResponsesEventBuilder,
     text: &str,
     offset: &mut usize,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: &str,
+    subtask_id: &str,
 ) -> usize
 where
     S: EventSink,
@@ -1078,8 +1079,8 @@ fn preview_log_value(value: &str) -> String {
 fn debug_claude_stdout_fields(
     spec: &CommandSpec,
     outcome: &CommandOutcome,
-    task_id: Option<i64>,
-    subtask_id: Option<i64>,
+    task_id: Option<&str>,
+    subtask_id: Option<&str>,
 ) -> Vec<(&'static str, String)> {
     let Some(path) = debug_claude_stdout_path_for_spec(spec, task_id, subtask_id) else {
         return Vec::new();
@@ -1113,8 +1114,8 @@ fn append_debug_claude_stdout(path: &PathBuf, stdout: &str) -> std::io::Result<(
 
 fn debug_claude_stdout_path_for_spec(
     spec: &CommandSpec,
-    task_id: Option<i64>,
-    subtask_id: Option<i64>,
+    task_id: Option<&str>,
+    subtask_id: Option<&str>,
 ) -> Option<PathBuf> {
     (spec.program == "claude" && env_flag_enabled(DEBUG_CLAUDE_STDOUT_ENV))
         .then(|| debug_claude_stdout_path(task_id, subtask_id))
@@ -1129,7 +1130,7 @@ fn env_flag_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn debug_claude_stdout_path(task_id: Option<i64>, subtask_id: Option<i64>) -> PathBuf {
+fn debug_claude_stdout_path(task_id: Option<&str>, subtask_id: Option<&str>) -> PathBuf {
     let filename = match (task_id, subtask_id) {
         (Some(task_id), Some(subtask_id)) => {
             format!("wegent-claude-stdout-{task_id}-{subtask_id}.jsonl")
@@ -1207,10 +1208,10 @@ mod tests {
     fn debug_claude_stdout_appends_existing_task_log() {
         let _lock = env_lock();
         let _debug = EnvGuard::set(DEBUG_CLAUDE_STDOUT_ENV, "1");
-        let task_id = i64::from(std::process::id());
-        let subtask_id = 987_654_321;
+        let task_id = std::process::id().to_string();
+        let subtask_id = "987654321".to_owned();
         let spec = CommandSpec::new("claude");
-        let path = debug_claude_stdout_path(Some(task_id), Some(subtask_id));
+        let path = debug_claude_stdout_path(Some(&task_id), Some(&subtask_id));
         let _ = fs::remove_file(&path);
 
         debug_claude_stdout_fields(
@@ -1218,16 +1219,16 @@ mod tests {
             &CommandOutcome::Success {
                 stdout: "first".to_owned(),
             },
-            Some(task_id),
-            Some(subtask_id),
+            Some(&task_id),
+            Some(&subtask_id),
         );
         debug_claude_stdout_fields(
             &spec,
             &CommandOutcome::Success {
                 stdout: "second".to_owned(),
             },
-            Some(task_id),
-            Some(subtask_id),
+            Some(&task_id),
+            Some(&subtask_id),
         );
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "first\nsecond\n");
@@ -1240,7 +1241,7 @@ mod tests {
         let _debug = EnvGuard::remove(DEBUG_CLAUDE_STDOUT_ENV);
         let spec = CommandSpec::new("claude");
 
-        assert!(debug_claude_stdout_path_for_spec(&spec, Some(1), Some(2)).is_none());
+        assert!(debug_claude_stdout_path_for_spec(&spec, Some("1"), Some("2")).is_none());
     }
 
     #[test]

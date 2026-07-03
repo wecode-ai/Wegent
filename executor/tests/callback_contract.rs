@@ -65,11 +65,25 @@ async fn callback_sink_returns_status_and_url_for_non_success_response() {
     assert!(error.contains(&url));
 }
 
+#[tokio::test]
+async fn callback_sink_rejects_non_numeric_backend_task_identity() {
+    let sink = CallbackSink::new("http://127.0.0.1:9/callback").unwrap();
+    let error = sink
+        .send(EventEnvelope {
+            task_id: "runtime-task".to_owned(),
+            ..sample_event()
+        })
+        .await
+        .unwrap_err();
+
+    assert!(error.contains("callback task identity is not numeric"));
+}
+
 fn sample_event() -> EventEnvelope {
     EventEnvelope {
         event_type: "response.created".to_owned(),
-        task_id: 1,
-        subtask_id: 2,
+        task_id: "1".to_owned(),
+        subtask_id: "2".to_owned(),
         data: json!({"type": "response.created"}),
         message_id: None,
         executor_name: None,

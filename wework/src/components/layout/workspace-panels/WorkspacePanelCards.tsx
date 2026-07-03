@@ -205,7 +205,9 @@ export function WorkspacePanelCards({
   )
   const projectTerminalAvailable =
     localTerminalLaunchable ||
-    (!localTerminalSupported && Boolean(currentProject) && remoteTerminalAvailable)
+    (!localTerminalSupported &&
+      (Boolean(currentProject) || Boolean(workspaceSource === 'runtime' && activeWorkspacePath)) &&
+      remoteTerminalAvailable)
   const projectIdeAvailable = cloudToolsAvailable || localIdeLaunchable
   const hasLimitedProjectTools = Boolean(
     hasWorkspaceContext &&

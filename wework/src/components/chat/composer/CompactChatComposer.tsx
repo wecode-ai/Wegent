@@ -91,6 +91,14 @@ export function CompactChatComposer({
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
   const explicitLineCount = value.split('\n').length
+  const handleShowTextAttachment = (attachment: Attachment) => {
+    const text = attachment.text_content
+    if (!text) return
+
+    onChange(value ? `${value}\n${text}` : text)
+    onRemoveAttachment(attachment.id)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
@@ -145,6 +153,7 @@ export function CompactChatComposer({
         errors={attachmentErrors}
         codeComments={codeComments}
         onRemoveAttachment={onRemoveAttachment}
+        onShowTextAttachment={handleShowTextAttachment}
         onClearCodeComments={onClearCodeComments}
       />
       <input

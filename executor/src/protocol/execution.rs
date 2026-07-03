@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
 pub const FULL_KB_TOOL_ACCESS_MODE: &str = "full";
@@ -27,9 +27,10 @@ pub struct KnowledgeBaseScope {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExecutionRequest {
-    pub task_id: i64,
-    #[serde(alias = "turn_id")]
-    pub subtask_id: i64,
+    #[serde(default, deserialize_with = "deserialize_id_string")]
+    pub task_id: String,
+    #[serde(default, alias = "turn_id", deserialize_with = "deserialize_id_string")]
+    pub subtask_id: String,
     pub team_namespace: Option<String>,
     pub bot: Value,
     pub model_config: Value,
@@ -60,11 +61,25 @@ pub struct ExecutionRequest {
     pub extra: Map<String, Value>,
 }
 
+fn deserialize_id_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Value::deserialize(deserializer)? {
+        Value::String(value) => Ok(value),
+        Value::Number(value) => Ok(value.to_string()),
+        Value::Null => Ok(String::new()),
+        other => Err(de::Error::custom(format!(
+            "expected string or number id, got {other}"
+        ))),
+    }
+}
+
 impl Default for ExecutionRequest {
     fn default() -> Self {
         Self {
-            task_id: 0,
-            subtask_id: 0,
+            task_id: String::new(),
+            subtask_id: String::new(),
             team_namespace: None,
             bot: Value::Array(Vec::new()),
             model_config: Value::Object(Default::default()),
@@ -182,4 +197,34 @@ fn value_string(value: Option<&Value>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExecutionRequest;
+    use serde_json::json;
+
+    #[test]
+    fn deserializes_numeric_task_identity_as_strings() {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "task_id": 123,
+            "subtask_id": 456
+        }))
+        .expect("numeric task identity should deserialize");
+
+        assert_eq!(request.task_id, "123");
+        assert_eq!(request.subtask_id, "456");
+    }
+
+    #[test]
+    fn deserializes_string_task_identity_as_strings() {
+        let request: ExecutionRequest = serde_json::from_value(json!({
+            "task_id": "task-123",
+            "subtask_id": "subtask-456"
+        }))
+        .expect("string task identity should deserialize");
+
+        assert_eq!(request.task_id, "task-123");
+        assert_eq!(request.subtask_id, "subtask-456");
+    }
 }

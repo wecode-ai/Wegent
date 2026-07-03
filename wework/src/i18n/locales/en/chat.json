@@ -66,6 +66,7 @@
     "review": "Review",
     "review_title": "Changes from this turn",
     "preview_file_label": "Preview file changes for {{path}}",
+    "copy_code": "Copy code",
     "revert": "Revert",
     "confirm_revert_title": "Revert this turn's file changes?",
     "confirm_revert_description": "The workspace changes only when the reverse patch applies safely. Later changes are never overwritten.",
@@ -159,7 +160,7 @@
       },
       "container_error": {
         "title": "Task service error",
-        "description": "The container or local task service is temporarily unavailable. Try again later."
+        "description": "The container or runtime task service is temporarily unavailable. Try again later."
       },
       "content_filter": {
         "title": "Content triggered security review and was rejected",

@@ -63,6 +63,13 @@ function stringField(record: Record<string, unknown>, key: string): string | und
   return typeof value === 'string' ? value : undefined
 }
 
+function idField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  if (typeof value === 'string' && value.trim()) return value
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return undefined
+}
+
 function numberField(record: Record<string, unknown>, key: string): number {
   const value = record[key]
   return typeof value === 'number' ? value : 0
@@ -78,11 +85,11 @@ function recordField(record: Record<string, unknown>, key: string): Record<strin
 }
 
 function eventBase(payload: Record<string, unknown>) {
+  const data = eventResult(payload)
   return {
-    task_id: numberField(payload, 'task_id'),
-    subtask_id: numberField(payload, 'subtask_id'),
-    device_id: stringField(payload, 'device_id'),
-    local_task_id: stringField(payload, 'local_task_id'),
+    taskId: idField(payload, 'taskId') ?? idField(data, 'taskId'),
+    subtaskId: idField(payload, 'subtaskId') ?? idField(data, 'subtaskId'),
+    deviceId: stringField(payload, 'deviceId') ?? stringField(data, 'deviceId'),
   }
 }
 
@@ -144,7 +151,7 @@ function completedResult(data: Record<string, unknown>): Record<string, unknown>
   const response = recordField(data, 'response')
   const fileChanges = response.file_changes ?? response.fileChanges ?? data.file_changes
   if (typeof fileChanges === 'object' && fileChanges !== null && !Array.isArray(fileChanges)) {
-    result.file_changes = fileChanges
+    result.fileChanges = fileChanges
   }
   const blocks = response.blocks ?? data.blocks
   if (Array.isArray(blocks)) {
@@ -252,10 +259,16 @@ function emitBlockCreated(
   state: ResponseApiStreamState
 ): void {
   const item = responseToolItem(data)
-  if (!isToolItem(item)) return
+  if (!isToolItem(item)) {
+    warnDroppedResponseBlock('response.output_item.added', 'not_tool_item', base, data)
+    return
+  }
 
   const callId = callIdFromItem(item)
-  if (!callId) return
+  if (!callId) {
+    warnDroppedResponseBlock('response.output_item.added', 'missing_call_id', base, data)
+    return
+  }
 
   const toolInput = toolInputFrom(data, item)
   const toolName = normalizeToolName(item)
@@ -277,19 +290,23 @@ function emitBlockCreated(
 
 function emitBlockUpdated(
   handlers: ChatStreamHandlers,
+  eventName: string,
   base: ReturnType<typeof eventBase>,
   blockId: string | undefined,
   updates: {
     status?: ChatBlock['status'] | 'running'
-    tool_input?: Record<string, unknown>
-    tool_output?: unknown
+    toolInput?: Record<string, unknown>
+    toolOutput?: unknown
     content?: string
   }
 ): void {
-  if (!blockId) return
+  if (!blockId) {
+    warnDroppedResponseBlock(eventName, 'missing_block_id', base, { updates })
+    return
+  }
   handlers.onBlockUpdated?.({
     ...base,
-    block_id: blockId,
+    blockId,
     ...updates,
   })
 }
@@ -309,9 +326,9 @@ function emitToolArgumentsUpdate(
   const nextInput = Object.keys(toolInput).length > 0 ? toolInput : previous.input
   state.toolContexts.set(callId, { ...previous, input: nextInput })
 
-  emitBlockUpdated(handlers, base, callId, {
+  emitBlockUpdated(handlers, 'response.function_call_arguments', base, callId, {
     status,
-    ...(nextInput && { tool_input: nextInput }),
+    ...(nextInput && { toolInput: nextInput }),
   })
 }
 
@@ -331,10 +348,10 @@ function emitToolDone(
   const toolOutput = item.output ?? data.output ?? data.failure_reason
   const status = toolStatusFromItem(item, data.failure_reason ? 'error' : 'done')
 
-  emitBlockUpdated(handlers, base, callId, {
+  emitBlockUpdated(handlers, 'response.output_item.done', base, callId, {
     status,
-    ...(nextInput && { tool_input: nextInput }),
-    ...(toolOutput !== undefined && { tool_output: toolOutput }),
+    ...(nextInput && { toolInput: nextInput }),
+    ...(toolOutput !== undefined && { toolOutput }),
   })
 
   state.toolContexts.delete(callId)
@@ -346,7 +363,10 @@ function emitResponseBlockCreated(
   data: Record<string, unknown>
 ): void {
   const block = data.block
-  if (typeof block !== 'object' || block === null || Array.isArray(block)) return
+  if (typeof block !== 'object' || block === null || Array.isArray(block)) {
+    warnDroppedResponseBlock('response.block.created', 'invalid_block', base, data)
+    return
+  }
   handlers.onBlockCreated?.({
     ...base,
     block: block as ChatBlock,
@@ -359,14 +379,56 @@ function emitResponseBlockUpdated(
   data: Record<string, unknown>
 ): void {
   const updates = recordField(data, 'updates')
-  const toolInput = parseRecord(updates.tool_input)
-  emitBlockUpdated(handlers, base, stringField(data, 'block_id'), {
-    ...(typeof updates.content === 'string' && { content: updates.content }),
-    ...(typeof updates.tool_output !== 'undefined' && { tool_output: updates.tool_output }),
-    ...(toolInput && { tool_input: toolInput }),
-    ...(typeof updates.status === 'string' && {
-      status: updates.status as ChatBlock['status'],
-    }),
+  const toolInput = parseRecord(updates.toolInput ?? updates.tool_input)
+  emitBlockUpdated(
+    handlers,
+    'response.block.updated',
+    base,
+    stringField(data, 'blockId') ?? stringField(data, 'block_id'),
+    {
+      ...(typeof updates.content === 'string' && { content: updates.content }),
+      ...(typeof (updates.toolOutput ?? updates.tool_output) !== 'undefined' && {
+        toolOutput: updates.toolOutput ?? updates.tool_output,
+      }),
+      ...(toolInput && { toolInput }),
+      ...(typeof updates.status === 'string' && {
+        status: updates.status as ChatBlock['status'],
+      }),
+    }
+  )
+}
+
+function warnDroppedResponseBlock(
+  event: string,
+  reason: string,
+  base: ReturnType<typeof eventBase>,
+  data: Record<string, unknown>
+): void {
+  console.warn('[Wework] Dropped response block event', {
+    event,
+    reason,
+    taskId: base.taskId,
+    subtaskId: base.subtaskId,
+    deviceId: base.deviceId,
+    dataKeys: Object.keys(data).sort(),
+    blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
+    itemType: stringField(recordField(data, 'item'), 'type'),
+  })
+}
+
+function warnDroppedResponseDelta(
+  event: string,
+  reason: string,
+  base: ReturnType<typeof eventBase>,
+  data: Record<string, unknown>
+): void {
+  console.warn('[Wework] Dropped response delta event', {
+    event,
+    reason,
+    taskId: base.taskId,
+    subtaskId: base.subtaskId,
+    deviceId: base.deviceId,
+    dataKeys: Object.keys(data).sort(),
   })
 }
 
@@ -380,12 +442,12 @@ function emitSubagentActivity(
 
   handlers.onSubagentActivity?.({
     ...base,
-    agent_path: agentPath,
-    agent_name: stringField(data, 'agent_name') ?? stringField(data, 'agentName'),
-    agent_thread_id: stringField(data, 'agent_thread_id') ?? stringField(data, 'agentThreadId'),
+    agentPath,
+    agentName: stringField(data, 'agent_name') ?? stringField(data, 'agentName'),
+    agentThreadId: stringField(data, 'agent_thread_id') ?? stringField(data, 'agentThreadId'),
     kind: stringField(data, 'kind'),
     status: stringField(data, 'status'),
-    occurred_at_ms:
+    occurredAtMs:
       optionalNumberField(data, 'occurred_at_ms') ?? optionalNumberField(data, 'occurredAtMs'),
   })
 }
@@ -416,14 +478,17 @@ export function emitResponseApiEvent(
   if (eventName === 'response.created' || eventName === 'response.in_progress') {
     handlers.onChatStart?.({
       ...base,
-      shell_type: stringField(payload, 'runtime'),
+      shellType: stringField(payload, 'runtime'),
     })
     return
   }
 
   if (eventName === 'response.output_text.delta' || eventName === 'response.refusal.delta') {
     const content = eventContent(payload)
-    if (!content) return
+    if (!content) {
+      warnDroppedResponseDelta(eventName, 'empty_text_delta', base, data)
+      return
+    }
     handlers.onChatChunk?.({
       ...base,
       content,
@@ -438,12 +503,15 @@ export function emitResponseApiEvent(
     eventName === 'response.reasoning_summary_part.added'
   ) {
     const content = reasoningContent(eventName, data)
-    if (!content) return
+    if (!content) {
+      warnDroppedResponseDelta(eventName, 'empty_reasoning_delta', base, data)
+      return
+    }
     handlers.onChatChunk?.({
       ...base,
       content: '',
       offset: numberField(payload, 'offset'),
-      result: { reasoning_chunk: content },
+      result: { reasoningChunk: content },
     })
     return
   }
@@ -466,7 +534,7 @@ export function emitResponseApiEvent(
   if (eventName === 'runtime.goal.updated') {
     handlers.onRuntimeGoalUpdated?.({
       ...base,
-      thread_id: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
+      threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
       goal: (data.goal ?? null) as RuntimeGoal | null,
     })
     return
@@ -475,7 +543,7 @@ export function emitResponseApiEvent(
   if (eventName === 'runtime.goal.cleared') {
     handlers.onRuntimeGoalCleared?.({
       ...base,
-      thread_id: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
+      threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
       goal: null,
     })
     return

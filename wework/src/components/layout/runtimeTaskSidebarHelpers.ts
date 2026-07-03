@@ -1,19 +1,19 @@
-import type { LocalTaskSummary, RuntimeDeviceWorkspace, RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeTaskSummary, RuntimeDeviceWorkspace, RuntimeTaskAddress } from '@/types/api'
 
 export interface RuntimeSidebarTaskItem {
   workspace: RuntimeDeviceWorkspace
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
   pinned?: boolean
 }
 
 export const RUNTIME_PROJECT_TASK_PREVIEW_LIMIT = 5
 export const RUNTIME_PROJECT_TASK_EXPAND_STEP = 10
 
-export function getRuntimeTaskTime(task: LocalTaskSummary) {
+export function getRuntimeTaskTime(task: RuntimeTaskSummary) {
   return task.updatedAt || task.createdAt || undefined
 }
 
-export function sortRuntimeTasks(tasks: LocalTaskSummary[] = []) {
+export function sortRuntimeTasks(tasks: RuntimeTaskSummary[] = []) {
   return [...tasks].sort((left, right) => {
     const leftTime = new Date(getRuntimeTaskTime(left) || 0).getTime()
     const rightTime = new Date(getRuntimeTaskTime(right) || 0).getTime()
@@ -33,7 +33,7 @@ export function getRuntimeSidebarTaskItems(
   workspaces: RuntimeDeviceWorkspace[] = []
 ): RuntimeSidebarTaskItem[] {
   return sortRuntimeTaskItems(
-    workspaces.flatMap(workspace => workspace.localTasks.map(task => ({ workspace, task })))
+    workspaces.flatMap(workspace => workspace.tasks.map(task => ({ workspace, task })))
   )
 }
 
@@ -105,7 +105,7 @@ function isRuntimeWorktreeWorkspace(workspace: RuntimeDeviceWorkspace) {
 
 export function getRuntimeTaskWorkspacePath(
   workspace: RuntimeDeviceWorkspace,
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
 ) {
   if (isRuntimeWorktreeWorkspace(workspace)) return workspace.workspacePath
   return task.workspacePath || workspace.workspacePath
@@ -113,24 +113,25 @@ export function getRuntimeTaskWorkspacePath(
 
 export function getRuntimeTaskAddress(
   workspace: RuntimeDeviceWorkspace,
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
 ): RuntimeTaskAddress {
   return {
     deviceId: workspace.deviceId,
+    taskId: task.taskId,
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
-    localTaskId: task.localTaskId,
+    ...(task.taskId ? { taskId: task.taskId } : {}),
     ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
   }
 }
 
-export function isRuntimeWorktreeTask(task: LocalTaskSummary) {
+export function isRuntimeWorktreeTask(task: RuntimeTaskSummary) {
   return task.workspaceKind === 'worktree' || Boolean(task.worktreeId)
 }
 
 export function isRuntimeChatWorkspace(workspace: RuntimeDeviceWorkspace) {
   return (
     workspace.workspaceKind === 'chat' ||
-    workspace.localTasks.some(task => task.workspaceKind === 'chat') ||
+    workspace.tasks.some(task => task.workspaceKind === 'chat') ||
     isRuntimeChatPath(workspace.workspacePath)
   )
 }
@@ -169,14 +170,14 @@ function partitionRuntimeSidebarTaskItems(items: RuntimeSidebarTaskItem[]) {
 export function isRuntimeTaskSelected(
   currentRuntimeTask: RuntimeTaskAddress | null | undefined,
   workspace: RuntimeDeviceWorkspace,
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
 ) {
   const taskAddress = getRuntimeTaskAddress(workspace, task)
   const currentPath = currentRuntimeTask?.workspacePath?.trim()
   const taskPath = taskAddress.workspacePath?.trim()
   return (
     currentRuntimeTask?.deviceId === taskAddress.deviceId &&
-    currentRuntimeTask.localTaskId === taskAddress.localTaskId &&
+    currentRuntimeTask.taskId === taskAddress.taskId &&
     (!currentPath || !taskPath || currentPath === taskPath)
   )
 }

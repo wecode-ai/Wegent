@@ -140,8 +140,8 @@ async fn background_runner_emits_error_event_for_failed_outcome() {
 
 fn task_request() -> ExecutionRequest {
     ExecutionRequest {
-        task_id: 1,
-        subtask_id: 2,
+        task_id: "1".to_owned(),
+        subtask_id: "2".to_owned(),
         system_prompt: "system".to_owned(),
         ..ExecutionRequest::default()
     }

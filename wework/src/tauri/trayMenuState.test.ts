@@ -1,11 +1,15 @@
 import { describe, expect, test } from 'vitest'
-import type { LocalTaskSummary, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  RuntimeTaskSummary,
+  RuntimeDeviceWorkspace,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import { buildTrayMenuTaskGroups } from './trayMenuState'
 import { parseTrayTaskMenuId } from './trayTaskMenuId'
 
-function task(overrides: Partial<LocalTaskSummary>): LocalTaskSummary {
+function task(overrides: Partial<RuntimeTaskSummary>): RuntimeTaskSummary {
   return {
-    localTaskId: 'task',
+    taskId: 'task',
     workspacePath: '/workspace/project',
     title: 'Task',
     runtime: 'codex',
@@ -18,7 +22,7 @@ function workspace(overrides: Partial<RuntimeDeviceWorkspace>): RuntimeDeviceWor
     deviceId: 'device-a',
     available: true,
     workspacePath: '/workspace/project',
-    localTasks: [],
+    tasks: [],
     ...overrides,
   }
 }
@@ -27,7 +31,7 @@ function runtimeWork(overrides: Partial<RuntimeWorkListResponse>): RuntimeWorkLi
   return {
     projects: [],
     chats: [],
-    totalLocalTasks: 0,
+    totalTasks: 0,
     ...overrides,
   }
 }
@@ -44,28 +48,28 @@ describe('buildTrayMenuTaskGroups', () => {
           },
           deviceWorkspaces: [
             workspace({
-              localTasks: [
+              tasks: [
                 task({
-                  localTaskId: 'old',
+                  taskId: 'old',
                   title: 'Older task',
                   updatedAt: '2026-01-01T00:00:00Z',
                 }),
                 task({
-                  localTaskId: 'running',
+                  taskId: 'running',
                   title: 'Running task',
                   updatedAt: '2026-01-04T00:00:00Z',
                   running: true,
                 }),
                 task({
-                  localTaskId: 'pinned',
+                  taskId: 'pinned',
                   title: 'Pinned task',
                   updatedAt: '2026-01-03T00:00:00Z',
                   pinned: true,
-                } as LocalTaskSummary),
+                } as RuntimeTaskSummary),
               ],
             }),
           ],
-          totalLocalTasks: 3,
+          totalTasks: 3,
         },
       ],
       chats: [
@@ -74,9 +78,9 @@ describe('buildTrayMenuTaskGroups', () => {
           deviceId: 'device-b',
           workspacePath: '/workspace/chats/chat-1',
           workspaceKind: 'chat',
-          localTasks: [
+          tasks: [
             task({
-              localTaskId: 'chat',
+              taskId: 'chat',
               workspacePath: '/workspace/chats/chat-1',
               workspaceKind: 'chat',
               title: 'Chat task',
@@ -85,7 +89,7 @@ describe('buildTrayMenuTaskGroups', () => {
           ],
         }),
       ],
-      totalLocalTasks: 4,
+      totalTasks: 4,
     })
 
     const groups = buildTrayMenuTaskGroups(work)
@@ -110,7 +114,7 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.running.map(item => parseTrayTaskMenuId(item.id))).toEqual([
       {
         deviceId: 'device-a',
-        localTaskId: 'running',
+        taskId: 'running',
       },
     ])
   })
@@ -120,9 +124,9 @@ describe('buildTrayMenuTaskGroups', () => {
       deviceId: 'device-b',
       workspacePath: '/workspace/chats/chat-1',
       workspaceKind: 'chat',
-      localTasks: [
+      tasks: [
         task({
-          localTaskId: 'chat',
+          taskId: 'chat',
           workspacePath: '/workspace/chats/chat-1',
           workspaceKind: 'chat',
           title: 'Chat task',
@@ -141,11 +145,11 @@ describe('buildTrayMenuTaskGroups', () => {
               name: 'Project 1',
             },
             deviceWorkspaces: [sharedWorkspace],
-            totalLocalTasks: 1,
+            totalTasks: 1,
           },
         ],
         chats: [sharedWorkspace],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       })
     )
 
@@ -164,20 +168,20 @@ describe('buildTrayMenuTaskGroups', () => {
             },
             deviceWorkspaces: [
               workspace({
-                localTasks: [1, 2, 3, 4].map(index =>
+                tasks: [1, 2, 3, 4].map(index =>
                   task({
-                    localTaskId: `pinned-${index}`,
+                    taskId: `pinned-${index}`,
                     title: `Pinned ${index}`,
                     updatedAt: `2026-01-0${index}T00:00:00Z`,
                     pinned: true,
-                  } as LocalTaskSummary)
+                  } as RuntimeTaskSummary)
                 ),
               }),
             ],
-            totalLocalTasks: 4,
+            totalTasks: 4,
           },
         ],
-        totalLocalTasks: 4,
+        totalTasks: 4,
       })
     )
 

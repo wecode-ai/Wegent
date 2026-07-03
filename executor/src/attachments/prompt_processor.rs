@@ -33,7 +33,7 @@ pub struct AttachmentRecord {
     pub local_path: Option<String>,
     pub file_size: Option<u64>,
     pub mime_type: Option<String>,
-    pub subtask_id: Option<i64>,
+    pub subtask_id: Option<String>,
     pub error: Option<String>,
 }
 
@@ -43,8 +43,8 @@ pub fn process_prompt(
     prompt: &Value,
     success_attachments: &[AttachmentRecord],
     failed_attachments: &[AttachmentRecord],
-    task_id: Option<i64>,
-    subtask_id: Option<i64>,
+    task_id: Option<String>,
+    subtask_id: Option<String>,
 ) -> Value {
     AttachmentPromptProcessor::process_prompt(
         prompt,
@@ -60,8 +60,8 @@ impl AttachmentPromptProcessor {
         prompt: &Value,
         success_attachments: &[AttachmentRecord],
         failed_attachments: &[AttachmentRecord],
-        task_id: Option<i64>,
-        subtask_id: Option<i64>,
+        task_id: Option<String>,
+        subtask_id: Option<String>,
     ) -> Value {
         match prompt {
             Value::String(text) => Value::String(Self::rewrite_text(
@@ -79,8 +79,8 @@ impl AttachmentPromptProcessor {
                             block,
                             success_attachments,
                             failed_attachments,
-                            task_id,
-                            subtask_id,
+                            task_id.clone(),
+                            subtask_id.clone(),
                         )
                     })
                     .collect(),
@@ -174,8 +174,8 @@ impl AttachmentPromptProcessor {
         block: &Value,
         success_attachments: &[AttachmentRecord],
         failed_attachments: &[AttachmentRecord],
-        task_id: Option<i64>,
-        subtask_id: Option<i64>,
+        task_id: Option<String>,
+        subtask_id: Option<String>,
     ) -> Value {
         let Some(object) = block.as_object() else {
             return block.clone();
@@ -206,8 +206,8 @@ impl AttachmentPromptProcessor {
         text: &str,
         success_attachments: &[AttachmentRecord],
         failed_attachments: &[AttachmentRecord],
-        task_id: Option<i64>,
-        subtask_id: Option<i64>,
+        task_id: Option<String>,
+        subtask_id: Option<String>,
     ) -> String {
         let mut processed = replace_attachment_refs(text, success_attachments, failed_attachments);
 
@@ -220,8 +220,8 @@ impl AttachmentPromptProcessor {
                 continue;
             };
             let Some(sandbox_path) = build_sandbox_path(
-                task_id,
-                attachment.subtask_id.or(subtask_id),
+                task_id.clone(),
+                attachment.subtask_id.clone().or_else(|| subtask_id.clone()),
                 &attachment.original_filename,
             ) else {
                 continue;
@@ -395,8 +395,8 @@ fn truncate_text_at_boundary(text: &str, max_bytes: usize) -> (String, bool) {
 }
 
 fn build_sandbox_path(
-    task_id: Option<i64>,
-    subtask_id: Option<i64>,
+    task_id: Option<String>,
+    subtask_id: Option<String>,
     filename: &str,
 ) -> Option<String> {
     Some(format!(

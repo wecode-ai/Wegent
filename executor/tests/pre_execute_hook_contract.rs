@@ -130,7 +130,7 @@ exit 0
     let result = hook
         .execute(context(
             "/tmp/test_task",
-            Some(456),
+            Some("456".to_owned()),
             Some("https://github.com/test/repo"),
         ))
         .await;
@@ -200,7 +200,7 @@ impl Drop for EnvGuard {
     }
 }
 
-fn context(task_dir: &str, task_id: Option<i64>, git_url: Option<&str>) -> PreExecuteContext {
+fn context(task_dir: &str, task_id: Option<String>, git_url: Option<&str>) -> PreExecuteContext {
     PreExecuteContext {
         task_dir: PathBuf::from(task_dir),
         task_id,

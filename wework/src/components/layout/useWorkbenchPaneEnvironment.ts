@@ -117,7 +117,7 @@ export function useWorkbenchPaneEnvironment({
     ? String(activeConversationProject.id)
     : ''
   const currentRuntimeTaskKey = currentRuntimeTask
-    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}:${
+    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}:${
         currentRuntimeTask.workspacePath ?? ''
       }`
     : ''

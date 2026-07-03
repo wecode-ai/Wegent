@@ -10,12 +10,13 @@ The Settings module provides configuration functionality for the Wegent system, 
 
 ## 📋 Documentation in This Module
 
-| Document | Description |
-|----------|-------------|
-| [Agent Settings](./agent-settings.md) | Configure Agents, Bots, prompts, and collaboration modes |
-| [Configuring Models](./configuring-models.md) | Configure AI models (Anthropic Claude, OpenAI GPT, etc.) |
-| [Configuring Shells](./configuring-shells.md) | Configure runtime environments (ClaudeCode, Dify, Chat) |
-| [Managing Skills](./managing-skills.md) | Upload, manage, and use Skill capability extension packages |
+| Document                                      | Description                                                 |
+| --------------------------------------------- | ----------------------------------------------------------- |
+| [Agent Settings](./agent-settings.md)         | Configure Agents, Bots, prompts, and collaboration modes    |
+| [Configuring Models](./configuring-models.md) | Configure AI models (Anthropic Claude, OpenAI GPT, etc.)    |
+| [Configuring Shells](./configuring-shells.md) | Configure runtime environments (ClaudeCode, Dify, Chat)     |
+| [Managing Skills](./managing-skills.md)       | Upload, manage, and use Skill capability extension packages |
+| [Keyboard Shortcuts](./keyboard-shortcuts.md) | Manage local shortcuts for the Wework desktop app           |
 
 ---
 
@@ -31,6 +32,7 @@ Bot = Shell + Model + Prompt + MCP Tools + Skills
 ```
 
 **Collaboration Modes**:
+
 - **Solo**: Single bot working independently
 - **Pipeline**: Sequential execution, forming a processing pipeline
 - **Coordinate**: Leader coordinates parallel execution and aggregates results
@@ -41,20 +43,20 @@ The web UI currently offers Solo, Pipeline, and Coordinate for new or edited age
 
 Supports multiple AI model providers:
 
-| Provider | Supported Models |
-|----------|-----------------|
+| Provider      | Supported Models                             |
+| ------------- | -------------------------------------------- |
 | **Anthropic** | Claude Haiku 4, Claude Sonnet 4, Claude Opus |
-| **OpenAI** | GPT-4, GPT-4 Turbo, GPT-3.5 Turbo |
+| **OpenAI**    | GPT-4, GPT-4 Turbo, GPT-3.5 Turbo            |
 
 ### Shell Configuration
 
 Supports multiple runtime environments:
 
-| Shell | Description | Use Case |
-|-------|-------------|----------|
+| Shell          | Description                                                  | Use Case                          |
+| -------------- | ------------------------------------------------------------ | --------------------------------- |
 | **ClaudeCode** | Claude Code SDK, supports code execution and file operations | Code development, file processing |
-| **Dify** | External Dify API proxy | Dify workflow integration |
-| **Chat** | Direct LLM API (no Docker) | Lightweight conversations |
+| **Dify**       | External Dify API proxy                                      | Dify workflow integration         |
+| **Chat**       | Direct LLM API (no Docker)                                   | Lightweight conversations         |
 
 ### Skills Management
 

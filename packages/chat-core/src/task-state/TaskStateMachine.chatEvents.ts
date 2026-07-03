@@ -35,7 +35,7 @@ export function reduceChatStartEvent({
   event,
   deriveRuntimeState,
 }: ChatEventReducerParams<Extract<Event, { type: 'CHAT_START' }>>): TaskMachineInternalState {
-  const aiMessageId = generateMessageId('ai', event.turnId)
+  const aiMessageId = generateMessageId('ai', event.subtaskId)
   const existingMessage = state.messages.get(aiMessageId)
   const isTerminalRuntime = isTerminalTaskStatus(state.runtime.taskStatus)
   const isRetryingTerminalMessage =
@@ -60,7 +60,7 @@ export function reduceChatStartEvent({
     status: 'streaming',
     content: '',
     timestamp: Date.now(),
-    turnId: event.turnId,
+    subtaskId: event.subtaskId,
     messageId: event.messageId,
     botName: event.botName,
     result: initialResult,
@@ -70,7 +70,7 @@ export function reduceChatStartEvent({
     ...state.runtime,
     taskStatus: isRestartingAfterTerminal ? 'RUNNING' : state.runtime.taskStatus,
     phase: 'streaming',
-    activeStreamSubtaskId: event.turnId,
+    activeStreamSubtaskId: event.subtaskId,
     activeStreamStartedAt: new Date().toISOString(),
     activeStreamLastActivityAt: undefined,
     localStreamCursor: 0,
@@ -101,7 +101,7 @@ export function reduceChatChunkEvent({
       pendingChunks: [
         ...pendingChunks,
         {
-          turnId: event.turnId,
+          subtaskId: event.subtaskId,
           content: event.content,
           offset: event.offset,
           result: event.result,
@@ -113,14 +113,14 @@ export function reduceChatChunkEvent({
     }
   }
 
-  const aiMessageId = generateMessageId('ai', event.turnId)
+  const aiMessageId = generateMessageId('ai', event.subtaskId)
   const existingMessage = state.messages.get(aiMessageId)
 
   if (!existingMessage) {
     console.warn(
       '[TaskStateMachine] CHAT_CHUNK ignored - message not found, waiting for chat:start',
       {
-        turnId: event.turnId,
+        subtaskId: event.subtaskId,
         taskId: state.taskId,
       }
     )
@@ -177,7 +177,7 @@ export function reduceChatChunkEvent({
   const runtime: TaskRuntimeState = {
     ...state.runtime,
     phase: 'streaming',
-    activeStreamSubtaskId: event.turnId,
+    activeStreamSubtaskId: event.subtaskId,
     localStreamCursor: updatedMessage.content.length,
     localLastChunkAt: Date.now(),
     serverConfirmedNoStream: false,
@@ -200,7 +200,7 @@ export function reduceChatDoneEvent({
   event,
   deriveRuntimeState,
 }: ChatEventReducerParams<Extract<Event, { type: 'CHAT_DONE' }>>): TaskMachineInternalState {
-  const aiMessageId = generateMessageId('ai', event.turnId)
+  const aiMessageId = generateMessageId('ai', event.subtaskId)
   let existingMessage = state.messages.get(aiMessageId)
 
   if (!existingMessage) {
@@ -210,14 +210,14 @@ export function reduceChatDoneEvent({
       status: 'streaming',
       content: event.content || (event.result?.value as string) || '',
       timestamp: Date.now(),
-      turnId: event.turnId,
+      subtaskId: event.subtaskId,
       result: event.result,
       sources: event.sources,
     }
   }
 
   const isActiveStreamEvent =
-    state.status === 'streaming' && state.runtime.activeStreamSubtaskId === event.turnId
+    state.status === 'streaming' && state.runtime.activeStreamSubtaskId === event.subtaskId
 
   if (
     !isActiveStreamEvent &&
@@ -331,18 +331,18 @@ export function reduceChatErrorEvent({
   event,
   deriveRuntimeState,
 }: ChatEventReducerParams<Extract<Event, { type: 'CHAT_ERROR' }>>): TaskMachineInternalState {
-  const aiMessageId = generateMessageId('ai', event.turnId)
+  const aiMessageId = generateMessageId('ai', event.subtaskId)
   const existingMessage = state.messages.get(aiMessageId)
 
   if (!existingMessage) {
-    console.warn('[TaskStateMachine] CHAT_ERROR for unknown message', event.turnId)
+    console.warn('[TaskStateMachine] CHAT_ERROR for unknown message', event.subtaskId)
     return state
   }
 
   if (isTerminalTaskStatus(state.runtime.taskStatus)) return state
 
   const isActiveStreamEvent =
-    state.status === 'streaming' && state.runtime.activeStreamSubtaskId === event.turnId
+    state.status === 'streaming' && state.runtime.activeStreamSubtaskId === event.subtaskId
   if (!isActiveStreamEvent) return state
 
   const newMessages = new Map(state.messages)
@@ -385,7 +385,7 @@ export function reduceChatCancelledEvent({
   event,
   deriveRuntimeState,
 }: ChatEventReducerParams<Extract<Event, { type: 'CHAT_CANCELLED' }>>): TaskMachineInternalState {
-  const aiMessageId = generateMessageId('ai', event.turnId)
+  const aiMessageId = generateMessageId('ai', event.subtaskId)
   const existingMessage = state.messages.get(aiMessageId)
 
   if (!existingMessage) return state
@@ -399,7 +399,7 @@ export function reduceChatCancelledEvent({
   })
 
   const newStatus =
-    state.status === 'streaming' && state.runtime.activeStreamSubtaskId === event.turnId
+    state.status === 'streaming' && state.runtime.activeStreamSubtaskId === event.subtaskId
       ? 'ready'
       : state.status
   if (newStatus === state.status) return state

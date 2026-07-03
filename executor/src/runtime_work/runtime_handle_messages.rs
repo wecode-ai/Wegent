@@ -6,25 +6,23 @@ use std::collections::BTreeSet;
 
 use serde_json::{json, Map, Value};
 
-use crate::{
-    codex_phase::{
-        codex_item_id, codex_phase_is_process, codex_phase_name, CodexAgentMessagePhaseTracker,
-    },
-    logging::log_executor_event,
-    protocol::ExecutionRequest,
-};
+use crate::{codex_phase::CodexAgentMessagePhaseTracker, protocol::ExecutionRequest};
 
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
+    notification_mapping::{
+        log_dropped_notification, log_text_mapping, map_text_chunk, notification_item_id,
+        TextChunkMapping,
+    },
     response::RuntimeTaskLink,
     store::RuntimeWorkStore,
     transcript::{
-        assistant_text_kind_from_notification, tool_block_from_notification,
-        tool_update_from_notification,
+        completed_workbench_block_from_notification, tool_update_from_notification,
+        workbench_block_from_notification,
     },
     util::{
-        extract_text, integer_field, is_completed_plan_item, item_id, now_ms, raw_string_field,
-        reasoning_content, string_field,
+        extract_text, id_field, is_completed_plan_item, item_id, now_ms, raw_string_field,
+        string_field,
     },
 };
 
@@ -87,62 +85,28 @@ impl CodexNotificationCacheMapper {
                 if self.is_subagent_delta(params) {
                     return;
                 }
-                if let Some(delta) = string_field(params, "delta")
-                    .or_else(|| reasoning_content(params))
-                    .filter(|delta| !delta.is_empty())
-                {
-                    append_runtime_assistant_process_delta(
-                        store,
-                        local_task_id,
-                        request,
-                        "reasoning",
-                        "thinking",
-                        None,
-                        delta,
-                    );
-                }
+                self.cache_text_chunk(
+                    store,
+                    local_task_id,
+                    request,
+                    &notification.method,
+                    params,
+                    Some("analysis"),
+                );
             }
             "item/agentMessage/delta" => {
                 if self.is_subagent_delta(params) {
                     return;
                 }
-                if let Some(delta) = agent_delta(params).filter(|delta| !delta.is_empty()) {
-                    let phase = self.agent_message_phases.phase_for_delta(params);
-                    if codex_phase_is_process(phase.as_deref()) {
-                        log_codex_cache_text_classification(
-                            local_task_id,
-                            &notification.method,
-                            "append_process_block",
-                            phase.as_deref(),
-                            params,
-                            &delta,
-                        );
-                        append_runtime_assistant_process_delta(
-                            store,
-                            local_task_id,
-                            request,
-                            "assistant_message",
-                            "text",
-                            notification_item_id(params),
-                            delta,
-                        );
-                    } else {
-                        log_codex_cache_text_classification(
-                            local_task_id,
-                            &notification.method,
-                            "append_content",
-                            phase.as_deref(),
-                            params,
-                            &delta,
-                        );
-                        append_runtime_assistant_content_delta(
-                            store,
-                            local_task_id,
-                            request,
-                            delta,
-                        );
-                    }
-                }
+                let phase = self.agent_message_phases.phase_for_delta(params);
+                self.cache_text_chunk(
+                    store,
+                    local_task_id,
+                    request,
+                    &notification.method,
+                    params,
+                    phase.as_deref(),
+                );
             }
             "item/plan/delta" => {
                 if let Some(delta) =
@@ -166,7 +130,13 @@ impl CodexNotificationCacheMapper {
                     return;
                 }
                 self.agent_message_phases.observe_item(params);
-                if let Some(block) = tool_block_from_notification(params, "pending") {
+                if let Some(block) = workbench_block_from_notification(
+                    params,
+                    &request.subtask_id,
+                    request.device_id.as_deref().unwrap_or_default(),
+                    request.cwd().unwrap_or_default(),
+                    Some("pending"),
+                ) {
                     cache_runtime_assistant_block(store, local_task_id, request, block);
                 }
             }
@@ -178,12 +148,29 @@ impl CodexNotificationCacheMapper {
                     return;
                 }
                 let phase = self.agent_message_phases.phase_for_item(params);
-                if assistant_text_kind_from_notification(params, phase.as_deref()).is_some() {
+                if self.cache_text_chunk(
+                    store,
+                    local_task_id,
+                    request,
+                    &notification.method,
+                    params,
+                    phase.as_deref(),
+                ) {
                     self.agent_message_phases.forget_item(params);
                     return;
                 }
                 if let Some(text) = plan_item_text(params) {
                     cache_runtime_assistant_plan_item(store, local_task_id, request, params, text);
+                    self.agent_message_phases.forget_item(params);
+                    return;
+                }
+                if let Some(block) = completed_workbench_block_from_notification(
+                    params,
+                    &request.subtask_id,
+                    request.device_id.as_deref().unwrap_or_default(),
+                    request.cwd().unwrap_or_default(),
+                ) {
+                    cache_runtime_assistant_block(store, local_task_id, request, block);
                     self.agent_message_phases.forget_item(params);
                     return;
                 }
@@ -244,15 +231,104 @@ impl CodexNotificationCacheMapper {
         };
         stream_thread_id(params).is_some_and(|thread_id| thread_id != root_thread_id)
     }
-}
 
-fn notification_item_id(params: &Value) -> Option<String> {
-    params
-        .get("item")
-        .and_then(codex_item_id)
-        .or_else(|| string_field(params, "itemId"))
-        .or_else(|| string_field(params, "item_id"))
-        .or_else(|| codex_item_id(params))
+    fn cache_text_chunk(
+        &mut self,
+        store: &RuntimeWorkStore,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        method: &str,
+        params: &Value,
+        resolved_phase: Option<&str>,
+    ) -> bool {
+        match map_text_chunk(method, params, resolved_phase) {
+            Ok(Some(TextChunkMapping::ProcessDelta {
+                process_kind,
+                block_type,
+                item_id,
+                delta,
+            })) => {
+                log_text_mapping(
+                    local_task_id,
+                    method,
+                    "cache_process_delta",
+                    resolved_phase,
+                    params,
+                    &delta,
+                );
+                append_runtime_assistant_process_delta(
+                    store,
+                    local_task_id,
+                    request,
+                    process_kind,
+                    block_type,
+                    item_id,
+                    delta,
+                );
+                true
+            }
+            Ok(Some(TextChunkMapping::FinalDelta { delta })) => {
+                log_text_mapping(
+                    local_task_id,
+                    method,
+                    "cache_final_delta",
+                    resolved_phase,
+                    params,
+                    &delta,
+                );
+                append_runtime_assistant_content_delta(store, local_task_id, request, delta);
+                true
+            }
+            Ok(Some(TextChunkMapping::ProcessCompleted {
+                process_kind,
+                block_type,
+                item_id,
+                text,
+            })) => {
+                log_text_mapping(
+                    local_task_id,
+                    method,
+                    "cache_completed_process",
+                    resolved_phase,
+                    params,
+                    &text,
+                );
+                append_runtime_assistant_process_snapshot(
+                    store,
+                    local_task_id,
+                    request,
+                    process_kind,
+                    block_type,
+                    item_id,
+                    text,
+                );
+                true
+            }
+            Ok(Some(TextChunkMapping::FinalCompleted)) => {
+                log_text_mapping(
+                    local_task_id,
+                    method,
+                    "ignore_completed_final_snapshot",
+                    resolved_phase,
+                    params,
+                    "",
+                );
+                true
+            }
+            Ok(None) => false,
+            Err(reason) => {
+                log_dropped_notification(
+                    local_task_id,
+                    &request.task_id,
+                    &request.subtask_id,
+                    method,
+                    params,
+                    reason,
+                );
+                true
+            }
+        }
+    }
 }
 
 fn is_non_root_codex_stream_event(params: &Value) -> bool {
@@ -316,83 +392,6 @@ fn is_root_codex_turn_event(params: &Value) -> bool {
         .or_else(|| string_field(params, "agent_path"))
         .or_else(|| string_field(params, "agentPath"))
         .map_or(true, |agent_path| agent_path == "/root")
-}
-
-fn agent_delta(params: &Value) -> Option<String> {
-    raw_string_field(params, "delta")
-}
-
-fn log_codex_cache_text_classification(
-    local_task_id: &str,
-    method: &str,
-    action: &str,
-    resolved_phase: Option<&str>,
-    params: &Value,
-    text: &str,
-) {
-    log_executor_event(
-        "codex runtime cache text classification",
-        &[
-            ("local_task_id", local_task_id.to_owned()),
-            ("method", method.to_owned()),
-            ("action", action.to_owned()),
-            (
-                "resolved_phase",
-                resolved_phase.unwrap_or("<none>").to_owned(),
-            ),
-            ("item_id", json_string_field(params, "itemId")),
-            (
-                "phase",
-                codex_phase_name(params).unwrap_or_else(|| "<none>".to_owned()),
-            ),
-            ("params_type", json_string_field(params, "type")),
-            ("params_phase", json_string_field(params, "phase")),
-            ("params_channel", json_string_field(params, "channel")),
-            (
-                "payload_type",
-                nested_json_string_field(params, "payload", "type"),
-            ),
-            (
-                "payload_phase",
-                nested_json_string_field(params, "payload", "phase"),
-            ),
-            (
-                "payload_channel",
-                nested_json_string_field(params, "payload", "channel"),
-            ),
-            ("text_len", text.len().to_string()),
-            ("text_preview", truncate_log_text(text, 160)),
-        ],
-    );
-}
-
-fn json_string_field(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
-}
-
-fn nested_json_string_field(value: &Value, object_key: &str, key: &str) -> String {
-    value
-        .get(object_key)
-        .and_then(|object| object.get(key))
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned()
-}
-
-fn truncate_log_text(text: &str, max_chars: usize) -> String {
-    let mut result = String::new();
-    for (index, ch) in text.chars().enumerate() {
-        if index >= max_chars {
-            result.push('…');
-            return result;
-        }
-        result.push(ch);
-    }
-    result
 }
 
 fn cache_runtime_thread_id(store: &RuntimeWorkStore, local_task_id: &str, params: &Value) {
@@ -508,12 +507,54 @@ fn append_runtime_assistant_process_delta(
         append_process_block_delta(
             blocks,
             local_task_id,
-            request.subtask_id,
+            &request.subtask_id,
             process_kind,
             block_type,
             process_item_id,
             delta,
         );
+    });
+}
+
+fn append_runtime_assistant_process_snapshot(
+    store: &RuntimeWorkStore,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    process_kind: &str,
+    block_type: &str,
+    process_item_id: Option<String>,
+    content: String,
+) {
+    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+        if let Some(block) = blocks.iter_mut().rev().find(|block| {
+            process_block_accepts_delta_for_item(
+                block,
+                block_type,
+                process_kind,
+                process_item_id.as_deref(),
+            )
+        }) {
+            if let Some(object) = block.as_object_mut() {
+                object.insert("content".to_owned(), Value::String(content));
+                object.insert("status".to_owned(), Value::String("done".to_owned()));
+            }
+            return;
+        }
+
+        let block_index = blocks
+            .iter()
+            .filter(|block| string_field(block, "type").as_deref() == Some(block_type))
+            .count()
+            + 1;
+        blocks.push(json!({
+            "id": format!("{block_type}-{local_task_id}-{}-{block_index}", request.subtask_id),
+            "type": block_type,
+            "process_kind": process_kind,
+            "process_item_id": process_item_id,
+            "content": content,
+            "status": "done",
+            "timestamp": now_ms(),
+        }));
     });
 }
 
@@ -714,12 +755,8 @@ fn messages_match(left: &Value, right: &Value) -> bool {
         return false;
     }
 
-    let left_subtask_id = integer_field(left, "turn_id")
-        .or_else(|| integer_field(left, "subtaskId"))
-        .or_else(|| integer_field(left, "subtask_id"));
-    let right_subtask_id = integer_field(right, "turn_id")
-        .or_else(|| integer_field(right, "subtaskId"))
-        .or_else(|| integer_field(right, "subtask_id"));
+    let left_subtask_id = id_field(left, "subtaskId");
+    let right_subtask_id = id_field(right, "subtaskId");
     if left_subtask_id.is_some() && right_subtask_id.is_some() {
         return left_subtask_id == right_subtask_id;
     }
@@ -748,9 +785,7 @@ fn ensure_cached_assistant_message<'a>(
         "role": "assistant",
         "content": "",
         "status": "streaming",
-        "subtaskId": request.subtask_id,
-        "subtask_id": request.subtask_id,
-        "turn_id": request.subtask_id,
+        "subtaskId": request.subtask_id.to_string(),
         "createdAt": now_ms(),
         "blocks": [],
     }));
@@ -765,9 +800,7 @@ fn cached_assistant_message_index(messages: &[Value], request: &ExecutionRequest
         {
             return false;
         }
-        integer_field(message, "turn_id")
-            .or_else(|| integer_field(message, "subtaskId"))
-            .or_else(|| integer_field(message, "subtask_id"))
+        id_field(message, "subtaskId")
             .is_some_and(|message_subtask_id| message_subtask_id == request.subtask_id)
     })
 }
@@ -926,7 +959,7 @@ fn matching_block_index(blocks: &[Value], used_blocks: &[bool], block: &Value) -
 fn append_process_block_delta(
     blocks: &mut Vec<Value>,
     local_task_id: &str,
-    subtask_id: i64,
+    subtask_id: &str,
     process_kind: &str,
     block_type: &str,
     process_item_id: Option<String>,
@@ -1054,8 +1087,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1118,12 +1151,15 @@ mod tests {
             .expect("runtime task should exist");
         let messages = cached_messages(&link);
         assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0]["blocks"][0]["type"], "thinking");
-        assert_eq!(messages[0]["blocks"][0]["content"], "Checking files.");
+        assert_eq!(messages[0]["blocks"][0]["type"], "text");
+        assert_eq!(messages[0]["blocks"][0]["content"], "I will inspect.");
         assert_eq!(messages[0]["blocks"][0]["status"], "done");
-        assert_eq!(messages[0]["blocks"][1]["tool_name"], "exec_command");
-        assert_eq!(messages[0]["blocks"][1]["tool_output"], "runtime.rs");
+        assert_eq!(messages[0]["blocks"][1]["type"], "thinking");
+        assert_eq!(messages[0]["blocks"][1]["content"], "Checking files.");
         assert_eq!(messages[0]["blocks"][1]["status"], "done");
+        assert_eq!(messages[0]["blocks"][2]["tool_name"], "exec_command");
+        assert_eq!(messages[0]["blocks"][2]["tool_output"], "runtime.rs");
+        assert_eq!(messages[0]["blocks"][2]["status"], "done");
 
         let _ = fs::remove_file(index_path);
     }
@@ -1139,8 +1175,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1182,8 +1218,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1240,8 +1276,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1331,8 +1367,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1372,8 +1408,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1411,8 +1447,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1466,8 +1502,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1516,8 +1552,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
 
@@ -1577,8 +1613,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationCacheMapper::default();
@@ -1632,8 +1668,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationCacheMapper::default();
@@ -1755,8 +1791,8 @@ mod tests {
             "Runtime cache".to_owned(),
         ));
         let request = ExecutionRequest {
-            task_id: 1,
-            subtask_id: 42,
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
             ..ExecutionRequest::default()
         };
         let mut mapper = CodexNotificationCacheMapper::default();

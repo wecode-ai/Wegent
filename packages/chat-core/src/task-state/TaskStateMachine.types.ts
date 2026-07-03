@@ -63,7 +63,6 @@ export interface UnifiedMessage {
   contexts?: unknown[]
   timestamp: number
   subtaskId?: number
-  turnId?: number
   messageId?: number
   error?: string
   errorType?: string
@@ -181,7 +180,7 @@ export interface TaskRuntimeVerifyResult {
  * Pending chunk event to be applied after sync completes
  */
 export interface PendingChunkEvent {
-  turnId: number
+  subtaskId: number
   content: string
   offset?: number
   result?: UnifiedMessage['result']
@@ -224,14 +223,14 @@ export type Event =
     }
   | {
       type: 'CHAT_START'
-      turnId: number
+      subtaskId: number
       shellType?: string
       messageId?: number
       botName?: string
     }
   | {
       type: 'CHAT_CHUNK'
-      turnId: number
+      subtaskId: number
       content: string
       offset?: number
       result?: UnifiedMessage['result']
@@ -240,7 +239,7 @@ export type Event =
     }
   | {
       type: 'CHAT_DONE'
-      turnId: number
+      subtaskId: number
       content?: string
       result?: UnifiedMessage['result']
       messageId?: number
@@ -248,8 +247,8 @@ export type Event =
       hasError?: boolean
       errorMessage?: string
     }
-  | { type: 'CHAT_ERROR'; turnId: number; error: string; messageId?: number; errorType?: string }
-  | { type: 'CHAT_CANCELLED'; turnId: number }
+  | { type: 'CHAT_ERROR'; subtaskId: number; error: string; messageId?: number; errorType?: string }
+  | { type: 'CHAT_CANCELLED'; subtaskId: number }
   | { type: 'SEND_ACCEPTED'; acceptedAt: string }
   | { type: 'TASK_STATUS_RECEIVED'; taskStatus: ApiTaskStatus; updatedAt?: string }
   | { type: 'TASK_DETAIL_SYNCED'; taskStatus: ApiTaskStatus; updatedAt?: string }

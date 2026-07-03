@@ -25,19 +25,17 @@ describe('createLocalChatStream', () => {
     listener({
       event: 'response.output_text.delta',
       payload: {
-        task_id: 0,
-        subtask_id: 1001,
-        local_task_id: 'task-1',
-        device_id: 'local-device',
+        taskId: 'task-1',
+        subtaskId: '1001',
+        deviceId: 'local-device',
         data: { delta: 'hello' },
       },
     })
 
     expect(onChatChunk).toHaveBeenCalledWith({
-      task_id: 0,
-      subtask_id: 1001,
-      local_task_id: 'task-1',
-      device_id: 'local-device',
+      taskId: 'task-1',
+      subtaskId: '1001',
+      deviceId: 'local-device',
       content: 'hello',
       offset: 0,
       result: { delta: 'hello' },
@@ -58,19 +56,17 @@ describe('createLocalChatStream', () => {
     listener({
       event: 'response.completed',
       payload: {
-        task_id: 0,
-        subtask_id: 1001,
-        local_task_id: 'task-1',
-        device_id: 'local-device',
+        taskId: 'task-1',
+        subtaskId: '1001',
+        deviceId: 'local-device',
         data: { value: 'complete' },
       },
     })
 
     expect(onChatDone).toHaveBeenCalledWith({
-      task_id: 0,
-      subtask_id: 1001,
-      local_task_id: 'task-1',
-      device_id: 'local-device',
+      taskId: 'task-1',
+      subtaskId: '1001',
+      deviceId: 'local-device',
       offset: 0,
       result: { value: 'complete' },
     })

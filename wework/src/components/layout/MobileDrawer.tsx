@@ -80,7 +80,7 @@ interface MobileDrawerProps {
   onUpdateProjectName?: (projectId: number, name: string) => Promise<void>
   onRemoveProject?: (projectId: number) => Promise<void>
   onSelectProject: (projectId: number) => void
-  onOpenRuntimeLocalTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onRefreshWorkLists?: () => Promise<void>
 }
 
@@ -109,7 +109,7 @@ export function MobileDrawer({
   onUpdateProjectName,
   onRemoveProject,
   onSelectProject,
-  onOpenRuntimeLocalTask,
+  onOpenRuntimeTask,
   onRefreshWorkLists,
 }: MobileDrawerProps) {
   useSidebarRelativeTimeRefresh()
@@ -347,17 +347,17 @@ export function MobileDrawer({
                         workspace,
                         task
                       )
-                      const disabled = !workspace.available || !onOpenRuntimeLocalTask
+                      const disabled = !workspace.available || !onOpenRuntimeTask
                       const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
                       return (
                         <button
-                          key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                          key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
                           type="button"
                           data-testid="mobile-chat-runtime-task-button"
                           disabled={disabled}
                           onClick={() => {
                             if (disabled) return
-                            void onOpenRuntimeLocalTask?.(getRuntimeTaskAddress(workspace, task))
+                            void onOpenRuntimeTask?.(getRuntimeTaskAddress(workspace, task))
                             onClose()
                           }}
                           className={[
@@ -370,7 +370,7 @@ export function MobileDrawer({
                           <span className="min-w-0 flex-1 truncate">{task.title}</span>
                           {task.running ? (
                             renderRuntimeTaskRunningStatus(
-                              `mobile-chat-runtime-task-running-${task.localTaskId}`
+                              `mobile-chat-runtime-task-running-${task.taskId}`
                             )
                           ) : (
                             <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
@@ -503,17 +503,17 @@ export function MobileDrawer({
                                   workspace,
                                   task
                                 )
-                                const disabled = !workspace.available || !onOpenRuntimeLocalTask
+                                const disabled = !workspace.available || !onOpenRuntimeTask
                                 const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
                                 return (
                                   <button
-                                    key={`${workspace.deviceId}:${task.workspacePath}:${task.localTaskId}`}
+                                    key={`${workspace.deviceId}:${task.workspacePath}:${task.taskId}`}
                                     type="button"
                                     data-testid="mobile-runtime-task-button"
                                     disabled={disabled}
                                     onClick={() => {
                                       if (disabled) return
-                                      void onOpenRuntimeLocalTask?.(
+                                      void onOpenRuntimeTask?.(
                                         getRuntimeTaskAddress(workspace, task)
                                       )
                                       onClose()
@@ -528,7 +528,7 @@ export function MobileDrawer({
                                     <span className="min-w-0 flex-1 truncate">{task.title}</span>
                                     {task.running ? (
                                       renderRuntimeTaskRunningStatus(
-                                        `mobile-runtime-task-running-${task.localTaskId}`
+                                        `mobile-runtime-task-running-${task.taskId}`
                                       )
                                     ) : (
                                       <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">

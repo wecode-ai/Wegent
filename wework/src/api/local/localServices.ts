@@ -8,7 +8,7 @@ import type {
   DeviceCommandResponse,
   DeviceWorkspacePrepareRequest,
   DeviceWorkspacePrepareResponse,
-  LocalTaskSummary,
+  RuntimeTaskSummary,
   LocalDeviceSkill,
   RuntimeArchiveProjectConversationsRequest,
   RuntimeArchivedConversationBulkRequest,
@@ -78,6 +78,7 @@ import {
 import { createLocalChatStream } from './localChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
+import type { KeybindingOverride } from '@/lib/keybindings'
 
 const LOCAL_DEVICE_ID = 'local-device'
 
@@ -349,6 +350,12 @@ function stringValue(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
+function idValue(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return null
+}
+
 function timestampValue(value: unknown): string | number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   return stringValue(value)
@@ -358,7 +365,7 @@ function runtimeAddressDebug(value: Record<string, unknown>): Record<string, unk
   const address = recordValue(value.address)
   return {
     deviceId: stringValue(value.deviceId) ?? stringValue(address.deviceId),
-    localTaskId: stringValue(value.localTaskId) ?? stringValue(address.localTaskId),
+    taskId: idValue(value.taskId) ?? idValue(address.taskId),
     workspacePath: stringValue(value.workspacePath) ?? stringValue(address.workspacePath),
   }
 }
@@ -409,10 +416,10 @@ function normalizeLocalArchiveProjectRequest(
 function normalizeRuntimeTaskSummary(
   task: unknown,
   fallbackWorkspacePath: string
-): LocalTaskSummary | null {
+): RuntimeTaskSummary | null {
   const taskRecord = recordValue(task)
-  const localTaskId = stringValue(taskRecord.localTaskId) ?? stringValue(taskRecord.local_task_id)
-  if (!localTaskId) return null
+  const taskId = idValue(taskRecord.taskId) ?? idValue(taskRecord.task_id)
+  if (!taskId) return null
 
   const workspacePath =
     stringValue(taskRecord.workspacePath) ??
@@ -432,9 +439,10 @@ function normalizeRuntimeTaskSummary(
 
   const normalized = {
     ...taskRecord,
-    localTaskId,
+    taskId,
+    ...(taskId ? { taskId } : {}),
     workspacePath,
-    title: stringValue(taskRecord.title) ?? localTaskId,
+    title: stringValue(taskRecord.title) ?? taskId ?? String(taskId),
     runtime: stringValue(taskRecord.runtime) ?? 'codex',
     ...(workspaceKind ? { workspaceKind } : {}),
     ...(worktreeId ? { worktreeId } : {}),
@@ -444,27 +452,35 @@ function normalizeRuntimeTaskSummary(
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
   }
 
-  return normalized as LocalTaskSummary
+  return normalized as RuntimeTaskSummary
 }
 
 function normalizeRuntimeTaskSummaries(
   tasks: unknown,
   fallbackWorkspacePath: string
-): LocalTaskSummary[] {
+): RuntimeTaskSummary[] {
   if (!Array.isArray(tasks)) return []
-  return tasks
+  const normalizedTasks = tasks
     .map(task => normalizeRuntimeTaskSummary(task, fallbackWorkspacePath))
-    .filter((task): task is LocalTaskSummary => task !== null)
+    .filter((task): task is RuntimeTaskSummary => task !== null)
+  if (tasks.length > 0 && normalizedTasks.length === 0) {
+    console.warn('[Wework] Dropped runtime tasks without taskId', {
+      workspacePath: fallbackWorkspacePath,
+      count: tasks.length,
+      firstTaskKeys: Object.keys(recordValue(tasks[0])).sort(),
+    })
+  }
+  return normalizedTasks
 }
 
-function createRuntimeExecutionIds(data: RuntimeTaskCreateRequest): [number, number] {
-  const seed = data.localTaskId || `${data.runtime}:${data.workspacePath ?? ''}:${data.message}`
+function createRuntimeExecutionIds(data: RuntimeTaskCreateRequest): [string, string] {
+  const seed = data.taskId || `${data.runtime}:${data.workspacePath ?? ''}:${data.message}`
   return createRuntimeExecutionIdsFromSeed(seed)
 }
 
-function createRuntimeExecutionIdsFromSeed(seed: string): [number, number] {
-  const taskId = 10_000_000_000_000 + stableLocalId(seed)
-  return [taskId, taskId + 1]
+function createRuntimeExecutionIdsFromSeed(seed: string): [string, string] {
+  const taskId = `runtime-${stableLocalId(seed)}`
+  return [taskId, `${taskId}-0`]
 }
 
 function createRuntimeTurnSeed(): number {
@@ -607,16 +623,17 @@ type LocalRuntimeAttachmentPayload = Record<string, unknown> & {
   original_filename: string
   file_size: number
   mime_type: string
-  subtask_id: number
+  subtask_id: string
   file_extension: string
   local_path: string
   local_preview_url: string
   text_length?: number
+  text_preview?: string
 }
 
 function localRuntimeAttachments(
   attachments: RuntimeTaskCreateRequest['attachments'],
-  subtaskId: number
+  subtaskId: string
 ): Record<string, unknown>[] {
   if (!attachments?.length) return []
   const runtimeAttachments: LocalRuntimeAttachmentPayload[] = []
@@ -636,6 +653,7 @@ function localRuntimeAttachments(
       local_path: localPath,
       local_preview_url: attachment.local_preview_url ?? localPath,
       ...(attachment.text_length != null ? { text_length: attachment.text_length } : {}),
+      ...(attachment.text_preview ? { text_preview: attachment.text_preview } : {}),
     })
   })
 
@@ -812,7 +830,7 @@ function executionWithWorkspace(
 }
 
 interface BuildLocalRuntimeExecutionRequestInput {
-  localTaskId?: string | null
+  taskId?: string | null
   runtime: string
   teamId: number
   title: string
@@ -832,11 +850,11 @@ interface BuildLocalRuntimeExecutionRequestInput {
 function buildLocalRuntimeExecutionRequest(
   input: BuildLocalRuntimeExecutionRequestInput
 ): Record<string, unknown> {
-  const baseSeed =
-    input.localTaskId || `${input.runtime}:${input.workspacePath ?? ''}:${input.message}`
-  const [taskId, turnId] = createRuntimeExecutionIdsFromSeed(
+  const baseSeed = input.taskId || `${input.runtime}:${input.workspacePath ?? ''}:${input.message}`
+  const [derivedTaskId, subtaskId] = createRuntimeExecutionIdsFromSeed(
     input.newSession ? baseSeed : `${baseSeed}:${input.turnSeed}`
   )
+  const taskId = input.taskId || derivedTaskId
   const modelConfig = applyRuntimeModelOptions(
     localRuntimeModelConfig(input.modelId, input.modelOptions),
     input.modelOptions
@@ -854,7 +872,7 @@ function buildLocalRuntimeExecutionRequest(
 
   return {
     task_id: taskId,
-    subtask_id: turnId,
+    subtask_id: subtaskId,
     team_id: input.teamId,
     team_name: LOCAL_WORKBENCH_TEAM.name,
     team_namespace: 'default',
@@ -893,7 +911,7 @@ function buildLocalRuntimeExecutionRequest(
     ...(collaborationMode ? { collaborationMode } : {}),
     mode: 'code',
     task_mode: 'code',
-    attachments: localRuntimeAttachments(input.attachments, turnId),
+    attachments: localRuntimeAttachments(input.attachments, subtaskId),
     reasoning_config: reasoning,
   }
 }
@@ -1022,7 +1040,7 @@ async function createLocalRuntimeTaskPayload(
     ...(collaborationMode ? { collaborationMode } : {}),
     title: runtimeTaskTitle(normalizedData),
     executionRequest: buildLocalRuntimeExecutionRequest({
-      localTaskId: normalizedData.localTaskId,
+      taskId: normalizedData.taskId,
       runtime: normalizedData.runtime,
       teamId: normalizedData.teamId,
       title: runtimeTaskTitle(normalizedData),
@@ -1048,9 +1066,20 @@ function createLocalRuntimeSendPayload(
   const turnSeed = createRuntimeTurnSeed()
   const collaborationMode = runtimeCollaborationMode(data.modelOptions)
   const workspacePath = stringValue(data.address.workspacePath)
+  const addressRecord = recordValue(data.address)
+  const taskId = stringValue(addressRecord.taskId)
+  if (!taskId) {
+    console.warn('[Wework] Local runtime send missing taskId', {
+      deviceId: localDeviceId,
+      workspacePath,
+      addressKeys: Object.keys(addressRecord).sort(),
+    })
+    throw new Error('Runtime task address missing taskId')
+  }
   const normalizedAddress: RuntimeTaskAddress = {
     ...data.address,
     deviceId: localDeviceId,
+    taskId,
     ...(workspacePath ? { workspacePath } : {}),
   }
 
@@ -1060,13 +1089,14 @@ function createLocalRuntimeSendPayload(
     delete payload.modelType
     return {
       ...payload,
+      taskId,
       address: normalizedAddress,
       ...(collaborationMode ? { collaborationMode } : {}),
       executionRequest: buildLocalRuntimeExecutionRequest({
-        localTaskId: data.address.localTaskId,
+        taskId,
         runtime: 'codex',
         teamId: LOCAL_WORKBENCH_TEAM.id,
-        title: data.address.localTaskId,
+        title: taskId,
         message: data.message,
         turnSeed,
         modelId: data.modelId,
@@ -1085,13 +1115,14 @@ function createLocalRuntimeSendPayload(
   delete payload.modelType
   return {
     ...payload,
+    taskId,
     address: normalizedAddress,
     ...(collaborationMode ? { collaborationMode } : {}),
     executionRequest: buildLocalRuntimeExecutionRequest({
-      localTaskId: data.address.localTaskId,
+      taskId,
       runtime: 'codex',
       teamId: LOCAL_WORKBENCH_TEAM.id,
-      title: data.address.localTaskId,
+      title: taskId,
       message: data.message,
       turnSeed,
       modelId: data.modelId,
@@ -1119,12 +1150,15 @@ function normalizeRuntimeWorkDeviceId(
       stringValue(workspaceRecord.workspaceKind) ?? stringValue(workspaceRecord.workspace_kind)
     const worktreeId =
       stringValue(workspaceRecord.worktreeId) ?? stringValue(workspaceRecord.worktree_id)
-    const rawTasks = Array.isArray(workspaceRecord.localTasks)
-      ? workspaceRecord.localTasks
-      : Array.isArray(workspaceRecord.local_tasks)
-        ? workspaceRecord.local_tasks
-        : workspace.localTasks
-    const localTasks = normalizeRuntimeTaskSummaries(rawTasks, workspacePath)
+    if (!Array.isArray(workspaceRecord.tasks)) {
+      console.warn('[Wework] Runtime workspace missing tasks', {
+        deviceId: localDeviceId,
+        workspacePath,
+        keys: Object.keys(workspaceRecord).sort(),
+      })
+    }
+    const rawTasks = Array.isArray(workspaceRecord.tasks) ? workspaceRecord.tasks : []
+    const tasks = normalizeRuntimeTaskSummaries(rawTasks, workspacePath)
 
     return {
       ...workspace,
@@ -1143,7 +1177,7 @@ function normalizeRuntimeWorkDeviceId(
       workspacePath,
       ...(workspaceKind ? { workspaceKind } : {}),
       ...(worktreeId ? { worktreeId } : {}),
-      localTasks,
+      tasks,
     }
   }
 
@@ -1209,7 +1243,7 @@ function adaptRuntimeWorkListResponse(
       : []
   const projects: RuntimeWorkListResponse['projects'] = []
   const chats: RuntimeWorkListResponse['chats'] = []
-  let totalLocalTasks = 0
+  let totalTasks = 0
 
   for (const rawWorkspace of workspaces) {
     const workspace = recordValue(rawWorkspace)
@@ -1222,17 +1256,20 @@ function adaptRuntimeWorkListResponse(
       stringValue(workspace.path)
     if (!workspacePath) continue
 
-    const rawTasks = Array.isArray(workspace.localTasks)
-      ? workspace.localTasks
-      : Array.isArray(workspace.local_tasks)
-        ? workspace.local_tasks
-        : []
-    const localTasks = normalizeRuntimeTaskSummaries(rawTasks, workspacePath)
-    totalLocalTasks += localTasks.length
+    if (!Array.isArray(workspace.tasks)) {
+      console.warn('[Wework] Local runtime workspace missing tasks', {
+        deviceId: localDeviceId,
+        workspacePath,
+        keys: Object.keys(workspace).sort(),
+      })
+    }
+    const rawTasks = Array.isArray(workspace.tasks) ? workspace.tasks : []
+    const tasks = normalizeRuntimeTaskSummaries(rawTasks, workspacePath)
+    totalTasks += tasks.length
 
     const workspaceKindFromWorkspace =
       stringValue(workspace.workspaceKind) ?? stringValue(workspace.workspace_kind)
-    const hasChatTask = localTasks.some(task => task.workspaceKind === 'chat')
+    const hasChatTask = tasks.some(task => task.workspaceKind === 'chat')
     const workspaceKind = workspaceKindFromWorkspace ?? (hasChatTask ? 'chat' : 'workspace')
     const worktreeId = stringValue(workspace.worktreeId) ?? stringValue(workspace.worktree_id)
     const label = workspaceLabel(workspacePath, workspace.label)
@@ -1251,7 +1288,7 @@ function adaptRuntimeWorkListResponse(
         stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source),
       remoteHostId: stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id),
       mapped: true,
-      localTasks,
+      tasks,
     }
 
     if (workspaceKind === 'chat') {
@@ -1266,11 +1303,11 @@ function adaptRuntimeWorkListResponse(
         name: label,
       },
       deviceWorkspaces: [deviceWorkspace],
-      totalLocalTasks: localTasks.length,
+      totalTasks: tasks.length,
     })
   }
 
-  return { projects, chats, totalLocalTasks }
+  return { projects, chats, totalTasks }
 }
 
 function createRuntimeWorkApi(
@@ -1334,6 +1371,14 @@ function createRuntimeWorkApi(
         throw error
       }
     },
+    getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
+      return request('runtime.keybindings.get', {})
+    },
+    updateKeybindings(data: {
+      keybindings: KeybindingOverride[]
+    }): Promise<{ keybindings: KeybindingOverride[] }> {
+      return request('runtime.keybindings.update', data)
+    },
     upsertDeviceWorkspace() {
       return cloudConnectionRequired('upsertDeviceWorkspace')
     },
@@ -1360,7 +1405,21 @@ function createRuntimeWorkApi(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await getLocalDeviceId()
-      return request('runtime.tasks.send', createLocalRuntimeSendPayload(data, localDeviceId))
+      const payload = createLocalRuntimeSendPayload(data, localDeviceId)
+      if (!payload.executionRequest) {
+        console.warn('[Wework] Local runtime send payload missing executionRequest', {
+          taskId: payload.taskId,
+          address: runtimeAddressDebug(payload),
+          payloadKeys: Object.keys(payload).sort(),
+        })
+        throw new Error('Runtime send payload missing executionRequest')
+      }
+      console.debug('[Wework] Local runtime send payload', {
+        taskId: payload.taskId,
+        address: runtimeAddressDebug(payload),
+        payloadKeys: Object.keys(payload).sort(),
+      })
+      return request('runtime.tasks.send', payload)
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)
@@ -1454,11 +1513,18 @@ function createRuntimeWorkApi(
         payload
       )
       const workspacePath = stringValue(payload.workspacePath) ?? requiredRuntimeWorkspacePath(data)
+      const executionRequest = recordValue(payload.executionRequest)
+      const responseRecord = recordValue(response)
+      const taskId =
+        stringValue(responseRecord.taskId) ??
+        stringValue(responseRecord.task_id) ??
+        stringValue(executionRequest.task_id) ??
+        createRuntimeExecutionIds(data)[0]
       return {
         ...response,
         accepted: response.accepted ?? true,
         deviceId: localDeviceId,
-        localTaskId: response.localTaskId ?? data.localTaskId ?? '',
+        taskId,
         workspacePath: response.workspacePath ?? workspacePath,
         runtime: response.runtime ?? data.runtime,
       }
@@ -1476,7 +1542,7 @@ function debugLocalRuntimeCreatePayload(
   if (globalThis.localStorage?.getItem('wework:debug-runtime') !== '1') return
   const executionRequest = recordValue(payload.executionRequest)
   console.debug('[Wework] Local runtime create payload', {
-    localTaskId: request.localTaskId,
+    taskId: request.taskId,
     runtime: request.runtime,
     requestModelOptions: summarizeLocalModelOptions(request.modelOptions),
     payloadModelOptions: summarizeLocalModelOptions(recordValue(payload.modelOptions)),
