@@ -1034,6 +1034,94 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }
 
+  function createLocalRuntimeTaskPanelFixture() {
+    const runtimeProject = {
+      id: 35,
+      name: 'Wegent',
+      tasks: [],
+    }
+    const localDevice = {
+      id: 43,
+      device_id: 'local-device',
+      name: 'Mac',
+      status: 'online' as const,
+      is_default: false,
+      device_type: 'local' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+    const runtimeWork = {
+      projects: [
+        {
+          project: {
+            id: runtimeProject.id,
+            key: 'project:wegent',
+            name: runtimeProject.name,
+          },
+          deviceWorkspaces: [
+            {
+              id: 44,
+              deviceId: localDevice.device_id,
+              deviceStatus: 'online' as const,
+              available: true,
+              workspacePath: '/Users/me/Wegent',
+              workspaceSource: 'local' as const,
+              localTasks: [
+                {
+                  localTaskId: 'runtime-a',
+                  workspacePath: '/Users/me/Wegent/.worktrees/a',
+                  title: 'Task A',
+                  runtime: 'codex',
+                },
+                {
+                  localTaskId: 'runtime-b',
+                  workspacePath: '/Users/me/Wegent/.worktrees/b',
+                  title: 'Task B',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalLocalTasks: 2,
+    }
+    const taskA = {
+      deviceId: localDevice.device_id,
+      workspacePath: '/Users/me/Wegent/.worktrees/a',
+      localTaskId: 'runtime-a',
+    }
+    const taskB = {
+      deviceId: localDevice.device_id,
+      workspacePath: '/Users/me/Wegent/.worktrees/b',
+      localTaskId: 'runtime-b',
+    }
+    const propsForTask = (task: typeof taskA) => ({
+      ...baseProps,
+      state: {
+        ...baseProps.state,
+        currentProject: runtimeProject,
+        currentRuntimeTask: task,
+        projects: [runtimeProject],
+        devices: [localDevice],
+        runtimeWork,
+      },
+      projectWork: {
+        ...baseProps.projectWork,
+        projects: [runtimeProject],
+        devices: [localDevice],
+        runtimeWork,
+        currentProject: runtimeProject,
+        currentProjectId: runtimeProject.id,
+        selectedDeviceWorkspaceId: 44,
+        executionMode: 'current_workspace' as const,
+      },
+    })
+
+    return { localDevice, propsForTask, runtimeWork, runtimeProject, taskA, taskB }
+  }
+
   test('submits implementation plan confirmation as a user message response', async () => {
     const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
 
@@ -3700,6 +3788,41 @@ describe('DesktopWorkbenchLayout', () => {
     }
   })
 
+  test('does not show inactive runtime task right workspace tabs in the Tauri titlebar', async () => {
+    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
+      .__TAURI_INTERNALS__
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+
+    try {
+      mockDesktopWorkbenchMainWidth(1000)
+      const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+      expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
+
+      rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+      expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
+    } finally {
+      if (previousTauriInternals === undefined) {
+        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+      } else {
+        Object.defineProperty(window, '__TAURI_INTERNALS__', {
+          configurable: true,
+          value: previousTauriInternals,
+        })
+      }
+    }
+  })
+
   test('right workspace panel restores the previous tab after closing and reopening', async () => {
     renderWorkspacePanelLayout()
 
@@ -5471,96 +5594,13 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('preserves bottom terminal state per runtime task', async () => {
-    const runtimeProject = {
-      id: 35,
-      name: 'Wegent',
-      tasks: [],
-    }
-    const localDevice = {
-      id: 43,
-      device_id: 'local-device',
-      name: 'Mac',
-      status: 'online' as const,
-      is_default: false,
-      device_type: 'local' as const,
-      bind_shell: 'claudecode',
-      executor_version: '1.8.5',
-    }
-    const runtimeWork = {
-      projects: [
-        {
-          project: {
-            id: runtimeProject.id,
-            key: 'project:wegent',
-            name: runtimeProject.name,
-          },
-          deviceWorkspaces: [
-            {
-              id: 44,
-              deviceId: localDevice.device_id,
-              deviceStatus: 'online' as const,
-              available: true,
-              workspacePath: '/Users/me/Wegent',
-              workspaceSource: 'local' as const,
-              localTasks: [
-                {
-                  localTaskId: 'runtime-a',
-                  workspacePath: '/Users/me/Wegent/.worktrees/a',
-                  title: 'Task A',
-                  runtime: 'codex',
-                },
-                {
-                  localTaskId: 'runtime-b',
-                  workspacePath: '/Users/me/Wegent/.worktrees/b',
-                  title: 'Task B',
-                  runtime: 'codex',
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      chats: [],
-      totalLocalTasks: 2,
-    }
-    const taskA = {
-      deviceId: localDevice.device_id,
-      workspacePath: '/Users/me/Wegent/.worktrees/a',
-      localTaskId: 'runtime-a',
-    }
-    const taskB = {
-      deviceId: localDevice.device_id,
-      workspacePath: '/Users/me/Wegent/.worktrees/b',
-      localTaskId: 'runtime-b',
-    }
+    const { localDevice, propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
     localPathExistsMock.mockResolvedValue(true)
     startLocalTerminalMock
       .mockResolvedValueOnce('local-terminal-a')
       .mockResolvedValueOnce('local-terminal-b')
-
-    const propsForTask = (task: typeof taskA) => ({
-      ...baseProps,
-      state: {
-        ...baseProps.state,
-        currentProject: runtimeProject,
-        currentRuntimeTask: task,
-        projects: [runtimeProject],
-        devices: [localDevice],
-        runtimeWork,
-      },
-      projectWork: {
-        ...baseProps.projectWork,
-        projects: [runtimeProject],
-        devices: [localDevice],
-        runtimeWork,
-        currentProject: runtimeProject,
-        currentProjectId: runtimeProject.id,
-        selectedDeviceWorkspaceId: 44,
-        executionMode: 'current_workspace' as const,
-      },
-    })
     const visibleLocalTerminals = () =>
       within(screen.getByTestId('desktop-workbench-main'))
         .queryAllByTestId('embedded-local-terminal')
