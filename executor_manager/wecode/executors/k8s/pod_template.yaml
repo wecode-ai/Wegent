@@ -111,6 +111,8 @@ spec:
           value: {{ executor_name }}
         - name: EXECUTOR_NAMESPACE
           value: {{ namespace }}
+        - name: WEGENT_DEBUG_CLAUDE_STDOUT
+          value: "1"
         - name: TZ
           value: Asia/Shanghai
         - name: LANG
