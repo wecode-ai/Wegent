@@ -80,6 +80,7 @@ import {
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
   type RuntimeSidebarTaskItem,
 } from './runtimeTaskSidebarHelpers'
+import { formatRelativeSidebarTime, useSidebarRelativeTimeRefresh } from './runtimeSidebarTime'
 import { useResizableSidebar } from './useResizableSidebar'
 
 interface DesktopSidebarProps {
@@ -509,23 +510,6 @@ function SidebarSectionHeader({
       </div>
     </div>
   )
-}
-
-function formatRelativeSidebarTime(value?: string | number) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const elapsedMs = Math.max(0, Date.now() - date.getTime())
-  const minutes = Math.floor(elapsedMs / 60000)
-  if (minutes < 60) return `${Math.max(1, minutes)}m`
-
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d`
-
-  return `${Math.floor(days / 7)}w`
 }
 
 type SidebarDeviceStatus = DeviceInfo['status'] | 'unavailable'
@@ -1794,6 +1778,7 @@ export function DesktopSidebar({
   onPointerEnter,
   onPointerLeave,
 }: DesktopSidebarProps) {
+  useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const { sidebarWidth, resizing, handleResizeStart } = useResizableSidebar({
     onCollapse: onResizeCollapse,
