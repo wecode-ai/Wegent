@@ -62,9 +62,6 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .extra
             .insert("collaborationMode".to_owned(), collaboration_mode);
     }
-    if let Some(message_id) = integer_field(payload, "message_id") {
-        request.message_id = Some(message_id);
-    }
     if let Some(turn_id) = integer_field(payload, "turn_id") {
         request.subtask_id = turn_id;
     }
