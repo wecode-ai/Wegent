@@ -1665,7 +1665,7 @@ function ProjectItem({
                 ))}
                 {(hasHiddenRuntimeTasks || canCollapseRuntimeTasks) && (
                   <div className="ml-9 flex h-8 items-center gap-2">
-                    {hasHiddenRuntimeTasks && (
+                    {hasHiddenRuntimeTasks ? (
                       <button
                         type="button"
                         data-testid={`project-runtime-tasks-expand-${project.id}`}
@@ -1681,8 +1681,7 @@ function ProjectItem({
                       >
                         {t('workbench.expand_display', '展开显示')}
                       </button>
-                    )}
-                    {canCollapseRuntimeTasks && (
+                    ) : (
                       <button
                         type="button"
                         data-testid={`project-runtime-tasks-collapse-${project.id}`}
