@@ -90,6 +90,7 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 2
 const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
+const TAURI_TITLEBAR_ACTIONS_CLEARANCE_CLASS = 'max-w-[calc(100%-22rem)]'
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
@@ -841,7 +842,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             )}
             style={{ width: chatColumnWidth }}
             left={topBarLeftContent}
-            leftClassName="min-w-0 max-w-[calc(100%-12rem)] gap-2"
+            leftClassName={cn(
+              'min-w-0 gap-2',
+              isTauri ? TAURI_TITLEBAR_ACTIONS_CLEARANCE_CLASS : 'max-w-[calc(100%-12rem)]'
+            )}
           />
         )}
         {showPageTopBar && hasSubagentStatuses && (

@@ -2031,7 +2031,8 @@ describe('DesktopWorkbenchLayout', () => {
                   {
                     taskId: 'runtime-empty',
                     workspacePath: '/workspace/project-alpha',
-                    title: 'Fix pane title',
+                    title:
+                      'wework的聊天链路现在代码逻辑比较混乱，尤其是状态方面，经常出现消息结束了但是发送按钮还显示运行中',
                     runtime: 'codex',
                     createdAt: '2026-06-20T00:00:00.000Z',
                     updatedAt: '2026-06-20T00:00:00.000Z',
@@ -2053,7 +2054,13 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-[14rem]')
-    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('Fix pane title')
+    expect(screen.getByTestId('workbench-topbar-left-actions')).toHaveClass(
+      'max-w-[calc(100%-22rem)]'
+    )
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass('truncate')
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent(
+      'wework的聊天链路现在代码逻辑比较混乱'
+    )
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
