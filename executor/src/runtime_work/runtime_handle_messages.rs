@@ -801,7 +801,7 @@ fn cached_assistant_message_index(messages: &[Value], request: &ExecutionRequest
             return false;
         }
         id_field(message, "subtaskId")
-            .is_some_and(|message_subtask_id| message_subtask_id == request.subtask_id.to_string())
+            .is_some_and(|message_subtask_id| message_subtask_id == request.subtask_id)
     })
 }
 

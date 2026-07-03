@@ -87,9 +87,7 @@ fn resolve_git_project_path(request: &ExecutionRequest, repo_name: &str) -> Path
             .join(safe_repo_name(repo_name));
     }
 
-    workspace_root()
-        .join(request.task_id.to_string())
-        .join(repo_name)
+    workspace_root().join(&request.task_id).join(repo_name)
 }
 
 fn resolve_workspace_path(path: &str) -> PathBuf {

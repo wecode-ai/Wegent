@@ -270,7 +270,7 @@ pub async fn prepare_claude_runtime(
         .current_dir()
         .cloned()
         .or_else(|| claude_task_dir(request))
-        .unwrap_or_else(|| workspace_root().join(request.task_id.to_string()));
+        .unwrap_or_else(|| workspace_root().join(&request.task_id));
     fs::create_dir_all(&task_dir).map_err(|error| {
         format!(
             "failed to create Claude runtime task dir {}: {error}",
@@ -350,7 +350,7 @@ pub async fn prepare_codex_runtime(request: &ExecutionRequest) {
     let task_dir = request
         .cwd()
         .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root().join(request.task_id.to_string()));
+        .unwrap_or_else(|| workspace_root().join(&request.task_id));
     let codex_skills_dir = codex_skills_dir(&task_dir);
     deploy_request_skills(request, &codex_skills_dir).await;
 }
@@ -1136,7 +1136,7 @@ fn resolve_attachment_workspace(request: &ExecutionRequest) -> (PathBuf, bool) {
     if let Some(project_workspace) = project_workspace_path(request) {
         return (project_workspace.join(".wegent/attachments"), true);
     }
-    (workspace_root().join(request.task_id.to_string()), false)
+    (workspace_root().join(&request.task_id), false)
 }
 
 fn project_workspace_path(request: &ExecutionRequest) -> Option<PathBuf> {

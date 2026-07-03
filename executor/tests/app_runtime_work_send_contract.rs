@@ -124,7 +124,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(created["accepted"], true);
     wait_for_thread_mapping(&handler, "local-task-1", "thread-1").await;
     wait_for_turn_count(&log_path, 1).await;
-    wait_for_response_event(&mut events, "response.completed", 2001).await;
+    wait_for_response_event(&mut events, "response.completed", "2001").await;
     wait_until_task_idle(&handler, "local-task-1").await;
     drain_events(&mut events);
 
@@ -605,7 +605,7 @@ async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure
         .await
         .expect("failed turn create should still be accepted");
     assert_eq!(failed["accepted"], true);
-    wait_for_response_event(&mut events, "response.failed", 6201).await;
+    wait_for_response_event(&mut events, "response.failed", "6201").await;
     wait_until_task_idle(&handler, "local-task-fail-once").await;
 
     let recovered = handler
@@ -632,7 +632,7 @@ async fn runtime_tasks_do_not_restart_shared_codex_app_server_after_turn_failure
         .await
         .expect("second create should be accepted on the same shared app-server");
     assert_eq!(recovered["accepted"], true);
-    wait_for_response_event(&mut events, "response.completed", 6202).await;
+    wait_for_response_event(&mut events, "response.completed", "6202").await;
     wait_until_task_idle(&handler, "local-task-after-failure").await;
 
     let calls = read_json_lines(&log_path);
@@ -1010,7 +1010,7 @@ async fn runtime_tasks_send_includes_local_text_attachment_content() {
         .expect("create should be accepted");
     wait_for_thread_mapping(&handler, "local-task-text", "thread-1").await;
     wait_for_turn_count(&log_path, 1).await;
-    wait_for_response_event(&mut events, "response.completed", 2002).await;
+    wait_for_response_event(&mut events, "response.completed", "2002").await;
     wait_until_task_idle(&handler, "local-task-text").await;
     drain_events(&mut events);
 
@@ -2168,11 +2168,11 @@ where
 async fn wait_for_response_event(
     events: &mut broadcast::Receiver<Value>,
     event_name: &str,
-    subtask_id: i64,
+    subtask_id: &str,
 ) {
     recv_events_until(events, |received| {
         find_runtime_event(received, event_name, |event| {
-            event["payload"]["subtaskId"] == subtask_id.to_string()
+            event["payload"]["subtaskId"] == subtask_id
         })
         .is_some()
     })

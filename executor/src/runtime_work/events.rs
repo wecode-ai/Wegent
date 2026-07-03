@@ -70,6 +70,13 @@ fn map_codex_notification(
     );
 }
 
+struct EventEmitContext<'a> {
+    event_tx: &'a Option<broadcast::Sender<Value>>,
+    device_id: &'a str,
+    local_task_id: &'a str,
+    request: &'a ExecutionRequest,
+}
+
 #[derive(Default)]
 pub(crate) struct CodexNotificationEventMapper {
     agent_message_phases: CodexAgentMessagePhaseTracker,
@@ -97,6 +104,12 @@ impl CodexNotificationEventMapper {
         request: &ExecutionRequest,
         message: Value,
     ) {
+        let emit_context = EventEmitContext {
+            event_tx,
+            device_id,
+            local_task_id,
+            request,
+        };
         let notification = codex_notification(&message);
         match notification.method.as_str() {
             "item/agentMessage/delta" => {
@@ -107,10 +120,7 @@ impl CodexNotificationEventMapper {
                     .agent_message_phases
                     .phase_for_delta(notification.params);
                 self.emit_text_chunk(
-                    event_tx,
-                    device_id,
-                    local_task_id,
-                    request,
+                    &emit_context,
                     &notification.method,
                     notification.params,
                     phase.as_deref(),
@@ -121,10 +131,7 @@ impl CodexNotificationEventMapper {
                     return;
                 }
                 self.emit_text_chunk(
-                    event_tx,
-                    device_id,
-                    local_task_id,
-                    request,
+                    &emit_context,
                     &notification.method,
                     notification.params,
                     Some("analysis"),
@@ -175,10 +182,7 @@ impl CodexNotificationEventMapper {
                     .agent_message_phases
                     .phase_for_item(notification.params);
                 if self.emit_text_chunk(
-                    event_tx,
-                    device_id,
-                    local_task_id,
-                    request,
+                    &emit_context,
                     &notification.method,
                     notification.params,
                     phase.as_deref(),
@@ -296,10 +300,7 @@ impl CodexNotificationEventMapper {
 
     fn emit_process_text_delta(
         &mut self,
-        event_tx: &Option<broadcast::Sender<Value>>,
-        device_id: &str,
-        local_task_id: &str,
-        request: &ExecutionRequest,
+        emit_context: &EventEmitContext<'_>,
         block_type: &str,
         process_kind: &str,
         item_id: Option<String>,
@@ -310,11 +311,11 @@ impl CodexNotificationEventMapper {
         }) {
             process_text.content.push_str(&delta);
             emit_response_event(
-                event_tx,
-                device_id,
+                emit_context.event_tx,
+                emit_context.device_id,
                 "response.block.updated",
-                local_task_id,
-                request,
+                emit_context.local_task_id,
+                emit_context.request,
                 json!({
                     "block_id": process_text.id.clone(),
                     "updates": {
@@ -328,8 +329,8 @@ impl CodexNotificationEventMapper {
 
         self.process_text_count += 1;
         let id = format!(
-            "text-{local_task_id}-{}-{}",
-            request.subtask_id, self.process_text_count
+            "text-{}-{}-{}",
+            emit_context.local_task_id, emit_context.request.subtask_id, self.process_text_count
         );
         self.process_text = Some(ProcessTextStream {
             id: id.clone(),
@@ -339,11 +340,11 @@ impl CodexNotificationEventMapper {
             content: delta.clone(),
         });
         emit_response_event(
-            event_tx,
-            device_id,
+            emit_context.event_tx,
+            emit_context.device_id,
             "response.block.created",
-            local_task_id,
-            request,
+            emit_context.local_task_id,
+            emit_context.request,
             json!({
                 "block": {
                     "id": id,
@@ -360,10 +361,7 @@ impl CodexNotificationEventMapper {
 
     fn emit_completed_process_text(
         &mut self,
-        event_tx: &Option<broadcast::Sender<Value>>,
-        device_id: &str,
-        local_task_id: &str,
-        request: &ExecutionRequest,
+        emit_context: &EventEmitContext<'_>,
         block_type: &str,
         process_kind: &str,
         item_id: Option<String>,
@@ -374,11 +372,11 @@ impl CodexNotificationEventMapper {
         }) {
             process_text.content = text.clone();
             emit_response_event(
-                event_tx,
-                device_id,
+                emit_context.event_tx,
+                emit_context.device_id,
                 "response.block.updated",
-                local_task_id,
-                request,
+                emit_context.local_task_id,
+                emit_context.request,
                 json!({
                     "block_id": process_text.id.clone(),
                     "updates": {
@@ -393,15 +391,15 @@ impl CodexNotificationEventMapper {
 
         self.process_text_count += 1;
         let id = format!(
-            "text-{local_task_id}-{}-{}",
-            request.subtask_id, self.process_text_count
+            "text-{}-{}-{}",
+            emit_context.local_task_id, emit_context.request.subtask_id, self.process_text_count
         );
         emit_response_event(
-            event_tx,
-            device_id,
+            emit_context.event_tx,
+            emit_context.device_id,
             "response.block.created",
-            local_task_id,
-            request,
+            emit_context.local_task_id,
+            emit_context.request,
             json!({
                 "block": {
                     "id": id,
@@ -418,10 +416,7 @@ impl CodexNotificationEventMapper {
 
     fn emit_text_chunk(
         &mut self,
-        event_tx: &Option<broadcast::Sender<Value>>,
-        device_id: &str,
-        local_task_id: &str,
-        request: &ExecutionRequest,
+        emit_context: &EventEmitContext<'_>,
         method: &str,
         params: &Value,
         resolved_phase: Option<&str>,
@@ -434,7 +429,7 @@ impl CodexNotificationEventMapper {
                 delta,
             })) => {
                 log_text_mapping(
-                    local_task_id,
+                    emit_context.local_task_id,
                     method,
                     "emit_process_delta",
                     resolved_phase,
@@ -442,10 +437,7 @@ impl CodexNotificationEventMapper {
                     &delta,
                 );
                 self.emit_process_text_delta(
-                    event_tx,
-                    device_id,
-                    local_task_id,
-                    request,
+                    emit_context,
                     block_type,
                     process_kind,
                     item_id,
@@ -455,7 +447,7 @@ impl CodexNotificationEventMapper {
             }
             Ok(Some(TextChunkMapping::FinalDelta { delta })) => {
                 log_text_mapping(
-                    local_task_id,
+                    emit_context.local_task_id,
                     method,
                     "emit_final_delta",
                     resolved_phase,
@@ -464,11 +456,11 @@ impl CodexNotificationEventMapper {
                 );
                 self.reset_process_text();
                 emit_response_event(
-                    event_tx,
-                    device_id,
+                    emit_context.event_tx,
+                    emit_context.device_id,
                     "response.output_text.delta",
-                    local_task_id,
-                    request,
+                    emit_context.local_task_id,
+                    emit_context.request,
                     json!({"delta": delta}),
                 );
                 true
@@ -480,7 +472,7 @@ impl CodexNotificationEventMapper {
                 text,
             })) => {
                 log_text_mapping(
-                    local_task_id,
+                    emit_context.local_task_id,
                     method,
                     "emit_completed_process",
                     resolved_phase,
@@ -488,10 +480,7 @@ impl CodexNotificationEventMapper {
                     &text,
                 );
                 self.emit_completed_process_text(
-                    event_tx,
-                    device_id,
-                    local_task_id,
-                    request,
+                    emit_context,
                     block_type,
                     process_kind,
                     item_id,
@@ -501,7 +490,7 @@ impl CodexNotificationEventMapper {
             }
             Ok(Some(TextChunkMapping::FinalCompleted)) => {
                 log_text_mapping(
-                    local_task_id,
+                    emit_context.local_task_id,
                     method,
                     "ignore_completed_final_snapshot",
                     resolved_phase,
@@ -513,9 +502,9 @@ impl CodexNotificationEventMapper {
             Ok(None) => false,
             Err(reason) => {
                 log_dropped_notification(
-                    local_task_id,
-                    &request.task_id,
-                    &request.subtask_id,
+                    emit_context.local_task_id,
+                    &emit_context.request.task_id,
+                    &emit_context.request.subtask_id,
                     method,
                     params,
                     reason,
