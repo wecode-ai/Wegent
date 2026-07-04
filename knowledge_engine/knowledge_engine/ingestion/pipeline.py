@@ -22,6 +22,7 @@ from knowledge_engine.ingestion.metadata import (
     build_ingestion_metadata,
     enrich_nodes_metadata,
 )
+from knowledge_engine.ingestion.qa_unitizer import build_qa_pair_nodes
 from knowledge_engine.splitter.config import (
     FlatChunkConfig,
     MarkdownEnhancementConfig,
@@ -35,6 +36,7 @@ from knowledge_engine.splitter.hierarchical import build_hierarchical_nodes
 from knowledge_engine.splitter.markdown_enhancement import enhance_markdown_nodes
 
 DEFAULT_FILE_AWARE_EXTENSION = ".txt"
+QA_PAIR_PARSER_SUBTYPE = "qa_pair"
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +196,28 @@ def build_ingestion_result(
             parser_subtype=hierarchical_parser_subtype,
         )
 
+    qa_pair_nodes = _try_build_qa_pair_nodes(
+        documents=documents,
+        preparation=preparation,
+    )
+    if qa_pair_nodes is not None:
+        qa_ingestion_metadata = build_ingestion_metadata(
+            preparation.normalized_splitter_config,
+            parser_subtype=QA_PAIR_PARSER_SUBTYPE,
+        )
+        nodes = enrich_nodes_metadata(
+            qa_pair_nodes,
+            ingestion_metadata=qa_ingestion_metadata,
+        )
+        return IngestionResult(
+            index_nodes=nodes,
+            parent_nodes=None,
+            child_nodes=None,
+            normalized_splitter_config=preparation.normalized_splitter_config,
+            ingestion_metadata=qa_ingestion_metadata,
+            parser_subtype=QA_PAIR_PARSER_SUBTYPE,
+        )
+
     pipeline = IngestionPipeline(
         transformations=_build_transformations(
             preparation.normalized_splitter_config,
@@ -211,6 +235,23 @@ def build_ingestion_result(
         ingestion_metadata=preparation.ingestion_metadata,
         parser_subtype=preparation.parser_subtype,
     )
+
+
+def _try_build_qa_pair_nodes(
+    *,
+    documents: list[Document],
+    preparation: IngestionPreparation,
+) -> list[BaseNode] | None:
+    """Auto-unitize clear Q/A documents without changing the query contract."""
+    splitter_config = preparation.normalized_splitter_config
+    if splitter_config.chunk_strategy != "flat":
+        return None
+    if splitter_config.format_enhancement != "file_aware":
+        return None
+    if preparation.parser_subtype not in {"markdown_sentence", "sentence"}:
+        return None
+
+    return build_qa_pair_nodes(documents)
 
 
 def _prepare_hierarchical_documents(

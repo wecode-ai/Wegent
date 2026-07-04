@@ -19,6 +19,7 @@ interface UseDocumentChunksReturn {
   pageSize: number
   splitterType?: string
   splitterSubtype?: string
+  qaPairCount: number
   loading: boolean
   error: string | null
   hasMore: boolean
@@ -36,6 +37,7 @@ export function useDocumentChunks({
   const [page, setPage] = useState(1)
   const [splitterType, setSplitterType] = useState<string | undefined>()
   const [splitterSubtype, setSplitterSubtype] = useState<string | undefined>()
+  const [qaPairCount, setQaPairCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -57,6 +59,7 @@ export function useDocumentChunks({
         setPage(response.page)
         setSplitterType(response.splitter_type)
         setSplitterSubtype(response.splitter_subtype)
+        setQaPairCount(response.qa_pair_count)
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to load chunks'
         setError(errorMessage)
@@ -96,6 +99,7 @@ export function useDocumentChunks({
     pageSize,
     splitterType,
     splitterSubtype,
+    qaPairCount,
     loading,
     error,
     hasMore,

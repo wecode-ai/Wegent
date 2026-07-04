@@ -118,6 +118,82 @@ def test_build_ingestion_result_without_splitter_config_uses_flat_file_aware_def
     assert "Useful body paragraph with enough detail." in result.index_nodes[0].text
 
 
+@pytest.mark.parametrize("file_extension", [".md", ".txt"])
+def test_build_ingestion_result_auto_unitizes_qa_documents(
+    file_extension: str,
+) -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "## Section A\n\n"
+                    "**Q1：What does Wegent index?**\n\n"
+                    "**A：**\n"
+                    "Wegent indexes the complete answer with enough detail "
+                    "to keep the returned chunk useful.\n"
+                    "- It preserves readable answer structure.\n\n"
+                    "**Q2：How is each answer returned?**\n\n"
+                    "**A：**\n"
+                    "Each detected question and answer pair becomes one node "
+                    "without changing the query architecture."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=file_extension,
+        embed_model=MagicMock(),
+    )
+
+    assert result.normalized_splitter_config.chunk_strategy == "flat"
+    assert result.parser_subtype == "qa_pair"
+    assert result.index_nodes == result.nodes
+    assert result.parent_nodes is None
+    assert result.child_nodes is None
+    assert len(result.index_nodes) == 2
+
+    first_node = result.index_nodes[0]
+    second_node = result.index_nodes[1]
+    assert first_node.metadata["node_role"] == "qa_pair"
+    assert first_node.metadata["parser_subtype"] == "qa_pair"
+    assert first_node.metadata["chunk_strategy"] == "flat"
+    assert first_node.metadata["format_enhancement"] == "file_aware"
+    assert first_node.metadata["qa_id"] == "doc1-q0001"
+    assert first_node.metadata["qa_index"] == 0
+    assert first_node.metadata["question"] == "What does Wegent index?"
+    assert first_node.metadata["heading_path"] == "Section A"
+    assert first_node.metadata["qa_confidence"] > 0.8
+    assert first_node.metadata["source_position"].count(":") == 1
+    assert first_node.text.startswith("Q: What does Wegent index?")
+    assert "A: Wegent indexes the complete answer" in first_node.text
+    assert "\n- It preserves readable answer structure." in first_node.text
+    assert "How is each answer returned?" not in first_node.text
+    assert second_node.metadata["qa_id"] == "doc1-q0002"
+    assert "Each detected question and answer pair becomes one node" in second_node.text
+
+
+def test_build_ingestion_result_does_not_unitize_single_qa_document() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "**Q1：What does Wegent index?**\n\n"
+                    "**A：**\n"
+                    "Wegent indexes the complete answer with enough detail."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+    assert len(result.index_nodes) == 1
+    assert result.index_nodes[0].metadata["node_role"] == "chunk"
+
+
 def test_build_ingestion_result_with_hierarchical_config_returns_parent_and_child_nodes() -> (
     None
 ):
@@ -296,6 +372,53 @@ def test_document_indexer_indexes_flat_nodes_with_enriched_metadata() -> None:
     assert indexed_nodes[0].metadata["heading_path"] == "Intro"
     assert result["chunks_data"]["splitter_type"] == "flat"
     assert result["chunks_data"]["splitter_subtype"] == "markdown_sentence"
+    assert result["chunks_data"]["qa_pair_count"] == 0
+
+
+def test_document_indexer_exposes_qa_pair_count_for_unitized_documents() -> None:
+    storage_backend = MagicMock()
+    storage_backend.index_with_metadata.return_value = {
+        "status": "success",
+        "indexed_count": 2,
+        "index_name": "wegent_kb_1",
+    }
+    indexer = DocumentIndexer(
+        storage_backend=storage_backend,
+        embed_model=MagicMock(),
+        splitter_config=None,
+        file_extension=".md",
+    )
+
+    result = indexer._index_documents(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "**Q1：What does Wegent index?**\n\n"
+                    "**A：**\n"
+                    "Wegent indexes complete question and answer pairs.\n\n"
+                    "**Q2：Does retrieval change?**\n\n"
+                    "**A：**\n"
+                    "Retrieval keeps reading the same node text, so query behavior "
+                    "does not require a new architecture."
+                )
+            )
+        ],
+        chunk_metadata=ChunkMetadata(
+            knowledge_id="1",
+            doc_ref="doc_qa",
+            source_file="faq.md",
+            created_at="2026-04-12T00:00:00+00:00",
+        ),
+    )
+
+    indexed_nodes = storage_backend.index_with_metadata.call_args.kwargs["nodes"]
+    assert len(indexed_nodes) == 2
+    assert indexed_nodes[0].metadata["node_role"] == "qa_pair"
+    assert indexed_nodes[0].metadata["parser_subtype"] == "qa_pair"
+    assert result["chunks_data"]["splitter_type"] == "flat"
+    assert result["chunks_data"]["splitter_subtype"] == "qa_pair"
+    assert result["chunks_data"]["qa_pair_count"] == 2
 
 
 def test_document_indexer_hierarchical_routes_through_ingestion_result_contract() -> (

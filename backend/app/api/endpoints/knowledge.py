@@ -1729,6 +1729,7 @@ def list_document_chunks(
         items=[ChunkItem(**item) for item in paginated_items],
         splitter_type=chunks_data.get("splitter_type"),
         splitter_subtype=chunks_data.get("splitter_subtype"),
+        qa_pair_count=chunks_data.get("qa_pair_count", 0),
     )
 
 

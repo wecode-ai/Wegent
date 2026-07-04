@@ -262,5 +262,6 @@ class DocumentIndexer:
             "total_count": len(items),
             "splitter_type": self.splitter_config.chunk_strategy,
             "splitter_subtype": parser_subtype,
+            "qa_pair_count": len(items) if parser_subtype == "qa_pair" else 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }

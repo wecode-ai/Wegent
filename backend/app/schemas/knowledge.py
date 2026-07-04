@@ -889,6 +889,11 @@ class ChunkMetadata(BaseModel):
         None,
         description="Optional parser subtype resolved during format enhancement",
     )
+    qa_pair_count: int = Field(
+        0,
+        ge=0,
+        description="Number of detected Q/A pairs when Q/A unitization is used",
+    )
     created_at: str = Field(..., description="Chunk creation timestamp (ISO format)")
 
 
@@ -917,6 +922,11 @@ class ChunkListResponse(BaseModel):
     splitter_subtype: Optional[str] = Field(
         None,
         description="Optional parser subtype resolved during format enhancement",
+    )
+    qa_pair_count: int = Field(
+        0,
+        ge=0,
+        description="Number of detected Q/A pairs when Q/A unitization is used",
     )
 
 
