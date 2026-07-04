@@ -21,7 +21,11 @@ from app.schemas.admin import (
     PublicBotResponse,
     PublicBotUpdate,
 )
-from app.schemas.kind import Ghost, Model, SkillRefMeta
+from app.schemas.kind import (
+    Ghost,
+    Model,
+    SkillRefMeta,
+)
 from app.services.adapters.shell_utils import get_shell_info_by_name
 
 logger = logging.getLogger(__name__)
@@ -182,7 +186,6 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
     preload_skill_refs = None
     agent_config = None
     default_knowledge_base_refs = None
-
     # Get Ghost info if available
     if ghost_name:
         ghost_namespace = "default"

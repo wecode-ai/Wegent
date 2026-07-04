@@ -30,6 +30,7 @@ export interface SimpleTeamFormValue {
   displayName: string
   description: string
   bindMode: TaskType[]
+  hideToolDetails?: boolean
   quickPhrases: string[]
   icon?: string | null
   requiresWorkspace?: boolean | null
@@ -111,6 +112,9 @@ export function buildSimpleTeamRequest(
         role: 'leader',
       },
     ],
+    display_config: {
+      hide_tool_details: form.hideToolDetails === true,
+    },
     quick_phrases: quickPhrases,
     namespace: form.namespace,
     icon: form.icon || undefined,

@@ -18,6 +18,10 @@ export interface TaskDetail {
   updated_at?: string
 }
 
+export interface TeamDisplayConfig {
+  hide_tool_details?: boolean
+}
+
 export interface TaskDetailSubtask {
   id: number
   role?: string
@@ -28,7 +32,9 @@ export interface TaskDetailSubtask {
   message_id?: number
   attachments?: unknown[]
   contexts?: unknown[]
-  bots?: Array<{ name?: string }>
+  bots?: Array<{
+    name?: string
+  }>
   error_message?: string
   sender_user_name?: string
   sender_user_id?: number

@@ -112,3 +112,99 @@ class TestParsePromptBlocksForPublicShare:
         result, extra = parse_prompt_blocks("")
         assert result == ""
         assert extra == []
+
+
+class TestPublicSharedTaskToolRedaction:
+    """Unit tests for public shared task result redaction."""
+
+    def test_redacts_structured_tool_blocks_and_thinking_details(self):
+        from app.services.shared_task import shared_task_service
+
+        result = {
+            "value": "Final answer remains visible.",
+            "blocks": [
+                {
+                    "id": "text-1",
+                    "type": "text",
+                    "content": "Final answer remains visible.",
+                },
+                {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "status": "done",
+                    "tool_use_id": "call-1",
+                    "tool_name": "knowledge_search",
+                    "tool_input": {"query": "secret query"},
+                    "tool_output": {"content": "secret result"},
+                    "render_payload": {"raw": "secret payload"},
+                },
+            ],
+            "thinking": [
+                {
+                    "title": "Using knowledge_search",
+                    "next_action": "continue",
+                    "details": {
+                        "type": "tool_use",
+                        "name": "knowledge_search",
+                        "status": "started",
+                        "input": {"query": "secret query"},
+                    },
+                },
+                {
+                    "title": "knowledge_search result",
+                    "next_action": "continue",
+                    "details": {
+                        "type": "tool_result",
+                        "tool_use_id": "call-1",
+                        "content": "secret result",
+                        "output": {"content": "secret result"},
+                    },
+                },
+            ],
+        }
+
+        redacted = shared_task_service._redact_public_tool_details(result)
+
+        assert redacted["value"] == "Final answer remains visible."
+        assert redacted["blocks"][0]["content"] == "Final answer remains visible."
+        assert redacted["blocks"][1] == {
+            "id": "tool-1",
+            "type": "tool",
+            "status": "done",
+            "tool_use_id": "call-1",
+            "tool_name": "knowledge_search",
+        }
+        assert "input" not in redacted["thinking"][0]["details"]
+        assert "content" not in redacted["thinking"][1]["details"]
+        assert "output" not in redacted["thinking"][1]["details"]
+        assert "secret query" not in json.dumps(redacted)
+        assert "secret result" not in json.dumps(redacted)
+        assert "secret payload" not in json.dumps(redacted)
+
+    def test_redacts_text_tool_call_arguments(self):
+        from app.services.shared_task import shared_task_service
+
+        result = {
+            "thinking": [
+                {
+                    "title": "Text tool call",
+                    "next_action": "continue",
+                    "details": {
+                        "type": "text",
+                        "text": (
+                            "<tool_call>web_search"
+                            "<arg_key>query</arg_key>"
+                            "<arg_value>secret query</arg_value>"
+                            "</tool_call>"
+                        ),
+                    },
+                }
+            ]
+        }
+
+        redacted = shared_task_service._redact_public_tool_details(result)
+        text = redacted["thinking"][0]["details"]["text"]
+
+        assert "web_search" in text
+        assert "secret query" not in text
+        assert "[tool details hidden]" in text

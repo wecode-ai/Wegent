@@ -115,6 +115,8 @@ function SharedTaskContent() {
     proceedToLoginOrChat(token)
   }
 
+  const hideToolDetails = taskData?.display_config?.hide_tool_details === true
+
   const proceedToLoginOrChat = (token: string) => {
     // Check if user is already logged in
     const authToken = getToken()
@@ -379,6 +381,7 @@ function SharedTaskContent() {
                     theme={theme}
                     t={t}
                     shareToken={searchParams.get('token') || undefined}
+                    hideToolDetailsOverride={hideToolDetails}
                   />
                 )
               })}

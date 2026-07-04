@@ -200,6 +200,8 @@ interface ToolBlockWithCountProps extends ToolBlockProps {
   count?: number
   /** All merged tools (for expanded view when count > 1) */
   mergedTools?: ToolRendererProps['tool'][]
+  /** Hide tool input/output details and parameter previews */
+  hideDetails?: boolean
 }
 
 /**
@@ -215,6 +217,7 @@ export const ToolBlock = memo(function ToolBlock({
   defaultExpanded = false,
   count = 1,
   mergedTools = [],
+  hideDetails = false,
 }: ToolBlockWithCountProps) {
   const { t } = useTranslation('chat')
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
@@ -255,7 +258,10 @@ export const ToolBlock = memo(function ToolBlock({
 
   // Get tool display name and input preview
   const toolDisplayName = getToolDisplayName(tool, t)
-  const inputPreview = useMemo(() => getToolInputPreview(tool), [tool])
+  const inputPreview = useMemo(
+    () => (hideDetails ? null : getToolInputPreview(tool)),
+    [hideDetails, tool]
+  )
 
   // Check if expandable (has content to show)
   const hasInput = hasMeaningfulToolInput(
@@ -279,7 +285,7 @@ export const ToolBlock = memo(function ToolBlock({
 
   // Check if any tool has content to show
   const hasMergedContent = count > 1 && mergedTools.length > 0
-  const canExpand = isExpandable || hasMergedContent
+  const canExpand = !hideDetails && (isExpandable || hasMergedContent)
 
   return (
     <div className="mb-1">

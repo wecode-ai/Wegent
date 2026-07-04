@@ -7,6 +7,8 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from app.schemas.kind import TeamDisplayConfig
+
 
 class TaskShareInfo(BaseModel):
     """Task share information decoded from token"""
@@ -163,5 +165,6 @@ class PublicSharedTaskResponse(BaseModel):
     task_title: str
     sharer_name: str
     sharer_id: int
+    display_config: Optional[TeamDisplayConfig] = None
     subtasks: List[PublicSubtaskData]
     created_at: datetime

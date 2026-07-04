@@ -18,7 +18,14 @@ logger = logging.getLogger(__name__)
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
-from app.schemas.kind import Bot, Ghost, Model, Shell, SkillRefMeta, Team
+from app.schemas.kind import (
+    Bot,
+    Ghost,
+    Model,
+    Shell,
+    SkillRefMeta,
+    Team,
+)
 from app.services.adapters.shell_utils import (
     get_shell_by_name,
     get_shell_info_by_name,

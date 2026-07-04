@@ -61,6 +61,7 @@ import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartU
 import { formatDateTime } from '@/utils/dateTime'
 import { getTeamDisplayName } from '@/utils/team'
 import { ErrorCard } from './ErrorCard'
+
 export interface Message {
   type: 'user' | 'ai'
   content: string
@@ -217,6 +218,8 @@ export interface MessageBubbleProps {
   onReEdit?: (msg: Message) => void
   /** Share token for public access to attachments (no login required) */
   shareToken?: string
+  /** Explicit public-view override for tool detail visibility. */
+  hideToolDetailsOverride?: boolean
   /** Current task type to determine which model category to show in regenerate popover */
   taskType?: TaskType
   /** Callback when user clicks forward button - receives the subtaskId of the message to forward */
@@ -385,6 +388,7 @@ const MessageBubble = memo(
     onUseAsReference,
     onReEdit,
     shareToken,
+    hideToolDetailsOverride,
     taskType,
     onForwardClick,
   }: MessageBubbleProps) {
@@ -465,6 +469,8 @@ const MessageBubble = memo(
       : isCorrectionResultMessage
         ? msg.botName || correctionResultTitle
         : messageHeaderLabel
+    const hideToolDetails =
+      hideToolDetailsOverride ?? selectedTeam?.display_config?.hide_tool_details === true
 
     // Determine if message is currently streaming (to disable URL metadata fetching)
     // During streaming, we show simple links to avoid excessive API calls
@@ -1429,6 +1435,7 @@ const MessageBubble = memo(
                     thinking={msg.thinking}
                     taskStatus={msg.subtaskStatus}
                     shellType={msg.result?.shell_type}
+                    hideToolDetails={hideToolDetails}
                   />
                 )}
               {/* Show header for other users' messages in group chat (left-aligned user messages) */}
@@ -1512,6 +1519,7 @@ const MessageBubble = memo(
                         subtaskId={msg.subtaskId}
                         currentMessageIndex={index}
                         onAskUserSubmit={onAskUserSubmit}
+                        hideToolDetails={hideToolDetails}
                       />
                       <SourceReferences
                         sources={msg.sources || msg.result?.sources || []}
@@ -1728,9 +1736,12 @@ const MessageBubble = memo(
       prevProps.onUseAsReference === nextProps.onUseAsReference &&
       prevProps.onRetryWithModel === nextProps.onRetryWithModel &&
       prevProps.onReEdit === nextProps.onReEdit &&
+      prevProps.hideToolDetailsOverride === nextProps.hideToolDetailsOverride &&
       prevProps.taskType === nextProps.taskType &&
       prevProps.selectedTeam?.name === nextProps.selectedTeam?.name &&
       prevProps.selectedTeam?.displayName === nextProps.selectedTeam?.displayName &&
+      prevProps.selectedTeam?.display_config?.hide_tool_details ===
+        nextProps.selectedTeam?.display_config?.hide_tool_details &&
       (prevProps.selectedTeam?.bots?.length ?? 0) === (nextProps.selectedTeam?.bots?.length ?? 0)
 
     return shouldSkipRender

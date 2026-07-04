@@ -28,6 +28,8 @@ interface TeamBasicInfoFormProps {
   setBindMode: (bindMode: TaskType[]) => void
   icon?: string | null
   setIcon?: (icon: string) => void
+  hideToolDetails?: boolean
+  setHideToolDetails?: (hideToolDetails: boolean) => void
   requiresWorkspace?: boolean | null
   setRequiresWorkspace?: (value: boolean | null) => void
 }
@@ -45,6 +47,8 @@ export default function TeamBasicInfoForm({
   setBindMode,
   icon,
   setIcon,
+  hideToolDetails = false,
+  setHideToolDetails,
   requiresWorkspace,
   setRequiresWorkspace,
 }: TeamBasicInfoFormProps) {
@@ -144,6 +148,24 @@ export default function TeamBasicInfoForm({
             {t('settings:team.quick_phrases.description')}
           </p>
           <QuickPhraseEditor value={quickPhrases} onChange={onQuickPhrasesChange} />
+        </div>
+      )}
+
+      {setHideToolDetails && (
+        <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-text-primary">
+              {t('settings:team.simple.core.hide_tool_details_label')}
+            </div>
+            <div className="text-xs text-text-muted">
+              {t('settings:team.simple.core.hide_tool_details_description')}
+            </div>
+          </div>
+          <Switch
+            checked={hideToolDetails}
+            onCheckedChange={setHideToolDetails}
+            data-testid="team-hide-tool-details-switch"
+          />
         </div>
       )}
 
