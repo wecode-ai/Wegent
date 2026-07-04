@@ -218,6 +218,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     Record<string, SkillRefMeta>
   >({})
   const [simplePreloadSkills, setSimplePreloadSkills] = useState<string[]>([])
+  const [hideToolDetails, setHideToolDetails] = useState(false)
   const [simpleAllSkills, setSimpleAllSkills] = useState<UnifiedSkill[]>([])
   const [simpleAvailableSkills, setSimpleAvailableSkills] = useState<UnifiedSkill[]>([])
   const [simpleLoadingSkills, setSimpleLoadingSkills] = useState(false)
@@ -344,6 +345,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkills(fullLeaderBot?.skills || [])
       setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
       setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
+      setHideToolDetails(formTeam.display_config?.hide_tool_details === true)
       setSimpleDefaultKnowledgeBaseRefs(fullLeaderBot?.default_knowledge_base_refs || [])
       setSimpleMcpConfig(stringifyMcpConfig(fullLeaderBot?.mcp_servers || {}))
       setSimpleModelName(
@@ -396,6 +398,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkills([])
       setSimpleSelectedSkillRefs({})
       setSimplePreloadSkills([])
+      setHideToolDetails(false)
       setSimpleDefaultKnowledgeBaseRefs([])
       setSimpleMcpConfig('')
       // Default to true for new teams (requires workspace by default)
@@ -699,6 +702,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           description,
           quickPhrases,
           bindMode,
+          hideToolDetails,
           icon,
           requiresWorkspace,
           namespace,
@@ -755,6 +759,9 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     const trimmedDisplayName = displayName.trim()
     const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
     const quickPhrasePayload = getQuickPhrasePayload(quickPhrases)
+    const displayConfigPayload = {
+      hide_tool_details: hideToolDetails === true,
+    }
 
     // For solo mode, save bot first via BotEdit ref
     if (mode === 'solo') {
@@ -795,6 +802,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               bind_mode: bindMode,
               bots: botsData,
               quick_phrases: quickPhrasePayload,
+              display_config: displayConfigPayload,
               namespace: scope === 'group' && groupName ? groupName : undefined,
               icon: icon || undefined,
               requires_workspace: requiresWorkspace ?? undefined,
@@ -809,6 +817,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               bind_mode: bindMode,
               bots: botsData,
               quick_phrases: quickPhrasePayload,
+              display_config: displayConfigPayload,
               namespace: scope === 'group' && groupName ? groupName : undefined,
               icon: icon || undefined,
               requires_workspace: requiresWorkspace ?? undefined,
@@ -893,6 +902,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           bind_mode: bindMode,
           bots: botsData,
           quick_phrases: quickPhrasePayload,
+          display_config: displayConfigPayload,
           namespace: scope === 'group' && groupName ? groupName : undefined,
           icon: icon || undefined,
           requires_workspace: requiresWorkspace ?? undefined,
@@ -907,6 +917,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           bind_mode: bindMode,
           bots: botsData,
           quick_phrases: quickPhrasePayload,
+          display_config: displayConfigPayload,
           namespace: scope === 'group' && groupName ? groupName : undefined,
           icon: icon || undefined,
           requires_workspace: requiresWorkspace ?? undefined,
@@ -1001,6 +1012,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 preloadSkills={simplePreloadSkills}
                 onPreloadSkillsChange={setSimplePreloadSkills}
                 supportsPreloadSkills={simpleSupportsPreloadSkills}
+                hideToolDetails={hideToolDetails}
+                setHideToolDetails={setHideToolDetails}
                 availableSkills={simpleAvailableSkills}
                 allSkills={simpleAllSkills}
                 loadingSkills={simpleLoadingSkills}
@@ -1046,6 +1059,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setBindMode={setBindMode}
                   icon={icon}
                   setIcon={setIcon}
+                  hideToolDetails={hideToolDetails}
+                  setHideToolDetails={setHideToolDetails}
                   requiresWorkspace={requiresWorkspace}
                   setRequiresWorkspace={setRequiresWorkspace}
                 />

@@ -28,7 +28,15 @@ from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole, has_permission
-from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team
+from app.schemas.kind import (
+    Bot,
+    Ghost,
+    Model,
+    Shell,
+    Task,
+    Team,
+    dump_team_display_config,
+)
 from app.schemas.quick_launch import normalize_quick_phrases
 from app.schemas.team import BotInfo, TeamCreate, TeamDetail, TeamInDB, TeamUpdate
 from app.services.adapters.pipeline_context import normalize_context_passing
@@ -230,6 +238,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         icon = getattr(obj_in, "icon", None)
         if icon is not None:
             spec["icon"] = icon
+
+        display_config = getattr(obj_in, "display_config", None)
+        if display_config is not None:
+            spec["displayConfig"] = dump_team_display_config(display_config)
 
         # Handle requires_workspace - get from obj_in directly
         requires_workspace = getattr(obj_in, "requires_workspace", None)
@@ -1071,6 +1083,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if "icon" in update_data:
             team_crd.spec.icon = update_data["icon"]
 
+        if "display_config" in update_data:
+            team_crd.spec.displayConfig = update_data["display_config"] or {}
+
         # Handle requires_workspace update
         if "requires_workspace" in update_data:
             team_crd.spec.requiresWorkspace = update_data["requires_workspace"]
@@ -1567,6 +1582,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get icon from spec
         icon = team_crd.spec.icon
 
+        display_config = dump_team_display_config(team_crd.spec.displayConfig)
+
         # Get requires_workspace from spec
         requires_workspace = team_crd.spec.requiresWorkspace
 
@@ -1595,6 +1612,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "updated_at": team.updated_at,
             "agent_type": agent_type,  # Add agent_type field
             "icon": icon,  # Add icon field
+            "display_config": display_config,
             "quick_phrases": quick_phrases,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
         }
@@ -1770,6 +1788,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get icon from spec
         icon = team_crd.spec.icon
 
+        display_config = dump_team_display_config(team_crd.spec.displayConfig)
+
         # Get requires_workspace from spec
         requires_workspace = team_crd.spec.requiresWorkspace
 
@@ -1792,6 +1812,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "updated_at": team.updated_at,
             "agent_type": agent_type,
             "icon": icon,
+            "display_config": display_config,
             "quick_phrases": quick_phrases,
             "requires_workspace": requires_workspace,  # Add requires_workspace field
         }
@@ -1866,7 +1887,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         "bind_model_type": "public",
                     }
 
-        return {"agent_config": agent_config, "shell_type": shell_type}
+        return {
+            "name": bot.name,
+            "agent_config": agent_config,
+            "shell_type": shell_type,
+        }
 
     def _get_bot_summary(self, bot: Kind, db: Session, user_id: int) -> Dict[str, Any]:
         """
@@ -1965,7 +1990,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         model_query_time = time.time() - t_model
 
-        result = {"agent_config": agent_config, "shell_type": shell_type}
+        result = {
+            "name": bot.name,
+            "agent_config": agent_config,
+            "shell_type": shell_type,
+        }
 
         total_summary_time = time.time() - summary_start
         if total_summary_time > 0.05:

@@ -7,6 +7,7 @@ export type {
   TaskDetail,
   TaskDetailSubtask,
   TaskStatus,
+  TeamDisplayConfig,
 } from './api-types'
 export type { MessageBlock, MessageBlockStatus } from './message-blocks'
 export {

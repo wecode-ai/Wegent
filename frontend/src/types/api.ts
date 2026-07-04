@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ExternalKnowledgeRef } from '@/types/context'
+import type { TeamDisplayConfig } from '@wegent/chat-core'
 
 // Authentication Types
 
@@ -187,6 +188,7 @@ export interface Team {
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
   bind_mode?: TaskType[] // Allowed modes for this team
   icon?: string // Icon ID from preset icon library
+  display_config?: TeamDisplayConfig
   quick_phrases?: string[] // Launcher phrases that prefill the chat input
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
   /** Modes this team is the default for (e.g., ['chat', 'code']) - computed from env config */
@@ -198,6 +200,7 @@ export interface Team {
 
 /** Bot summary with only necessary fields for team list */
 export interface BotSummary {
+  name?: string
   agent_config?: Record<string, unknown>
   shell_type?: string
 }

@@ -13,6 +13,7 @@ import {
   TaskRuntimeCheck,
 } from '../types/api'
 import { getApiBaseUrl } from '@/lib/runtime-config'
+import type { TeamDisplayConfig } from '@wegent/chat-core'
 
 // Task Request/Response Types
 export interface CreateTaskRequest {
@@ -192,6 +193,7 @@ export interface PublicSharedTaskResponse {
   task_title: string
   sharer_name: string
   sharer_id: number
+  display_config?: TeamDisplayConfig | null
   subtasks: PublicSubtaskData[]
   created_at: string
 }

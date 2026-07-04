@@ -383,6 +383,23 @@ class ShellRef(BaseModel):
     namespace: str = "default"
 
 
+class TeamDisplayConfig(BaseModel):
+    """Team display configuration"""
+
+    hide_tool_details: Optional[bool] = None
+
+
+def dump_team_display_config(
+    config: Optional[TeamDisplayConfig | Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Convert team display config to a compact JSON dictionary."""
+    if not config:
+        return {}
+    if isinstance(config, TeamDisplayConfig):
+        return config.model_dump(exclude_none=True)
+    return {key: value for key, value in config.items() if value is not None}
+
+
 class BotSpec(BaseModel):
     """Bot specification"""
 
@@ -455,12 +472,20 @@ class TeamSpec(QuickPhraseMixin):
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     description: Optional[str] = None  # Team description
     icon: Optional[str] = None  # Icon ID from preset icon library
+    displayConfig: TeamDisplayConfig = Field(default_factory=TeamDisplayConfig)
     requiresWorkspace: Optional[bool] = Field(
         default=None,
         description="Whether this team requires a workspace/repository. "
         "If not set (None), it will be inferred from the underlying shell types. "
         "Set to True to always require workspace, False to never require workspace.",
     )
+
+    @field_serializer("displayConfig")
+    def serialize_display_config(
+        self, display_config: TeamDisplayConfig
+    ) -> Dict[str, Any]:
+        """Serialize display config without unset keys."""
+        return dump_team_display_config(display_config)
 
 
 class TeamStatus(Status):

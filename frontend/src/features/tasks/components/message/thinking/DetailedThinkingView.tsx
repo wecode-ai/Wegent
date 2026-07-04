@@ -30,6 +30,7 @@ import ScrollToBottom from './components/ScrollToBottom'
 interface DetailedThinkingViewProps {
   thinking: ThinkingStep[] | null
   taskStatus?: string
+  hideToolDetails?: boolean
 }
 
 /**
@@ -39,6 +40,7 @@ interface DetailedThinkingViewProps {
 const DetailedThinkingView = memo(function DetailedThinkingView({
   thinking,
   taskStatus,
+  hideToolDetails = false,
 }: DetailedThinkingViewProps) {
   const { t } = useTranslation()
 
@@ -97,6 +99,20 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
     return t('chat:messages.thinking') || 'Thinking'
   }
 
+  const renderHiddenToolCall = (toolName: string, beforeText?: string, afterText?: string) => (
+    <div className="space-y-2">
+      {beforeText && (
+        <div className="text-xs text-text-secondary whitespace-pre-wrap">{beforeText}</div>
+      )}
+      <div className="text-xs font-medium text-blue-400">
+        {t('chat:thinking.pre_tool_call') || 'Tool Call'}: {toolName}
+      </div>
+      {afterText && (
+        <div className="text-xs text-text-secondary whitespace-pre-wrap">{afterText}</div>
+      )}
+    </div>
+  )
+
   // Render text content with tool_call parsing
   const renderTextContent = (text: string, uniqueId: string) => {
     const parsed = parseToolCallTags(text)
@@ -107,6 +123,9 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
         /<tool_call>TodoWrite\s*<arg_key>todos<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/
       )
       if (todoWriteMatch) {
+        if (hideToolDetails) {
+          return renderHiddenToolCall('TodoWrite')
+        }
         try {
           const todosData = JSON.parse(todoWriteMatch[1])
           if (Array.isArray(todosData)) {
@@ -143,6 +162,10 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
           </div>
         </div>
       )
+    }
+
+    if (hideToolDetails) {
+      return renderHiddenToolCall(parsed.toolName, parsed.beforeText, parsed.afterText)
     }
 
     // Render with parsed tool_call - handle TodoWrite specially
@@ -230,6 +253,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
         <div className="mt-2 space-y-2">
           {details.message.content.map((content, idx) => {
             if (content.type === 'tool_use') {
+              if (hideToolDetails) return null
               return (
                 <ToolCallItem
                   key={idx}
@@ -239,6 +263,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
                 />
               )
             } else if (content.type === 'tool_result') {
+              if (hideToolDetails) return null
               return (
                 <ToolResultItem
                   key={idx}
@@ -262,6 +287,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
 
     // Handle direct tool_use type
     if (details.type === 'tool_use') {
+      if (hideToolDetails) return null
       return (
         <div className="mt-2">
           <ToolCallItem
@@ -275,6 +301,7 @@ const DetailedThinkingView = memo(function DetailedThinkingView({
 
     // Handle direct tool_result type
     if (details.type === 'tool_result') {
+      if (hideToolDetails) return null
       return (
         <div className="mt-2">
           <ToolResultItem

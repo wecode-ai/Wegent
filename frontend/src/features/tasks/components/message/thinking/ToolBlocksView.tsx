@@ -13,6 +13,7 @@ import { ToolBlockGroup } from './components/ToolBlockGroup'
 interface ToolBlocksViewProps {
   thinking: ThinkingStep[] | null
   taskStatus?: string
+  hideToolDetails?: boolean
 }
 
 /**
@@ -21,7 +22,11 @@ interface ToolBlocksViewProps {
  * Displays tool execution blocks separately from thinking timeline.
  * Extracts tools from thinking array and renders them as collapsible blocks.
  */
-const ToolBlocksView = memo(function ToolBlocksView({ thinking, taskStatus }: ToolBlocksViewProps) {
+const ToolBlocksView = memo(function ToolBlocksView({
+  thinking,
+  taskStatus,
+  hideToolDetails = false,
+}: ToolBlocksViewProps) {
   const { toolGroups, hasTools } = useToolExtraction(thinking)
 
   // Check if task is still running
@@ -41,6 +46,7 @@ const ToolBlocksView = memo(function ToolBlocksView({ thinking, taskStatus }: To
             group={group}
             taskStatus={taskStatus}
             defaultExpanded={shouldExpand}
+            hideToolDetails={hideToolDetails}
           />
         )
       })}

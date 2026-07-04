@@ -706,7 +706,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       )
       parsedAgentConfig = modelConfig ?? {}
     }
-
     let parsedMcpConfig: Record<string, unknown> = {}
     if (!isDifyAgent && mcpConfig.trim()) {
       parsedMcpConfig = JSON.parse(mcpConfig)
@@ -868,13 +867,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       return
     }
 
-    let parsedAgentConfig: unknown = undefined
+    let parsedAgentConfig: Record<string, unknown> = {}
 
     // For Dify agent, always use custom model configuration
     if (isDifyAgent) {
       const trimmedConfig = agentConfig.trim()
       try {
-        parsedAgentConfig = JSON.parse(trimmedConfig)
+        parsedAgentConfig = JSON.parse(trimmedConfig) as Record<string, unknown>
         setAgentConfigError(false)
       } catch {
         setAgentConfigError(true)
@@ -911,7 +910,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       )
       parsedAgentConfig = modelConfig ?? {}
     }
-
     let parsedMcpConfig: Record<string, unknown> | null = null
 
     // Skip MCP config for Dify agent

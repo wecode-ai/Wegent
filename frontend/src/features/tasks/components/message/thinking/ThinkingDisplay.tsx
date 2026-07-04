@@ -29,6 +29,7 @@ const ThinkingDisplay = memo(function ThinkingDisplay({
   thinking,
   taskStatus,
   shellType: _shellType,
+  hideToolDetails = false,
 }: ThinkingDisplayProps) {
   // Early return if no thinking data
   if (!thinking || thinking.length === 0) {
@@ -37,10 +38,18 @@ const ThinkingDisplay = memo(function ThinkingDisplay({
 
   // Text-type steps (e.g. deep research) need the detailed renderer.
   if (hasTextTypeSteps(thinking)) {
-    return <DetailedThinkingView thinking={thinking} taskStatus={taskStatus} />
+    return (
+      <DetailedThinkingView
+        thinking={thinking}
+        taskStatus={taskStatus}
+        hideToolDetails={hideToolDetails}
+      />
+    )
   }
 
-  return <ToolBlocksView thinking={thinking} taskStatus={taskStatus} />
+  return (
+    <ToolBlocksView thinking={thinking} taskStatus={taskStatus} hideToolDetails={hideToolDetails} />
+  )
 })
 
 export default ThinkingDisplay

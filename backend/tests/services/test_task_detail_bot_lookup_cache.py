@@ -101,8 +101,10 @@ def test_get_bots_for_subtasks_caches_shared_model_and_shell_queries():
 
     assert len(result) == 2
     assert result[1]["agent_config"]["bind_model"] == "shared-model"
+    assert "display_config" not in result[1]
     assert result[1]["shell_type"] == "ClaudeCode"
     assert result[2]["agent_config"]["bind_model"] == "shared-model"
+    assert "display_config" not in result[2]
     assert result[2]["shell_type"] == "ClaudeCode"
     assert mock_lookup.call_count == 2
 
