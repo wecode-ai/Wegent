@@ -22,6 +22,58 @@ def set_auto_direct_injection_enabled_by_default(monkeypatch):
     )
 
 
+class _FakeChunksQuery:
+    def __init__(self, chunks_rows):
+        self.chunks_rows = chunks_rows
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def with_entities(self, *args, **kwargs):
+        return [(chunks,) for chunks in self.chunks_rows]
+
+
+class _FakeChunksDb:
+    def __init__(self, chunks_rows):
+        self.chunks_rows = chunks_rows
+
+    def query(self, *args, **kwargs):
+        return _FakeChunksQuery(self.chunks_rows)
+
+
+def test_build_qa_query_plan_detects_qa_pair_chunks():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    plan = RetrievalService._build_qa_query_plan(
+        db=_FakeChunksDb(
+            [
+                {"splitter_subtype": "qa_pair", "qa_pair_count": 2},
+                {"splitter_subtype": "markdown_sentence", "qa_pair_count": 0},
+                {"splitter_subtype": "qa_pair", "qa_pair_count": 3},
+            ]
+        ),
+        knowledge_base_id=1,
+    )
+
+    assert plan == {"retrieval_profile": "qa_pair", "qa_pair_count": 5}
+
+
+def test_build_qa_query_plan_ignores_non_qa_chunks():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    plan = RetrievalService._build_qa_query_plan(
+        db=_FakeChunksDb(
+            [
+                {"splitter_subtype": "markdown_sentence", "qa_pair_count": 0},
+                None,
+            ]
+        ),
+        knowledge_base_id=1,
+    )
+
+    assert plan is None
+
+
 @pytest.mark.asyncio
 async def test_retrieve_for_chat_shell_no_longer_persists_subtask_context():
     from app.services.context.context_service import context_service
@@ -891,6 +943,7 @@ class TestRetrieveForChatShell:
         mock_execute.assert_awaited_once_with(
             knowledge_id="123",
             query="release checklist",
+            query_plan=None,
             search_hints=None,
             retrieval_config=kb_config.retrieval_config,
             scope=RetrievalScope(document_ids=[9]),

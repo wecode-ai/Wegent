@@ -487,6 +487,7 @@ class RagRuntimeResolver:
                 owner_user_id = kb_info.index_owner_user_id
 
             retrieval_mode = retrieval_config.get("retrieval_mode", "vector")
+            retrieval_mode_source = retrieval_config.get("retrieval_mode_source")
             hybrid_weights = retrieval_config.get("hybrid_weights") or {}
             configs.append(
                 QueryKnowledgeBaseRuntimeConfig(
@@ -509,6 +510,7 @@ class RagRuntimeResolver:
                         top_k=retrieval_config.get("top_k", 20),
                         score_threshold=retrieval_config.get("score_threshold", 0.5),
                         retrieval_mode=retrieval_mode,
+                        retrieval_mode_source=retrieval_mode_source,
                         vector_weight=(
                             hybrid_weights.get("vector_weight")
                             if retrieval_mode == "hybrid"

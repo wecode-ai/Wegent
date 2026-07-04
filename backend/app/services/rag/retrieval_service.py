@@ -666,9 +666,15 @@ class RetrievalService:
             db=db,
             user_name=user_name,
         )
+        query_plan = self._build_qa_query_plan(
+            db=db,
+            knowledge_base_id=kb.id,
+            scope=scope,
+        )
         result = await self._execute_runtime_query(
             query=query,
             search_hints=search_hints,
+            query_plan=query_plan,
             knowledge_base_config=resolved_config,
             scope=scope,
             metadata_condition=metadata_condition,
@@ -721,6 +727,7 @@ class RetrievalService:
         *,
         query: str,
         search_hints: SearchHints | None = None,
+        query_plan: dict[str, Any] | None = None,
         knowledge_base_config: RemoteKnowledgeBaseQueryConfig,
         scope: RetrievalScope | None = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
@@ -739,12 +746,44 @@ class RetrievalService:
         return await executor.execute(
             knowledge_id=str(knowledge_base_config.knowledge_base_id),
             query=query,
+            query_plan=query_plan,
             search_hints=search_hints,
             retrieval_config=knowledge_base_config.retrieval_config,
             scope=scope,
             metadata_condition=metadata_condition,
             user_id=knowledge_base_config.index_owner_user_id,
         )
+
+    @staticmethod
+    def _build_qa_query_plan(
+        *,
+        db: Session,
+        knowledge_base_id: int,
+        scope: RetrievalScope | None = None,
+    ) -> dict[str, Any] | None:
+        from app.models.knowledge import KnowledgeDocument
+
+        query = db.query(KnowledgeDocument).filter(
+            KnowledgeDocument.kind_id == knowledge_base_id,
+            KnowledgeDocument.is_active.is_(True),
+        )
+        if scope and scope.document_ids:
+            query = query.filter(KnowledgeDocument.id.in_(scope.document_ids))
+
+        qa_pair_count = 0
+        for chunks in (row[0] for row in query.with_entities(KnowledgeDocument.chunks)):
+            if not isinstance(chunks, dict):
+                continue
+            if chunks.get("splitter_subtype") == "qa_pair":
+                qa_pair_count += int(chunks.get("qa_pair_count") or 0)
+
+        if qa_pair_count <= 0:
+            return None
+
+        return {
+            "retrieval_profile": "qa_pair",
+            "qa_pair_count": qa_pair_count,
+        }
 
     async def get_original_documents_from_knowledge_base(
         self,
