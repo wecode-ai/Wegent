@@ -9,6 +9,7 @@ Unit tests for MilvusBackend storage backend implementation.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from llama_index.core.schema import TextNode
 
 from knowledge_engine.retrieval.filters import parse_metadata_filters
 from knowledge_engine.storage.chunk_metadata import ChunkMetadata
@@ -243,6 +244,27 @@ class TestCreateVectorStore:
 
 class TestRetrieve:
     """Tests for retrieve method."""
+
+    def test_process_query_results_returns_display_text(self):
+        from knowledge_engine.storage.milvus_backend import MilvusBackend
+
+        backend = MilvusBackend(
+            {
+                "url": "http://localhost:19530/default",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        node = TextNode(
+            text="Question-only retrieval text",
+            metadata={"display_text": "Q: question\n\nA: full answer"},
+        )
+
+        result = backend._process_query_results(
+            MagicMock(nodes=[node], similarities=[0.9]),
+            score_threshold=0.1,
+        )
+
+        assert result["records"][0]["content"] == "Q: question\n\nA: full answer"
 
     @patch("knowledge_engine.storage.milvus_backend.LazyAsyncMilvusVectorStore")
     def test_retrieve_vector_mode(self, mock_milvus_vs):

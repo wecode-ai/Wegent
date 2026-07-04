@@ -391,8 +391,9 @@ class MilvusBackend(BaseStorageBackend):
         # Index nodes using LlamaIndex
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
+        nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
         VectorStoreIndex(
-            nodes,
+            nodes_for_embedding,
             storage_context=storage_context,
             embed_model=embed_model,
             show_progress=True,
@@ -667,7 +668,7 @@ class MilvusBackend(BaseStorageBackend):
             if score >= score_threshold:
                 results.append(
                     {
-                        "content": node.text,
+                        "content": self.get_node_display_text(node),
                         "score": float(score),
                         "title": node.metadata.get("source_file", ""),
                         "metadata": node.metadata,
@@ -816,7 +817,7 @@ class MilvusBackend(BaseStorageBackend):
             chunks.append(
                 {
                     "chunk_index": metadata.get("chunk_index"),
-                    "content": node.text,
+                    "content": self.get_node_display_text(node),
                     "metadata": metadata,
                 }
             )
@@ -1000,7 +1001,7 @@ class MilvusBackend(BaseStorageBackend):
                         "knowledge_id": knowledge_id,
                         "doc_ref": node.metadata.get("doc_ref"),
                         "source_file": node.metadata.get("source_file"),
-                        "content": node.text,
+                        "content": self.get_node_display_text(node),
                         "title": node.metadata.get("source_file", ""),
                         "metadata_json": json.dumps(node.metadata),
                     }
@@ -1154,6 +1155,7 @@ class MilvusBackend(BaseStorageBackend):
                     "created_at",
                     "chunk_index",
                     "text",
+                    "display_text",
                 ],
                 limit=max_chunks,
             )
@@ -1166,7 +1168,10 @@ class MilvusBackend(BaseStorageBackend):
 
                 chunks.append(
                     {
-                        "content": self.extract_chunk_text(raw_content),
+                        "content": self.get_display_text_from_metadata(
+                            record,
+                            fallback=self.extract_chunk_text(raw_content),
+                        ),
                         "title": record.get("source_file", ""),
                         "chunk_id": record.get("chunk_index", 0),
                         "doc_ref": record.get("doc_ref", ""),

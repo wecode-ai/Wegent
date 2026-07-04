@@ -161,6 +161,12 @@ def test_build_ingestion_result_auto_unitizes_qa_documents(
     assert first_node.metadata["qa_id"] == "doc1-q0001"
     assert first_node.metadata["qa_index"] == 0
     assert first_node.metadata["question"] == "What does Wegent index?"
+    assert first_node.metadata["display_text"] == first_node.text
+    assert first_node.metadata["retrieval_text"].startswith(
+        "Section: Section A\nQuestion: What does Wegent index?"
+    )
+    assert first_node.metadata["retrieval_text"] != first_node.text
+    assert "\n\nA:" not in first_node.metadata["retrieval_text"]
     assert first_node.metadata["heading_path"] == "Section A"
     assert first_node.metadata["qa_confidence"] > 0.8
     assert first_node.metadata["source_position"].count(":") == 1
@@ -419,6 +425,13 @@ def test_document_indexer_exposes_qa_pair_count_for_unitized_documents() -> None
     assert result["chunks_data"]["splitter_type"] == "flat"
     assert result["chunks_data"]["splitter_subtype"] == "qa_pair"
     assert result["chunks_data"]["qa_pair_count"] == 2
+    assert result["chunks_data"]["items"][0]["content"].startswith(
+        "Q: What does Wegent index?"
+    )
+    assert (
+        "A: Wegent indexes complete question and answer pairs."
+        in result["chunks_data"]["items"][0]["content"]
+    )
 
 
 def test_document_indexer_hierarchical_routes_through_ingestion_result_contract() -> (

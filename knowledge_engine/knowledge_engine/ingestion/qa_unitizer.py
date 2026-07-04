@@ -49,6 +49,17 @@ class QAPairUnit:
     def text(self) -> str:
         return f"Q: {self.question}\n\nA: {self.answer}".strip()
 
+    @property
+    def retrieval_text(self) -> str:
+        parts = []
+        if self.section_path:
+            parts.append(f"Section: {self.section_path}")
+        parts.append(f"Question: {self.question}")
+        digest = _answer_digest(self.answer)
+        if digest:
+            parts.append(f"Answer summary: {digest}")
+        return "\n".join(parts)
+
 
 def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
     """Return one node per Q/A pair when a document is clearly Q/A structured."""
@@ -65,12 +76,15 @@ def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
 
     nodes: list[TextNode] = []
     for index, (unit, source_metadata) in enumerate(all_units):
+        display_text = unit.text
         metadata = {
             **source_metadata,
             "node_role": "qa_pair",
             "qa_id": unit.qa_id,
             "qa_index": index,
             "question": unit.question,
+            "retrieval_text": unit.retrieval_text,
+            "display_text": display_text,
             "qa_confidence": unit.confidence,
             "source_position": f"{unit.start}:{unit.end}",
         }
@@ -79,19 +93,23 @@ def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
 
         nodes.append(
             TextNode(
-                text=unit.text,
+                text=display_text,
                 metadata=metadata,
                 excluded_embed_metadata_keys=[
                     "qa_id",
                     "qa_index",
                     "qa_confidence",
                     "source_position",
+                    "retrieval_text",
+                    "display_text",
                 ],
                 excluded_llm_metadata_keys=[
                     "qa_id",
                     "qa_index",
                     "qa_confidence",
                     "source_position",
+                    "retrieval_text",
+                    "display_text",
                 ],
             )
         )
@@ -205,3 +223,10 @@ def _score_pair_confidence(
     if question.endswith(("?", "？")):
         score += 0.05
     return min(score, 1.0)
+
+
+def _answer_digest(answer: str, limit: int = 240) -> str:
+    normalized = re.sub(r"\s+", " ", answer).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[:limit].rstrip() + "..."

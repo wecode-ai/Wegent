@@ -184,8 +184,9 @@ class ElasticsearchBackend(BaseStorageBackend):
             },
         )
 
+        nodes_for_embedding = self.prepare_nodes_for_embedding(nodes)
         VectorStoreIndex(
-            nodes,
+            nodes_for_embedding,
             storage_context=storage_context,
             embed_model=embed_model,
             show_progress=True,
@@ -516,7 +517,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             if normalized_score >= score_threshold:
                 results.append(
                     {
-                        "content": node.text,
+                        "content": self.get_node_display_text(node),
                         "score": float(normalized_score),
                         "title": node.metadata.get("source_file", ""),
                         "metadata": node.metadata,
@@ -728,7 +729,7 @@ class ElasticsearchBackend(BaseStorageBackend):
             chunks.append(
                 {
                     "chunk_index": metadata.get("chunk_index"),
-                    "content": node.text,
+                    "content": self.get_node_display_text(node),
                     "metadata": metadata,
                 }
             )
@@ -907,10 +908,14 @@ class ElasticsearchBackend(BaseStorageBackend):
                 # for robustness we still pass it through extract_chunk_text
                 # to handle potential serialized node payloads.
                 raw_content = source.get("content", "")
+                fallback_content = self.extract_chunk_text(raw_content)
 
                 chunks.append(
                     {
-                        "content": self.extract_chunk_text(raw_content),
+                        "content": self.get_display_text_from_metadata(
+                            metadata,
+                            fallback=fallback_content,
+                        ),
                         "title": metadata.get("source_file", ""),
                         "chunk_id": metadata.get("chunk_index", 0),
                         "doc_ref": metadata.get("doc_ref", ""),
@@ -964,7 +969,7 @@ class ElasticsearchBackend(BaseStorageBackend):
                     "knowledge_id": knowledge_id,
                     "doc_ref": node.metadata.get("doc_ref"),
                     "source_file": node.metadata.get("source_file"),
-                    "content": node.text,
+                    "content": self.get_node_display_text(node),
                     "title": node.metadata.get("source_file", ""),
                     "metadata": node.metadata,
                 },
