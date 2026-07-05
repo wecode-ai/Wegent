@@ -550,6 +550,9 @@ importers:
       "@eslint/js":
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.4.1(jiti@1.21.7))
+      "@playwright/test":
+        specifier: ^1.57.0
+        version: 1.60.0
       "@tauri-apps/cli":
         specifier: ^2.11.2
         version: 2.11.2

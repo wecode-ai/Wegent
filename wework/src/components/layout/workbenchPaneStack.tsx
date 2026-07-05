@@ -63,6 +63,7 @@ interface CachedWorkbenchPaneStackProps {
   activePane: WorkbenchPaneIdentity
   maxPanes: number
   pinnedKeys?: string[]
+  prunedKeys?: string[]
   className?: string
   activeTestId?: string
   renderPane: (pane: WorkbenchPaneIdentity) => ReactNode
@@ -72,12 +73,17 @@ export function CachedWorkbenchPaneStack({
   activePane,
   maxPanes,
   pinnedKeys = [],
+  prunedKeys = [],
   className,
   activeTestId,
   renderPane,
 }: CachedWorkbenchPaneStackProps) {
   const activeKey = getWorkbenchPaneKey(activePane)
   const pinnedKeySet = useMemo(() => new Set(pinnedKeys), [pinnedKeys])
+  const prunedKeySet = useMemo(
+    () => new Set(prunedKeys.filter(key => key !== activeKey)),
+    [activeKey, prunedKeys]
+  )
   const paneCacheRef = useRef<Map<string, WorkbenchPaneIdentity>>(new Map())
   const [cachedKeys, setCachedKeys] = useState<string[]>(() => [activeKey])
   const cachedKeysRef = useRef<string[]>(cachedKeys)
@@ -89,7 +95,9 @@ export function CachedWorkbenchPaneStack({
 
   useEffect(() => {
     const currentKeys = cachedKeysRef.current
+    const hasPrunedKeys = currentKeys.some(key => prunedKeySet.has(key))
     if (
+      !hasPrunedKeys &&
       currentKeys.includes(activeKey) &&
       currentKeys.length <= Math.max(1, maxPanes) + pinnedKeySet.size
     ) {
@@ -97,11 +105,12 @@ export function CachedWorkbenchPaneStack({
     }
 
     setCachedKeys(previousKeys => {
+      const retainedKeys = previousKeys.filter(key => !prunedKeySet.has(key))
       const nextKeys = getStableCachedPaneKeys(
-        previousKeys,
+        retainedKeys,
         activeKey,
         maxPanes,
-        recentKeysRef.current,
+        recentKeysRef.current.filter(key => !prunedKeySet.has(key)),
         pinnedKeySet
       )
       if (areStringArraysEqual(previousKeys, nextKeys)) return previousKeys
@@ -110,13 +119,13 @@ export function CachedWorkbenchPaneStack({
       recentKeysRef.current = recentKeysRef.current.filter(key => nextKeys.includes(key))
       return nextKeys
     })
-  }, [activeKey, maxPanes, pinnedKeySet])
+  }, [activeKey, maxPanes, pinnedKeySet, prunedKeySet])
 
   const renderKeys = getStableCachedPaneKeys(
-    cachedKeys,
+    cachedKeys.filter(key => !prunedKeySet.has(key)),
     activeKey,
     maxPanes,
-    recentKeysRef.current,
+    recentKeysRef.current.filter(key => !prunedKeySet.has(key)),
     pinnedKeySet
   )
 

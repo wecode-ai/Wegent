@@ -23,6 +23,7 @@ interface BottomWorkspacePanelProps {
   workspaceTarget: WorkspaceTarget | null
   preferLocalTerminal?: boolean
   onRequestClose: () => void
+  onTerminalTabsEmpty?: () => void
 }
 
 function createTerminalTab(index: number): BottomWorkspacePanelTab {
@@ -39,6 +40,7 @@ export function BottomWorkspacePanel({
   workspaceTarget,
   preferLocalTerminal = false,
   onRequestClose,
+  onTerminalTabsEmpty,
 }: BottomWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const { height, handleResizeStart } = useResizableBottomPanel()
@@ -75,6 +77,7 @@ export function BottomWorkspacePanel({
 
     if (nextTabs.length === 0) {
       setActiveTabId('')
+      onTerminalTabsEmpty?.()
       onRequestClose()
       return
     }
