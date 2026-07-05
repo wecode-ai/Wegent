@@ -10,6 +10,8 @@ CALL_LOG="$TMP_DIR/calls.log"
 DEFAULT_TEST_OUT="$(mktemp "${TMP_DIR}/default-test.XXXXXX")"
 FULL_TEST_OUT="$(mktemp "${TMP_DIR}/full-test.XXXXXX")"
 WEWORK_TEST_OUT="$(mktemp "${TMP_DIR}/wework-test.XXXXXX")"
+EXECUTOR_TEST_OUT="$(mktemp "${TMP_DIR}/executor-test.XXXXXX")"
+EXECUTOR_FULL_TEST_OUT="$(mktemp "${TMP_DIR}/executor-full-test.XXXXXX")"
 ROOT_NODE_MODULES_CREATED=0
 WEWORK_NODE_MODULES_CREATED=0
 
@@ -120,8 +122,53 @@ if ! grep -qE '^pnpm --filter wework typecheck$' "$CALL_LOG"; then
     exit 1
 fi
 
-if ! grep -qE '^pnpm --filter wework test --coverage$' "$CALL_LOG"; then
+if ! grep -qE '^pnpm --filter wework test$' "$CALL_LOG"; then
     echo "Expected Wework changes to run unit tests through the Wework package script."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+
+# This range includes executor changes. It verifies pre-push keeps Rust checks
+# lightweight by default and reserves the full integration suite for opt-in runs.
+EXECUTOR_REMOTE_SHA="f296d3881^"
+EXECUTOR_LOCAL_SHA="f296d3881"
+
+ensure_wework_node_modules
+
+AI_VERIFIED=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$EXECUTOR_TEST_OUT" 2>&1
+refs/heads/topic $EXECUTOR_LOCAL_SHA refs/heads/topic $EXECUTOR_REMOTE_SHA
+EOF
+
+if ! grep -qE '^cargo test --all-features --lib$' "$CALL_LOG"; then
+    echo "Expected Executor changes to run the lightweight Rust library tests by default."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+if grep -qE '^cargo test --all-features$' "$CALL_LOG"; then
+    echo "Expected Executor changes to skip the full Rust test suite by default."
+    echo "Calls:"
+    cat "$CALL_LOG"
+    exit 1
+fi
+
+: > "$CALL_LOG"
+
+AI_VERIFIED=1 \
+AI_PUSH_FULL_TESTS=1 \
+PATH="$TMP_DIR/bin:$PATH" \
+bash "$PROJECT_ROOT/scripts/hooks/ai-push-gate.sh" <<EOF >"$EXECUTOR_FULL_TEST_OUT" 2>&1
+refs/heads/topic $EXECUTOR_LOCAL_SHA refs/heads/topic $EXECUTOR_REMOTE_SHA
+EOF
+
+if ! grep -qE '^cargo test --all-features$' "$CALL_LOG"; then
+    echo "Expected AI_PUSH_FULL_TESTS=1 to run the full Rust test suite."
     echo "Calls:"
     cat "$CALL_LOG"
     exit 1
