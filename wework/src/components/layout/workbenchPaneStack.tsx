@@ -21,16 +21,13 @@ export interface WorkbenchPaneIdentity {
 
 export function getWorkbenchPaneKey({
   currentRuntimeTask,
-  currentProject,
   standaloneChatKey,
 }: WorkbenchPaneIdentity): string {
   if (currentRuntimeTask) {
     return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.taskId].join(':')
   }
   const blankPaneKey = standaloneChatKey ?? 0
-  return currentProject
-    ? `project:${currentProject.id}:${blankPaneKey}`
-    : `standalone:${blankPaneKey}`
+  return `blank:${blankPaneKey}`
 }
 
 export function getRunningRuntimeWorkbenchPaneKeys(

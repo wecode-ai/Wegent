@@ -10,16 +10,40 @@ import { readTextAttachmentMetadata } from '@/lib/attachments'
 interface UseWorkbenchAttachmentsOptions {
   uploadAttachment?: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
   deleteAttachment?: (attachmentId: number) => Promise<void>
+  scopeKey?: string
+}
+
+const DEFAULT_ATTACHMENT_SCOPE_KEY = 'default'
+
+function emptyAttachmentState(): MultiAttachmentUploadState {
+  return {
+    attachments: [],
+    uploadingFiles: new Map(),
+    errors: new Map(),
+  }
 }
 
 export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions = {}) {
   const uploadAttachment = options.uploadAttachment ?? defaultUploadAttachment
   const deleteAttachment = options.deleteAttachment ?? defaultDeleteAttachment
-  const [state, setState] = useState<MultiAttachmentUploadState>({
-    attachments: [],
-    uploadingFiles: new Map(),
-    errors: new Map(),
-  })
+  const scopeKey = options.scopeKey ?? DEFAULT_ATTACHMENT_SCOPE_KEY
+  const [stateByScope, setStateByScope] = useState<Record<string, MultiAttachmentUploadState>>({})
+  const state = stateByScope[scopeKey] ?? emptyAttachmentState()
+
+  const updateScopeState = useCallback(
+    (updater: (current: MultiAttachmentUploadState) => MultiAttachmentUploadState) => {
+      setStateByScope(currentByScope => {
+        const current = currentByScope[scopeKey] ?? emptyAttachmentState()
+        const next = updater(current)
+        if (next === current) return currentByScope
+        return {
+          ...currentByScope,
+          [scopeKey]: next,
+        }
+      })
+    },
+    [scopeKey]
+  )
 
   const isUploading = state.uploadingFiles.size > 0
   const isAttachmentReadyToSend = useMemo(
@@ -27,15 +51,18 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
     [isUploading, state.attachments]
   )
 
-  const addExistingAttachment = useCallback((attachment: Attachment) => {
-    setState(current => {
-      if (current.attachments.some(item => item.id === attachment.id)) return current
-      return {
-        ...current,
-        attachments: [...current.attachments, attachment],
-      }
-    })
-  }, [])
+  const addExistingAttachment = useCallback(
+    (attachment: Attachment) => {
+      updateScopeState(current => {
+        if (current.attachments.some(item => item.id === attachment.id)) return current
+        return {
+          ...current,
+          attachments: [...current.attachments, attachment],
+        }
+      })
+    },
+    [updateScopeState]
+  )
 
   const handleFileSelect = useCallback(
     async (files: File | File[]) => {
@@ -45,7 +72,7 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
         const fileId = file.name
 
         if (!isValidFileSize(file.size)) {
-          setState(current => {
+          updateScopeState(current => {
             const errors = new Map(current.errors)
             errors.set(fileId, 'File is too large')
             return { ...current, errors }
@@ -53,7 +80,7 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
           continue
         }
 
-        setState(current => {
+        updateScopeState(current => {
           const uploadingFiles = new Map(current.uploadingFiles)
           uploadingFiles.set(fileId, { file, progress: 0 })
           return { ...current, uploadingFiles }
@@ -62,7 +89,7 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
         try {
           const textMetadataPromise = readTextAttachmentMetadata(file)
           const attachment = await uploadAttachment(file, progress => {
-            setState(current => {
+            updateScopeState(current => {
               const uploadingFiles = new Map(current.uploadingFiles)
               const existing = uploadingFiles.get(fileId)
               if (existing) {
@@ -81,7 +108,7 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
               }
             : attachment
 
-          setState(current => {
+          updateScopeState(current => {
             const uploadingFiles = new Map(current.uploadingFiles)
             uploadingFiles.delete(fileId)
             return {
@@ -91,7 +118,7 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
             }
           })
         } catch (error) {
-          setState(current => {
+          updateScopeState(current => {
             const uploadingFiles = new Map(current.uploadingFiles)
             const errors = new Map(current.errors)
             uploadingFiles.delete(fileId)
@@ -101,28 +128,28 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
         }
       }
     },
-    [uploadAttachment]
+    [updateScopeState, uploadAttachment]
   )
 
   const removeAttachment = useCallback(
     async (attachmentId: number) => {
-      setState(current => ({
+      updateScopeState(current => ({
         ...current,
         attachments: current.attachments.filter(attachment => attachment.id !== attachmentId),
       }))
       await deleteAttachment(attachmentId)
     },
-    [deleteAttachment]
+    [deleteAttachment, updateScopeState]
   )
 
   const resetAttachments = useCallback(() => {
-    setState(current => ({
+    updateScopeState(current => ({
       ...current,
       attachments: [],
       uploadingFiles: new Map(),
       errors: new Map(),
     }))
-  }, [])
+  }, [updateScopeState])
 
   return {
     state,

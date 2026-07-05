@@ -65,10 +65,15 @@ export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 export interface SendCurrentInputOptions {
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
+  onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void
+}
+
+export interface RuntimePaneActionOptions {
+  onError?: (error: string) => void
 }
 
 export interface WorkbenchContextValue {
@@ -83,6 +88,7 @@ export interface WorkbenchContextValue {
     selectedModel: UnifiedModel | null
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
+    input: string
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -94,6 +100,7 @@ export interface WorkbenchContextValue {
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
+    setInput: (value: string) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
@@ -213,8 +220,14 @@ export interface WorkbenchContextValue {
     branchName: string,
     workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
-  sendRuntimePaneMessage: (request: RuntimeSendRequest) => Promise<boolean>
-  cancelRuntimePaneTask: (address: RuntimeTaskAddress) => Promise<boolean>
+  sendRuntimePaneMessage: (
+    request: RuntimeSendRequest,
+    options?: RuntimePaneActionOptions
+  ) => Promise<boolean>
+  cancelRuntimePaneTask: (
+    address: RuntimeTaskAddress,
+    options?: RuntimePaneActionOptions
+  ) => Promise<boolean>
   sendCurrentInput: (
     inputOverride?: string,
     options?: SendCurrentInputOptions

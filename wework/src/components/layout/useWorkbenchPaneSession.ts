@@ -82,6 +82,7 @@ const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const MAX_CACHED_RUNTIME_PANE_MESSAGES = 3
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
+const noopSetInput = () => undefined
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
@@ -92,7 +93,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     getRuntimeGoal,
     setRuntimeGoal,
     clearRuntimeGoal,
-    setWorkbenchError,
     sendRuntimePaneMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
@@ -102,7 +102,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
-  const [input, setInput] = useState('')
+  const input = projectChat.input ?? ''
+  const setInput = projectChat.setInput ?? noopSetInput
+  const [error, setError] = useState<string | null>(null)
   const [sendPhase, setSendPhase] = useState<RuntimePaneSendPhase>('idle')
   const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
     ReadonlySet<string>
@@ -168,6 +170,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [currentRuntimeTask, messages, sendPhase, taskExecution]
   )
   const activeAssistantMessage = paneStatus.activeAssistantMessage
+  const updateInput = useCallback(
+    (value: string) => {
+      setInput(value)
+      setError(null)
+    },
+    [setInput]
+  )
   const goal = useMemo(() => {
     const visibleThreadGoal = visibleRuntimeGoal(threadGoal)
     if (visibleThreadGoal) return visibleThreadGoal
@@ -191,6 +200,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   useEffect(() => {
     setAnsweredRequestUserInputIds(new Set())
+    setError(null)
   }, [runtimeTaskLoadTarget?.key])
 
   useEffect(() => {
@@ -568,19 +578,23 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const messageAttachments = message.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
-      const sent = await sendRuntimePaneMessage({
-        address: currentRuntimeTask,
-        message: message.content,
-        ...(message.modelId
-          ? {
-              modelId: message.modelId,
-              modelType: message.modelType,
-            }
-          : {}),
-        ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
-        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-        ...(attachments.length > 0 ? { attachments } : {}),
-      })
+      setError(null)
+      const sent = await sendRuntimePaneMessage(
+        {
+          address: currentRuntimeTask,
+          message: message.content,
+          ...(message.modelId
+            ? {
+                modelId: message.modelId,
+                modelType: message.modelType,
+              }
+            : {}),
+          ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
+        },
+        { onError: setError }
+      )
       if (sent) {
         setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
       } else {
@@ -622,12 +636,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const runtimeModelFields = options.appendUserMessage
         ? getRuntimeModelFields(runtimeModelOverride)
         : {}
-      const sent = await sendRuntimePaneMessage({
-        address: currentRuntimeTask,
-        message,
-        ...runtimeModelFields,
-        ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
-      })
+      setError(null)
+      const sent = await sendRuntimePaneMessage(
+        {
+          address: currentRuntimeTask,
+          message,
+          ...runtimeModelFields,
+          ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
+        },
+        { onError: setError }
+      )
       if (sent) {
         setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
       } else {
@@ -670,7 +688,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         return
       }
 
-      const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
+      setError(null)
+      const cancelled = await cancelRuntimePaneTask(currentRuntimeTask, { onError: setError })
       setSendPhase('idle')
       if (!cancelled) {
         if (requestUserInputKey) {
@@ -727,14 +746,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
     if (goalDraftActive) {
       if (!submittedInput) {
-        setWorkbenchError(i18n.t('workbench.goal_objective_required'))
+        setError(i18n.t('workbench.goal_objective_required'))
         return
       }
       if (hasCodeComments) {
-        setWorkbenchError(i18n.t('workbench.runtime_task_code_comments_not_supported'))
+        setError(i18n.t('workbench.runtime_task_code_comments_not_supported'))
         return
       }
 
+      setError(null)
       setInput('')
       setSendPhase('submitting')
       try {
@@ -745,7 +765,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             status: 'active',
           })
           if (!response.accepted) {
-            setWorkbenchError(response.error || i18n.t('workbench.goal_set_failed'))
+            setError(response.error || i18n.t('workbench.goal_set_failed'))
             return
           }
           setThreadGoal(response.goal)
@@ -783,6 +803,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         let seededGoalAddress: RuntimeTaskAddress | null = null
         const sent = await sendCurrentInput(submittedInput, {
           initialGoal,
+          onError: setError,
           onRuntimeTaskOptimisticOpen: (address, context) => {
             setPendingGoalState(current =>
               current
@@ -849,10 +870,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         : null
     const effectiveSubmittedInput = submittedInput || pendingInitialGoal?.objective.trim() || ''
     if (!effectiveSubmittedInput && currentAttachments.length === 0 && !hasCodeComments) {
-      void sendCurrentInput('', { codeCommentContexts })
+      void sendCurrentInput('', { codeCommentContexts, onError: setError })
       return
     }
 
+    setError(null)
     setInput('')
     setSendPhase('submitting')
     try {
@@ -865,6 +887,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         const sent = await sendCurrentInput(effectiveSubmittedInput, {
           codeCommentContexts,
           initialGoal: pendingInitialGoal,
+          onError: setError,
           onRuntimeTaskOptimisticOpen: (address, context) => {
             if (pendingInitialGoal) {
               setPendingGoalState(current =>
@@ -914,6 +937,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 : current
             )
           }
+          if (isRuntimeTaskAddress(sent)) {
+            dispatchMessages({ type: 'reset', messages: [] })
+          }
+          projectChat.resetAttachments()
           setCodeCommentContexts([])
         } else {
           setSendPhase('idle')
@@ -922,7 +949,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       }
 
       if (hasCodeComments) {
-        void sendCurrentInput(submittedInput, { codeCommentContexts })
+        void sendCurrentInput(submittedInput, { codeCommentContexts, onError: setError })
         return
       }
 
@@ -961,8 +988,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     queuedMessages.length,
     sendCurrentInput,
     sendRuntimeMessage,
+    setInput,
     setRuntimeGoal,
-    setWorkbenchError,
   ])
 
   const addCodeComment = useCallback((context: CodeCommentContext) => {
@@ -982,13 +1009,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage || queuedMessage.status === 'sending') return
 
-      setInput(queuedMessage.content)
+      updateInput(queuedMessage.content)
       queuedMessage.attachments?.forEach(attachment => {
         projectChat.addExistingAttachment(attachment)
       })
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
-    [projectChat, queuedMessages]
+    [projectChat, queuedMessages, updateInput]
   )
 
   const sendQueuedAsGuidance = useCallback(
@@ -1020,7 +1047,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
       )
 
-      const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
+      setError(null)
+      const cancelled = await cancelRuntimePaneTask(currentRuntimeTask, { onError: setError })
       if (!cancelled) {
         setQueuedMessages(messages =>
           messages.map(message =>
@@ -1063,7 +1091,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const pauseCurrentResponse = useCallback(async () => {
     if (!currentRuntimeTask || !activeAssistantMessage) return
 
-    const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
+    setError(null)
+    const cancelled = await cancelRuntimePaneTask(currentRuntimeTask, { onError: setError })
     if (!cancelled) return
 
     dispatchMessages({
@@ -1083,9 +1112,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   const editCurrentGoal = useCallback(() => {
     if (!goal) return
-    setInput(goal.objective)
+    updateInput(goal.objective)
     setGoalDraftActive(true)
-  }, [goal])
+  }, [goal, updateInput])
 
   const updateCurrentGoalStatus = useCallback(
     async (status: RuntimeGoal['status']) => {
@@ -1207,7 +1236,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     guidanceMessages,
     codeCommentContexts,
     input,
-    setInput,
+    setInput: updateInput,
+    error,
     status: paneStatus,
     sending: paneStatus.isSubmitting,
     waitingForAssistant: paneStatus.isWaitingForAssistantIndicator,
