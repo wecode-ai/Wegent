@@ -75,33 +75,38 @@ test('sends local model connection tests through the Wework Responses API path',
 
   await app.goto('/')
 
-  await page.evaluate(async mockUrl => {
-    await fetch(`${mockUrl}/clear-requests`, { method: 'POST' })
-  }, responseApiMockUrl)
-
-  const result = await app.testLocalModelConnection({
-    baseUrl: `${responseApiMockUrl}/v1`,
-    modelId: 'mock-response-model',
-    apiKey: 'test-token',
-  })
-
-  const captured = await page.evaluate(
-    async mockUrl => fetch(`${mockUrl}/captured-requests`).then(res => res.json()),
-    responseApiMockUrl
-  )
+  const [request, result] = await Promise.all([
+    page.waitForRequest(
+      candidate =>
+        candidate.method() === 'POST' &&
+        candidate.url() === `${responseApiMockUrl}/v1/responses`
+    ),
+    app.testLocalModelConnection({
+      baseUrl: `${responseApiMockUrl}/v1`,
+      modelId: 'mock-response-model',
+      apiKey: 'test-token',
+    }),
+  ])
 
   expect(result).toEqual({ status: 200 })
-  const matchingRequests = (captured as CapturedRequest[]).filter(request =>
-    JSON.stringify(request.body).includes('Reply with ok.')
-  )
-  expect(matchingRequests).toHaveLength(1)
-  expect(matchingRequests[0]).toMatchObject({
-    method: 'POST',
-    url: '/v1/responses',
-    body: {
-      model: 'mock-response-model',
-    },
+  expect(request.postDataJSON()).toMatchObject({
+    model: 'mock-response-model',
   })
+  expect(request.postData()).toContain('Reply with ok.')
+})
+
+test('surfaces local model send circuit breaker failures', async ({ page }) => {
+  const app = new WeworkApp(page)
+
+  await app.goto('/')
+
+  await expect(
+    app.tripLocalModelConnectionCircuitBreaker({
+      baseUrl: `${responseApiMockUrl}/v1`,
+      modelId: 'mock-response-model',
+      apiKey: 'test-token',
+    })
+  ).rejects.toThrow('WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN')
 })
 
 test('streams OpenAI Responses API events from the mock server', async ({ page }) => {

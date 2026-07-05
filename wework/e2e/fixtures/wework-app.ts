@@ -38,6 +38,9 @@ declare global {
       testLocalModelConnection: (
         input: TestLocalModelConnectionInput
       ) => Promise<TestLocalModelConnectionResult>
+      tripLocalModelConnectionCircuitBreaker: (
+        input: TestLocalModelConnectionInput
+      ) => Promise<TestLocalModelConnectionResult>
     }
   }
 }
@@ -82,6 +85,13 @@ export class WeworkApp {
   async testLocalModelConnection(input: TestLocalModelConnectionInput) {
     return this.page.evaluate(
       value => window.__WEWORK_E2E__?.testLocalModelConnection(value),
+      input
+    )
+  }
+
+  async tripLocalModelConnectionCircuitBreaker(input: TestLocalModelConnectionInput) {
+    return this.page.evaluate(
+      value => window.__WEWORK_E2E__?.tripLocalModelConnectionCircuitBreaker(value),
       input
     )
   }

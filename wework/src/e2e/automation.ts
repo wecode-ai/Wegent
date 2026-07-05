@@ -8,6 +8,8 @@ import {
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
+const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR =
+  'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
 
 export interface WeworkAutomationBridge {
   version: 1
@@ -22,6 +24,9 @@ export interface WeworkAutomationBridge {
   clearAuthToken: () => void
   clearStorage: () => void
   testLocalModelConnection: (
+    input: TestLocalModelConnectionInput
+  ) => Promise<TestLocalModelConnectionResult>
+  tripLocalModelConnectionCircuitBreaker: (
     input: TestLocalModelConnectionInput
   ) => Promise<TestLocalModelConnectionResult>
 }
@@ -90,6 +95,12 @@ function queryTestIds(prefix?: string): string[] {
   ).sort()
 }
 
+function createLocalModelCircuitBreakerFetcher(): typeof fetch {
+  return (async () => {
+    throw new Error(LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR)
+  }) as typeof fetch
+}
+
 function createBridge(): WeworkAutomationBridge {
   return {
     version: 1,
@@ -114,6 +125,11 @@ function createBridge(): WeworkAutomationBridge {
       sessionStorage.clear()
     },
     testLocalModelConnection,
+    tripLocalModelConnectionCircuitBreaker: input =>
+      testLocalModelConnection(input, {
+        fetcher: createLocalModelCircuitBreakerFetcher(),
+        timeoutMs: 1000,
+      }),
   }
 }
 
