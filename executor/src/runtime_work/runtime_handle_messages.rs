@@ -17,7 +17,8 @@ use super::{
     response::RuntimeTaskLink,
     store::RuntimeWorkStore,
     transcript::{
-        completed_workbench_block_from_notification, tool_update_from_notification,
+        completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
+        file_changes_update_from_patch_updated, tool_update_from_notification,
         workbench_block_from_notification,
     },
     util::{
@@ -120,6 +121,32 @@ impl CodexNotificationCacheMapper {
                         "plan",
                         notification_item_id(params),
                         delta,
+                    );
+                }
+            }
+            "item/fileChange/patchUpdated" => {
+                if let Some(block) = file_changes_block_from_patch_updated(
+                    params,
+                    &request.subtask_id,
+                    request.device_id.as_deref().unwrap_or_default(),
+                    request.cwd().unwrap_or_default(),
+                    "streaming",
+                ) {
+                    cache_runtime_assistant_block(store, local_task_id, request, block);
+                }
+                if let Some((block_id, updates)) = file_changes_update_from_patch_updated(
+                    params,
+                    &request.subtask_id,
+                    request.device_id.as_deref().unwrap_or_default(),
+                    request.cwd().unwrap_or_default(),
+                    "streaming",
+                ) {
+                    update_runtime_assistant_block(
+                        store,
+                        local_task_id,
+                        request,
+                        &block_id,
+                        updates,
                     );
                 }
             }

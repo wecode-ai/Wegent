@@ -298,6 +298,7 @@ function emitBlockUpdated(
     toolInput?: Record<string, unknown>
     toolOutput?: unknown
     content?: string
+    fileChanges?: ChatBlock['fileChanges']
   }
 ): void {
   if (!blockId) {
@@ -380,6 +381,7 @@ function emitResponseBlockUpdated(
 ): void {
   const updates = recordField(data, 'updates')
   const toolInput = parseRecord(updates.toolInput ?? updates.tool_input)
+  const fileChanges = parseRecord(updates.fileChanges ?? updates.file_changes)
   emitBlockUpdated(
     handlers,
     'response.block.updated',
@@ -391,6 +393,7 @@ function emitResponseBlockUpdated(
         toolOutput: updates.toolOutput ?? updates.tool_output,
       }),
       ...(toolInput && { toolInput }),
+      ...(fileChanges && { fileChanges: fileChanges as unknown as ChatBlock['fileChanges'] }),
       ...(typeof updates.status === 'string' && {
         status: updates.status as ChatBlock['status'],
       }),

@@ -52,6 +52,10 @@
     "open_label": "打开 {{path}}"
   },
   "file_changes": {
+    "editing_files": "正在编辑 {{count}} 个文件",
+    "creating_files": "正在创建 {{count}} 个文件",
+    "deleting_files": "正在删除 {{count}} 个文件",
+    "renaming_files": "正在重命名 {{count}} 个文件",
     "edited_files": "已编辑 {{count}} 个文件",
     "created_files": "已创建 {{count}} 个文件",
     "deleted_files": "已删除 {{count}} 个文件",

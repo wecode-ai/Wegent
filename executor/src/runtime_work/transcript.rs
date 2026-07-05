@@ -369,6 +369,40 @@ pub(crate) fn completed_workbench_block_from_notification(
         .then_some(block)
 }
 
+pub(crate) fn file_changes_block_from_patch_updated(
+    params: &Value,
+    turn_id: &str,
+    device_id: &str,
+    workspace_path: &str,
+    status: &str,
+) -> Option<Value> {
+    let summary = file_changes_from_patch_updated(params, turn_id, device_id, workspace_path)?;
+    let item = patch_updated_item(params);
+    let mut block = file_changes_block(&item, &summary, now_ms());
+    if let Some(object) = block.as_object_mut() {
+        object.insert("status".to_owned(), Value::String(status.to_owned()));
+    }
+    Some(block)
+}
+
+pub(crate) fn file_changes_update_from_patch_updated(
+    params: &Value,
+    turn_id: &str,
+    device_id: &str,
+    workspace_path: &str,
+    status: &str,
+) -> Option<(String, Value)> {
+    let summary = file_changes_from_patch_updated(params, turn_id, device_id, workspace_path)?;
+    let block_id = format!("file-changes-{}", patch_updated_item_id(params));
+    Some((
+        block_id,
+        json!({
+            "file_changes": summary,
+            "status": status,
+        }),
+    ))
+}
+
 pub(crate) fn workbench_block_from_codex_item(
     item: &Value,
     turn_id: &str,
@@ -1692,10 +1726,6 @@ fn file_changes_from_file_change_item(
     device_id: &str,
     workspace_path: &str,
 ) -> Option<Value> {
-    let status = string_field(item, "status").unwrap_or_else(|| "completed".to_owned());
-    if !status.eq_ignore_ascii_case("completed") {
-        return None;
-    }
     let changes = item.get("changes")?.as_array()?;
     let files = changes
         .iter()
@@ -1708,6 +1738,27 @@ fn file_changes_from_file_change_item(
         workspace_path,
         files,
         combined_diff_from_file_change_item(item, workspace_path),
+    )
+}
+
+fn file_changes_from_patch_updated(
+    params: &Value,
+    turn_id: &str,
+    device_id: &str,
+    workspace_path: &str,
+) -> Option<Value> {
+    let changes = params.get("changes")?.as_array()?;
+    let files = changes
+        .iter()
+        .filter_map(|change| file_change_from_codex_change(change, workspace_path))
+        .collect::<Vec<_>>();
+    file_changes_summary(
+        &patch_updated_item_id(params),
+        turn_id,
+        device_id,
+        workspace_path,
+        files,
+        combined_diff_from_patch_updated(params, workspace_path),
     )
 }
 
@@ -1938,6 +1989,41 @@ fn combined_diff_from_patch_apply_end(item: &Value, workspace_path: &str) -> Opt
         .collect::<Vec<_>>()
         .join("\n");
     Some(diff).filter(|diff| !diff.is_empty())
+}
+
+fn combined_diff_from_patch_updated(params: &Value, workspace_path: &str) -> Option<String> {
+    let diff = params
+        .get("changes")?
+        .as_array()?
+        .iter()
+        .filter_map(|change| {
+            let path = string_field(change, "path")?;
+            let move_path = change.get("kind").and_then(|kind| {
+                string_field(kind, "movePath").or_else(|| string_field(kind, "move_path"))
+            });
+            raw_string_field(change, "diff").map(|diff| match move_path {
+                Some(move_path) => {
+                    diff_with_file_header(&move_path, Some(&path), &diff, workspace_path)
+                }
+                None => diff_with_file_header(&path, None, &diff, workspace_path),
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(diff).filter(|diff| !diff.is_empty())
+}
+
+fn patch_updated_item(params: &Value) -> Value {
+    json!({
+        "id": patch_updated_item_id(params),
+        "type": "fileChange",
+    })
+}
+
+fn patch_updated_item_id(params: &Value) -> String {
+    string_field(params, "itemId")
+        .or_else(|| string_field(params, "item_id"))
+        .unwrap_or_else(|| item_id(params, "file-change"))
 }
 
 fn diff_with_file_header(

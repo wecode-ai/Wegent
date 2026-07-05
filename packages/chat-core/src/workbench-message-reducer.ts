@@ -86,6 +86,7 @@ type ProcessingBlockUpdate = {
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
   renderPayload?: unknown
+  fileChanges?: unknown
   status?: WorkbenchToolBlockStatus
 }
 

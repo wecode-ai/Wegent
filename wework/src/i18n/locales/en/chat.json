@@ -52,6 +52,10 @@
     "open_label": "Open {{path}}"
   },
   "file_changes": {
+    "editing_files": "Editing {{count}} files",
+    "creating_files": "Creating {{count}} files",
+    "deleting_files": "Deleting {{count}} files",
+    "renaming_files": "Renaming {{count}} files",
     "edited_files": "Edited {{count}} files",
     "created_files": "Created {{count}} files",
     "deleted_files": "Deleted {{count}} files",
