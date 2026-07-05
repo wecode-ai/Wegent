@@ -441,6 +441,56 @@ describe('ToolBlocksDisplay', () => {
     ).toBeInTheDocument()
   })
 
+  test('merges consecutive file change blocks into one activity row', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          completedFileChangesBlock,
+          {
+            ...completedFileChangesBlock,
+            id: 'file-changes-2',
+            createdAt: 1770000003001,
+            fileChanges: {
+              ...completedFileChangesBlock.fileChanges,
+              artifact_id: 'artifact-2',
+              additions: 3,
+              deletions: 0,
+              files: [
+                {
+                  path: 'scripts/env',
+                  change_type: 'modified',
+                  additions: 3,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    const fileChangeBlocks = screen.getAllByTestId('process-file-changes-block')
+    expect(fileChangeBlocks).toHaveLength(1)
+    expect(fileChangeBlocks[0]).toHaveTextContent('已编辑 1 个文件')
+    expect(fileChangeBlocks[0]).toHaveTextContent('+5')
+    expect(fileChangeBlocks[0]).toHaveTextContent('-1')
+  })
+
+  test('renders static file change stat bars for historical file changes', () => {
+    render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    const statBars = screen
+      .getByTestId('process-file-changes-block')
+      .querySelectorAll('.file-change-stat-block')
+    expect(statBars).toHaveLength(1)
+  })
+
   test('uses an edit icon for completed edit activity groups', () => {
     render(
       <ToolBlocksDisplay

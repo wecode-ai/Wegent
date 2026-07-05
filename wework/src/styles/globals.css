@@ -230,13 +230,13 @@ button:disabled {
   }
 
   .file-change-stat-blocks {
-    position: absolute;
-    inset-block-start: 50%;
-    inset-inline-end: 0;
-    width: 2.875rem;
+    position: relative;
+    display: inline-block;
+    width: var(--file-change-stat-blocks-width, 0);
     height: 1.5rem;
+    flex-shrink: 0;
     pointer-events: none;
-    transform: translateY(-50%) translateZ(0);
+    transform: translateZ(0);
   }
 
   .file-change-stat-block {
