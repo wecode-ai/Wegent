@@ -1050,6 +1050,12 @@ describe('DesktopWorkbenchLayout', () => {
       bind_shell: 'claudecode',
       executor_version: '1.8.5',
     }
+    const taskSuffixes = 'abcdefghijk'.split('')
+    const taskAddresses = taskSuffixes.map(suffix => ({
+      deviceId: localDevice.device_id,
+      workspacePath: `/Users/me/Wegent/.worktrees/${suffix}`,
+      taskId: `runtime-${suffix}`,
+    }))
     const runtimeWork = {
       projects: [
         {
@@ -1066,38 +1072,24 @@ describe('DesktopWorkbenchLayout', () => {
               available: true,
               workspacePath: '/Users/me/Wegent',
               workspaceSource: 'local' as const,
-              tasks: [
-                {
-                  taskId: 'runtime-a',
-                  workspacePath: '/Users/me/Wegent/.worktrees/a',
-                  title: 'Task A',
-                  runtime: 'codex',
-                },
-                {
-                  taskId: 'runtime-b',
-                  workspacePath: '/Users/me/Wegent/.worktrees/b',
-                  title: 'Task B',
-                  runtime: 'codex',
-                },
-              ],
+              tasks: taskSuffixes.map(suffix => ({
+                taskId: `runtime-${suffix}`,
+                workspacePath: `/Users/me/Wegent/.worktrees/${suffix}`,
+                title: `Task ${suffix.toUpperCase()}`,
+                runtime: 'codex',
+              })),
             },
           ],
         },
       ],
       chats: [],
-      totalTasks: 2,
+      totalTasks: taskSuffixes.length,
     }
-    const taskA = {
-      deviceId: localDevice.device_id,
-      workspacePath: '/Users/me/Wegent/.worktrees/a',
-      taskId: 'runtime-a',
-    }
-    const taskB = {
-      deviceId: localDevice.device_id,
-      workspacePath: '/Users/me/Wegent/.worktrees/b',
-      taskId: 'runtime-b',
-    }
-    const propsForTask = (task: typeof taskA) => ({
+    const [taskA, taskB, taskC] = taskAddresses
+    const propsForTask = (
+      task: (typeof taskAddresses)[number],
+      options: { runtimeWork?: typeof runtimeWork } = {}
+    ) => ({
       ...baseProps,
       state: {
         ...baseProps.state,
@@ -1105,13 +1097,13 @@ describe('DesktopWorkbenchLayout', () => {
         currentRuntimeTask: task,
         projects: [runtimeProject],
         devices: [localDevice],
-        runtimeWork,
+        runtimeWork: options.runtimeWork ?? runtimeWork,
       },
       projectWork: {
         ...baseProps.projectWork,
         projects: [runtimeProject],
         devices: [localDevice],
-        runtimeWork,
+        runtimeWork: options.runtimeWork ?? runtimeWork,
         currentProject: runtimeProject,
         currentProjectId: runtimeProject.id,
         selectedDeviceWorkspaceId: 44,
@@ -1119,7 +1111,16 @@ describe('DesktopWorkbenchLayout', () => {
       },
     })
 
-    return { localDevice, propsForTask, runtimeWork, runtimeProject, taskA, taskB }
+    return {
+      localDevice,
+      propsForTask,
+      runtimeWork,
+      runtimeProject,
+      taskA,
+      taskB,
+      taskC,
+      taskAddresses,
+    }
   }
 
   test('submits implementation plan confirmation as a user message response', async () => {
@@ -5653,6 +5654,74 @@ describe('DesktopWorkbenchLayout', () => {
       const terminals = visibleLocalTerminals()
       expect(terminals).toHaveLength(1)
       expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a')
+    })
+  })
+
+  test('keeps runtime task terminals past the pane cache limit until the task is archived', async () => {
+    const { localDevice, propsForTask, runtimeWork, taskA, taskAddresses } =
+      createLocalRuntimeTaskPanelFixture()
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    getLocalExecutorDeviceIdMock.mockResolvedValue(localDevice.device_id)
+    localPathExistsMock.mockResolvedValue(true)
+    taskAddresses.forEach(task => {
+      const suffix = task.taskId.replace('runtime-', '')
+      startLocalTerminalMock.mockResolvedValueOnce(`local-terminal-${suffix}`)
+    })
+    const visibleLocalTerminals = () =>
+      within(screen.getByTestId('desktop-workbench-main'))
+        .queryAllByTestId('embedded-local-terminal')
+        .filter(element => !element.hasAttribute('hidden'))
+
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    for (const [index, task] of taskAddresses.entries()) {
+      if (index > 0) {
+        rerender(<DesktopWorkbenchLayout {...propsForTask(task)} />)
+      }
+      const suffix = task.taskId.replace('runtime-', '')
+      await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
+      await waitFor(() => {
+        const terminals = visibleLocalTerminals()
+        expect(terminals).toHaveLength(1)
+        expect(terminals[0]).toHaveAttribute('data-session-id', `local-terminal-${suffix}`)
+      })
+    }
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(startLocalTerminalMock).toHaveBeenCalledTimes(taskAddresses.length)
+    expect(closeLocalTerminalMock).not.toHaveBeenCalledWith('local-terminal-a')
+    await waitFor(() => {
+      const terminals = visibleLocalTerminals()
+      expect(terminals).toHaveLength(1)
+      expect(terminals[0]).toHaveAttribute('data-session-id', 'local-terminal-a')
+    })
+
+    const archivedTaskAWork = {
+      projects: [
+        {
+          ...runtimeWork.projects[0],
+          deviceWorkspaces: [
+            {
+              ...runtimeWork.projects[0].deviceWorkspaces[0],
+              tasks: runtimeWork.projects[0].deviceWorkspaces[0].tasks.filter(
+                task => task.taskId !== taskA.taskId
+              ),
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: taskAddresses.length - 1,
+    }
+    rerender(
+      <DesktopWorkbenchLayout
+        {...propsForTask(taskAddresses[1], { runtimeWork: archivedTaskAWork })}
+      />
+    )
+
+    await waitFor(() => {
+      expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-a')
     })
   })
 

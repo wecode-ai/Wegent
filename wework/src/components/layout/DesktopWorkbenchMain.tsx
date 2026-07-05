@@ -20,7 +20,7 @@ import {
   isRemoteDevice,
 } from '@/lib/device-capabilities'
 import type { EnvironmentDiffMode } from '@/api/environment'
-import type { WorkspaceFileOpenRequest } from '@/types/workspace-files'
+import type { WorkspaceFileOpenRequest, WorkspaceTarget } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
@@ -66,6 +66,7 @@ import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
+import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
@@ -89,9 +90,58 @@ const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
   'transition-[width,opacity] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width,opacity]'
 const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
-const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 2
+const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
 const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
 const TAURI_TITLEBAR_ACTIONS_CLEARANCE_CLASS = 'max-w-[calc(100%-22rem)]'
+
+function getRuntimeWorkbenchPaneKeys(
+  runtimeWork: RuntimeWorkListResponse | null | undefined
+): string[] {
+  if (!runtimeWork) return []
+
+  const workspaces = [
+    ...runtimeWork.chats,
+    ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+  ]
+
+  return workspaces.flatMap(workspace =>
+    workspace.tasks.map(task =>
+      getWorkbenchPaneKey({
+        currentRuntimeTask: {
+          deviceId: workspace.deviceId,
+          taskId: task.taskId,
+        },
+        currentProject: null,
+      })
+    )
+  )
+}
+
+function createBottomPanelWorkspaceKey({
+  currentRuntimeTask,
+  workspaceProjectId,
+  workspaceTarget,
+  executionMode,
+  preferLocalTerminal,
+}: {
+  currentRuntimeTask: RuntimeTaskAddress | null
+  workspaceProjectId?: number
+  workspaceTarget: WorkspaceTarget | null
+  executionMode: string
+  preferLocalTerminal: boolean
+}): string {
+  if (currentRuntimeTask) {
+    return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.taskId].join(':')
+  }
+
+  return [
+    'workspace',
+    workspaceProjectId ?? 'projectless',
+    workspaceTarget?.deviceId ?? '',
+    workspaceTarget?.path ?? '',
+    preferLocalTerminal ? 'local' : executionMode,
+  ].join(':')
+}
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
@@ -102,16 +152,43 @@ interface DesktopWorkbenchMainProps {
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
-  const pinnedPaneKeys = useMemo(
+  const [terminalPinnedPaneKeys, setTerminalPinnedPaneKeys] = useState<string[]>([])
+  const runtimePaneKeys = useMemo(
+    () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
+  const validRuntimePaneKeySet = useMemo(() => new Set(runtimePaneKeys), [runtimePaneKeys])
+  const runningPaneKeys = useMemo(
     () => getRunningRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
   )
+  const validTerminalPinnedPaneKeys = useMemo(
+    () => terminalPinnedPaneKeys.filter(key => validRuntimePaneKeySet.has(key)),
+    [terminalPinnedPaneKeys, validRuntimePaneKeySet]
+  )
+  const prunedPaneKeys = useMemo(
+    () => terminalPinnedPaneKeys.filter(key => !validRuntimePaneKeySet.has(key)),
+    [terminalPinnedPaneKeys, validRuntimePaneKeySet]
+  )
+  const pinnedPaneKeys = useMemo(
+    () => Array.from(new Set([...runningPaneKeys, ...validTerminalPinnedPaneKeys])),
+    [runningPaneKeys, validTerminalPinnedPaneKeys]
+  )
+  const pinTerminalPane = useCallback((paneKey: string) => {
+    setTerminalPinnedPaneKeys(current =>
+      current.includes(paneKey) ? current : [...current, paneKey]
+    )
+  }, [])
+  const unpinTerminalPane = useCallback((paneKey: string) => {
+    setTerminalPinnedPaneKeys(current => current.filter(key => key !== paneKey))
+  }, [])
 
   return (
     <CachedWorkbenchPaneStack
       activePane={props.activePane}
       maxPanes={MAX_CACHED_DESKTOP_WORKBENCH_TABS}
       pinnedKeys={pinnedPaneKeys}
+      prunedKeys={prunedPaneKeys}
       activeTestId="desktop-workbench-main"
       renderPane={pane => (
         <DesktopWorkbenchPane
@@ -119,6 +196,8 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
+          onTerminalPanePinned={pinTerminalPane}
+          onTerminalPaneUnpinned={unpinTerminalPane}
         />
       )}
     />
@@ -130,11 +209,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   sidebarCollapsed,
   sidebarResizing = false,
   onSidebarCollapsedChange,
+  onTerminalPanePinned,
+  onTerminalPaneUnpinned,
 }: {
   pane: WorkbenchPaneIdentity
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
+  onTerminalPanePinned: (paneKey: string) => void
+  onTerminalPaneUnpinned: (paneKey: string) => void
 }) {
   const {
     state,
@@ -279,17 +362,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => observer.disconnect()
   }, [])
 
-  const bottomPanelWorkspaceKey = [
-    currentRuntimeTask
-      ? `runtime:${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}:${
-          currentRuntimeTask.workspacePath ?? effectiveWorkspaceTarget?.path ?? ''
-        }`
-      : 'workspace',
-    workspaceProject?.id ?? 'projectless',
-    effectiveWorkspaceTarget?.deviceId ?? '',
-    effectiveWorkspaceTarget?.path ?? '',
-    preferLocalWorkspaceTerminal ? 'local' : paneProjectWork.executionMode,
-  ].join(':')
+  const bottomPanelWorkspaceKey = createBottomPanelWorkspaceKey({
+    currentRuntimeTask,
+    workspaceProjectId: workspaceProject?.id,
+    workspaceTarget: effectiveWorkspaceTarget,
+    executionMode: paneProjectWork.executionMode,
+    preferLocalTerminal: preferLocalWorkspaceTerminal,
+  })
   const bottomPanelOpen = bottomPanelOpenByKey[bottomPanelWorkspaceKey] ?? false
   const activeBottomPanelContext = useMemo<BottomPanelRenderContext>(
     () => ({
@@ -327,11 +406,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       setBottomPanelOpenByKey(current => {
         const currentOpen = current[bottomPanelWorkspaceKey] ?? false
         const nextOpen = typeof next === 'function' ? next(currentOpen) : next
+        if (nextOpen && currentRuntimeTask) {
+          onTerminalPanePinned(paneKey)
+        }
         if (currentOpen === nextOpen) return current
         return { ...current, [bottomPanelWorkspaceKey]: nextOpen }
       })
     },
-    [bottomPanelWorkspaceKey, rememberActiveBottomPanelContext]
+    [
+      bottomPanelWorkspaceKey,
+      currentRuntimeTask,
+      onTerminalPanePinned,
+      paneKey,
+      rememberActiveBottomPanelContext,
+    ]
   )
   const bottomPanelContextsToRender = useMemo(() => {
     const inactiveContexts = bottomPanelContexts.filter(
@@ -1184,6 +1272,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             preferLocalTerminal={context.preferLocalTerminal}
             onRequestClose={() => {
               setBottomPanelOpenByKey(current => ({ ...current, [context.key]: false }))
+            }}
+            onTerminalTabsEmpty={() => {
+              if (currentRuntimeTask) {
+                onTerminalPaneUnpinned(paneKey)
+              }
             }}
           />
         )
