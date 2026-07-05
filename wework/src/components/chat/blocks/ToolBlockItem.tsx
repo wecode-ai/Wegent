@@ -208,12 +208,15 @@ type FileChangeStatBlock = {
 type FileChangeStatBlockStyle = CSSProperties & {
   '--file-change-stat-addition-height': string
   '--file-change-stat-deletion-height': string
+  '--file-change-stat-blocks-width': string
   '--file-change-stat-x': string
   '--file-change-stat-alpha': string
 }
 
 function FileChangeLineStats({ summary }: { summary: TurnFileChangesSummary }) {
   const [statBlocks, setStatBlocks] = useState<FileChangeStatBlock[]>([])
+  const visibleStatBlocks =
+    statBlocks.length > 0 ? statBlocks : buildStaticFileChangeStatBlocks(summary)
   const previousRef = useRef({
     artifactId: summary.artifact_id,
     additions: summary.additions,
@@ -256,16 +259,36 @@ function FileChangeLineStats({ summary }: { summary: TurnFileChangesSummary }) {
   }, [summary.additions, summary.artifact_id, summary.deletions])
 
   return (
-    <span className="relative flex shrink-0 items-center gap-1 pr-14 text-xs font-medium tabular-nums">
+    <span className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums">
       <span className="inline-flex items-center text-green-600">
         +<AnimatedChangeNumber value={summary.additions} deltaPrefix="+" />
       </span>
       <span className="inline-flex items-center text-red-500">
         -<AnimatedChangeNumber value={summary.deletions} deltaPrefix="-" />
       </span>
-      <FileChangeStatBlocks blocks={statBlocks} />
+      {visibleStatBlocks.length > 0 ? <FileChangeStatBlocks blocks={visibleStatBlocks} /> : null}
     </span>
   )
+}
+
+function buildStaticFileChangeStatBlocks(summary: TurnFileChangesSummary): FileChangeStatBlock[] {
+  const changedFiles = summary.files.filter(file => !file.binary)
+  if (changedFiles.length > 0) {
+    return changedFiles.slice(-6).map(file => ({
+      id: `${file.path}:${file.additions}:${file.deletions}`,
+      additions: file.additions,
+      deletions: file.deletions,
+    }))
+  }
+
+  if (summary.additions === 0 && summary.deletions === 0) return []
+  return [
+    {
+      id: `${summary.artifact_id}:${summary.additions}:${summary.deletions}`,
+      additions: summary.additions,
+      deletions: summary.deletions,
+    },
+  ]
 }
 
 function AnimatedChangeNumber({ value, deltaPrefix }: { value: number; deltaPrefix: '+' | '-' }) {
@@ -310,8 +333,14 @@ function AnimatedChangeNumber({ value, deltaPrefix }: { value: number; deltaPref
 }
 
 function FileChangeStatBlocks({ blocks }: { blocks: FileChangeStatBlock[] }) {
+  const width = Math.max(6, (blocks.length - 1) * 7 + 6)
+
   return (
-    <span className="file-change-stat-blocks" aria-hidden="true">
+    <span
+      className="file-change-stat-blocks"
+      aria-hidden="true"
+      style={{ '--file-change-stat-blocks-width': `${width}px` } as FileChangeStatBlockStyle}
+    >
       {blocks.map((block, index) => {
         const age = blocks.length - index - 1
         const additionHeight = block.additions > 0 ? Math.min(10, 3 + block.additions * 1.6) : 0
