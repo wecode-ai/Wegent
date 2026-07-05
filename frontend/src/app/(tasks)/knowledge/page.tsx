@@ -275,19 +275,17 @@ function KnowledgePageContent() {
           activePage="wiki"
           variant="with-sidebar"
           centerContent={
-            <div className="flex items-center gap-2 min-w-0 overflow-x-auto">
-              <KnowledgeTabs
-                activeTab={activeTab}
-                onTabChange={handleTabChange}
-                isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
-                onExpandClick={handleExpandKnowledgeSidebar}
-              />
-              {knowledgeViewSwitcher}
-            </div>
+            <KnowledgeTabs
+              activeTab={activeTab}
+              onTabChange={handleTabChange}
+              isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
+              onExpandClick={handleExpandKnowledgeSidebar}
+            />
           }
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >
+          {knowledgeViewSwitcher}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 

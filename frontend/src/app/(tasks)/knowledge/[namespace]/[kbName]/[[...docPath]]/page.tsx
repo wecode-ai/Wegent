@@ -226,23 +226,21 @@ function KnowledgeVirtualPageContent() {
           activePage="wiki"
           variant="with-sidebar"
           centerContent={
-            <div className="flex items-center gap-2 min-w-0 overflow-x-auto">
-              <KnowledgeTabs
-                activeTab="document"
-                onTabChange={tab => {
-                  if (tab === 'code') {
-                    router.push('/knowledge?type=code')
-                  }
-                }}
-                isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
-                onExpandClick={handleExpandKnowledgeSidebar}
-              />
-              {knowledgeViewSwitcher}
-            </div>
+            <KnowledgeTabs
+              activeTab="document"
+              onTabChange={tab => {
+                if (tab === 'code') {
+                  router.push('/knowledge?type=code')
+                }
+              }}
+              isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
+              onExpandClick={handleExpandKnowledgeSidebar}
+            />
           }
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
         >
+          {knowledgeViewSwitcher}
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
