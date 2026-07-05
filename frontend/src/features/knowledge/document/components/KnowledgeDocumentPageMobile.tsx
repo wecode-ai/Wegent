@@ -30,6 +30,7 @@ import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { getKnowledgeBase } from '@/apis/knowledge'
+import type { KnowledgeViewState } from './KnowledgeDocumentPage'
 import type {
   KnowledgeBase,
   KnowledgeBaseCreate,
@@ -46,12 +47,15 @@ interface KnowledgeDocumentPageMobileProps {
   initialKbName?: string
   /** Initial document path to auto-open (from virtual URL path segments) */
   initialDocPath?: string
+  /** Notifies the parent shell so it can render page-level view controls */
+  onKnowledgeViewStateChange?: (state: KnowledgeViewState) => void
 }
 
 export function KnowledgeDocumentPageMobile({
   initialKbNamespace,
   initialKbName,
   initialDocPath,
+  onKnowledgeViewStateChange,
 }: KnowledgeDocumentPageMobileProps = {}) {
   const router = useRouter()
 
@@ -66,6 +70,14 @@ export function KnowledgeDocumentPageMobile({
   const [detailKb, setDetailKb] = useState<KnowledgeBase | null>(null)
   const [detailKbLoading, setDetailKbLoading] = useState(false)
   const { currentView, setCurrentView } = useKnowledgeViewMode(detailKb?.kb_type, detailKb?.id)
+
+  useEffect(() => {
+    onKnowledgeViewStateChange?.({
+      visible: Boolean(detailKb && isDetailMode),
+      currentView,
+      onViewChange: setCurrentView,
+    })
+  }, [currentView, detailKb, isDetailMode, onKnowledgeViewStateChange, setCurrentView])
 
   const allLoadedKbs = useMemo((): KnowledgeBase[] => {
     const kbs: KnowledgeBase[] = []
@@ -313,7 +325,6 @@ export function KnowledgeDocumentPageMobile({
             onSyncKnowledgeBase={setDetailKb}
             initialDocPath={initialDocPath}
             currentView={currentView}
-            onViewChange={setCurrentView}
           />
         </div>
       )

@@ -214,7 +214,7 @@
       "notebookDesc": "默认进入 Notebook 工作台，可选择文档并开启对话",
       "classicDesc": "默认进入文档视图，适合浏览、上传和管理文档",
       "type": "默认打开方式",
-      "typeNotebook": "Notebook",
+      "typeNotebook": "笔记本视图",
       "typeClassic": "文档视图",
       "edit": "编辑知识库",
       "delete": "删除知识库",

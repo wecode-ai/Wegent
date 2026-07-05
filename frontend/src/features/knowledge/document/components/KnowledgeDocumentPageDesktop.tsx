@@ -38,6 +38,7 @@ import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledg
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
 import { MigrateKnowledgeBaseDialog } from './MigrateKnowledgeBaseDialog'
+import type { KnowledgeViewState } from './KnowledgeDocumentPage'
 import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
@@ -55,12 +56,15 @@ interface KnowledgeDocumentPageDesktopProps {
   initialKbName?: string
   /** Initial document path to auto-open (from virtual URL path segments) */
   initialDocPath?: string
+  /** Notifies the parent shell so it can render page-level view controls */
+  onKnowledgeViewStateChange?: (state: KnowledgeViewState) => void
 }
 
 export function KnowledgeDocumentPageDesktop({
   initialKbNamespace,
   initialKbName,
   initialDocPath,
+  onKnowledgeViewStateChange,
 }: KnowledgeDocumentPageDesktopProps = {}) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
@@ -79,6 +83,15 @@ export function KnowledgeDocumentPageDesktop({
     sidebar.selectedKb?.kb_type,
     sidebar.selectedKb?.id
   )
+  const selectedKbId = sidebar.selectedKb?.id
+
+  useEffect(() => {
+    onKnowledgeViewStateChange?.({
+      visible: Boolean(selectedKbId),
+      currentView,
+      onViewChange: setCurrentView,
+    })
+  }, [currentView, onKnowledgeViewStateChange, selectedKbId, setCurrentView])
   const sourceViews = useKnowledgeSourceViews()
   const namespaceRoleMap = useNamespaceRoleMap()
 
@@ -466,7 +479,6 @@ export function KnowledgeDocumentPageDesktop({
           onGroupClick={handleGroupClick}
           initialDocPath={currentDocPath}
           currentView={currentView}
-          onViewChange={setCurrentView}
         />
       )
     }

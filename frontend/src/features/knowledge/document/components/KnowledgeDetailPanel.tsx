@@ -55,8 +55,6 @@ interface KnowledgeDetailPanelProps {
   initialDocPath?: string
   /** Current view resolved from URL/default view */
   currentView: KnowledgeView
-  /** Switches the current URL-scoped view */
-  onViewChange: (view: KnowledgeView) => void
 }
 
 export function KnowledgeDetailPanel({
@@ -69,7 +67,6 @@ export function KnowledgeDetailPanel({
   onGroupClick,
   initialDocPath,
   currentView,
-  onViewChange,
 }: KnowledgeDetailPanelProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
@@ -205,81 +202,54 @@ export function KnowledgeDetailPanel({
     }
   }, [selectedKb?.id, currentView, selectTask])
 
-  const viewSwitcher = selectedKb ? (
-    <Tabs
-      value={currentView}
-      onValueChange={value => onViewChange(value as KnowledgeView)}
-      className="flex-shrink-0"
-    >
-      <TabsList className="h-8">
-        <TabsTrigger value="documents" className="gap-1 h-7 px-2 text-xs">
-          <FileText className="w-3.5 h-3.5" />
-          {t('chatPage.documents')}
-        </TabsTrigger>
-        <TabsTrigger value="notebook" className="gap-1 h-7 px-2 text-xs">
-          <Library className="w-3.5 h-3.5" />
-          Notebook
-        </TabsTrigger>
-      </TabsList>
-    </Tabs>
-  ) : null
-
   // In Notebook view, show chat interface with document panel.
   // Simplified layout: direct left-right split without extra header bars
   if (selectedKb && currentView === 'notebook') {
     return (
-      <div
-        className="flex-1 flex flex-col bg-base overflow-hidden"
-        data-testid="knowledge-detail-notebook"
-      >
-        <div className="flex items-center justify-end px-3 py-2 border-b border-border shrink-0">
-          {viewSwitcher}
-        </div>
-        <div className="flex-1 flex min-h-0 overflow-hidden">
-          {/* Chat area - left side */}
-          <div className="flex-1 flex flex-col min-w-0 min-h-0">
-            <ChatArea
-              teams={filteredTeams}
-              isTeamsLoading={isTeamsLoading}
-              showRepositorySelector={false}
-              taskType="knowledge"
-              knowledgeBaseId={selectedKb.id}
-              onRefreshTeams={handleRefreshTeams}
-              initialKnowledgeBase={{
-                id: selectedKb.id,
-                name: selectedKb.name,
-                namespace: selectedKb.namespace,
-                document_count: selectedKb.document_count,
-              }}
-              selectedDocumentIds={selectedDocumentIds}
-              guidedQuestions={selectedKb.guided_questions}
-              inputAlwaysAtBottom={true}
-              emptyStateContent={
-                <KnowledgeBaseSummaryCard
-                  knowledgeBase={selectedKb}
-                  onRefresh={handleRefreshKnowledgeBase}
-                  canEditSummary={canManageKb}
-                />
-              }
-              // Note: Knowledge base binding is handled by the backend when creating the task
-              // via the knowledge_base_id parameter in the chat request.
-            />
-          </div>
-
-          {/* Right panel - Document context selection */}
-          <DocumentPanel
-            knowledgeBase={selectedKb}
-            canUpload={canUploadDocuments}
-            canManageAllDocuments={canManageKb}
-            canManagePermissions={canManagePermissions}
-            onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
-            onDocumentSelectionChange={setSelectedDocumentIds}
-            onCollapsedChange={setIsDocumentPanelCollapsed}
-            groupInfo={groupInfo}
-            onGroupClick={onGroupClick}
-            initialDocPath={initialDocPath}
+      <div className="flex-1 flex bg-base overflow-hidden" data-testid="knowledge-detail-notebook">
+        {/* Chat area - left side */}
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+          <ChatArea
+            teams={filteredTeams}
+            isTeamsLoading={isTeamsLoading}
+            showRepositorySelector={false}
+            taskType="knowledge"
+            knowledgeBaseId={selectedKb.id}
+            onRefreshTeams={handleRefreshTeams}
+            initialKnowledgeBase={{
+              id: selectedKb.id,
+              name: selectedKb.name,
+              namespace: selectedKb.namespace,
+              document_count: selectedKb.document_count,
+            }}
+            selectedDocumentIds={selectedDocumentIds}
+            guidedQuestions={selectedKb.guided_questions}
+            inputAlwaysAtBottom={true}
+            emptyStateContent={
+              <KnowledgeBaseSummaryCard
+                knowledgeBase={selectedKb}
+                onRefresh={handleRefreshKnowledgeBase}
+                canEditSummary={canManageKb}
+              />
+            }
+            // Note: Knowledge base binding is handled by the backend when creating the task
+            // via the knowledge_base_id parameter in the chat request.
           />
         </div>
+
+        {/* Right panel - Document context selection */}
+        <DocumentPanel
+          knowledgeBase={selectedKb}
+          canUpload={canUploadDocuments}
+          canManageAllDocuments={canManageKb}
+          canManagePermissions={canManagePermissions}
+          onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
+          onDocumentSelectionChange={setSelectedDocumentIds}
+          onCollapsedChange={setIsDocumentPanelCollapsed}
+          groupInfo={groupInfo}
+          onGroupClick={onGroupClick}
+          initialDocPath={initialDocPath}
+        />
       </div>
     )
   }
@@ -320,12 +290,7 @@ export function KnowledgeDetailPanel({
               canManageAllDocuments={canManageKb}
               paginationEnabled={true}
               onRefreshKnowledgeBase={handleRefreshKnowledgeBase}
-              headerActions={
-                <div className="flex items-center gap-2">
-                  {headerActions}
-                  {viewSwitcher}
-                </div>
-              }
+              headerActions={headerActions}
               groupInfo={groupInfo}
               onGroupClick={onGroupClick}
               initialDocPath={initialDocPath}
@@ -339,10 +304,7 @@ export function KnowledgeDetailPanel({
                     {selectedKb.name}
                   </h2>
                 </div>
-                <div className="flex items-center gap-2">
-                  {headerActions}
-                  {viewSwitcher}
-                </div>
+                {headerActions}
               </div>
               <PermissionManagementTab kbId={selectedKb.id} kbNamespace={selectedKb.namespace} />
             </>
