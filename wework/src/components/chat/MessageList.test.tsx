@@ -2865,6 +2865,111 @@ describe('MessageList', () => {
     expect(screen.getByTestId('copy-message-icon')).toBeInTheDocument()
   })
 
+  test('shows edit action only for the final completed user turn and submits edited text', async () => {
+    const onEditLastUserMessage = vi.fn().mockResolvedValue(true)
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-old',
+            role: 'user',
+            content: '旧问题',
+            status: 'done',
+            createdAt: '2026-05-25T15:00:00.000+08:00',
+          },
+          {
+            id: 'assistant-old',
+            role: 'assistant',
+            content: '旧回答',
+            status: 'done',
+            createdAt: '2026-05-25T15:01:00.000+08:00',
+          },
+          {
+            id: 'user-last',
+            role: 'user',
+            content: '最后问题',
+            status: 'done',
+            createdAt: '2026-05-25T15:02:00.000+08:00',
+          },
+          {
+            id: 'assistant-last',
+            role: 'assistant',
+            content: '最后回答',
+            status: 'done',
+            createdAt: '2026-05-25T15:03:00.000+08:00',
+          },
+        ]}
+        onEditLastUserMessage={onEditLastUserMessage}
+        canEditLastUserMessage
+      />
+    )
+
+    expect(screen.getAllByTestId('edit-message-button')).toHaveLength(1)
+
+    const lastHoverRegion = screen
+      .getByText('最后问题')
+      .closest('[data-testid="message-hover-region"]')
+    expect(lastHoverRegion).toBeInstanceOf(HTMLElement)
+    fireEvent.pointerEnter(lastHoverRegion as HTMLElement)
+
+    expect(screen.getByTestId('edit-message-label')).toHaveTextContent('编辑')
+    expect(screen.getByTestId('edit-message-button')).toHaveAttribute('title', '编辑')
+
+    await userEvent.click(screen.getByTestId('edit-message-button'))
+    expect(screen.getByTestId('edit-user-message-form')).toBeInTheDocument()
+    expect(screen.getByTestId('edit-user-message-textarea')).toHaveValue('最后问题')
+
+    await userEvent.click(screen.getByTestId('cancel-edit-user-message-button'))
+    expect(screen.queryByTestId('edit-user-message-form')).not.toBeInTheDocument()
+
+    fireEvent.pointerEnter(lastHoverRegion as HTMLElement)
+    await userEvent.click(screen.getByTestId('edit-message-button'))
+    const textarea = screen.getByTestId('edit-user-message-textarea')
+    await userEvent.clear(textarea)
+    await userEvent.type(textarea, '编辑后的问题')
+    await userEvent.keyboard('{Shift>}{Enter}{/Shift}继续')
+
+    expect(onEditLastUserMessage).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('编辑后的问题\n继续')
+
+    await userEvent.keyboard('{Enter}')
+
+    await waitFor(() =>
+      expect(onEditLastUserMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'user-last' }),
+        '编辑后的问题\n继续'
+      )
+    )
+    expect(screen.queryByTestId('edit-user-message-form')).not.toBeInTheDocument()
+  })
+
+  test('hides edit action while the final user turn is still streaming', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-last',
+            role: 'user',
+            content: '最后问题',
+            status: 'done',
+            createdAt: '2026-05-25T15:02:00.000+08:00',
+          },
+          {
+            id: 'assistant-last',
+            role: 'assistant',
+            content: '正在回答',
+            status: 'streaming',
+            createdAt: '2026-05-25T15:03:00.000+08:00',
+          },
+        ]}
+        onEditLastUserMessage={vi.fn()}
+        canEditLastUserMessage
+      />
+    )
+
+    expect(screen.queryByTestId('edit-message-button')).not.toBeInTheDocument()
+  })
+
   test('collapses long user messages without changing copied content', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     stubClipboardWriteText(writeText)

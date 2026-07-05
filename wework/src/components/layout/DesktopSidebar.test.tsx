@@ -136,11 +136,13 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('projects-create-button')).toBeInTheDocument()
   })
 
-  test('keeps the settings row notification bell inside the sidebar width', () => {
+  test('keeps the account settings trigger and notification bell inside the sidebar width', () => {
     renderSidebar()
 
-    expect(screen.getByTestId('settings-button')).toHaveClass('min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-14', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
+    expect(screen.getByTestId('settings-button')).toHaveTextContent('alice')
+    expect(screen.getByTestId('settings-button')).toHaveTextContent('alice@example.com')
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass(
       'h-8',
       'w-8',

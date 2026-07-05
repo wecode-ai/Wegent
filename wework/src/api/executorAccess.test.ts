@@ -59,6 +59,7 @@ function createApis(devices: DeviceInfo[] = [createDevice()]) {
     searchRuntimeWork: vi.fn(),
     revertRuntimeFileChanges: vi.fn(),
     sendRuntimeMessage: vi.fn(),
+    rollbackRuntimeTask: vi.fn(),
     openRuntimeWorkspace: vi.fn(),
     renameRuntimeWorkspace: vi.fn(),
     removeRuntimeWorkspace: vi.fn(),

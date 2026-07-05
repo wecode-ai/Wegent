@@ -1419,6 +1419,62 @@ async fn runtime_tasks_send_uses_nested_address_runtime_handle_without_local_ind
     assert_eq!(resume["params"]["threadId"], "thread-1");
 }
 
+#[tokio::test]
+async fn runtime_tasks_rollback_uses_nested_address_runtime_handle_without_local_index() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-rollback-address-handle-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-rollback-address-handle-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-rollback-address-handle-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let rollback = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.rollback",
+            "payload": {
+                "address": {
+                    "deviceId": "device-1",
+                    "workspacePath": "/tmp/project",
+                    "taskId": "local-visible-task",
+                    "runtimeHandle": {
+                        "threadId": "thread-1"
+                    }
+                },
+                "message": "edited from address handle",
+                "messageId": "user-last",
+                "executionRequest": codex_execution_request(
+                    "edited from address handle",
+                    "/tmp/project",
+                    "gpt-4.1"
+                )
+            }
+        }))
+        .await
+        .expect("rollback should be accepted");
+    assert_eq!(rollback["accepted"], true);
+
+    wait_for_method_count(&log_path, "thread/rollback", 1).await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    wait_for_thread_mapping(&handler, "local-visible-task", "thread-1").await;
+    let calls = read_json_lines(&log_path);
+    let rollback = calls
+        .iter()
+        .find(|call| call["method"] == "thread/rollback")
+        .expect("rollback should use the nested runtime handle");
+    assert_eq!(rollback["params"]["threadId"], "thread-1");
+    assert_eq!(rollback["params"]["numTurns"], 1);
+}
+
 fn write_fake_codex(log_path: &Path) -> PathBuf {
     let path = temp_path("fake-codex-send", "sh");
     let _ = fs::remove_file(log_path);
@@ -1449,6 +1505,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/name/set"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"thread/rollback"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'

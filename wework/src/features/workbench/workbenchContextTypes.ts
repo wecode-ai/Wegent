@@ -20,6 +20,7 @@ import type {
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeRollbackRequest,
   RuntimeIMNotificationSettingsResponse,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -224,6 +225,7 @@ export interface WorkbenchContextValue {
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
+  editLastUserMessage: (request: RuntimeRollbackRequest) => Promise<boolean>
   cancelRuntimePaneTask: (
     address: RuntimeTaskAddress,
     options?: RuntimePaneActionOptions

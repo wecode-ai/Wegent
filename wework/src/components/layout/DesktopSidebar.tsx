@@ -14,7 +14,6 @@ import {
   Plus,
   RotateCw,
   Search,
-  Settings,
   Sparkles,
   X,
 } from 'lucide-react'
@@ -169,6 +168,27 @@ interface ArchiveConversationsConfirmDialogProps {
 const PROJECT_CREATE_MENU_WIDTH = 248
 const PROJECT_CREATE_MENU_MARGIN = 8
 const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 2200
+
+function getAccountInitials(label: string): string {
+  const normalizedLabel = label.trim()
+  if (!normalizedLabel) return 'U'
+  const [namePart] = normalizedLabel.split('@')
+  const words = namePart.split(/[._\-\s]+/).filter(Boolean)
+  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase()
+  return namePart.slice(0, 2).toUpperCase()
+}
+
+function getSidebarAccountSummary(user: UserProfile | null, fallback: string) {
+  const userName = user?.user_name?.trim()
+  const email = user?.email?.trim()
+  const label = userName || email || fallback
+  const detail = email && email !== label ? email : fallback
+  return {
+    label,
+    detail,
+    initials: getAccountInitials(label),
+  }
+}
 
 function getStandaloneDeviceLabel(device: DeviceInfo): string {
   return device.name || device.device_id
@@ -1784,6 +1804,7 @@ export function DesktopSidebar({
   })
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
   const usesOverlayTitlebar = isTauriRuntime()
+  const sidebarAccount = getSidebarAccountSummary(user, t('workbench.account_fallback', '当前账号'))
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -2502,11 +2523,22 @@ export function DesktopSidebar({
                   setImNotificationMenuOpen(false)
                   setSettingsMenuOpen(open => !open)
                 }}
-                className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-[13px] font-medium leading-[18px] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+                className="flex h-14 min-w-0 flex-1 items-center gap-3 rounded-xl px-2.5 text-left text-[rgb(var(--color-sidebar-text-primary))] transition-colors hover:bg-[rgb(var(--color-sidebar-hover))]"
+                title={t('workbench.settings', '设置')}
+                aria-label={t('workbench.settings', '设置')}
                 aria-expanded={settingsMenuOpen}
               >
-                <Settings className="h-4 w-4 shrink-0" />
-                <span className="truncate">{t('workbench.settings', '设置')}</span>
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[11px] font-semibold leading-none text-primary">
+                  {sidebarAccount.initials}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] font-semibold leading-[18px]">
+                    {sidebarAccount.label}
+                  </span>
+                  <span className="block truncate text-[12px] font-medium leading-4 text-[rgb(var(--color-sidebar-text-secondary))]">
+                    {sidebarAccount.detail}
+                  </span>
+                </span>
               </button>
               <GlobalImNotificationBell
                 devices={devices}

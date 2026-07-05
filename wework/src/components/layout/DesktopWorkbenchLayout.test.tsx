@@ -2114,14 +2114,11 @@ describe('DesktopWorkbenchLayout', () => {
       'title',
       '打开项目 IDE'
     )
-    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toHaveAttribute(
-      'title',
-      '打开底部栏'
-    )
-    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toHaveAttribute(
-      'title',
-      '打开右侧栏'
-    )
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).not.toHaveAttribute('title')
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).not.toHaveAttribute('title')
+    const bottomPanelTooltip = screen.getByText('切换底部面板显示').closest('[role="tooltip"]')
+    expect(bottomPanelTooltip).toHaveTextContent('⌘')
+    expect(bottomPanelTooltip).toHaveTextContent('J')
   })
 
   test('shows project code-server in the Tauri titlebar before devices hydrate', () => {
@@ -2291,7 +2288,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
     expect(screen.getByText('个人账户')).toBeInTheDocument()
-    expect(screen.getAllByText('设置')).toHaveLength(2)
+    expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('设置')
+    expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('⌘,')
     expect(screen.getByText('剩余用量')).toBeInTheDocument()
     expect(screen.getByText('退出登录')).toBeInTheDocument()
   })
@@ -3216,7 +3214,7 @@ describe('DesktopWorkbenchLayout', () => {
       'scrollbar-none',
       '[overflow-anchor:none]'
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-8', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-14', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
   })

@@ -159,6 +159,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
       standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
     })
   const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
+  const canEditLastUserMessage = Boolean(
+    currentRuntimeTask &&
+    (activeDevice?.device_type === 'local' || activeDeviceId === 'local-device') &&
+    !paneSession.status.isBusy
+  )
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
@@ -313,6 +318,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={subtaskId => loadTurnFileChangesDiff(subtaskId, paneMessages)}
               onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
+              onEditLastUserMessage={paneSession.editLastUserMessage}
+              canEditLastUserMessage={canEditLastUserMessage}
               onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
               onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
               hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}

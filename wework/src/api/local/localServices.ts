@@ -14,6 +14,7 @@ import type {
   RuntimeArchivedConversationBulkRequest,
   RuntimeArchivedConversationBulkResponse,
   RuntimeDeviceWorkspace,
+  RuntimeRollbackRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
   RuntimeGoalClearRequest,
@@ -60,6 +61,7 @@ import {
 } from '@/tauri/localExecutor'
 import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
+import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import { requestLocalCodexOfficialModels } from './codexOfficialModels'
 import {
   codexOfficialModelIdFromModelName,
@@ -532,7 +534,7 @@ function builtInCodexModelId(modelId?: string): string {
 }
 
 function runtimeReasoning(modelOptions?: Record<string, string>): Record<string, string> | null {
-  const reasoning = modelOptions?.reasoning
+  const reasoning = normalizeModelOptionValue('reasoning', modelOptions?.reasoning)
   const summary = modelOptions?.summary
   const result: Record<string, string> = {}
   if (reasoning) result.effort = reasoning
@@ -1029,6 +1031,7 @@ async function createLocalRuntimeTaskPayload(
     ...data,
     deviceId: localDeviceId,
     workspacePath: runtimeWorkspace.workspacePath,
+    ...(data.modelOptions ? { modelOptions: normalizeModelOptionAliases(data.modelOptions) } : {}),
   }
   if (execution) normalizedData.execution = execution
   const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
@@ -1064,9 +1067,13 @@ function createLocalRuntimeSendPayload(
   localDeviceId: string
 ): Record<string, unknown> {
   const turnSeed = createRuntimeTurnSeed()
-  const collaborationMode = runtimeCollaborationMode(data.modelOptions)
+  const normalizedData: RuntimeSendRequest = {
+    ...data,
+    ...(data.modelOptions ? { modelOptions: normalizeModelOptionAliases(data.modelOptions) } : {}),
+  }
+  const collaborationMode = runtimeCollaborationMode(normalizedData.modelOptions)
   const workspacePath = stringValue(data.address.workspacePath)
-  const addressRecord = recordValue(data.address)
+  const addressRecord = recordValue(normalizedData.address)
   const taskId = stringValue(addressRecord.taskId)
   if (!taskId) {
     console.warn('[Wework] Local runtime send missing taskId', {
@@ -1077,14 +1084,14 @@ function createLocalRuntimeSendPayload(
     throw new Error('Runtime task address missing taskId')
   }
   const normalizedAddress: RuntimeTaskAddress = {
-    ...data.address,
+    ...normalizedData.address,
     deviceId: localDeviceId,
     taskId,
     ...(workspacePath ? { workspacePath } : {}),
   }
 
-  if (data.requestUserInputResponse || data.request_user_input_response) {
-    const payload = { ...data } as Record<string, unknown>
+  if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
+    const payload = { ...normalizedData } as Record<string, unknown>
     delete payload.modelId
     delete payload.modelType
     return {
@@ -1097,11 +1104,11 @@ function createLocalRuntimeSendPayload(
         runtime: 'codex',
         teamId: LOCAL_WORKBENCH_TEAM.id,
         title: taskId,
-        message: data.message,
+        message: normalizedData.message,
         turnSeed,
-        modelId: data.modelId,
-        modelOptions: data.modelOptions,
-        attachments: data.attachments,
+        modelId: normalizedData.modelId,
+        modelOptions: normalizedData.modelOptions,
+        attachments: normalizedData.attachments,
         localDeviceId,
         workspacePath,
         workspaceSource: 'local_path',
@@ -1110,7 +1117,7 @@ function createLocalRuntimeSendPayload(
     } as unknown as Record<string, unknown>
   }
 
-  const payload = { ...data } as Record<string, unknown>
+  const payload = { ...normalizedData } as Record<string, unknown>
   delete payload.modelId
   delete payload.modelType
   return {
@@ -1123,11 +1130,11 @@ function createLocalRuntimeSendPayload(
       runtime: 'codex',
       teamId: LOCAL_WORKBENCH_TEAM.id,
       title: taskId,
-      message: data.message,
+      message: normalizedData.message,
       turnSeed,
-      modelId: data.modelId,
-      modelOptions: data.modelOptions,
-      attachments: data.attachments,
+      modelId: normalizedData.modelId,
+      modelOptions: normalizedData.modelOptions,
+      attachments: normalizedData.attachments,
       localDeviceId,
       workspacePath,
       workspaceSource: 'local_path',
@@ -1420,6 +1427,24 @@ function createRuntimeWorkApi(
         payloadKeys: Object.keys(payload).sort(),
       })
       return request('runtime.tasks.send', payload)
+    },
+    async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
+      const localDeviceId = await getLocalDeviceId()
+      const payload = createLocalRuntimeSendPayload(data, localDeviceId)
+      if (!payload.executionRequest) {
+        console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
+          taskId: payload.taskId,
+          address: runtimeAddressDebug(payload),
+          payloadKeys: Object.keys(payload).sort(),
+        })
+        throw new Error('Runtime rollback payload missing executionRequest')
+      }
+      console.debug('[Wework] Local runtime rollback payload', {
+        taskId: payload.taskId,
+        address: runtimeAddressDebug(payload),
+        payloadKeys: Object.keys(payload).sort(),
+      })
+      return request('runtime.tasks.rollback', payload)
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)
