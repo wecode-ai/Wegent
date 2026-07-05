@@ -1,9 +1,8 @@
-/// <reference types="vitest/config" />
-
 import path from 'path'
 import fs from 'fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { configDefaults } from 'vitest/config'
 
 const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000'
 const socketProxyTarget = process.env.VITE_SOCKET_PROXY_TARGET || apiProxyTarget
@@ -56,6 +55,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     globals: true,
+    exclude: [...configDefaults.exclude, 'e2e/**'],
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'json', 'lcov'],
