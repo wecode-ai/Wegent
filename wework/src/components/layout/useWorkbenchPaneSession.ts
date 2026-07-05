@@ -83,6 +83,7 @@ const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const MAX_CACHED_RUNTIME_PANE_MESSAGES = 3
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
+const noopSetInput = () => undefined
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
@@ -93,7 +94,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     getRuntimeGoal,
     setRuntimeGoal,
     clearRuntimeGoal,
-    setWorkbenchError,
     sendRuntimePaneMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
@@ -103,7 +103,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
-  const [input, setInput] = useState('')
+  const input = projectChat.input ?? ''
+  const scopedSetInput = projectChat.setInput ?? noopSetInput
+  const [error, setError] = useState<string | null>(null)
+  const setInput = useCallback(
+    (value: string) => {
+      scopedSetInput(value)
+      setError(null)
+    },
+    [scopedSetInput]
+  )
   const [sendPhase, setSendPhase] = useState<RuntimePaneSendPhase>('idle')
   const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
     ReadonlySet<string>
@@ -741,11 +750,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
       if (goalDraftActive) {
         if (!submittedInput) {
-          setWorkbenchError(i18n.t('workbench.goal_objective_required'))
+          setError(i18n.t('workbench.goal_objective_required'))
           return
         }
         if (hasCodeComments) {
-          setWorkbenchError(i18n.t('workbench.runtime_task_code_comments_not_supported'))
+          setError(i18n.t('workbench.runtime_task_code_comments_not_supported'))
           return
         }
 
@@ -759,7 +768,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               status: 'active',
             })
             if (!response.accepted) {
-              setWorkbenchError(response.error || i18n.t('workbench.goal_set_failed'))
+              setError(response.error || i18n.t('workbench.goal_set_failed'))
               return
             }
             setThreadGoal(response.goal)
@@ -928,6 +937,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                   : current
               )
             }
+            if (isRuntimeTaskAddress(sent)) {
+              dispatchMessages({ type: 'reset', messages: [] })
+              projectChat.resetAttachments()
+            }
             setCodeCommentContexts([])
           } else {
             setSendPhase('idle')
@@ -976,8 +989,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       queuedMessages.length,
       sendCurrentInput,
       sendRuntimeMessage,
+      setInput,
       setRuntimeGoal,
-      setWorkbenchError,
     ]
   )
 
@@ -1224,6 +1237,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     codeCommentContexts,
     input,
     setInput,
+    error,
     status: paneStatus,
     sending: paneStatus.isSubmitting,
     waitingForAssistant: paneStatus.isWaitingForAssistantIndicator,

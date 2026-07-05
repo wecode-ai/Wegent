@@ -11,7 +11,10 @@ interface UseWorkbenchSkillsOptions {
   api: WorkbenchSkillApi
   teamId?: number | null
   locked: boolean
+  scopeKey?: string
 }
+
+const DEFAULT_SKILL_SCOPE_KEY = 'default'
 
 function isSameSkill(left: SkillRef, right: SkillRef): boolean {
   return (
@@ -21,14 +24,20 @@ function isSameSkill(left: SkillRef, right: SkillRef): boolean {
   )
 }
 
-export function useWorkbenchSkills({ api, teamId, locked }: UseWorkbenchSkillsOptions) {
+export function useWorkbenchSkills({
+  api,
+  teamId,
+  locked,
+  scopeKey = DEFAULT_SKILL_SCOPE_KEY,
+}: UseWorkbenchSkillsOptions) {
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
   const [teamSkillNames, setTeamSkillNames] = useState<string[]>([])
   const [preloadedSkillNames, setPreloadedSkillNames] = useState<string[]>([])
-  const [selectedSkills, setSelectedSkillsState] = useState<SkillRef[]>([])
+  const [selectedSkillsByScope, setSelectedSkillsByScope] = useState<Record<string, SkillRef[]>>({})
   const [isLoading, setIsLoading] = useState(false)
   const [isTeamSkillsLoading, setIsTeamSkillsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
+  const selectedSkills = selectedSkillsByScope[scopeKey] ?? []
 
   useEffect(() => {
     let cancelled = false
@@ -102,22 +111,32 @@ export function useWorkbenchSkills({ api, teamId, locked }: UseWorkbenchSkillsOp
   const setSelectedSkills = useCallback(
     (nextSkills: SkillRef[]) => {
       if (locked) return
-      setSelectedSkillsState(nextSkills)
+      setSelectedSkillsByScope(current => ({
+        ...current,
+        [scopeKey]: nextSkills,
+      }))
     },
-    [locked]
+    [locked, scopeKey]
   )
 
   const toggleSkill = useCallback(
     (skill: SkillRef) => {
       if (locked) return
-      setSelectedSkillsState(current => {
+      setSelectedSkillsByScope(currentByScope => {
+        const current = currentByScope[scopeKey] ?? []
         if (current.some(item => isSameSkill(item, skill))) {
-          return current.filter(item => !isSameSkill(item, skill))
+          return {
+            ...currentByScope,
+            [scopeKey]: current.filter(item => !isSameSkill(item, skill)),
+          }
         }
-        return [...current, skill]
+        return {
+          ...currentByScope,
+          [scopeKey]: [...current, skill],
+        }
       })
     },
-    [locked]
+    [locked, scopeKey]
   )
 
   return {

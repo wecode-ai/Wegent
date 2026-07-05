@@ -13,6 +13,110 @@ describe('workbenchReducer', () => {
     expect(state.currentRuntimeTask).toBeNull()
   })
 
+  test('preserves the current blank chat draft when clearing the runtime task', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentProject: { id: 7, name: 'Repo', tasks: [] },
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        standaloneChatKey: 4,
+      },
+      { type: 'current_task_cleared' }
+    )
+
+    expect(state.currentRuntimeTask).toBeNull()
+    expect(state.standaloneChatKey).toBe(4)
+  })
+
+  test('preserves blank chat draft when returning to standalone chat', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        standaloneChatKey: 4,
+      },
+      {
+        type: 'project_cleared',
+        standaloneDeviceId: 'device-1',
+        standaloneWorkspacePath: null,
+      }
+    )
+
+    expect(state.currentRuntimeTask).toBeNull()
+    expect(state.standaloneChatKey).toBe(4)
+  })
+
+  test('creates a fresh blank chat draft when requested explicitly', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 4,
+      },
+      {
+        type: 'project_cleared',
+        standaloneDeviceId: 'device-1',
+        standaloneWorkspacePath: null,
+        startFreshChat: true,
+      }
+    )
+
+    expect(state.standaloneChatKey).toBe(5)
+  })
+
+  test('creates a fresh blank chat draft after the previous draft is committed', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 4,
+      },
+      { type: 'blank_chat_committed' }
+    )
+
+    expect(state.standaloneChatKey).toBe(5)
+  })
+
+  test('preserves blank chat draft when selecting a project', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 4,
+      },
+      {
+        type: 'project_selected',
+        project: { id: 7, name: 'Repo', tasks: [] },
+      }
+    )
+
+    expect(state.currentProject?.id).toBe(7)
+    expect(state.standaloneChatKey).toBe(4)
+  })
+
+  test('preserves blank chat draft when selecting a project workspace', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 4,
+      },
+      {
+        type: 'project_workspace_selected',
+        project: { id: 7, name: 'Repo', tasks: [] },
+        deviceWorkspaceId: null,
+      }
+    )
+
+    expect(state.currentProject?.id).toBe(7)
+    expect(state.pendingProjectWorkspaceProjectId).toBe(7)
+    expect(state.standaloneChatKey).toBe(4)
+  })
+
   test('stores runtime work separately from backend task lists', () => {
     const runtimeWork = {
       projects: [

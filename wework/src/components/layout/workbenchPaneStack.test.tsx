@@ -85,6 +85,22 @@ describe('workbenchPaneStack', () => {
     expect(getWorkbenchPaneKey(basePane)).toBe(getWorkbenchPaneKey(resolvedPane))
   })
 
+  test('keeps the same blank pane key when project context is resolved later', () => {
+    expect(
+      getWorkbenchPaneKey({
+        currentRuntimeTask: null,
+        currentProject: null,
+        standaloneChatKey: 3,
+      })
+    ).toBe(
+      getWorkbenchPaneKey({
+        currentRuntimeTask: null,
+        currentProject: { id: 7, name: 'Wegent', tasks: [] },
+        standaloneChatKey: 3,
+      })
+    )
+  })
+
   test('keeps pinned runtime panes mounted beyond the normal cache limit', async () => {
     const panes: WorkbenchPaneIdentity[] = [
       { currentRuntimeTask: { deviceId: 'device-1', taskId: 101 }, currentProject: null },

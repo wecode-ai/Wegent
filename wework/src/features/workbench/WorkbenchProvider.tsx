@@ -149,6 +149,21 @@ export function WorkbenchProvider({
 
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
+  const projectChatScopeKey = getProjectChatScopeKey({
+    currentRuntimeTask: state.currentRuntimeTask,
+    standaloneChatKey: state.standaloneChatKey,
+  })
+  const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>({})
+  const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
+  const setDraftInput = useCallback(
+    (value: string) => {
+      setDraftInputByScope(current => {
+        if ((current[projectChatScopeKey] ?? '') === value) return current
+        return { ...current, [projectChatScopeKey]: value }
+      })
+    },
+    [projectChatScopeKey]
+  )
   const activeDeviceId =
     state.currentRuntimeTask?.deviceId ??
     getActiveWorkbenchDeviceId({
@@ -308,6 +323,8 @@ export function WorkbenchProvider({
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
     locked: false,
+    scopeKey: projectChatScopeKey,
+    persistSelection: false,
     selectionConfig: modelSelectionConfig,
     compatibilityConfig: modelCompatibilityConfig,
     compatibilityFamily: modelCompatibilityFamily,
@@ -320,6 +337,7 @@ export function WorkbenchProvider({
     api: resolvedServices.skillApi,
     teamId: state.defaultTeam?.id,
     locked: isOptionsLocked,
+    scopeKey: projectChatScopeKey,
   })
   const isWorkbenchShellReady = !state.isBootstrapping
   const isStartupReady =
@@ -339,6 +357,7 @@ export function WorkbenchProvider({
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: uploadWorkbenchAttachment,
     deleteAttachment: resolvedServices.attachmentApi?.deleteAttachment,
+    scopeKey: projectChatScopeKey,
   })
   const { cloudWorkStatus, refreshWorkLists, refreshDevices, getRemoteDeviceStartupCommand } =
     useWorkbenchDataRefresh({
@@ -354,8 +373,25 @@ export function WorkbenchProvider({
       state,
       currentRuntimeTaskRunning,
       cloudWorkStatus,
+      composer: {
+        scopeKey: projectChatScopeKey,
+        standaloneChatKey: state.standaloneChatKey,
+        currentInputLength: draftInput.length,
+        scopedInputLengths: Object.fromEntries(
+          Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
+        ),
+        attachmentCount: attachmentSelection.attachments.length,
+      },
     })
-  }, [cloudWorkStatus, currentRuntimeTaskRunning, state])
+  }, [
+    attachmentSelection.attachments.length,
+    cloudWorkStatus,
+    currentRuntimeTaskRunning,
+    draftInput.length,
+    draftInputByScope,
+    projectChatScopeKey,
+    state,
+  ])
 
   const { upgradingDevices, upgradeDevice } = useWorkbenchDeviceUpgrades({
     state,
@@ -438,6 +474,7 @@ export function WorkbenchProvider({
         type: 'project_cleared',
         standaloneDeviceId,
         standaloneWorkspacePath: null,
+        startFreshChat: true,
       })
       navigateTo('/')
     },
@@ -472,6 +509,7 @@ export function WorkbenchProvider({
         type: 'project_cleared',
         standaloneDeviceId: normalizedDeviceId,
         standaloneWorkspacePath: openedWorkspacePath,
+        startFreshChat: true,
       })
       dispatch({
         type: 'runtime_workspace_opened',
@@ -746,6 +784,7 @@ export function WorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
+      input: draftInput,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -757,6 +796,7 @@ export function WorkbenchProvider({
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
+      setInput: setDraftInput,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -774,6 +814,7 @@ export function WorkbenchProvider({
       attachmentSelection.removeAttachment,
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
+      draftInput,
       handleBlockedModelSelect,
       isOptionsLocked,
       listLocalSkills,
@@ -785,6 +826,7 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      setDraftInput,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,
@@ -798,6 +840,7 @@ export function WorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
+      input: draftInput,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -809,6 +852,7 @@ export function WorkbenchProvider({
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
+      setInput: setDraftInput,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -826,6 +870,7 @@ export function WorkbenchProvider({
       attachmentSelection.removeAttachment,
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
+      draftInput,
       handleBlockedModelSelect,
       listLocalSkills,
       modelSelection.isSelectionReady,
@@ -836,6 +881,7 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      setDraftInput,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,
@@ -1072,4 +1118,17 @@ function useStableEvent<TArgs extends unknown[], TResult>(
   }, [handler])
 
   return useCallback((...args: TArgs) => handlerRef.current(...args), [])
+}
+
+function getProjectChatScopeKey({
+  currentRuntimeTask,
+  standaloneChatKey,
+}: {
+  currentRuntimeTask: RuntimeTaskAddress | null
+  standaloneChatKey: number
+}): string {
+  if (currentRuntimeTask) {
+    return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.taskId].join(':')
+  }
+  return `blank:${standaloneChatKey}`
 }

@@ -8,8 +8,7 @@ import {
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
-const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR =
-  'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
+const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
 
 export interface WeworkAutomationBridge {
   version: 1

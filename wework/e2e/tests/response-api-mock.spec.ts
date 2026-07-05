@@ -78,8 +78,7 @@ test('sends local model connection tests through the Wework Responses API path',
   const [request, result] = await Promise.all([
     page.waitForRequest(
       candidate =>
-        candidate.method() === 'POST' &&
-        candidate.url() === `${responseApiMockUrl}/v1/responses`
+        candidate.method() === 'POST' && candidate.url() === `${responseApiMockUrl}/v1/responses`
     ),
     app.testLocalModelConnection({
       baseUrl: `${responseApiMockUrl}/v1`,
