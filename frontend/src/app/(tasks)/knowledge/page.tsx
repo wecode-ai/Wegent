@@ -184,14 +184,26 @@ function KnowledgePageContent() {
         onValueChange={value => knowledgeViewState.onViewChange?.(value as KnowledgeView)}
         className="flex-shrink-0"
       >
-        <TabsList className="h-8 rounded-md bg-surface/80 p-0.5">
-          <TabsTrigger value="documents" className="gap-1 h-7 px-2 text-xs">
+        <TabsList className="h-11 sm:h-8 rounded-md bg-surface/80 p-0 sm:p-0.5">
+          <TabsTrigger
+            value="documents"
+            aria-label={t('knowledge:document.knowledgeBase.typeClassic')}
+            className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+          >
             <FileText className="w-3.5 h-3.5" />
-            <span>{t('knowledge:document.knowledgeBase.typeClassic')}</span>
+            <span className="hidden sm:inline">
+              {t('knowledge:document.knowledgeBase.typeClassic')}
+            </span>
           </TabsTrigger>
-          <TabsTrigger value="notebook" className="gap-1 h-7 px-2 text-xs">
+          <TabsTrigger
+            value="notebook"
+            aria-label={t('knowledge:document.knowledgeBase.typeNotebook')}
+            className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
+          >
             <BookOpen className="w-3.5 h-3.5" />
-            <span>{t('knowledge:document.knowledgeBase.typeNotebook')}</span>
+            <span className="hidden sm:inline">
+              {t('knowledge:document.knowledgeBase.typeNotebook')}
+            </span>
           </TabsTrigger>
         </TabsList>
       </Tabs>
