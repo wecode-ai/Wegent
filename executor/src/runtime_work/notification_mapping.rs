@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::{env, sync::OnceLock};
+
 use serde_json::Value;
 
 use crate::{
@@ -163,6 +165,40 @@ pub(crate) fn log_text_mapping(
             ("text_preview", truncate_log_text(text, 160)),
         ],
     );
+}
+
+pub(crate) fn log_stream_text_mapping(
+    local_task_id: &str,
+    method: &str,
+    action: &str,
+    resolved_phase: Option<&str>,
+    params: &Value,
+    text: &str,
+) {
+    if codex_stream_mapping_debug_enabled() {
+        log_text_mapping(local_task_id, method, action, resolved_phase, params, text);
+    }
+}
+
+pub(crate) fn codex_stream_debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env_bool("WEGENT_CODEX_STREAM_DEBUG", true))
+}
+
+fn codex_stream_mapping_debug_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| env_bool("WEGENT_CODEX_STREAM_MAPPING_DEBUG", false))
+}
+
+fn env_bool(name: &str, default_value: bool) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            _ => default_value,
+        })
+        .unwrap_or(default_value)
 }
 
 enum CompletedAssistantTextKind {

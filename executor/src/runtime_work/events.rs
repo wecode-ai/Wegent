@@ -12,8 +12,8 @@ use crate::{codex_phase::CodexAgentMessagePhaseTracker, protocol::ExecutionReque
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     notification_mapping::{
-        log_dropped_notification, log_text_mapping, map_text_chunk, notification_item_id,
-        TextChunkMapping,
+        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
+        notification_item_id, TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, tool_update_from_notification,
@@ -84,6 +84,7 @@ pub(crate) struct CodexNotificationEventMapper {
     root_thread_id: Option<String>,
     process_text: Option<ProcessTextStream>,
     process_text_count: usize,
+    final_text_offset: usize,
     plan_blocks: BTreeMap<String, String>,
 }
 
@@ -259,6 +260,7 @@ impl CodexNotificationEventMapper {
                 );
             }
             "thread/started" => {
+                self.final_text_offset = 0;
                 self.observe_root_thread(notification.params);
             }
             "thread/goal/updated" => {
@@ -428,7 +430,7 @@ impl CodexNotificationEventMapper {
                 item_id,
                 delta,
             })) => {
-                log_text_mapping(
+                log_stream_text_mapping(
                     emit_context.local_task_id,
                     method,
                     "emit_process_delta",
@@ -446,7 +448,7 @@ impl CodexNotificationEventMapper {
                 true
             }
             Ok(Some(TextChunkMapping::FinalDelta { delta })) => {
-                log_text_mapping(
+                log_stream_text_mapping(
                     emit_context.local_task_id,
                     method,
                     "emit_final_delta",
@@ -455,13 +457,15 @@ impl CodexNotificationEventMapper {
                     &delta,
                 );
                 self.reset_process_text();
+                let offset = self.final_text_offset;
+                self.final_text_offset += delta.chars().count();
                 emit_response_event(
                     emit_context.event_tx,
                     emit_context.device_id,
                     "response.output_text.delta",
                     emit_context.local_task_id,
                     emit_context.request,
-                    json!({"delta": delta}),
+                    json!({"delta": delta, "offset": offset}),
                 );
                 true
             }
@@ -497,6 +501,7 @@ impl CodexNotificationEventMapper {
                     params,
                     "",
                 );
+                self.final_text_offset = 0;
                 true
             }
             Ok(None) => false,
@@ -1471,7 +1476,7 @@ mod tests {
             }),
         );
         mapper.map(
-            &Some(event_tx),
+            &Some(event_tx.clone()),
             "device-1",
             "local-1",
             &request,
@@ -1483,10 +1488,61 @@ mod tests {
                 }
             }),
         );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final",
+                    "delta": " More."
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "thread/started",
+                "params": {
+                    "thread": {
+                        "id": "root-thread-2"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final-2",
+                    "delta": "Next."
+                }
+            }),
+        );
 
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["event"], "response.output_text.delta");
-        assert_eq!(event["payload"]["data"]["delta"], "Done.");
+        let first_event = event_rx.try_recv().expect("first event should be emitted");
+        let second_event = event_rx.try_recv().expect("second event should be emitted");
+        let next_event = event_rx
+            .try_recv()
+            .expect("next turn event should be emitted");
+        assert_eq!(first_event["event"], "response.output_text.delta");
+        assert_eq!(first_event["payload"]["data"]["delta"], "Done.");
+        assert_eq!(first_event["payload"]["data"]["offset"], 0);
+        assert_eq!(second_event["event"], "response.output_text.delta");
+        assert_eq!(second_event["payload"]["data"]["delta"], " More.");
+        assert_eq!(second_event["payload"]["data"]["offset"], 5);
+        assert_eq!(next_event["event"], "response.output_text.delta");
+        assert_eq!(next_event["payload"]["data"]["delta"], "Next.");
+        assert_eq!(next_event["payload"]["data"]["offset"], 0);
     }
 
     #[test]

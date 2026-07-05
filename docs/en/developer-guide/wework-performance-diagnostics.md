@@ -37,6 +37,20 @@ The **Debug Panel** command in the Developer Commands menu helps diagnose the cu
 
 The Debug Panel can be expanded, collapsed, refreshed, copied as a snapshot, and cleared. When collapsed, it leaves only a small status bar in the lower-right corner so it does not block the main UI.
 
+## Local Codex Streaming Logs
+
+The local executor keeps Codex delta details enabled by default so developers can diagnose streaming order, phase classification, and final-content overwrite issues. By default, it records raw Codex delta events and run-state classification summaries.
+
+To avoid excessive logs in debug builds during long responses or high-frequency token output, runtime work cache/emit mapping logs are disabled by default. Those logs add extra records for the cache path and UI event dispatch path of the same delta, and are only needed when diagnosing local runtime work routing.
+
+Available environment variables:
+
+```text
+WEGENT_CODEX_STREAM_DEBUG=0          # disable raw Codex delta / classification details
+WEGENT_CODEX_STREAM_DEBUG=1          # enable raw Codex delta / classification details (default)
+WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # enable runtime work cache/emit mapping details
+```
+
 ## Collected Data
 
 When enabled, the diagnostics module records:

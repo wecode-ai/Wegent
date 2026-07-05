@@ -28,7 +28,7 @@ describe('createLocalChatStream', () => {
         taskId: 'task-1',
         subtaskId: '1001',
         deviceId: 'local-device',
-        data: { delta: 'hello' },
+        data: { delta: 'hello', offset: 0 },
       },
     })
 
@@ -38,7 +38,7 @@ describe('createLocalChatStream', () => {
       deviceId: 'local-device',
       content: 'hello',
       offset: 0,
-      result: { delta: 'hello' },
+      result: { delta: 'hello', offset: 0 },
     })
   })
 
@@ -67,7 +67,6 @@ describe('createLocalChatStream', () => {
       taskId: 'task-1',
       subtaskId: '1001',
       deviceId: 'local-device',
-      offset: 0,
       result: { value: 'complete' },
     })
   })
