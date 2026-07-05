@@ -104,4 +104,50 @@ describe('emitResponseApiEvent', () => {
       occurredAtMs: 12345,
     })
   })
+
+  test('emits file changes block updates', () => {
+    const onBlockUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      'response.block.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          block_id: 'file-changes-call-1',
+          updates: {
+            status: 'streaming',
+            file_changes: {
+              version: 1,
+              status: 'active',
+              artifact_id: 'artifact-1',
+              device_id: 'device-1',
+              workspace_path: '/repo',
+              file_count: 1,
+              additions: 2,
+              deletions: 1,
+              files: [],
+              reverted_at: null,
+              revertible: false,
+            },
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      blockId: 'file-changes-call-1',
+      status: 'streaming',
+      fileChanges: expect.objectContaining({
+        additions: 2,
+        deletions: 1,
+      }),
+    })
+  })
 })

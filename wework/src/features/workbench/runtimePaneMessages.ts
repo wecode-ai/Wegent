@@ -173,6 +173,7 @@ export function createRuntimeTaskStreamHandlers(
         hasContent: payload.content !== undefined,
         hasToolInput: payload.toolInput !== undefined,
         hasToolOutput: payload.toolOutput !== undefined,
+        hasFileChanges: payload.fileChanges !== undefined,
       })
       handlers.onMessageAction({
         type: 'block_updated',
@@ -182,6 +183,9 @@ export function createRuntimeTaskStreamHandlers(
           ...(payload.content !== undefined && { content: payload.content }),
           ...(payload.toolInput !== undefined && { toolInput: payload.toolInput }),
           ...(payload.toolOutput !== undefined && { toolOutput: payload.toolOutput }),
+          ...(payload.fileChanges !== undefined && {
+            fileChanges: normalizeTurnFileChanges(payload.fileChanges),
+          }),
           ...(payload.status && { status: normalizeWorkbenchBlockStatus(payload.status) }),
         },
       })

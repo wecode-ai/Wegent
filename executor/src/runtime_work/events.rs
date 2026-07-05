@@ -16,7 +16,8 @@ use super::{
         notification_item_id, TextChunkMapping,
     },
     transcript::{
-        completed_workbench_block_from_notification, tool_update_from_notification,
+        completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
+        file_changes_update_from_patch_updated, tool_update_from_notification,
         workbench_block_from_notification,
     },
     util::{extract_text, is_completed_plan_item, item_id, now_ms, raw_string_field, string_field},
@@ -165,6 +166,15 @@ impl CodexNotificationEventMapper {
             }
             "item/plan/delta" => {
                 self.emit_plan_delta(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    notification.params,
+                );
+            }
+            "item/fileChange/patchUpdated" => {
+                self.emit_file_change_patch_updated(
                     event_tx,
                     device_id,
                     local_task_id,
@@ -617,6 +627,51 @@ impl CodexNotificationEventMapper {
                 }
             }),
         );
+    }
+
+    fn emit_file_change_patch_updated(
+        &mut self,
+        event_tx: &Option<broadcast::Sender<Value>>,
+        device_id: &str,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        params: &Value,
+    ) {
+        let Some((block_id, updates)) = file_changes_update_from_patch_updated(
+            params,
+            &request.subtask_id,
+            device_id,
+            request.cwd().unwrap_or_default(),
+            "streaming",
+        ) else {
+            return;
+        };
+
+        emit_response_event(
+            event_tx,
+            device_id,
+            "response.block.updated",
+            local_task_id,
+            request,
+            json!({"block_id": block_id, "updates": updates}),
+        );
+
+        if let Some(block) = file_changes_block_from_patch_updated(
+            params,
+            &request.subtask_id,
+            device_id,
+            request.cwd().unwrap_or_default(),
+            "streaming",
+        ) {
+            emit_response_event(
+                event_tx,
+                device_id,
+                "response.block.created",
+                local_task_id,
+                request,
+                json!({"block": block}),
+            );
+        }
     }
 
     fn reset_process_text(&mut self) {
@@ -2503,5 +2558,104 @@ mod tests {
         assert_eq!(block["file_changes"]["file_count"], 1);
         assert_eq!(block["file_changes"]["files"][0]["path"], "helloworld.html");
         assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn maps_started_codex_file_change_to_pending_file_changes_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "turn-1".to_owned(),
+            project_workspace_path: Some("/workspace/repo".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "file-change-1",
+                        "type": "fileChange",
+                        "status": "inProgress",
+                        "changes": [
+                            {
+                                "path": "/workspace/repo/helloworld.html",
+                                "kind": { "type": "add" },
+                                "diff": ""
+                            }
+                        ]
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("started file changes event should be emitted");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(block["type"], "file_changes");
+        assert_eq!(block["status"], "pending");
+        assert_eq!(block["file_changes"]["additions"], 0);
+        assert_eq!(block["file_changes"]["deletions"], 0);
+    }
+
+    #[test]
+    fn maps_codex_patch_updates_to_streaming_file_changes_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "turn-1".to_owned(),
+            project_workspace_path: Some("/workspace/repo".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/fileChange/patchUpdated",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "call-1",
+                    "changes": [
+                        {
+                            "path": "/workspace/repo/live.txt",
+                            "kind": { "type": "add" },
+                            "diff": "first\nsecond\n"
+                        }
+                    ]
+                }
+            }),
+        );
+
+        let updated = event_rx
+            .try_recv()
+            .expect("patch update should emit a block update");
+        assert_eq!(updated["event"], "response.block.updated");
+        assert_eq!(
+            updated["payload"]["data"]["block_id"],
+            "file-changes-call-1"
+        );
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["file_changes"]["additions"],
+            2
+        );
+
+        let created = event_rx
+            .try_recv()
+            .expect("patch update should ensure a block exists");
+        let block = &created["payload"]["data"]["block"];
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(block["id"], "file-changes-call-1");
+        assert_eq!(block["status"], "streaming");
     }
 }

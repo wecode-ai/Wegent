@@ -349,6 +349,7 @@ function CollapsibleProcessingContent({
     }
     if (!keepMounted) setIsRendered(false)
   }
+  const allowOverflow = expanded && maxHeight === 'none'
 
   return (
     <div
@@ -357,7 +358,8 @@ function CollapsibleProcessingContent({
       inert={!expanded ? true : undefined}
       onTransitionEnd={handleTransitionEnd}
       className={[
-        'overflow-hidden transition-[max-height,opacity] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        'transition-[max-height,opacity] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        allowOverflow ? 'overflow-visible' : 'overflow-hidden',
         expanded ? 'opacity-100' : 'pointer-events-none opacity-0',
       ].join(' ')}
       style={{ maxHeight }}
@@ -366,7 +368,8 @@ function CollapsibleProcessingContent({
         <div
           ref={contentRef}
           className={[
-            'min-h-0 overflow-hidden transition-transform duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            'min-h-0 transition-transform duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            allowOverflow ? 'overflow-visible' : 'overflow-hidden',
             expanded ? 'translate-y-0' : '-translate-y-1',
           ].join(' ')}
         >

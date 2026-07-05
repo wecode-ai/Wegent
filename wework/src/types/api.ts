@@ -1501,7 +1501,14 @@ export interface InstalledPluginUpdateRequest {
   description?: string
 }
 
-export type ChatBlockType = 'text' | 'tool' | 'thinking' | 'plan' | 'error' | 'guidance'
+export type ChatBlockType =
+  | 'text'
+  | 'tool'
+  | 'thinking'
+  | 'plan'
+  | 'error'
+  | 'guidance'
+  | 'file_changes'
 
 export interface ChatBlock {
   id: string
@@ -1513,6 +1520,8 @@ export interface ChatBlock {
   tool_output?: unknown
   render_payload?: unknown
   renderPayload?: unknown
+  file_changes?: TurnFileChangesSummary
+  fileChanges?: TurnFileChangesSummary
   status?: 'generating_arguments' | 'pending' | 'streaming' | 'done' | 'error'
   timestamp?: number | string | null
   created_at?: number | string | null
@@ -1533,6 +1542,7 @@ export interface ChatBlockUpdatedPayload {
   content?: string
   toolOutput?: unknown
   toolInput?: Record<string, unknown>
+  fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'
   deviceId?: string
 }
