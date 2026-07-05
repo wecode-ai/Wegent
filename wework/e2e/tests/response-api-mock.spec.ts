@@ -68,6 +68,42 @@ test('serves browser-accessible OpenAI Responses API mock responses', async ({ p
   })
 })
 
+test('sends local model connection tests through the Wework Responses API path', async ({
+  page,
+}) => {
+  const app = new WeworkApp(page)
+
+  await app.goto('/')
+
+  await page.evaluate(async mockUrl => {
+    await fetch(`${mockUrl}/clear-requests`, { method: 'POST' })
+  }, responseApiMockUrl)
+
+  const result = await app.testLocalModelConnection({
+    baseUrl: `${responseApiMockUrl}/v1`,
+    modelId: 'mock-response-model',
+    apiKey: 'test-token',
+  })
+
+  const captured = await page.evaluate(
+    async mockUrl => fetch(`${mockUrl}/captured-requests`).then(res => res.json()),
+    responseApiMockUrl
+  )
+
+  expect(result).toEqual({ status: 200 })
+  const matchingRequests = (captured as CapturedRequest[]).filter(request =>
+    JSON.stringify(request.body).includes('Reply with ok.')
+  )
+  expect(matchingRequests).toHaveLength(1)
+  expect(matchingRequests[0]).toMatchObject({
+    method: 'POST',
+    url: '/v1/responses',
+    body: {
+      model: 'mock-response-model',
+    },
+  })
+})
+
 test('streams OpenAI Responses API events from the mock server', async ({ page }) => {
   const app = new WeworkApp(page)
 

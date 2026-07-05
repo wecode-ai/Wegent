@@ -11,6 +11,16 @@ type BridgeRuntimeConfig = {
   cloudDeviceScalingWikiUrl: string
 }
 
+type TestLocalModelConnectionInput = {
+  baseUrl: string
+  modelId: string
+  apiKey?: string | null
+}
+
+type TestLocalModelConnectionResult = {
+  status: number
+}
+
 declare global {
   interface Window {
     __WEWORK_E2E__?: {
@@ -25,6 +35,9 @@ declare global {
       setAuthToken: (token: string) => void
       clearAuthToken: () => void
       clearStorage: () => void
+      testLocalModelConnection: (
+        input: TestLocalModelConnectionInput
+      ) => Promise<TestLocalModelConnectionResult>
     }
   }
 }
@@ -64,5 +77,12 @@ export class WeworkApp {
 
   async testIds(prefix?: string) {
     return this.page.evaluate(value => window.__WEWORK_E2E__?.queryTestIds(value) ?? [], prefix)
+  }
+
+  async testLocalModelConnection(input: TestLocalModelConnectionInput) {
+    return this.page.evaluate(
+      value => window.__WEWORK_E2E__?.testLocalModelConnection(value),
+      input
+    )
   }
 }

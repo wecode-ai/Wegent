@@ -1,5 +1,10 @@
 import { getRuntimeConfig, joinAppPath, stripAppBasePath } from '@/config/runtime'
 import { removeToken, setToken } from '@/api/auth'
+import {
+  testLocalModelConnection,
+  type TestLocalModelConnectionInput,
+  type TestLocalModelConnectionResult,
+} from '@/features/model-settings/localModelConnectionTest'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
@@ -16,6 +21,9 @@ export interface WeworkAutomationBridge {
   setAuthToken: (token: string) => void
   clearAuthToken: () => void
   clearStorage: () => void
+  testLocalModelConnection: (
+    input: TestLocalModelConnectionInput
+  ) => Promise<TestLocalModelConnectionResult>
 }
 
 declare global {
@@ -105,6 +113,7 @@ function createBridge(): WeworkAutomationBridge {
       localStorage.clear()
       sessionStorage.clear()
     },
+    testLocalModelConnection,
   }
 }
 
