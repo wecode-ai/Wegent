@@ -178,7 +178,16 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('context-compaction-indicator')).toHaveTextContent(
       '正在自动压缩上下文'
     )
+    expect(screen.getByText('正在自动压缩上下文')).toHaveClass('waiting-thinking-text')
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
+  test('keeps completed context compaction status static', () => {
+    render(<ToolBlocksDisplay blocks={[completedContextCompactionBlock]} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByText('上下文已自动压缩')).not.toHaveClass('waiting-thinking-text')
   })
 
   test('renders completed web search tools as a Codex-style web search activity', () => {
