@@ -22,36 +22,33 @@ def set_auto_direct_injection_enabled_by_default(monkeypatch):
     )
 
 
-class _FakeChunksQuery:
-    def __init__(self, chunks_rows):
-        self.chunks_rows = chunks_rows
+class _FakeQaCountQuery:
+    def __init__(self, qa_pair_count):
+        self.qa_pair_count = qa_pair_count
+
+    def select_from(self, *args, **kwargs):
+        return self
 
     def filter(self, *args, **kwargs):
         return self
 
-    def with_entities(self, *args, **kwargs):
-        return [(chunks,) for chunks in self.chunks_rows]
+    def scalar(self):
+        return self.qa_pair_count
 
 
-class _FakeChunksDb:
-    def __init__(self, chunks_rows):
-        self.chunks_rows = chunks_rows
+class _FakeQaCountDb:
+    def __init__(self, qa_pair_count):
+        self.qa_pair_count = qa_pair_count
 
     def query(self, *args, **kwargs):
-        return _FakeChunksQuery(self.chunks_rows)
+        return _FakeQaCountQuery(self.qa_pair_count)
 
 
 def test_build_qa_query_plan_detects_qa_pair_chunks():
     from app.services.rag.retrieval_service import RetrievalService
 
     plan = RetrievalService._build_qa_query_plan(
-        db=_FakeChunksDb(
-            [
-                {"splitter_subtype": "qa_pair", "qa_pair_count": 2},
-                {"splitter_subtype": "markdown_sentence", "qa_pair_count": 0},
-                {"splitter_subtype": "qa_pair", "qa_pair_count": 3},
-            ]
-        ),
+        db=_FakeQaCountDb(5),
         knowledge_base_id=1,
     )
 
@@ -62,12 +59,7 @@ def test_build_qa_query_plan_ignores_non_qa_chunks():
     from app.services.rag.retrieval_service import RetrievalService
 
     plan = RetrievalService._build_qa_query_plan(
-        db=_FakeChunksDb(
-            [
-                {"splitter_subtype": "markdown_sentence", "qa_pair_count": 0},
-                None,
-            ]
-        ),
+        db=_FakeQaCountDb(0),
         knowledge_base_id=1,
     )
 
@@ -916,6 +908,7 @@ class TestRetrieveForChatShell:
                     ]
                 },
             ) as mock_execute,
+            patch.object(RetrievalService, "_build_qa_query_plan", return_value=None),
         ):
             result = await RetrievalService().retrieve_with_routing(
                 query="release checklist",
