@@ -25,6 +25,7 @@ import { saveGlobalModelPreference, type ModelPreference } from '@/utils/modelPr
 import { getModelFromConfig } from '@/features/settings/services/bots'
 import { canManageNamespace } from '@/utils/namespace-permissions'
 import { useKnowledgeTree } from '../hooks/useKnowledgeTree'
+import { useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeTree } from './KnowledgeTree'
 import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
@@ -64,6 +65,7 @@ export function KnowledgeDocumentPageMobile({
 
   const [detailKb, setDetailKb] = useState<KnowledgeBase | null>(null)
   const [detailKbLoading, setDetailKbLoading] = useState(false)
+  const { currentView, setCurrentView } = useKnowledgeViewMode(detailKb?.kb_type, detailKb?.id)
 
   const allLoadedKbs = useMemo((): KnowledgeBase[] => {
     const kbs: KnowledgeBase[] = []
@@ -310,6 +312,8 @@ export function KnowledgeDocumentPageMobile({
             selectedKb={detailKb}
             onSyncKnowledgeBase={setDetailKb}
             initialDocPath={initialDocPath}
+            currentView={currentView}
+            onViewChange={setCurrentView}
           />
         </div>
       )
