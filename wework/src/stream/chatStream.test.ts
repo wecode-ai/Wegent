@@ -21,7 +21,7 @@ describe('createChatStream', () => {
       subtaskId: '202',
       deviceId: 'device-1',
       runtime: 'codex',
-      data: { delta: 'hello' },
+      data: { delta: 'hello', offset: 0 },
     })
 
     expect(onChatChunk).toHaveBeenCalledWith({
@@ -30,7 +30,7 @@ describe('createChatStream', () => {
       deviceId: 'device-1',
       content: 'hello',
       offset: 0,
-      result: { delta: 'hello' },
+      result: { delta: 'hello', offset: 0 },
     })
   })
 

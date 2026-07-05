@@ -35,6 +35,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
       type: 'assistant_chunk',
       subtaskId: 'subtask-9',
       content: 'partial',
+      offset: 0,
     })
     expect('messageId' in actions[0]).toBe(false)
   })

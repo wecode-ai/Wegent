@@ -81,6 +81,7 @@ export function createRuntimeTaskStreamHandlers(
         type: 'assistant_chunk',
         subtaskId: identity.subtaskId,
         content: payload.content,
+        offset: payload.offset,
         reasoningChunk,
         blocks,
       })

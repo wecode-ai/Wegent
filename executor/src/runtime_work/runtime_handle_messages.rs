@@ -11,8 +11,8 @@ use crate::{codex_phase::CodexAgentMessagePhaseTracker, protocol::ExecutionReque
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     notification_mapping::{
-        log_dropped_notification, log_text_mapping, map_text_chunk, notification_item_id,
-        TextChunkMapping,
+        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
+        notification_item_id, TextChunkMapping,
     },
     response::RuntimeTaskLink,
     store::RuntimeWorkStore,
@@ -248,7 +248,7 @@ impl CodexNotificationCacheMapper {
                 item_id,
                 delta,
             })) => {
-                log_text_mapping(
+                log_stream_text_mapping(
                     local_task_id,
                     method,
                     "cache_process_delta",
@@ -268,7 +268,7 @@ impl CodexNotificationCacheMapper {
                 true
             }
             Ok(Some(TextChunkMapping::FinalDelta { delta })) => {
-                log_text_mapping(
+                log_stream_text_mapping(
                     local_task_id,
                     method,
                     "cache_final_delta",

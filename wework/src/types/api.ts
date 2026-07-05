@@ -1113,7 +1113,7 @@ export interface ChatChunkPayload {
   taskId?: string
   subtaskId?: string
   content: string
-  offset: number
+  offset?: number
   result?: ChatResultPayload
   deviceId?: string
 }
@@ -1121,7 +1121,7 @@ export interface ChatChunkPayload {
 export interface ChatDonePayload {
   taskId?: string
   subtaskId?: string
-  offset: number
+  offset?: number
   result: ChatResultPayload
   deviceId?: string
 }

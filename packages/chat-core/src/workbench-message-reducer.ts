@@ -78,6 +78,7 @@ export interface WorkbenchMessage<TAttachment = unknown, TFileChanges = unknown>
   runtimeStatus?: WorkbenchRuntimeMessageStatus | null
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
+  streamTextOffset?: number
   createdAt: string
 }
 
@@ -112,6 +113,7 @@ export type WorkbenchMessageAction<TAttachment = unknown, TFileChanges = unknown
       messageId?: string
       subtaskId?: string
       content: string
+      offset?: number
       reasoningChunk?: string
       blocks?: WorkbenchProcessingBlock<TFileChanges>[]
     }
@@ -216,15 +218,17 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
       ]
     case 'assistant_chunk':
       if (!state.some(message => isAssistantMessageForAction(message, action))) {
+        const contentMerge = mergeWorkbenchChunkContent('', undefined, action.content, action.offset)
         const message = createAssistantMessage<TAttachment, TFileChanges>({
           messageId: action.messageId,
           subtaskId: action.subtaskId,
-          content: action.content
+          content: contentMerge.content
         })
         return [
           ...state,
           {
             ...message,
+            streamTextOffset: contentMerge.streamTextOffset,
             blocks: getChunkBlocks(message, action)
           }
         ]
@@ -235,7 +239,12 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
             ? message
             : {
                 ...clearMessageError(message),
-                content: message.content + action.content,
+                ...mergeWorkbenchChunkContent(
+                  message.content,
+                  message.streamTextOffset,
+                  action.content,
+                  action.offset
+                ),
                 status: 'streaming' as const,
                 blocks: getChunkBlocks(message, action)
               }
@@ -260,6 +269,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
           ? {
               ...clearMessageError(message),
               content: action.content ?? message.content,
+              streamTextOffset: undefined,
               status: 'done' as const,
               blocks: finalizeProcessingBlocks(action.blocks ?? message.blocks, 'done'),
               fileChanges: action.fileChanges ?? message.fileChanges
@@ -595,6 +605,62 @@ function getChunkBlocks<TAttachment, TFileChanges>(
 
   if (!action.blocks) return withReasoning
   return action.blocks.reduce(mergeProcessingBlock, withReasoning ?? [])
+}
+
+function mergeWorkbenchChunkContent(
+  content: string,
+  streamTextOffset: number | undefined,
+  incomingContent: string,
+  incomingOffset: number | undefined
+): { content: string; streamTextOffset?: number } {
+  if (!incomingContent) {
+    return { content, streamTextOffset }
+  }
+
+  const currentOffset =
+    streamTextOffset ?? (content.length === 0 && incomingOffset === 0 ? 0 : undefined)
+  if (
+    incomingOffset === undefined ||
+    currentOffset === undefined ||
+    incomingOffset > currentOffset
+  ) {
+    return {
+      content: content + incomingContent,
+      streamTextOffset:
+        incomingOffset === undefined
+          ? undefined
+          : incomingOffset + textCodePointLength(incomingContent)
+    }
+  }
+
+  const incomingLength = textCodePointLength(incomingContent)
+  if (incomingOffset < currentOffset) {
+    const coveredLength = currentOffset - incomingOffset
+    if (coveredLength >= incomingLength) {
+      return { content, streamTextOffset: currentOffset }
+    }
+
+    const suffix = sliceTextCodePoints(incomingContent, coveredLength)
+    return {
+      content: content + suffix,
+      streamTextOffset: incomingOffset + incomingLength
+    }
+  }
+
+  return {
+    content: content + incomingContent,
+    streamTextOffset: incomingOffset + incomingLength
+  }
+}
+
+function textCodePointLength(value: string): number {
+  return /^[\x00-\x7F]*$/.test(value) ? value.length : Array.from(value).length
+}
+
+function sliceTextCodePoints(value: string, start: number): string {
+  if (start <= 0) return value
+  if (/^[\x00-\x7F]*$/.test(value)) return value.slice(start)
+  return Array.from(value).slice(start).join('')
 }
 
 function appendThinkingChunk<TFileChanges>(

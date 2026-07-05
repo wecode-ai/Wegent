@@ -32,6 +32,7 @@ use crate::{
     process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
+    runtime_work::codex_stream_debug_enabled,
 };
 
 use super::{model_id, prompt_text};
@@ -1720,6 +1721,10 @@ fn log_codex_run_state_text(
     item: &Value,
     text: &str,
 ) {
+    if source == "delta" && !codex_stream_debug_enabled() {
+        return;
+    }
+
     log_executor_event(
         "codex run state text classification",
         &[
@@ -1771,6 +1776,14 @@ fn log_codex_run_state_error(params: &Value) {
 
 fn log_codex_raw_turn_message(message: &Value) {
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+    if matches!(
+        method,
+        "item/agentMessage/delta" | "item/reasoning/delta" | "item/reasoningSummary/delta"
+    ) && !codex_stream_debug_enabled()
+    {
+        return;
+    }
+
     if !matches!(
         method,
         "item/agentMessage/delta"
