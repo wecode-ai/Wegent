@@ -125,7 +125,7 @@ class KnowledgeBaseCreate(BaseModel):
     namespace: str = Field(default="default", max_length=255)
     kb_type: Optional[str] = Field(
         "notebook",
-        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
     )
     retrieval_config: Optional[RetrievalConfigCreate] = Field(
         None, description="Retrieval configuration"
@@ -253,12 +253,12 @@ class KnowledgeBaseUpdate(BaseModel):
 
 
 class KnowledgeBaseTypeUpdate(BaseModel):
-    """Schema for updating knowledge base type (notebook <-> classic conversion)."""
+    """Schema for updating the default opening view."""
 
     kb_type: str = Field(
         ...,
         pattern="^(notebook|classic)$",
-        description="New knowledge base type: 'notebook' or 'classic'",
+        description="New default opening view: 'notebook' or 'classic'",
     )
 
 
@@ -272,7 +272,7 @@ class KnowledgeBaseResponse(BaseModel):
     namespace: str
     kb_type: Optional[str] = Field(
         "notebook",
-        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
     )
     document_count: int
     is_active: bool
