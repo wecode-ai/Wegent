@@ -7,6 +7,7 @@
 import { Suspense, useState, useEffect, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { BookOpen, FileText } from 'lucide-react'
 import TopNavigation from '@/features/layout/TopNavigation'
 import {
   TaskSidebar,
@@ -28,7 +29,10 @@ import { Spinner } from '@/components/ui/spinner'
 import { useWikiProjects } from '@/features/knowledge/useWikiProjects'
 import { SearchBox } from '@/features/knowledge/SearchBox'
 import { KnowledgeTabs } from '@/features/knowledge/KnowledgeTabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import type { KnowledgeView } from '@/types/knowledge'
 import type { KnowledgeTabType } from '@/features/knowledge/KnowledgeTabs'
+import type { KnowledgeViewState } from '@/features/knowledge/document/components/KnowledgeDocumentPage'
 
 const WikiProjectList = dynamic(() => import('@/features/knowledge/WikiProjectList'), {
   ssr: false,
@@ -61,6 +65,10 @@ function KnowledgePageContent() {
   const { user } = useUser()
   const { selectTask } = useTaskSession()
   const isMobile = useIsMobile()
+  const [knowledgeViewState, setKnowledgeViewState] = useState<KnowledgeViewState>({
+    visible: false,
+    currentView: 'notebook',
+  })
 
   // Get initial knowledge type tab from URL parameter
   const getInitialKnowledgeTab = useCallback((): KnowledgeTabType => {
@@ -169,6 +177,26 @@ function KnowledgePageContent() {
     router.push(`/chat?taskId=${taskId}`)
   }
 
+  const knowledgeViewSwitcher =
+    activeTab === 'document' && knowledgeViewState.visible ? (
+      <Tabs
+        value={knowledgeViewState.currentView}
+        onValueChange={value => knowledgeViewState.onViewChange?.(value as KnowledgeView)}
+        className="flex-shrink-0"
+      >
+        <TabsList className="h-8 rounded-md bg-surface/80 p-0.5">
+          <TabsTrigger value="documents" className="gap-1 h-7 px-2 text-xs">
+            <FileText className="w-3.5 h-3.5" />
+            <span>{t('knowledge:document.knowledgeBase.typeClassic')}</span>
+          </TabsTrigger>
+          <TabsTrigger value="notebook" className="gap-1 h-7 px-2 text-xs">
+            <BookOpen className="w-3.5 h-3.5" />
+            <span>{t('knowledge:document.knowledgeBase.typeNotebook')}</span>
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
+    ) : null
+
   // Filter projects to show only those with user's generations
   // This ensures the knowledge page only shows projects created by the current user
   const userProjects = projects.filter(project => {
@@ -247,12 +275,15 @@ function KnowledgePageContent() {
           activePage="wiki"
           variant="with-sidebar"
           centerContent={
-            <KnowledgeTabs
-              activeTab={activeTab}
-              onTabChange={handleTabChange}
-              isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
-              onExpandClick={handleExpandKnowledgeSidebar}
-            />
+            <div className="flex items-center gap-2 min-w-0 overflow-x-auto">
+              <KnowledgeTabs
+                activeTab={activeTab}
+                onTabChange={handleTabChange}
+                isKnowledgeSidebarCollapsed={isKnowledgeSidebarCollapsed}
+                onExpandClick={handleExpandKnowledgeSidebar}
+              />
+              {knowledgeViewSwitcher}
+            </div>
           }
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           isSidebarCollapsed={isCollapsed}
@@ -293,7 +324,7 @@ function KnowledgePageContent() {
         {/* Document knowledge - no padding, full height */}
         {activeTab === 'document' && (
           <div className="flex-1 flex flex-col min-h-0">
-            <KnowledgeDocumentPage />
+            <KnowledgeDocumentPage onKnowledgeViewStateChange={setKnowledgeViewState} />
           </div>
         )}
       </div>
