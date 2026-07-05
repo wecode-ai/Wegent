@@ -15,6 +15,7 @@ from llama_index.core.schema import TextNode
 
 MIN_QA_PAIRS_FOR_DOCUMENT = 2
 MIN_QA_COVERAGE = 0.35
+MIN_FALLBACK_CHARS = 40
 
 QUESTION_LINE_RE = re.compile(
     r"^\s*(?:[-*]\s*)?(?:\*\*)?"
@@ -64,12 +65,20 @@ class QAPairUnit:
 def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
     """Return one node per Q/A pair when a document is clearly Q/A structured."""
     all_units: list[tuple[QAPairUnit, dict[str, Any]]] = []
+    fallback_nodes: list[TextNode] = []
 
     for document_index, document in enumerate(documents):
         text = document.text or ""
         units = extract_qa_pairs(text, document_index=document_index)
         if units:
             all_units.extend((unit, dict(document.metadata or {})) for unit in units)
+            fallback_nodes.extend(
+                _build_uncovered_text_nodes(
+                    text=text,
+                    units=units,
+                    source_metadata=dict(document.metadata or {}),
+                )
+            )
 
     if not _is_confident_qa_document(documents, [unit for unit, _ in all_units]):
         return None
@@ -98,6 +107,7 @@ def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
                 excluded_embed_metadata_keys=[
                     "qa_id",
                     "qa_index",
+                    "question",
                     "qa_confidence",
                     "source_position",
                     "retrieval_text",
@@ -106,6 +116,7 @@ def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
                 excluded_llm_metadata_keys=[
                     "qa_id",
                     "qa_index",
+                    "question",
                     "qa_confidence",
                     "source_position",
                     "retrieval_text",
@@ -114,12 +125,19 @@ def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
             )
         )
 
+    nodes.extend(fallback_nodes)
     return nodes
 
 
 def extract_qa_pairs(text: str, *, document_index: int = 0) -> list[QAPairUnit]:
     """Extract Q/A pairs from Markdown-like or plain text content."""
     question_matches = list(QUESTION_LINE_RE.finditer(text))
+    reserved_numbers = {
+        int(match.group("number"))
+        for match in question_matches
+        if match.group("number") is not None
+    }
+    next_implicit_number = (max(reserved_numbers) + 1) if reserved_numbers else 1
     units: list[QAPairUnit] = []
 
     for match_index, question_match in enumerate(question_matches):
@@ -134,21 +152,25 @@ def extract_qa_pairs(text: str, *, document_index: int = 0) -> list[QAPairUnit]:
             continue
 
         answer_prefix_end = question_match.end() + answer_match.end()
+        question_continuation = block[: answer_match.start()].strip()
         inline_answer = answer_match.group("inline").strip()
         answer_body = text[answer_prefix_end:next_start].strip()
         answer = _clean_answer_text(
             f"{inline_answer}\n{answer_body}".strip() if inline_answer else answer_body
         )
-        question = _clean_boundary_text(question_match.group("question"))
+        question = _clean_boundary_text(
+            f"{question_match.group('question')}\n{question_continuation}".strip()
+        )
         if not question or not answer:
             continue
 
         qa_number = question_match.group("number")
-        qa_id = (
-            f"doc{document_index + 1}-q{int(qa_number):04d}"
-            if qa_number is not None
-            else f"doc{document_index + 1}-q{len(units) + 1:04d}"
-        )
+        if qa_number is not None:
+            qa_sequence = int(qa_number)
+        else:
+            qa_sequence = next_implicit_number
+            next_implicit_number += 1
+        qa_id = f"doc{document_index + 1}-q{qa_sequence:04d}"
         units.append(
             QAPairUnit(
                 qa_id=qa_id,
@@ -166,6 +188,54 @@ def extract_qa_pairs(text: str, *, document_index: int = 0) -> list[QAPairUnit]:
         )
 
     return units
+
+
+def _build_uncovered_text_nodes(
+    *,
+    text: str,
+    units: list[QAPairUnit],
+    source_metadata: dict[str, Any],
+) -> list[TextNode]:
+    nodes: list[TextNode] = []
+    cursor = 0
+    for unit in sorted(units, key=lambda item: item.start):
+        nodes.extend(
+            _build_fallback_text_node(
+                text[cursor : unit.start],
+                offset=cursor,
+                source_metadata=source_metadata,
+            )
+        )
+        cursor = max(cursor, unit.end)
+    nodes.extend(
+        _build_fallback_text_node(
+            text[cursor:],
+            offset=cursor,
+            source_metadata=source_metadata,
+        )
+    )
+    return nodes
+
+
+def _build_fallback_text_node(
+    text: str,
+    *,
+    offset: int,
+    source_metadata: dict[str, Any],
+) -> list[TextNode]:
+    cleaned = text.strip()
+    if len(cleaned) < MIN_FALLBACK_CHARS:
+        return []
+    return [
+        TextNode(
+            text=cleaned,
+            metadata={
+                **source_metadata,
+                "node_role": "chunk",
+                "source_position": f"{offset}:{offset + len(text)}",
+            },
+        )
+    ]
 
 
 def _is_confident_qa_document(

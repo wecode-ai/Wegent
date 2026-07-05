@@ -358,9 +358,9 @@ class KnowledgeOrchestrator:
             "model_name": embedding_model_name,
             "model_namespace": embedding_model_namespace or "default",
         }
-        if "retrieval_mode" not in resolved_config:
+        if not resolved_config.get("retrieval_mode"):
             resolved_config["retrieval_mode"] = "vector"
-            resolved_config.setdefault("retrieval_mode_source", "system_default")
+            resolved_config["retrieval_mode_source"] = "system_default"
         else:
             resolved_config.setdefault("retrieval_mode_source", "user")
         resolved_config.setdefault("top_k", 5)

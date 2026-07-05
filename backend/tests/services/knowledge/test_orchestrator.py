@@ -250,6 +250,37 @@ class TestKnowledgeOrchestrator:
         assert result["retrieval_mode"] == "vector"
         assert result["retrieval_mode_source"] == "system_default"
 
+    def test_resolve_retrieval_config_normalizes_blank_mode_as_system_default(
+        self, orchestrator, mock_db, mock_user
+    ):
+        with (
+            patch.object(
+                orchestrator,
+                "get_default_retriever",
+                return_value={
+                    "retriever_name": "retriever-1",
+                    "retriever_namespace": "default",
+                },
+            ),
+            patch.object(
+                orchestrator,
+                "get_default_embedding_model",
+                return_value={
+                    "model_name": "embedding-1",
+                    "model_namespace": "default",
+                },
+            ),
+        ):
+            result = orchestrator._resolve_retrieval_config(
+                db=mock_db,
+                user=mock_user,
+                namespace="default",
+                retrieval_config={"retrieval_mode": None},
+            )
+
+        assert result["retrieval_mode"] == "vector"
+        assert result["retrieval_mode_source"] == "system_default"
+
     def test_resolve_retrieval_config_auto_selects_when_config_absent(
         self, orchestrator, mock_db, mock_user
     ):

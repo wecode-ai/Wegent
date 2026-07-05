@@ -167,6 +167,8 @@ def test_build_ingestion_result_auto_unitizes_qa_documents(
     )
     assert first_node.metadata["retrieval_text"] != first_node.text
     assert "\n\nA:" not in first_node.metadata["retrieval_text"]
+    assert "question" in first_node.excluded_embed_metadata_keys
+    assert "question" in first_node.excluded_llm_metadata_keys
     assert first_node.metadata["heading_path"] == "Section A"
     assert first_node.metadata["qa_confidence"] > 0.8
     assert first_node.metadata["source_position"].count(":") == 1
@@ -176,6 +178,126 @@ def test_build_ingestion_result_auto_unitizes_qa_documents(
     assert "How is each answer returned?" not in first_node.text
     assert second_node.metadata["qa_id"] == "doc1-q0002"
     assert "Each detected question and answer pair becomes one node" in second_node.text
+
+
+def test_build_ingestion_result_preserves_qa_question_continuation() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "Question: What does Wegent index?\n"
+                    "Include uploaded files and pasted text.\n\n"
+                    "Answer: Wegent indexes the resulting text as searchable nodes "
+                    "with metadata for retrieval.\n\n"
+                    "Question: How is each answer returned?\n\n"
+                    "Answer: Each answer remains readable as display text while "
+                    "retrieval uses a focused search text."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert "Include uploaded files and pasted text." in result.index_nodes[0].text
+    assert result.index_nodes[0].metadata["question"] == (
+        "What does Wegent index? Include uploaded files and pasted text."
+    )
+
+
+def test_build_ingestion_result_generates_unique_ids_for_mixed_question_numbering() -> (
+    None
+):
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "**Q1: What is indexed?**\n\n"
+                    "**A:** Indexed text is stored as retrievable nodes with "
+                    "source metadata.\n\n"
+                    "**Q: How is it returned?**\n\n"
+                    "**A:** Returned text remains readable and includes the "
+                    "complete answer.\n\n"
+                    "**Q2: Does retrieval change?**\n\n"
+                    "**A:** The retrieval contract remains compatible with "
+                    "existing knowledge base queries."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    qa_ids = [
+        node.metadata["qa_id"]
+        for node in result.index_nodes
+        if node.metadata["node_role"] == "qa_pair"
+    ]
+    assert qa_ids == ["doc1-q0001", "doc1-q0003", "doc1-q0002"]
+    assert len(qa_ids) == len(set(qa_ids))
+
+
+def test_build_ingestion_result_unitizes_plain_qa_labels() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "Q1: What changed in retrieval?\n\n"
+                    "A: Retrieval can index each question and answer pair "
+                    "as a focused searchable node.\n\n"
+                    "Q2: Does the answer stay readable?\n\n"
+                    "A: The returned node keeps the full answer text for "
+                    "downstream LLM context."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert [node.metadata["node_role"] for node in result.index_nodes] == [
+        "qa_pair",
+        "qa_pair",
+    ]
+
+
+def test_build_ingestion_result_preserves_uncovered_text_in_mixed_qa_document() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "# FAQ\n\n"
+                    "This introduction contains important operational context that "
+                    "is not part of any individual question and must remain "
+                    "available to retrieval after QA unitization.\n\n"
+                    "**Q1: What is indexed?**\n\n"
+                    "**A:** Indexed text is stored as retrievable nodes with "
+                    "source metadata.\n\n"
+                    "**Q2: How is it returned?**\n\n"
+                    "**A:** Returned text remains readable and includes the "
+                    "complete answer."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert [node.metadata["node_role"] for node in result.index_nodes] == [
+        "qa_pair",
+        "qa_pair",
+        "chunk",
+    ]
+    assert "important operational context" in result.index_nodes[2].text
 
 
 def test_build_ingestion_result_does_not_unitize_single_qa_document() -> None:

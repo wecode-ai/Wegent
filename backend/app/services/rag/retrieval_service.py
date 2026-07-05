@@ -761,21 +761,38 @@ class RetrievalService:
         knowledge_base_id: int,
         scope: RetrievalScope | None = None,
     ) -> dict[str, Any] | None:
+        from sqlalchemy import Integer, case, cast, func
+
         from app.models.knowledge import KnowledgeDocument
 
-        query = db.query(KnowledgeDocument).filter(
+        splitter_subtype = func.json_unquote(
+            func.json_extract(KnowledgeDocument.chunks, "$.splitter_subtype")
+        )
+        qa_pair_count_expr = cast(
+            func.json_unquote(
+                func.json_extract(KnowledgeDocument.chunks, "$.qa_pair_count")
+            ),
+            Integer,
+        )
+        query = db.query(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (splitter_subtype == "qa_pair", qa_pair_count_expr),
+                        else_=0,
+                    )
+                ),
+                0,
+            )
+        ).select_from(KnowledgeDocument)
+        query = query.filter(
             KnowledgeDocument.kind_id == knowledge_base_id,
             KnowledgeDocument.is_active.is_(True),
         )
         if scope and scope.document_ids:
             query = query.filter(KnowledgeDocument.id.in_(scope.document_ids))
 
-        qa_pair_count = 0
-        for chunks in (row[0] for row in query.with_entities(KnowledgeDocument.chunks)):
-            if not isinstance(chunks, dict):
-                continue
-            if chunks.get("splitter_subtype") == "qa_pair":
-                qa_pair_count += int(chunks.get("qa_pair_count") or 0)
+        qa_pair_count = int(query.scalar() or 0)
 
         if qa_pair_count <= 0:
             return None
