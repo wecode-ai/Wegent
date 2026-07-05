@@ -208,10 +208,8 @@
     "knowledgeBase": {
       "title": "知识库",
       "create": "创建知识库",
-      "createNotebook": "创建笔记本",
-      "createClassic": "创建知识库",
       "createDesc": "创建您的第一个知识库",
-      "notebookDesc": "默认进入 Notebook 工作台，可选择文档并开启对话",
+      "notebookDesc": "默认进入笔记本视图，可选择文档并开启对话",
       "classicDesc": "默认进入文档视图，适合浏览、上传和管理文档",
       "type": "默认打开方式",
       "typeNotebook": "笔记本视图",
@@ -231,20 +229,13 @@
       "deleteWarning": "该知识库包含 {{count}} 个文档，请先删除所有文档后再删除知识库。",
       "search": "搜索知识库...",
       "noResults": "没有匹配的知识库",
-      "convertType": "修改默认打开方式",
-      "currentType": "当前默认打开方式",
       "currentDefaultView": "当前默认打开方式",
-      "convertToNotebook": "默认打开 Notebook",
+      "convertToNotebook": "默认打开笔记本视图",
       "convertToClassic": "默认打开文档视图",
-      "convertToNotebookDisabled": "Notebook 视图不再限制文档数量",
-      "convertToClassicConfirm": "这只会修改 URL 未指定 view 时的默认入口，不会影响文档、权限或对话能力。确定修改吗？",
-      "convertToNotebookConfirm": "这只会修改 URL 未指定 view 时的默认入口，不会影响文档、权限或对话能力。确定修改吗？",
       "changeDefaultView": "修改默认打开方式",
-      "changeDefaultViewConfirm": "这只会修改 URL 未指定 view 时的默认入口，不会影响文档、权限或对话能力。",
+      "changeDefaultViewConfirm": "仅修改下次打开知识库时默认进入的视图，不影响已有内容和权限。",
       "defaultViewUpdateSuccess": "默认打开方式已更新",
       "defaultViewUpdateFailed": "默认打开方式更新失败",
-      "convertSuccess": "默认打开方式已更新",
-      "convertFailed": "默认打开方式更新失败",
       "targetGroup": "归属",
       "selectGroup": "选择分组"
     },
@@ -371,7 +362,6 @@
           "INVALID_TRANSFER_NAMESPACE": "不支持的目标知识库命名空间",
           "FOLDERS_NOT_FOUND": "源知识库中未找到指定文件夹",
           "DOCS_NOT_FOUND": "源知识库中未找到指定文档",
-          "NOTEBOOK_DOC_LIMIT_EXCEEDED": "笔记本模式知识库文档数量超出限制",
           "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
           "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
         }
@@ -480,7 +470,6 @@
         }
       },
       "documentCount": "文档数量",
-      "notebookLimitReached": "Notebook 视图不再限制文档数量",
       "web": {
         "addWebPage": "添加网页",
         "orAddWebPage": "或输入网页地址",

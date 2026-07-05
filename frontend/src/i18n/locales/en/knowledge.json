@@ -208,11 +208,9 @@
     "knowledgeBase": {
       "title": "Knowledge Base",
       "create": "Create Knowledge Base",
-      "createNotebook": "Create Notebook",
-      "createClassic": "Create Knowledge Base",
       "createDesc": "Create your first knowledge base",
-      "notebookDesc": "Open the Notebook workspace by default for document selection and chat",
-      "classicDesc": "Open the documents view by default for browsing, uploading, and management",
+      "notebookDesc": "Open Notebook View by default for document selection and chat",
+      "classicDesc": "Open Document View by default for browsing, uploading, and management",
       "type": "Default Opening View",
       "typeNotebook": "Notebook View",
       "typeClassic": "Document View",
@@ -231,20 +229,13 @@
       "deleteWarning": "This knowledge base contains {{count}} document(s). Please delete all documents before deleting the knowledge base.",
       "search": "Search knowledge bases...",
       "noResults": "No matching knowledge bases",
-      "convertType": "Change Default Opening View",
-      "currentType": "Current Default Opening View",
       "currentDefaultView": "Current Default Opening View",
-      "convertToNotebook": "Open Notebook by Default",
-      "convertToClassic": "Open Documents by Default",
-      "convertToNotebookDisabled": "Notebook view no longer limits document count",
-      "convertToClassicConfirm": "This only changes the default entry when the URL does not specify view. Documents, permissions, and chat capability are unchanged.",
-      "convertToNotebookConfirm": "This only changes the default entry when the URL does not specify view. Documents, permissions, and chat capability are unchanged.",
+      "convertToNotebook": "Open Notebook View by Default",
+      "convertToClassic": "Open Document View by Default",
       "changeDefaultView": "Change Default View",
-      "changeDefaultViewConfirm": "This only changes the default entry when the URL does not specify view. Documents, permissions, and chat capability are unchanged.",
+      "changeDefaultViewConfirm": "This only changes the default view used when opening the knowledge base. Existing content and permissions are unchanged.",
       "defaultViewUpdateSuccess": "Default opening view updated",
       "defaultViewUpdateFailed": "Failed to update default opening view",
-      "convertSuccess": "Default opening view updated",
-      "convertFailed": "Failed to update default opening view",
       "targetGroup": "Target Group",
       "selectGroup": "Select Group"
     },
@@ -371,7 +362,6 @@
           "INVALID_TRANSFER_NAMESPACE": "Unsupported target knowledge base namespace",
           "FOLDERS_NOT_FOUND": "Specified folders not found in the source knowledge base",
           "DOCS_NOT_FOUND": "Specified documents not found in the source knowledge base",
-          "NOTEBOOK_DOC_LIMIT_EXCEEDED": "Notebook mode knowledge base document limit exceeded",
           "DUPLICATE_DOCUMENT_NAMES": "Documents with the same name already exist in the target knowledge base",
           "KB_INSUFFICIENT_PERMISSION": "You do not have permission to operate on this knowledge base"
         }
@@ -480,7 +470,6 @@
         }
       },
       "documentCount": "Document Count",
-      "notebookLimitReached": "Notebook view no longer limits document count",
       "web": {
         "addWebPage": "Add Web Page",
         "orAddWebPage": "Or enter a web page URL",
