@@ -24,6 +24,7 @@ APPLE_BUILD_PASSWORD="${APPLE_BUILD_PASSWORD:-}"
 DEFAULT_NOTARY_PROFILE="${DEFAULT_NOTARY_PROFILE:-wework-notary}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-universal-apple-darwin}"
 PRINT_NEXT_VERSION_ONLY="false"
+RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
 
 usage() {
   cat <<EOF
@@ -41,6 +42,7 @@ Options:
   --notary-profile <name>    Keychain profile name used by xcrun notarytool.
   --macos-build-target <target>
                               macOS Rust/Tauri target. Default: universal-apple-darwin.
+  --devtools                  Enable Web Inspector support in the release build.
   --print-next-version       Only print the next version and exit.
   -h, --help                 Show this help message.
 
@@ -50,7 +52,7 @@ Environment overrides:
   TAURI_SIGNING_PRIVATE_KEY_PATH, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, TAURI_UPDATER_PUBKEY,
   MACOS_APP_SIGN_IDENTITY, MACOS_KEYCHAIN_PATH, MACOS_NOTARY_PROFILE,
   APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, APPLE_BUILD_PASSWORD, DEFAULT_NOTARY_PROFILE,
-  MACOS_BUILD_TARGET
+  MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS
 EOF
 }
 
@@ -435,6 +437,10 @@ while [ $# -gt 0 ]; do
       MACOS_BUILD_TARGET="$2"
       shift 2
       ;;
+    --devtools)
+      RELEASE_DEVTOOLS="1"
+      shift
+      ;;
     --print-next-version)
       PRINT_NEXT_VERSION_ONLY="true"
       shift
@@ -556,6 +562,7 @@ echo "Release target: $TARGET"
 echo "Releasing version: $next_version"
 echo "macOS build target: $MACOS_BUILD_TARGET"
 echo "Updater platforms: $(updater_platforms)"
+echo "Release devtools: ${RELEASE_DEVTOOLS:-0}"
 if [ -n "$app_sign_identity" ]; then
   echo "Signing identity: $app_sign_identity"
 elif [ "$TARGET" = "local" ]; then
@@ -571,11 +578,15 @@ echo "VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
 
 cd "$WEWORK_DIR"
 rm -rf "$(bundle_root)"
+TAURI_BUILD_ARGS=(build)
 if [ -n "$MACOS_BUILD_TARGET" ]; then
-  pnpm exec tauri build --target "$MACOS_BUILD_TARGET" --config "$config_override"
-else
-  pnpm exec tauri build --config "$config_override"
+  TAURI_BUILD_ARGS+=(--target "$MACOS_BUILD_TARGET")
 fi
+if [ "$RELEASE_DEVTOOLS" = "1" ]; then
+  TAURI_BUILD_ARGS+=(--features release-devtools)
+fi
+TAURI_BUILD_ARGS+=(--config "$config_override")
+pnpm exec tauri "${TAURI_BUILD_ARGS[@]}"
 
 archive_path="$(find_update_archive)"
 if [ -z "$archive_path" ] || [ ! -f "$archive_path" ]; then

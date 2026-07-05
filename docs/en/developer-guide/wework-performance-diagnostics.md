@@ -65,7 +65,25 @@ The latest 300 events are kept in memory and exposed through `window.__WEWORK_PE
 
 ## Capturing Evidence
 
-If Web Inspector is available in a debug or release build, run this after the app becomes slow:
+Normal release builds do not compile Tauri Web Inspector support. To investigate a release build, first create a diagnostics build:
+
+```bash
+pnpm --filter wework build:mac:devtools
+```
+
+To create an updater-compatible diagnostics build through the macOS release script, use:
+
+```bash
+bash wework/scripts/release-mac-app.sh --target local --devtools
+```
+
+You can also set `WEWORK_RELEASE_DEVTOOLS=1`. After launching the diagnostics build, press the hidden shortcut to open **Developer Commands**, then select **Open Web Inspector**. To open it automatically at startup, use:
+
+```bash
+WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork
+```
+
+After Web Inspector opens, run this when the app becomes slow:
 
 ```js
 window.__WEWORK_PERF__.snapshot();
