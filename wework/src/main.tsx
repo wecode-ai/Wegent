@@ -9,10 +9,12 @@ import { installDeveloperCommandMenu } from './lib/developerCommandMenu'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPageZoomGuard } from './lib/pageZoomGuard'
 import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
+import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
 
 installDebugPanelLogCapture()
 installAppLogging()
+installWeworkAutomationBridge()
 installDesktopExtensions()
 installExternalLinkHandler()
 installPageZoomGuard()
