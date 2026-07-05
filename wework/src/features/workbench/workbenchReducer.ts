@@ -1028,6 +1028,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         pendingProjectWorkspaceProjectId: null,
         standaloneWorkspacePath: null,
         currentRuntimeTask: null,
+        standaloneChatKey: state.standaloneChatKey + 1,
       }
     case 'device_workspace_prepared':
       return {
@@ -1074,6 +1075,7 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
           action.deviceWorkspaceId === null ? action.project.id : null,
         standaloneWorkspacePath: null,
         currentRuntimeTask: null,
+        standaloneChatKey: state.standaloneChatKey + 1,
       }
     case 'project_updated':
       return {

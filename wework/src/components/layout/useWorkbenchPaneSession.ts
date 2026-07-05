@@ -721,14 +721,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [paneStatus.canSendQueuedMessage, queuedMessages, sendRuntimeMessage])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const send = useCallback(
-    async (submittedValue?: string) => {
-      const submittedInput = (submittedValue ?? input).trim()
+  const send: (inputOverride?: string) => Promise<void> = useCallback(
+    async inputOverride => {
+      const submittedInput = (inputOverride ?? input).trim()
       const currentAttachments = projectChat.attachments
       const hasCodeComments = codeCommentContexts.length > 0
       debugComposerEvent('pane-send-called', {
-        hasSubmittedValue: submittedValue !== undefined,
-        submittedValue: textMetrics(submittedValue),
+        hasSubmittedValue: inputOverride !== undefined,
+        submittedValue: textMetrics(inputOverride),
         stateInput: textMetrics(input),
         submittedInput: textMetrics(submittedInput),
         attachmentsCount: currentAttachments.length,
