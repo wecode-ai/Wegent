@@ -24,6 +24,7 @@ import {
   requestUserInputResponseKey,
 } from '@/components/chat/requestUserInputMessages'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
+import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
   Attachment,
@@ -725,6 +726,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const submittedInput = (inputOverride ?? input).trim()
       const currentAttachments = projectChat.attachments
       const hasCodeComments = codeCommentContexts.length > 0
+      debugComposerEvent('pane-send-called', {
+        hasSubmittedValue: inputOverride !== undefined,
+        submittedValue: textMetrics(inputOverride),
+        stateInput: textMetrics(input),
+        submittedInput: textMetrics(submittedInput),
+        attachmentsCount: currentAttachments.length,
+        codeCommentsCount: codeCommentContexts.length,
+        hasCodeComments,
+        goalDraftActive,
+        hasCurrentRuntimeTask: Boolean(currentRuntimeTask),
+        paneBusy: paneStatus.isBusy,
+      })
 
       if (goalDraftActive) {
         if (!submittedInput) {

@@ -14,13 +14,16 @@ export function BufferedChatInput({ value, onSubmit, ...props }: ChatInputProps)
     [value]
   )
 
-  const handleSubmit = useCallback(() => {
-    const submittedDraft = draft
-    void onSubmit(submittedDraft)
-    if (submittedDraft.trim()) {
-      setDraftState({ sourceValue: value, draft: '' })
-    }
-  }, [draft, onSubmit, value])
+  const handleSubmit = useCallback(
+    (valueOverride?: string) => {
+      const submittedDraft = valueOverride ?? draft
+      void onSubmit(submittedDraft)
+      if (submittedDraft.trim()) {
+        setDraftState({ sourceValue: value, draft: '' })
+      }
+    },
+    [draft, onSubmit, value]
+  )
 
   return <ChatInput {...props} value={draft} onChange={setDraft} onSubmit={handleSubmit} />
 }
