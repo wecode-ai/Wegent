@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -3157,23 +3157,47 @@ describe('ChatInput', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
-  test('does not submit when Enter confirms IME composition', () => {
-    vi.useFakeTimers()
+  test('submits latest textarea value when Enter is pressed before controlled value updates', () => {
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+    render(<ChatInput value="" onChange={onChange} onSubmit={onSubmit} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+    valueSetter?.call(input, 'hello')
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSubmit).toHaveBeenCalledWith('hello')
+    expect(input).not.toHaveValue('\n')
+  })
+
+  test('submits with Enter after IME composition key press is released', () => {
     const onSubmit = vi.fn()
     render(<ControlledChatInput onSubmit={onSubmit} />)
 
     const input = screen.getByTestId('chat-message-input')
     fireEvent.change(input, { target: { value: 'hello' } })
     fireEvent.compositionStart(input)
+    fireEvent.compositionEnd(input)
+    fireEvent.keyUp(input, { key: 'Enter' })
     fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('suppresses Enter keydown that arrives after IME composition ends but before keyup', () => {
+    const onSubmit = vi.fn()
+    render(<ControlledChatInput onSubmit={onSubmit} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    fireEvent.change(input, { target: { value: 'hello' } })
+    fireEvent.compositionStart(input)
     fireEvent.compositionEnd(input)
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(onSubmit).not.toHaveBeenCalled()
 
-    act(() => {
-      vi.advanceTimersByTime(101)
-    })
+    fireEvent.keyUp(input, { key: 'Enter' })
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(onSubmit).toHaveBeenCalledTimes(1)
