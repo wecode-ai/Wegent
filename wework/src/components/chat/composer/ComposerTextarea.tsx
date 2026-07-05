@@ -14,11 +14,12 @@ import {
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
+import { debugComposerEvent, textMetrics } from './composerDebug'
 
 interface ComposerTextareaProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: () => void
+  onSubmit: (submittedValue?: string) => void
   canSend: boolean
   disabled?: boolean
   placeholder: string
@@ -387,8 +388,7 @@ export function ComposerTextarea({
     focused: false,
   })
   const [isComposing, setIsComposing] = useState(false)
-  const compositionJustEndedRef = useRef(false)
-  const compositionResetTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const suppressEnterUntilKeyUpRef = useRef(false)
   const [activeMenu, setActiveMenu] = useState<ActiveComposerMenu | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
@@ -704,35 +704,23 @@ export function ComposerTextarea({
     }
   }, [closeSlashModelMenu, modelMenuOpen, textareaRef])
 
-  useEffect(() => {
-    return () => {
-      if (compositionResetTimerRef.current) {
-        window.clearTimeout(compositionResetTimerRef.current)
-      }
-    }
-  }, [])
-
-  const clearCompositionResetTimer = () => {
-    if (!compositionResetTimerRef.current) return
-
-    window.clearTimeout(compositionResetTimerRef.current)
-    compositionResetTimerRef.current = null
-  }
-
   const handleCompositionStart = () => {
-    clearCompositionResetTimer()
     setIsComposing(true)
-    compositionJustEndedRef.current = false
+    debugComposerEvent('composition-start', {
+      propValue: textMetrics(value),
+      domValue: textMetrics(textareaRef.current?.value),
+      suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+    })
   }
 
   const handleCompositionEnd = () => {
     setIsComposing(false)
-    compositionJustEndedRef.current = true
-    clearCompositionResetTimer()
-    compositionResetTimerRef.current = window.setTimeout(() => {
-      compositionJustEndedRef.current = false
-      compositionResetTimerRef.current = null
-    }, 100)
+    suppressEnterUntilKeyUpRef.current = true
+    debugComposerEvent('composition-end', {
+      propValue: textMetrics(value),
+      domValue: textMetrics(textareaRef.current?.value),
+      suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+    })
   }
 
   const selectSkill = useCallback(
@@ -845,7 +833,45 @@ export function ComposerTextarea({
   )
 
   const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = event => {
-    if (isComposing || event.nativeEvent.isComposing || compositionJustEndedRef.current) {
+    if (event.key === 'Enter') {
+      debugComposerEvent('keydown-enter', {
+        shiftKey: event.shiftKey,
+        canSend,
+        stateIsComposing: isComposing,
+        nativeIsComposing: event.nativeEvent.isComposing,
+        suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+        showSkillMenu,
+        showSlashMenu,
+        activeMenuKind: activeMenu?.kind ?? null,
+        highlightedIndex,
+        activeOptionCount,
+        propValue: textMetrics(value),
+        domValue: textMetrics(event.currentTarget.value),
+      })
+    }
+
+    if (event.key === 'Enter' && (isComposing || event.nativeEvent.isComposing)) {
+      suppressEnterUntilKeyUpRef.current = true
+      debugComposerEvent('keydown-enter-ignored-composition', {
+        stateIsComposing: isComposing,
+        nativeIsComposing: event.nativeEvent.isComposing,
+        suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+        domValue: textMetrics(event.currentTarget.value),
+      })
+      return
+    }
+
+    if (event.key === 'Enter' && suppressEnterUntilKeyUpRef.current) {
+      event.preventDefault()
+      debugComposerEvent('keydown-enter-suppressed-until-keyup', {
+        stateIsComposing: isComposing,
+        nativeIsComposing: event.nativeEvent.isComposing,
+        domValue: textMetrics(event.currentTarget.value),
+      })
+      return
+    }
+
+    if (isComposing || event.nativeEvent.isComposing) {
       return
     }
 
@@ -901,6 +927,11 @@ export function ComposerTextarea({
         canSelectSkillForModel(filteredSkills[highlightedIndex], selectedModel)
       ) {
         event.preventDefault()
+        debugComposerEvent('keydown-enter-select-skill', {
+          highlightedIndex,
+          skillName: filteredSkills[highlightedIndex]?.name,
+          domValue: textMetrics(event.currentTarget.value),
+        })
         selectSkill(filteredSkills[highlightedIndex])
         return
       }
@@ -911,15 +942,44 @@ export function ComposerTextarea({
         filteredSlashCommands[highlightedIndex].enabled !== false
       ) {
         event.preventDefault()
+        debugComposerEvent('keydown-enter-select-slash-command', {
+          highlightedIndex,
+          commandId: filteredSlashCommands[highlightedIndex]?.id,
+          domValue: textMetrics(event.currentTarget.value),
+        })
         selectSlashCommand(filteredSlashCommands[highlightedIndex])
         return
       }
     }
 
-    if (event.key !== 'Enter' || event.shiftKey) return
+    if (event.key !== 'Enter' || event.shiftKey) {
+      if (event.key === 'Enter') {
+        debugComposerEvent('keydown-enter-newline', {
+          shiftKey: event.shiftKey,
+          domValue: textMetrics(event.currentTarget.value),
+        })
+      }
+      return
+    }
+
+    const submittedValue = event.currentTarget.value
+    const canSubmitCurrentValue = submittedValue.trim().length > 0 || canSend
 
     event.preventDefault()
-    if (canSend) onSubmit()
+    debugComposerEvent('keydown-enter-submit-decision', {
+      canSend,
+      canSubmitCurrentValue,
+      submittedValue: textMetrics(submittedValue),
+      propValue: textMetrics(value),
+    })
+    if (canSubmitCurrentValue) {
+      onSubmit(submittedValue)
+    } else {
+      debugComposerEvent('keydown-enter-submit-skipped-empty', {
+        submittedValue: textMetrics(submittedValue),
+        propValue: textMetrics(value),
+      })
+    }
   }
 
   const handlePaste: ClipboardEventHandler<HTMLTextAreaElement> = event => {
@@ -961,6 +1021,15 @@ export function ComposerTextarea({
         rows={rows}
         value={value}
         onChange={event => {
+          const nativeIsComposing =
+            event.nativeEvent instanceof InputEvent ? event.nativeEvent.isComposing : undefined
+          debugComposerEvent('textarea-change', {
+            propValue: textMetrics(value),
+            nextValue: textMetrics(event.target.value),
+            stateIsComposing: isComposing,
+            nativeIsComposing,
+            suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+          })
           handleValueChange(event.target.value)
           window.requestAnimationFrame(() => {
             updateAutocompleteTrigger()
@@ -978,7 +1047,17 @@ export function ComposerTextarea({
           syncSelection()
         }}
         onKeyDown={handleKeyDown}
-        onKeyUp={syncSelection}
+        onKeyUp={event => {
+          if (suppressEnterUntilKeyUpRef.current) {
+            suppressEnterUntilKeyUpRef.current = false
+            debugComposerEvent('keyup-clear-composition-enter-suppression', {
+              key: event.key,
+              propValue: textMetrics(value),
+              domValue: textMetrics(event.currentTarget.value),
+            })
+          }
+          syncSelection()
+        }}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
         onSelect={() => {

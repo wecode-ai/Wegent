@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { ArrowLeftRight, MessageCircle } from 'lucide-react'
-import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -67,6 +66,7 @@ import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import { BufferedChatInput } from './BufferedChatInput'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
@@ -1108,7 +1108,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
                     />
                   ) : (
-                    <ChatInput
+                    <BufferedChatInput
                       value={paneSession.input}
                       onChange={paneSession.setInput}
                       onSubmit={paneSession.send}
@@ -1167,7 +1167,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   hideAvailableUpdates
                   className="mb-3"
                 />
-                <ChatInput
+                <BufferedChatInput
                   value={paneSession.input}
                   onChange={paneSession.setInput}
                   onSubmit={paneSession.send}
