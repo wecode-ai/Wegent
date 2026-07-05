@@ -27,7 +27,10 @@ export function getWorkbenchPaneKey({
   if (currentRuntimeTask) {
     return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.taskId].join(':')
   }
-  return currentProject ? `project:${currentProject.id}` : `standalone:${standaloneChatKey ?? 0}`
+  const blankPaneKey = standaloneChatKey ?? 0
+  return currentProject
+    ? `project:${currentProject.id}:${blankPaneKey}`
+    : `standalone:${blankPaneKey}`
 }
 
 export function getRunningRuntimeWorkbenchPaneKeys(

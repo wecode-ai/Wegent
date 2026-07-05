@@ -201,6 +201,37 @@ describe('workbenchPaneStack', () => {
     expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('empty')
   })
 
+  test('uses standalone chat key to create a fresh project chat pane', async () => {
+    function RuntimePaneStackProbe() {
+      const [standaloneChatKey, setStandaloneChatKey] = useState(0)
+      return (
+        <div>
+          <button type="button" onClick={() => setStandaloneChatKey(value => value + 1)}>
+            start fresh project chat
+          </button>
+          <CachedWorkbenchPaneStack
+            activePane={{
+              currentRuntimeTask: null,
+              currentProject: { id: 7, name: 'Wegent', tasks: [] },
+              standaloneChatKey,
+            }}
+            maxPanes={2}
+            renderPane={activePane => <StandaloneLocalStatePane pane={activePane} />}
+          />
+        </div>
+      )
+    }
+
+    render(<RuntimePaneStackProbe />)
+
+    await userEvent.click(screen.getByText('seed local message'))
+    expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('hi')
+
+    await userEvent.click(screen.getByText('start fresh project chat'))
+
+    expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('empty')
+  })
+
   test('derives running runtime pane keys from task ids', () => {
     expect(
       getRunningRuntimeWorkbenchPaneKeys({

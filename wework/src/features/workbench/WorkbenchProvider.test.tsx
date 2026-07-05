@@ -692,6 +692,9 @@ function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
       <button type="button" onClick={() => workbench.selectProjectWorkspace(7, 22)}>
         select mapped project workspace
       </button>
+      <button type="button" onClick={() => workbench.startNewProjectChat(7)}>
+        start new project task
+      </button>
       <button type="button" onClick={() => void paneSession.setCurrentGoal()}>
         set pane goal
       </button>
@@ -2221,6 +2224,74 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
+  })
+
+  test('starts a fresh project pane after creating a runtime task in the same project', async () => {
+    const initialRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(initialRuntimeWork),
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-1',
+        taskId: 'runtime-created',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+      }),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-created',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [],
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimePaneSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
+    await userEvent.click(await screen.findByText('select mapped project workspace'))
+    await userEvent.click(screen.getByText('set pane input'))
+    await userEvent.click(screen.getByText('send pane input'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-created:/workspace/project-alpha'
+      )
+    )
+    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
+
+    await userEvent.click(screen.getByText('start new project task'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
+    )
+    expect(screen.getByTestId('active-pane-key')).toHaveTextContent('project:7')
+    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('')
+    expect(screen.getByTestId('pane-goal-draft-active')).toHaveTextContent('inactive')
   })
 
   test('keeps streamed assistant content when the resolved address adds a workspace path', async () => {
