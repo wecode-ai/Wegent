@@ -75,7 +75,7 @@ export interface ProjectWorkControls {
 interface ChatInputProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: () => void
+  onSubmit: (submittedValue?: string) => void
   disabled: boolean
   error?: string | null
   disabledReason?: string
