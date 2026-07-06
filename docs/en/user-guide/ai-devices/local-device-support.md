@@ -214,10 +214,10 @@ The installer and first startup create `~/.wegent-executor/device-config.json`. 
 
 #### Claude Code Execution Timeout
 
-When the local executor starts a Claude Code child process, it waits up to 1 hour by default. Long-running code generation, dependency installation, or file processing tasks can continue within that window. To tune the limit for a specific environment, set `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS` before starting the executor. This setting only affects Claude Code child processes, not the native Codex app-server path; Codex RPC timeouts are controlled by `WEGENT_CODEX_RPC_TIMEOUT_SECONDS`.
+When the local executor starts a Claude Code child process, it waits up to 24 hours by default. Long-running code generation, dependency installation, or file processing tasks can continue within that window. To tune the limit for a specific environment, set `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS` before starting the executor. This setting only affects Claude Code child processes, not the native Codex app-server path; Codex RPC timeouts are controlled by `WEGENT_CODEX_RPC_TIMEOUT_SECONDS`.
 
 ```bash
-export WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS=7200
+export WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS=172800
 wegent-executor
 ```
 
