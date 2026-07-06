@@ -46,7 +46,7 @@ def test_standalone_image_installs_codex_runtime_dependencies() -> None:
     """Container executor needs both the Codex CLI and Python SDK in Linux."""
     dockerfile = STANDALONE_DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "@openai/codex@0.137.0" in dockerfile
+    assert "@openai/codex@0.142.5" in dockerfile
     assert (
         "uv pip install --system --no-cache --no-deps openai-codex==0.1.0b3"
         in dockerfile

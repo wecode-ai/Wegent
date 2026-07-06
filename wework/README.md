@@ -1,80 +1,67 @@
-# React + TypeScript + Vite
+# Wework
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Wework is the Wegent desktop workbench for local-first AI coding and workplace workflows. It is built with Tauri v2, Vite, React, and TypeScript.
 
-Currently, two official plugins are available:
+## Capabilities
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Run local Codex-backed tasks through a managed executor sidecar.
+- Work with local projects, runtime conversations, attachments, terminals, file previews, and code change review without Backend login.
+- Connect to a Wegent Backend when cloud models, cloud devices, remote runtime work, or encrypted Codex auth sync are needed.
+- Package macOS builds as DMG releases with bundled Codex binaries and Tauri updater metadata.
+- Build iOS simulator, device, and App Store Connect packages from the same Tauri app.
 
-## React Compiler
+## Development
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+From the repository root:
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm install
+pnpm --filter wework dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+For the macOS Tauri app:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm --filter wework dev:mac
 ```
 
-## iOS App (Tauri)
+Useful checks:
 
-The desktop app is built with [Tauri v2](https://v2.tauri.app/), which also targets iOS.
+```bash
+pnpm --filter wework typecheck
+pnpm --filter wework lint
+pnpm --filter wework test
+pnpm --filter wework e2e
+```
+
+## macOS Build and Release
+
+Build a local macOS app bundle or DMG:
+
+```bash
+pnpm --filter wework build:mac
+pnpm --filter wework build:mac -- --target universal-apple-darwin --bundles app,dmg
+```
+
+Release builds prepare the pinned Codex binary before Tauri packaging:
+
+```bash
+pnpm --filter wework run prepare:codex
+```
+
+The release script handles version calculation, Tauri config injection, updater signing, DMG generation, and upload:
+
+```bash
+cd wework
+scripts/release-mac-app.sh --target local --version 0.1.99 --notes "Local verification."
+scripts/release-mac-app.sh --target prod --notes "Release notes."
+```
+
+Production publishing requires updater, signing, and notarization environment variables. See [Wework macOS Release](../docs/en/developer-guide/wework-macos-release.md) for the full release model.
+
+## iOS App
+
+The Tauri app also targets iOS.
 
 ### Prerequisites
 
@@ -82,63 +69,58 @@ The desktop app is built with [Tauri v2](https://v2.tauri.app/), which also targ
 - Rust iOS targets: `rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios`
 - CocoaPods (`brew install cocoapods`) and `xcodegen` (`brew install xcodegen`)
 
-### One-time setup
+### One-Time Setup
 
-The Xcode project lives in `src-tauri/gen/apple` and is **git-ignored** (regenerable, and a real build may embed your Apple Team ID into it). Generate it locally with:
+The Xcode project lives in `src-tauri/gen/apple` and is git-ignored because it is regenerable and may embed an Apple Team ID.
 
 ```bash
-pnpm run ios:init
+pnpm --filter wework run ios:init
 ```
 
-### Per-environment configuration
+### Environment Configuration
 
-iOS native builds have **no Vite dev proxy**, so the backend URLs must be absolute.
-Each environment is a file under `scripts/ios-env/<env>.env` (`dev`, `staging`, `prod`).
-Edit these to point at your real backend before building:
+iOS native builds have no Vite dev proxy, so backend URLs must be absolute. Each environment is a file under `scripts/ios-env/<env>.env` (`dev`, `staging`, `prod`):
 
 ```dotenv
 VITE_API_BASE_URL=https://wework.example.com/api
 VITE_SOCKET_BASE_URL=https://wework.example.com
-APPLE_DEVELOPMENT_TEAM=XXXXXXXXXX   # Apple Team ID for signing (device/IPA)
+APPLE_DEVELOPMENT_TEAM=XXXXXXXXXX
 ```
 
-### Dev (simulator / device)
+### Run and Package
 
 ```bash
-pnpm run dev:ios                          # env=dev (default)
-pnpm run dev:ios -- --env staging
-pnpm run dev:ios -- --device "iPhone 16 Pro"
+pnpm --filter wework dev:ios
+pnpm --filter wework dev:ios -- --env staging
+pnpm --filter wework dev:ios -- --device "iPhone 16 Pro"
+
+pnpm --filter wework build:ios -- --env prod
+pnpm --filter wework build:ios -- --env staging --target sim
+pnpm --filter wework build:ios -- --env prod --export-method app-store-connect
 ```
 
-### Build / package
+Useful flags: `--target device|sim|x86_64`, `--export-method app-store-connect|release-testing|debugging`, `--build-number N`, `--open`, `--archive-only`, `--no-sign`.
+
+Set `WEWORK_DRY_RUN=1` to print the resolved Tauri command without running it.
+
+Free or personal Apple teams can only create development profiles. Use `--export-method debugging`; the `release-testing` default requires Ad Hoc provisioning permissions. The signed device must also be registered to the team in Xcode.
+
+### Install to a Device
+
+Building does not install the app. List devices, then install the IPA:
 
 ```bash
-pnpm run build:ios -- --env prod                         # device IPA (release-testing)
-pnpm run build:ios -- --env staging --target sim         # simulator build
-pnpm run build:ios -- --env prod --export-method app-store-connect
-```
-
-Useful flags: `--target device|sim|x86_64`, `--export-method app-store-connect|release-testing|debugging`,
-`--build-number N`, `--open`, `--archive-only`, `--no-sign`.
-Set `WEWORK_DRY_RUN=1` to print the resolved `tauri` command without running it.
-
-> **Free / Personal Apple teams** can only create *development* profiles, not Ad Hoc or
-> App Store ones. Use `--export-method debugging` (the `release-testing` default fails with
-> "does not have permission to create iOS Ad Hoc provisioning profiles"). The signed device
-> must also be registered to the team — set this up once in Xcode (open `src-tauri/gen/apple`,
-> select the target → Signing & Capabilities → pick the team with Automatic signing).
-
-### Install to a device
-
-Building does not install. List devices, then install the IPA:
-
-```bash
-xcrun devicectl list devices                              # find your device UDID
+xcrun devicectl list devices
 xcrun devicectl device install app --device <UDID> \
   src-tauri/gen/apple/build/arm64/WeWork.ipa
 ```
 
-First launch: on the phone, **Settings ▸ General ▸ VPN & Device Management** → trust the
-developer certificate, otherwise iOS blocks the app as an untrusted developer.
+On first launch, trust the developer certificate in iOS Settings. The phone must be able to reach the backend URL configured in the selected environment file.
 
-The phone must reach the backend URL from `local.env` (same LAN, backend listening on `0.0.0.0`).
+## Related Documentation
+
+- [Local-First Cloud Connection](../docs/en/developer-guide/wework-cloud-connection.md)
+- [Runtime Local Work](../docs/en/developer-guide/runtime-local-work.md)
+- [Wework macOS Release](../docs/en/developer-guide/wework-macos-release.md)
+- [Wework Performance Diagnostics](../docs/en/developer-guide/wework-performance-diagnostics.md)
+- [Wework E2E Automation](../docs/en/developer-guide/wework-e2e-automation.md)
