@@ -1205,7 +1205,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           }
 
           if (hasCodeComments) {
-            void sendCurrentInput(submittedInput, { codeCommentContexts })
+            const sent = await sendCurrentInput(submittedInput, { codeCommentContexts })
+            if (sent) {
+              appendLocalUserMessage(
+                submittedInput || i18n.t('workbench.code_comment_fallback'),
+                currentAttachments
+              )
+              setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
+              setCodeCommentContexts([])
+            }
             return
           }
 

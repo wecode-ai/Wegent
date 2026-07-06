@@ -668,10 +668,6 @@ export function useWorkbenchRuntimeMessaging({
       )
 
       if (state.currentRuntimeTask) {
-        if (hasCodeComments) {
-          reportSendBlocked('当前 LocalTask 暂不支持代码评论', undefined, options)
-          return false
-        }
         if (currentRuntimeTaskRunning) {
           reportSendBlocked(i18n.t('workbench.runtime_task_running_message'), undefined, options)
           return false
