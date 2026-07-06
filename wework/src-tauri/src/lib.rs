@@ -993,9 +993,23 @@ fn open_task_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, task_id: &s
 
 #[cfg(desktop)]
 fn quit_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    shutdown_local_executor_for_app(app);
+    app.exit(0);
+}
+
+#[cfg(desktop)]
+fn shutdown_local_executor_for_app<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let state = app.state::<local_executor::LocalExecutorState>();
     local_executor::shutdown_local_executor(&state);
-    app.exit(0);
+}
+
+#[cfg(desktop)]
+fn install_shutdown_signal_handler(app: tauri::AppHandle) -> Result<(), String> {
+    ctrlc::set_handler(move || {
+        shutdown_local_executor_for_app(&app);
+        app.exit(130);
+    })
+    .map_err(|error| format!("Failed to install shutdown signal handler: {error}"))
 }
 
 #[derive(serde::Deserialize)]
@@ -1355,7 +1369,7 @@ mod tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
@@ -1405,6 +1419,9 @@ pub fn run() {
             #[cfg(desktop)]
             setup_system_tray(app)?;
             #[cfg(desktop)]
+            install_shutdown_signal_handler(app.handle().clone())
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
                     log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
@@ -1446,6 +1463,16 @@ pub fn run() {
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        #[cfg(desktop)]
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) {
+            shutdown_local_executor_for_app(app_handle);
+        }
+    });
 }
