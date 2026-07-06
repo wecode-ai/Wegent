@@ -5,6 +5,8 @@
 import sys
 from types import ModuleType, SimpleNamespace
 
+from kubernetes.client.rest import ApiException
+
 from executor_manager.wecode.executors.k8s.build_pod import build_pod_configuration
 from executor_manager.wecode.executors.k8s.k8s_executor import (
     K8S_NAMESPACE,
@@ -93,6 +95,56 @@ def test_delete_executor_prefers_explicit_executor_namespace(mocker):
     _, kwargs = core_v1.delete_namespaced_pod.call_args
     assert kwargs["name"] == "executor-1"
     assert kwargs["namespace"] == "custom-ns"
+
+
+def test_delete_executor_deletes_same_name_sandbox_claim_first(mocker):
+    executor = object.__new__(K8sExecutor)
+    core_v1 = mocker.MagicMock()
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+    delete_sandbox_claim = mocker.patch.object(
+        executor,
+        "delete_sandbox_claim",
+        return_value={"status": "success"},
+    )
+
+    result = executor.delete_executor("executor-1")
+
+    assert result == {"status": "success"}
+    delete_sandbox_claim.assert_called_once_with("executor-1")
+    core_v1.delete_namespaced_pod.assert_not_called()
+
+
+def test_delete_executor_deletes_pod_when_sandbox_claim_missing(mocker):
+    executor = object.__new__(K8sExecutor)
+    core_v1 = mocker.MagicMock()
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+    mocker.patch.object(
+        executor,
+        "delete_sandbox_claim",
+        return_value={"status": "not_found"},
+    )
+
+    result = executor.delete_executor("executor-1")
+
+    assert result == {"status": "success"}
+    core_v1.delete_namespaced_pod.assert_called_once()
+
+
+def test_delete_executor_returns_not_found_when_claim_and_pod_missing(mocker):
+    executor = object.__new__(K8sExecutor)
+    core_v1 = mocker.MagicMock()
+    core_v1.delete_namespaced_pod.side_effect = ApiException(status=404)
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+    delete_sandbox_claim = mocker.patch.object(
+        executor,
+        "delete_sandbox_claim",
+        return_value={"status": "not_found"},
+    )
+
+    result = executor.delete_executor("executor-1")
+
+    assert result == {"status": "not_found", "error_msg": "Pod 'executor-1' not found"}
+    delete_sandbox_claim.assert_called_once_with("executor-1")
 
 
 def test_submit_executor_prepare_only_skips_initial_dispatch(mocker):
@@ -233,3 +285,55 @@ def test_create_pod_from_warmpool_patches_skill_identity_annotations(mocker):
     annotations = warm_pool_client.patch_pod_metadata.call_args.kwargs["annotations"]
     assert annotations[ANNOTATION_SKILL_IDENTITY_TOKEN] == "skill-jwt"
     assert annotations[ANNOTATION_SKILL_USER_NAME] == "test_user"
+
+
+def test_create_pod_from_warmpool_deletes_stale_claim_without_pod(mocker):
+    executor = object.__new__(K8sExecutor)
+    mocker.patch(
+        "executor_manager.wecode.executors.k8s.k8s_executor._get_api_client",
+        return_value=object(),
+    )
+
+    warm_pool_client = mocker.MagicMock()
+    warm_pool_client.get_sandbox_claim.return_value = {
+        "metadata": {"name": "executor-1"}
+    }
+    warm_pool_client.get_sandbox_status.return_value = {
+        "exists": True,
+        "phase": "Running",
+        "pod_name": "missing-pod",
+        "pod_ip": None,
+    }
+    mocker.patch(
+        "executor_manager.wecode.executors.warmpool.WarmPoolClient",
+        return_value=warm_pool_client,
+    )
+    mocker.patch.object(
+        executor,
+        "_wait_for_warmpool_sandbox_ready",
+        return_value={"pod_name": "pod-1", "pod_ip": "10.0.0.8"},
+    )
+    repository = mocker.MagicMock()
+    sandbox_package = ModuleType("executor_manager.services.sandbox")
+    sandbox_package.__path__ = []
+    repository_module = ModuleType("executor_manager.services.sandbox.repository")
+    repository_module.get_sandbox_repository = mocker.MagicMock(return_value=repository)
+    mocker.patch.dict(
+        sys.modules,
+        {
+            "executor_manager.services.sandbox": sandbox_package,
+            "executor_manager.services.sandbox.repository": repository_module,
+        },
+    )
+
+    result = executor._create_pod_from_warmpool(
+        task={"task_id": 123, "type": "sandbox"},
+        executor_name="executor-1",
+        user_name="test_user",
+        task_id="123",
+        subtask_id="456",
+    )
+
+    assert result == {"status": "success"}
+    warm_pool_client.delete_sandbox_claim.assert_called_once_with("executor-1")
+    warm_pool_client.create_sandbox_claim.assert_called_once()
