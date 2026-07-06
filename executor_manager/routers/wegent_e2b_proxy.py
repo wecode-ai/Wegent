@@ -70,9 +70,11 @@ async def _get_sandbox_info(sandbox_id: str) -> tuple:
 
     # Find sandbox by e2b_sandbox_id
     sandbox = await _find_sandbox_by_e2b_id(manager, sandbox_id)
-    if sandbox is None:
+    if sandbox is not None:
+        sandbox = await manager.get_sandbox(sandbox.sandbox_id, check_health=True)
+    else:
         # Fallback: try direct lookup
-        sandbox = await manager.get_sandbox(sandbox_id, check_health=False)
+        sandbox = await manager.get_sandbox(sandbox_id, check_health=True)
 
     if sandbox is None:
         raise HTTPException(
