@@ -26,6 +26,7 @@ import {
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
+import { appendCodeCommentContexts } from '@/lib/code-comment-context'
 import type {
   Attachment,
   ModelOptions,
@@ -56,6 +57,8 @@ interface WorkbenchPaneSessionOptions {
 
 interface RuntimePaneQueuedMessage extends QueuedWorkbenchMessage {
   attachments?: Attachment[]
+  displayContent?: string
+  codeComments?: CodeCommentContext[]
   modelId?: string
   modelType?: RuntimeSendRequest['modelType']
   modelOptions?: ModelOptions
@@ -621,10 +624,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
       setSendPhase('submitting')
       if (options.appendLocalMessage !== false) {
-        appendLocalUserMessage(message.content, message.attachments, {
+        appendLocalUserMessage(message.displayContent ?? message.content, message.attachments, {
           id: message.id,
           createdAt: message.createdAt,
           runtimeGoalRequest: message.runtimeGoalRequest,
+          codeComments: message.codeComments,
         })
       }
       const messageAttachments = message.attachments ?? []
@@ -1135,13 +1139,19 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         setInput('')
         setSendPhase('submitting')
         try {
+          const visibleSubmittedInput =
+            effectiveSubmittedInput ||
+            (hasCodeComments ? i18n.t('workbench.code_comment_fallback') : '')
           if (!currentRuntimeTask) {
             const optimisticMessage = createLocalUserMessage(
-              effectiveSubmittedInput,
+              visibleSubmittedInput,
               currentAttachments,
-              { runtimeGoalRequest: Boolean(pendingInitialGoal) }
+              {
+                runtimeGoalRequest: Boolean(pendingInitialGoal),
+                codeComments: codeCommentContexts,
+              }
             )
-            const sent = await sendCurrentInput(effectiveSubmittedInput, {
+            const sent = await sendCurrentInput(visibleSubmittedInput, {
               codeCommentContexts,
               initialGoal: pendingInitialGoal,
               onRuntimeTaskOptimisticOpen: (address, context) => {
@@ -1179,8 +1189,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             if (sent) {
               setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
               if (!isRuntimeTaskAddress(sent)) {
-                appendLocalUserMessage(effectiveSubmittedInput, currentAttachments, {
+                appendLocalUserMessage(visibleSubmittedInput, currentAttachments, {
                   runtimeGoalRequest: Boolean(pendingInitialGoal),
+                  codeComments: codeCommentContexts,
                 })
               } else if (pendingInitialGoal) {
                 setPendingGoalState(current =>
@@ -1195,8 +1206,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               }
               if (isRuntimeTaskAddress(sent)) {
                 dispatchMessages({ type: 'reset', messages: [] })
-                projectChat.resetAttachments()
               }
+              projectChat.resetAttachments()
               setCodeCommentContexts([])
             } else {
               setSendPhase('idle')
@@ -1205,7 +1216,29 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           }
 
           if (hasCodeComments) {
-            void sendCurrentInput(submittedInput, { codeCommentContexts })
+            const queuedMessage: RuntimePaneQueuedMessage = {
+              id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+              content: appendCodeCommentContexts(visibleSubmittedInput, codeCommentContexts),
+              displayContent: visibleSubmittedInput,
+              codeComments: codeCommentContexts,
+              status: 'queued',
+              createdAt: new Date().toISOString(),
+              attachments: currentAttachments,
+              ...getRuntimeModelFields(),
+            }
+
+            if (paneStatus.isBusy) {
+              projectChat.resetAttachments()
+              setCodeCommentContexts([])
+              setQueuedMessages(messages => [...messages, queuedMessage])
+              return
+            }
+
+            const sent = await sendRuntimeMessage(queuedMessage)
+            if (sent) {
+              projectChat.resetAttachments()
+              setCodeCommentContexts([])
+            }
             return
           }
 
@@ -1562,6 +1595,7 @@ interface CreateLocalUserMessageOptions {
   id?: string
   createdAt?: string
   runtimeGoalRequest?: boolean
+  codeComments?: CodeCommentContext[]
 }
 
 function createLocalUserMessage(
@@ -1577,6 +1611,7 @@ function createLocalUserMessage(
     status: 'done',
     createdAt: options.createdAt ?? new Date().toISOString(),
     runtimeGoalRequest: options.runtimeGoalRequest ? true : undefined,
+    codeComments: options.codeComments?.length ? options.codeComments : undefined,
   }
 }
 

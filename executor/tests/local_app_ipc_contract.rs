@@ -461,6 +461,77 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
 }
 
 #[tokio::test]
+async fn app_ipc_resolves_browser_session_device_commands() {
+    let command_handler = JsonCaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let relay_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-browser-relay",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "browser_relay_restart"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(relay_response["ok"], true);
+    let request = seen_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.argv[0], "sh");
+    assert!(request.argv[2].contains("cdp-relay-server"));
+    assert!(request.argv[2].contains("--restart"));
+
+    let tool_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-browser-tool",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "browser_tool",
+                    "args": ["{\"action\":\"open\",\"url\":\"https://example.com\"}"]
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(tool_response["ok"], true);
+    let request = seen_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.argv[0], "sh");
+    assert_eq!(request.argv[3], "--");
+    assert_eq!(
+        request.argv[4],
+        "{\"action\":\"open\",\"url\":\"https://example.com\"}"
+    );
+    assert!(request.argv[2].contains("browser-tool"));
+}
+
+#[derive(Default)]
+struct JsonCaptureCommandHandler {
+    seen_request: Arc<Mutex<Option<CommandRequest>>>,
+}
+
+impl DeviceCommandHandler for JsonCaptureCommandHandler {
+    fn handle_execute_command<'a>(
+        &'a self,
+        request: CommandRequest,
+    ) -> Pin<Box<dyn Future<Output = CommandResult> + Send + 'a>> {
+        Box::pin(async move {
+            *self.seen_request.lock().unwrap() = Some(request);
+            CommandResult::ok(json!({"ok": true}).to_string())
+        })
+    }
+}
+
+#[tokio::test]
 async fn app_ipc_accepts_gitdir_with_configured_worktree_as_worktree_source() {
     let root = unique_dir("gitdir-worktree-source");
     let source_worktree = root.join("source");
