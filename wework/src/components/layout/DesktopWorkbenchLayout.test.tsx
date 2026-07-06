@@ -5030,13 +5030,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
   })
 
-  test('keeps environment info visible without a git branch and hides git actions', async () => {
+  test('keeps environment diff stats and branch row visible without a current branch', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         onLoadEnvironmentInfo={vi.fn().mockResolvedValue({
-          additions: '+0',
-          deletions: '-0',
+          additions: '+55',
+          deletions: '-8',
           executionTarget: 'local',
           deviceId: 'device-1',
           workspacePath: '/workspace/plain-folder',
@@ -5053,8 +5053,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent(
       '/workspace/plain-folder'
     )
-    expect(screen.queryByTestId('environment-git-section')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('environment-branch-row')).not.toBeInTheDocument()
+    const gitSection = screen.getByTestId('environment-git-section')
+    expect(gitSection).toHaveTextContent('变更')
+    expect(gitSection).toHaveTextContent('+55')
+    expect(gitSection).toHaveTextContent('-8')
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('暂无分支')
+    expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('create-pull-request-button')).not.toBeInTheDocument()
   })
 
   test('closes the branch menu when Escape is pressed', async () => {
