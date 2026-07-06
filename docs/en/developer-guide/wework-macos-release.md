@@ -87,26 +87,28 @@ To validate local updater behavior, serve the script output directory:
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
 
-## CI Builds Without Apple Developer
+## CI DMG Without Apple Developer
 
-The repository includes `.github/workflows/wework-app.yml` for producing macOS artifacts on GitHub Actions. This workflow does not require an Apple Developer account and builds:
+The repository includes `.github/workflows/wework-app.yml` for producing macOS test DMGs on GitHub Actions without the Apple Developer Program. The workflow applies an ad-hoc codesign signature to the `.app`, but it does not perform Apple notarization, so first launch still triggers Gatekeeper. Use this mode for internal testing and developer distribution only; do not label it as a notarized production package.
 
-- `wework-macos-arm64-unsigned-adhoc`
-- `wework-macos-x64-unsigned-adhoc`
+The workflow does not require Apple signing secrets. It creates or updates the `wework-v<version>` GitHub prerelease and uploads two release assets:
 
-Each artifact contains `.app.zip`, `.dmg`, and `README-macos-unsigned.txt`. The workflow applies an ad-hoc signature to the `.app`:
+- `WeWork_<version>_macos_arm64_unsigned-adhoc.dmg`
+- `WeWork_<version>_macos_x64_unsigned-adhoc.dmg`
 
-```bash
-codesign --force --deep --options runtime --sign - WeWork.app
-```
+When downloaded from GitHub Release assets, the link points directly to the `.dmg` file and is not wrapped by an Actions artifact `.zip`. When the workflow is triggered manually without a version input, the release tag uses `wework-v<package-version>-<short-sha>`.
 
-This build is not Apple notarized, so first launch still triggers Gatekeeper. Users can force-open it from **Open Anyway** in macOS Privacy & Security settings. If the download keeps the quarantine flag, they can also run:
+To force-open the app on first launch. On macOS 15 and later, the warning can still include a **Move to Trash** button; as long as CI passed `codesign --verify --deep --strict`, this is usually the normal Gatekeeper block for a non-notarized app, not a damaged package:
+
+1. Open the DMG and drag `WeWork.app` to `/Applications`.
+2. If the first launch shows an unidentified developer or **Move to Trash** warning, click Done. Do not click Move to Trash.
+3. Open **System Settings > Privacy & Security**, then click **Open Anyway** in the Security section.
+
+If macOS still keeps the quarantine flag, run this after confirming the source is trusted:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/WeWork.app
 ```
-
-Use this mode for internal testing and developer distribution only. Do not label it as a notarized production package. Public distribution for ordinary users should still use a Developer ID Application certificate and Apple notarization.
 
 ## Production Release
 
