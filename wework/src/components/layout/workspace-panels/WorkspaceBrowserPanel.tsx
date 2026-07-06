@@ -1,99 +1,67 @@
-import { ArrowLeft, ArrowRight, ExternalLink, Globe2, Loader2, RotateCw } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  ExternalLink,
+  Globe2,
+  Loader2,
+  MessageSquarePlus,
+  RotateCw,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
 import {
-  canUseNativeInAppBrowser,
-  closeNativeInAppBrowser,
-  createNativeInAppBrowser,
-  goBackInAppBrowser,
-  goForwardInAppBrowser,
-  hideNativeInAppBrowser,
-  IN_APP_BROWSER_FAVICON_CHANGED_EVENT,
-  IN_APP_BROWSER_TITLE_CHANGED_EVENT,
-  IN_APP_BROWSER_URL_CHANGED_EVENT,
-  type InAppBrowserFaviconChangedPayload,
-  type InAppBrowserTitleChangedPayload,
-  type InAppBrowserUrlChangedPayload,
-  normalizeBrowserUrl,
-  reloadInAppBrowser,
-  WORKSPACE_BROWSER_LABEL,
-  type BrowserFrameRect,
-  type NativeInAppBrowser,
-} from '@/lib/in-app-browser'
+  canUseEmbeddedBrowser,
+  closeEmbeddedBrowser,
+  consumeEmbeddedBrowserLabelTransfer,
+  EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
+  evalEmbeddedBrowser,
+  evalEmbeddedBrowserJson,
+  goBackEmbeddedBrowser,
+  goForwardEmbeddedBrowser,
+  navigateEmbeddedBrowser,
+  openEmbeddedBrowser,
+  readEmbeddedBrowserPageState,
+  reloadEmbeddedBrowser,
+  setEmbeddedBrowserBounds,
+  type EmbeddedBrowserBounds,
+  type EmbeddedBrowserOpenRequest,
+} from '@/lib/embedded-browser'
 import { openExternalUrl } from '@/lib/external-links'
+import { normalizeBrowserUrl } from '@/lib/browser-url'
 import { cn } from '@/lib/utils'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { CodeCommentContext } from '@/types/workspace-files'
 
-const MIN_BROWSER_SIZE = 48
-const NATIVE_BROWSER_READY_TIMEOUT_MS = 1200
-const FRAME_RECT_UPDATE_THRESHOLD_PX = 2
+const EMBEDDED_BROWSER_READY_TIMEOUT_MS = 800
+const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
+const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
+const EMBEDDED_BROWSER_HOST_BOUNDS_TIMEOUT_MS = 5000
+const EMBEDDED_BROWSER_HOST_BOUNDS_INTERVAL_MS = 50
+const EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS = [0, 120, 300, 600]
+const BROWSER_ANNOTATION_LOG_PREFIX = '[Wework][BrowserAnnotation]'
 
 interface WorkspaceBrowserPanelProps {
   active: boolean
+  label?: string
+  openRequest?: (EmbeddedBrowserOpenRequest & { id: number }) | null
+  codeCommentCount?: number
+  onAddCodeComment?: (context: CodeCommentContext) => void
   onFaviconChange?: (faviconUrl: string | null) => void
   onTitleChange?: (title: string | null) => void
 }
 
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
-
-function readFrameRect(element: HTMLElement): BrowserFrameRect | null {
-  if (!element.isConnected) return null
-
-  const rect = element.getBoundingClientRect()
-  const width = Math.floor(rect.width)
-  const height = Math.floor(rect.height)
-
-  if (
-    width < MIN_BROWSER_SIZE ||
-    height < MIN_BROWSER_SIZE ||
-    rect.right <= 0 ||
-    rect.bottom <= 0 ||
-    rect.left >= window.innerWidth ||
-    rect.top >= window.innerHeight
-  ) {
-    return null
-  }
-
-  return {
-    x: Math.round(rect.left),
-    y: Math.round(rect.top),
-    width,
-    height,
-  }
+type BrowserAnnotationRect = { x: number; y: number; width: number; height: number }
+type BrowserAnnotation = BrowserAnnotationRect & {
+  id: string
+  comment: string
+  number: number
 }
 
-function isSameFrameRect(left: BrowserFrameRect | null, right: BrowserFrameRect) {
-  return (
-    left?.x === right.x &&
-    left.y === right.y &&
-    left.width === right.width &&
-    left.height === right.height
-  )
-}
-
-function isEffectivelySameFrameRect(left: BrowserFrameRect | null, right: BrowserFrameRect) {
-  if (!left) return false
-
-  return (
-    Math.abs(left.x - right.x) < FRAME_RECT_UPDATE_THRESHOLD_PX &&
-    Math.abs(left.y - right.y) < FRAME_RECT_UPDATE_THRESHOLD_PX &&
-    Math.abs(left.width - right.width) < FRAME_RECT_UPDATE_THRESHOLD_PX &&
-    Math.abs(left.height - right.height) < FRAME_RECT_UPDATE_THRESHOLD_PX
-  )
-}
-
-function afterNextPaint(callback: () => void) {
-  let secondFrame = 0
-  const firstFrame = window.requestAnimationFrame(() => {
-    secondFrame = window.requestAnimationFrame(callback)
-  })
-
-  return () => {
-    window.cancelAnimationFrame(firstFrame)
-    if (secondFrame) {
-      window.cancelAnimationFrame(secondFrame)
-    }
-  }
+function logBrowserAnnotation(message: string, data?: Record<string, unknown>) {
+  console.info(BROWSER_ANNOTATION_LOG_PREFIX, message, data ?? {})
 }
 
 function getFallbackBrowserTitle(url: string) {
@@ -113,44 +81,434 @@ function getFallbackFaviconUrl(url: string) {
   }
 }
 
-function isSupportedBrowserUrl(url: string) {
-  try {
-    const parsedUrl = new URL(url)
-    return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:'
-  } catch {
-    return false
+function getElementBounds(element: HTMLElement): EmbeddedBrowserBounds | null {
+  const rect = element.getBoundingClientRect()
+  if (rect.width < 1 || rect.height < 1) return null
+  return {
+    x: rect.left,
+    y: rect.top,
+    width: rect.width,
+    height: rect.height,
+  }
+}
+
+function waitForElementBounds(
+  getElement: () => HTMLElement | null,
+  isDisposed: () => boolean
+): Promise<EmbeddedBrowserBounds> {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now()
+    let timer: number | null = null
+    const finish = (callback: () => void) => {
+      if (timer !== null) {
+        window.clearTimeout(timer)
+        timer = null
+      }
+      callback()
+    }
+
+    const check = () => {
+      if (isDisposed()) {
+        finish(() => reject(new Error('Embedded browser open was cancelled')))
+        return
+      }
+
+      const element = getElement()
+      const bounds = element ? getElementBounds(element) : null
+      if (bounds) {
+        finish(() => resolve(bounds))
+        return
+      }
+
+      if (Date.now() - startedAt >= EMBEDDED_BROWSER_HOST_BOUNDS_TIMEOUT_MS) {
+        finish(() => reject(new Error('Timed out waiting for embedded browser host bounds')))
+        return
+      }
+
+      timer = window.setTimeout(check, EMBEDDED_BROWSER_HOST_BOUNDS_INTERVAL_MS)
+    }
+
+    timer = window.setTimeout(check, 0)
+  })
+}
+
+function observeElementIfPresent(observer: ResizeObserver, element: Element | null) {
+  if (element) observer.observe(element)
+}
+
+function browserAnnotationInjectionScript() {
+  return String.raw`
+(() => {
+  const log = (message, data = {}) => {
+    console.info('[Wework][BrowserAnnotation][page]', message, data);
+  };
+  const existing = document.getElementById('__wework_browser_annotation_layer__');
+  if (existing) {
+    log('remove existing annotation layer');
+    existing.remove();
+  }
+
+  const state = {
+    nextNumber: 1,
+    published: [],
+    draftBox: null,
+    hoverBox: null,
+    activeElement: null,
+    activeEditor: null,
+    activeInput: null,
+  };
+
+  window.__weworkBrowserAnnotationConsume = () => {
+    const items = state.published.slice();
+    state.published.length = 0;
+    if (items.length > 0) {
+      log('consume published annotations', { count: items.length, comments: items.map((item) => item.comment) });
+    }
+    return items;
+  };
+  window.__weworkBrowserAnnotationClear = () => {
+    log('clear annotations');
+    layer.querySelectorAll('[data-wework-annotation="editor"]').forEach((node) => node.remove());
+    layer.querySelectorAll('[data-wework-annotation="box"]').forEach((node) => node.remove());
+    state.nextNumber = 1;
+    state.draftBox = null;
+    state.activeEditor = null;
+    state.activeInput = null;
+  };
+
+  const layer = document.createElement('div');
+  layer.id = '__wework_browser_annotation_layer__';
+  Object.assign(layer.style, {
+    position: 'fixed',
+    inset: '0',
+    zIndex: '2147483647',
+    background: 'transparent',
+    pointerEvents: 'none',
+    userSelect: 'none',
+  });
+
+  const makeBox = (rect) => {
+    const box = document.createElement('div');
+    box.dataset.weworkAnnotation = 'box';
+    Object.assign(box.style, {
+      position: 'fixed',
+      left: rect.x + 'px',
+      top: rect.y + 'px',
+      width: rect.width + 'px',
+      height: rect.height + 'px',
+      border: '2px solid #1683ff',
+      background: 'rgba(147, 197, 253, 0.45)',
+      boxSizing: 'border-box',
+      pointerEvents: 'none',
+    });
+    return box;
+  };
+
+  const elementRect = (element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      x: Math.max(0, rect.left),
+      y: Math.max(0, rect.top),
+      width: Math.max(1, Math.min(rect.width, window.innerWidth - Math.max(0, rect.left))),
+      height: Math.max(1, Math.min(rect.height, window.innerHeight - Math.max(0, rect.top))),
+    };
+  };
+
+  const updateHoverBox = (element) => {
+    const rect = elementRect(element);
+    if (!state.hoverBox) {
+      state.hoverBox = makeBox(rect);
+      state.hoverBox.dataset.weworkAnnotation = 'hover';
+      state.hoverBox.style.background = 'rgba(147, 197, 253, 0.28)';
+      layer.appendChild(state.hoverBox);
+    }
+    Object.assign(state.hoverBox.style, {
+      left: rect.x + 'px',
+      top: rect.y + 'px',
+      width: rect.width + 'px',
+      height: rect.height + 'px',
+    });
+  };
+
+  const clearHoverBox = () => {
+    state.hoverBox?.remove();
+    state.hoverBox = null;
+  };
+
+  const validTarget = (target) => {
+    if (!(target instanceof Element)) return null;
+    if (target.closest('#__wework_browser_annotation_layer__')) return null;
+    if (target === document.documentElement || target === document.body) return null;
+    return target;
+  };
+
+  const showEditor = (element) => {
+    const rect = elementRect(element);
+    log('open editor', {
+      tagName: element.tagName?.toLowerCase?.(),
+      text: (element.innerText || element.textContent || '').trim().slice(0, 120),
+      rect,
+    });
+    clearHoverBox();
+    state.draftBox = makeBox(rect);
+    layer.appendChild(state.draftBox);
+
+    const editor = document.createElement('div');
+    Object.assign(editor.style, {
+      position: 'fixed',
+      left: Math.min(rect.x + 8, Math.max(8, window.innerWidth - 300)) + 'px',
+      top: Math.min(rect.y + 28, Math.max(8, window.innerHeight - 52)) + 'px',
+      width: '280px',
+      height: '40px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      padding: '0 10px',
+      borderRadius: '999px',
+      border: '1px solid rgba(0,0,0,0.12)',
+      background: 'white',
+      boxShadow: '0 12px 30px rgba(0,0,0,0.16)',
+      boxSizing: 'border-box',
+      cursor: 'default',
+      pointerEvents: 'auto',
+    });
+    editor.dataset.weworkAnnotation = 'editor';
+
+    const input = document.createElement('input');
+    input.placeholder = '添加评论...';
+    Object.assign(input.style, {
+      minWidth: '0',
+      flex: '1',
+      height: '28px',
+      border: '0',
+      outline: '0',
+      fontSize: '13px',
+      background: 'transparent',
+    });
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = '发布';
+    Object.assign(button.style, {
+      border: '0',
+      borderRadius: '999px',
+      background: '#1683ff',
+      color: 'white',
+      height: '28px',
+      padding: '0 10px',
+      fontSize: '12px',
+      cursor: 'pointer',
+    });
+
+    const closeEditor = (removeDraft) => {
+      layer.querySelectorAll('[data-wework-annotation="editor"]').forEach((node) => node.remove());
+      editor.remove();
+      if (removeDraft) {
+        state.draftBox?.remove();
+      }
+      if (removeDraft) {
+        state.draftBox = null;
+      }
+      state.activeEditor = null;
+      state.activeInput = null;
+    };
+
+    const publish = () => {
+      const comment = input.value.trim();
+      if (!comment) return;
+      const number = state.nextNumber++;
+      const badge = document.createElement('span');
+      badge.textContent = String(number);
+      Object.assign(badge.style, {
+        position: 'absolute',
+        right: '4px',
+        top: '4px',
+        minWidth: '20px',
+        height: '20px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: '999px',
+        background: '#1683ff',
+        color: 'white',
+        fontSize: '11px',
+        fontWeight: '700',
+        padding: '0 4px',
+      });
+      state.draftBox.appendChild(badge);
+      const annotation = {
+        id: 'browser-annotation-' + Date.now() + '-' + number,
+        number,
+        comment,
+        tagName: element.tagName.toLowerCase(),
+        text: (element.innerText || element.textContent || '').trim().slice(0, 500),
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      };
+      state.published.push(annotation);
+      log('publish annotation', annotation);
+      closeEditor(false);
+      state.draftBox = null;
+    };
+
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      publish();
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.isComposing) {
+        event.preventDefault();
+        event.stopPropagation();
+        publish();
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeEditor(true);
+      }
+    });
+    editor.addEventListener('pointerdown', (event) => event.stopPropagation());
+    editor.addEventListener('mousedown', (event) => event.stopPropagation());
+    editor.addEventListener('click', (event) => event.stopPropagation());
+    editor.append(input, button);
+    layer.appendChild(editor);
+    state.activeEditor = editor;
+    state.activeInput = input;
+    input.focus();
+  };
+
+  const handleMouseMove = (event) => {
+    if (state.draftBox) return;
+    const target = validTarget(event.target);
+    if (!target) {
+      clearHoverBox();
+      return;
+    }
+    state.activeElement = target;
+    updateHoverBox(target);
+  };
+
+  const keepDraftFocus = (event) => {
+    if (!state.draftBox) return false;
+    const target = event.target;
+    if (target instanceof Element && target.closest('#__wework_browser_annotation_layer__')) {
+      return false;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    state.activeInput?.focus();
+    return true;
+  };
+
+  const handlePointerDown = (event) => {
+    keepDraftFocus(event);
+  };
+
+  const handleClick = (event) => {
+    if (keepDraftFocus(event)) return;
+    const target = validTarget(event.target) || state.activeElement;
+    if (!target) return;
+    event.preventDefault();
+    event.stopPropagation();
+    showEditor(target);
+  };
+
+  const cleanup = () => {
+    log('cleanup annotation layer');
+    document.removeEventListener('pointerdown', handlePointerDown, true);
+    document.removeEventListener('mousemove', handleMouseMove, true);
+    document.removeEventListener('click', handleClick, true);
+    delete window.__weworkBrowserAnnotationConsume;
+    delete window.__weworkBrowserAnnotationClose;
+    delete window.__weworkBrowserAnnotationClear;
+    layer.remove();
+  };
+
+  window.__weworkBrowserAnnotationClose = cleanup;
+
+  document.addEventListener('pointerdown', handlePointerDown, true);
+  document.addEventListener('mousemove', handleMouseMove, true);
+  document.addEventListener('click', handleClick, true);
+
+  document.documentElement.appendChild(layer);
+  log('annotation layer installed', { url: window.location.href });
+  return true;
+})();`
+}
+
+function browserAnnotationContext(
+  annotation: BrowserAnnotation,
+  url: string | null,
+  title: string | null
+): CodeCommentContext {
+  const browserUrl = url ?? 'about:blank'
+  const fallbackName = (() => {
+    try {
+      return new URL(browserUrl).hostname || browserUrl
+    } catch {
+      return browserUrl
+    }
+  })()
+  return {
+    id: annotation.id,
+    filePath: `browser:${browserUrl}`,
+    fileName: title || fallbackName,
+    startLine: annotation.number,
+    endLine: annotation.number,
+    selectedText: JSON.stringify(
+      {
+        type: 'browser_annotation',
+        url: browserUrl,
+        title,
+        rect: {
+          x: Math.round(annotation.x),
+          y: Math.round(annotation.y),
+          width: Math.round(annotation.width),
+          height: Math.round(annotation.height),
+        },
+      },
+      null,
+      2
+    ),
+    comment: annotation.comment,
+    createdAt: new Date().toISOString(),
   }
 }
 
 export function WorkspaceBrowserPanel({
   active,
+  label = 'workspace-browser',
+  openRequest,
+  codeCommentCount = 0,
+  onAddCodeComment,
   onFaviconChange,
   onTitleChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
-  const viewportRef = useRef<HTMLDivElement | null>(null)
-  const browserRef = useRef<NativeInAppBrowser | null>(null)
-  const activeRef = useRef(active)
+  const browserHostRef = useRef<HTMLDivElement | null>(null)
+  const nativeBrowserOpenRef = useRef(false)
   const currentUrlRef = useRef<string | null>(null)
-  const pageUrlRef = useRef<string | null>(null)
-  const lastNativeFrameRef = useRef<BrowserFrameRect | null>(null)
-  const nativeShownRef = useRef(false)
-  const nativeVisible = active
+  const previousCodeCommentCountRef = useRef(codeCommentCount)
+  const handledOpenRequestIdRef = useRef<number | null>(null)
+  const syncBoundsTimerRef = useRef<number | null>(null)
+  const syncBoundsAnimationFrameRef = useRef<number | null>(null)
+  const annotationEmptyPollLogCountRef = useRef(0)
+  const [debugPanelExpanded, setDebugPanelExpanded] = useState(false)
   const [address, setAddress] = useState('')
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
   const [pageUrl, setPageUrl] = useState<string | null>(null)
   const [status, setStatus] = useState<BrowserStatus>('idle')
   const [error, setError] = useState<string | null>(null)
-  const nativeBrowserAvailable = canUseNativeInAppBrowser()
+  const [annotationMode, setAnnotationMode] = useState(false)
+  const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
+  const embeddedBrowserAvailable = canUseEmbeddedBrowser()
   const activePageUrl = pageUrl ?? currentUrl
-
-  useEffect(() => {
-    activeRef.current = nativeVisible
-  }, [nativeVisible])
 
   const updatePageUrl = useCallback(
     (url: string | null) => {
-      pageUrlRef.current = url
       setPageUrl(url)
       if (url) {
         setAddress(url)
@@ -165,310 +523,498 @@ export function WorkspaceBrowserPanel({
     [onFaviconChange, onTitleChange]
   )
 
+  const syncEmbeddedBrowserBounds = useCallback(
+    async (visible = active) => {
+      if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
+      const host = browserHostRef.current
+      if (!host) {
+        if (!visible) {
+          await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
+        }
+        return
+      }
+      const bounds = getElementBounds(host)
+      if (!bounds) {
+        if (!visible) {
+          await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
+        }
+        return
+      }
+      await setEmbeddedBrowserBounds(bounds, visible && !debugPanelExpanded, label)
+    },
+    [active, debugPanelExpanded, embeddedBrowserAvailable, label]
+  )
+
+  const hideEmbeddedBrowser = useCallback(async () => {
+    if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
+    await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
+  }, [embeddedBrowserAvailable, label])
+
+  const exitAnnotationMode = useCallback(() => {
+    logBrowserAnnotation('exit annotation mode', {
+      label,
+      currentUrl,
+      nativeBrowserOpen: nativeBrowserOpenRef.current,
+    })
+    setAnnotationMode(false)
+    void evalEmbeddedBrowser('window.__weworkBrowserAnnotationClose?.(); true', label).catch(
+      error => {
+        console.error('Failed to close embedded browser annotation layer:', error)
+      }
+    )
+  }, [currentUrl, label])
+
+  const enterAnnotationMode = useCallback(async () => {
+    logBrowserAnnotation('enter annotation mode requested', {
+      label,
+      active,
+      currentUrl,
+      embeddedBrowserAvailable,
+      nativeBrowserOpen: nativeBrowserOpenRef.current,
+    })
+    if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current || !currentUrl) {
+      logBrowserAnnotation('enter annotation mode skipped', {
+        label,
+        active,
+        currentUrl,
+        embeddedBrowserAvailable,
+        nativeBrowserOpen: nativeBrowserOpenRef.current,
+      })
+      return
+    }
+    try {
+      await evalEmbeddedBrowser(browserAnnotationInjectionScript(), label)
+      annotationEmptyPollLogCountRef.current = 0
+      setAnnotationMode(true)
+      logBrowserAnnotation('enter annotation mode succeeded', { label, currentUrl })
+    } catch (error) {
+      console.error('Failed to enter embedded browser annotation mode:', error)
+      logBrowserAnnotation('enter annotation mode failed', {
+        label,
+        currentUrl,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      setStatus('error')
+      setError(t('workbench.browser_annotation_failed'))
+    }
+  }, [active, currentUrl, embeddedBrowserAvailable, label, t])
+
+  useEffect(() => {
+    const previousCount = previousCodeCommentCountRef.current
+    previousCodeCommentCountRef.current = codeCommentCount
+    if (previousCount > 0 && codeCommentCount === 0 && annotationMode) {
+      setAnnotations([])
+      exitAnnotationMode()
+    }
+  }, [annotationMode, codeCommentCount, exitAnnotationMode])
+
+  const scheduleEmbeddedBrowserBoundsSync = useCallback(
+    (visible = active) => {
+      if (syncBoundsAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(syncBoundsAnimationFrameRef.current)
+      }
+      if (syncBoundsTimerRef.current !== null) {
+        window.clearTimeout(syncBoundsTimerRef.current)
+      }
+
+      syncBoundsAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        syncBoundsAnimationFrameRef.current = null
+        void syncEmbeddedBrowserBounds(visible).catch(error => {
+          console.error('Failed to sync embedded browser bounds:', error)
+        })
+      })
+      syncBoundsTimerRef.current = window.setTimeout(() => {
+        syncBoundsTimerRef.current = null
+        void syncEmbeddedBrowserBounds(visible).catch(error => {
+          console.error('Failed to sync embedded browser bounds:', error)
+        })
+      }, EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS)
+    },
+    [active, syncEmbeddedBrowserBounds]
+  )
+
+  const schedulePostOpenBoundsSync = useCallback(
+    (visible = active) => {
+      EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS.forEach(delay => {
+        window.setTimeout(() => {
+          scheduleEmbeddedBrowserBoundsSync(visible)
+        }, delay)
+      })
+    },
+    [active, scheduleEmbeddedBrowserBoundsSync]
+  )
+
+  const refreshPageState = useCallback(async () => {
+    if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
+    try {
+      const pageState = await readEmbeddedBrowserPageState(label)
+      const nextUrl = pageState.url || currentUrlRef.current
+      updatePageUrl(nextUrl)
+      if (nextUrl) {
+        onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
+        onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
+      }
+    } catch (error) {
+      console.error('Failed to read embedded browser page state:', error)
+    }
+  }, [embeddedBrowserAvailable, label, onFaviconChange, onTitleChange, updatePageUrl])
+
   useEffect(() => {
     currentUrlRef.current = currentUrl
   }, [currentUrl])
 
-  const closeNativeBrowser = useCallback(async () => {
-    const browser = browserRef.current
-    browserRef.current = null
-    lastNativeFrameRef.current = null
-    nativeShownRef.current = false
-    await browser?.close().catch(() => undefined)
-    await closeNativeInAppBrowser(WORKSPACE_BROWSER_LABEL).catch(() => undefined)
-  }, [])
-
-  const hideNativeBrowser = useCallback(async () => {
-    nativeShownRef.current = false
-    const browser = browserRef.current
-    if (browser) {
-      await browser.hide().catch(() => undefined)
-      return
-    }
-
-    await hideNativeInAppBrowser(WORKSPACE_BROWSER_LABEL).catch(() => undefined)
-  }, [])
-
-  const updateNativeFrame = useCallback(() => {
-    const browser = browserRef.current
-    const viewport = viewportRef.current
-    if (!browser || !viewport) return
-
-    const rect = readFrameRect(viewport)
-    if (!rect) {
-      lastNativeFrameRef.current = null
-      void hideNativeBrowser()
-      return
-    }
-
-    const shouldShowAfterFrame = activeRef.current && !nativeShownRef.current
-
-    if (
-      isSameFrameRect(lastNativeFrameRef.current, rect) ||
-      isEffectivelySameFrameRect(lastNativeFrameRef.current, rect)
-    ) {
-      if (shouldShowAfterFrame) {
-        nativeShownRef.current = true
-        void browser.show().catch(error => {
-          console.error('Failed to show in-app browser:', error)
-          nativeShownRef.current = false
-        })
-      }
-      return
-    }
-
-    lastNativeFrameRef.current = rect
-    void browser
-      .setFrame(rect)
-      .then(() => {
-        if (!shouldShowAfterFrame || !activeRef.current) return
-
-        nativeShownRef.current = true
-        return browser.show().catch(error => {
-          console.error('Failed to show in-app browser:', error)
-          nativeShownRef.current = false
-        })
-      })
-      .catch(error => {
-        console.error('Failed to resize in-app browser:', error)
-        lastNativeFrameRef.current = null
-        nativeShownRef.current = false
-        void hideNativeBrowser()
-      })
-  }, [hideNativeBrowser])
-
-  const showNativeBrowser = useCallback(() => {
-    const browser = browserRef.current
-    if (!browser) {
-      updateNativeFrame()
-      return
-    }
-
-    if (nativeShownRef.current) {
-      updateNativeFrame()
-      return
-    }
-
-    updateNativeFrame()
-  }, [updateNativeFrame])
-
   useEffect(() => {
-    if (!nativeBrowserAvailable || !currentUrl) {
-      void closeNativeBrowser()
+    if (!active || !embeddedBrowserAvailable || !currentUrl) return
+    if (nativeBrowserOpenRef.current) {
+      schedulePostOpenBoundsSync(active)
       return
     }
 
     let disposed = false
-    const readyTimer = window.setTimeout(() => {
-      if (!disposed) setStatus('ready')
-    }, NATIVE_BROWSER_READY_TIMEOUT_MS)
+    let readyTimer: number | null = null
 
-    const cancelOpen = afterNextPaint(() => {
-      const viewport = viewportRef.current
-      const rect = viewport ? readFrameRect(viewport) : null
-      if (!rect) {
-        if (!disposed) setStatus('ready')
-        return
+    setStatus('loading')
+    const openWhenHostIsReady = async () => {
+      try {
+        const bounds = await waitForElementBounds(
+          () => browserHostRef.current,
+          () => disposed
+        )
+        if (disposed) return
+
+        readyTimer = window.setTimeout(() => {
+          if (!disposed) setStatus('ready')
+        }, EMBEDDED_BROWSER_READY_TIMEOUT_MS)
+
+        const pageState = await openEmbeddedBrowser(currentUrl, bounds, label)
+        if (disposed) {
+          await closeEmbeddedBrowser(label).catch(() => undefined)
+          return
+        }
+        nativeBrowserOpenRef.current = true
+        updatePageUrl(pageState.url || currentUrl)
+        schedulePostOpenBoundsSync(active)
+        if (readyTimer !== null) window.clearTimeout(readyTimer)
+        setStatus('ready')
+      } catch (error) {
+        console.error('Failed to open embedded browser:', error)
+        if (!disposed) {
+          if (readyTimer !== null) window.clearTimeout(readyTimer)
+          setStatus('error')
+          setError(t('workbench.browser_open_failed'))
+        }
       }
+    }
 
-      createNativeInAppBrowser(WORKSPACE_BROWSER_LABEL, currentUrl, rect)
-        .then(browser => {
-          if (disposed) {
-            void browser.close().catch(() => undefined)
-            return
-          }
-          browserRef.current = browser
-          if (activeRef.current) {
-            nativeShownRef.current = true
-            updateNativeFrame()
-          } else {
-            nativeShownRef.current = false
-            void browser.hide().catch(() => undefined)
-          }
-          window.clearTimeout(readyTimer)
-          setStatus('ready')
-        })
-        .catch(error => {
-          console.error('Failed to open in-app browser:', error)
-          if (!disposed) {
-            window.clearTimeout(readyTimer)
-            setStatus('error')
-            setError(t('workbench.browser_open_failed'))
-          }
-        })
-    })
+    void openWhenHostIsReady()
 
     return () => {
       disposed = true
-      window.clearTimeout(readyTimer)
-      cancelOpen()
-      void closeNativeBrowser()
+      if (readyTimer !== null) window.clearTimeout(readyTimer)
     }
-  }, [closeNativeBrowser, currentUrl, nativeBrowserAvailable, t, updateNativeFrame])
+  }, [
+    active,
+    currentUrl,
+    embeddedBrowserAvailable,
+    label,
+    schedulePostOpenBoundsSync,
+    t,
+    updatePageUrl,
+  ])
 
   useEffect(() => {
-    if (!nativeBrowserAvailable || !currentUrl) return
+    if (!active || !embeddedBrowserAvailable || nativeBrowserOpenRef.current || currentUrl) return
 
-    const browser = browserRef.current
-    if (!browser) {
-      if (!nativeVisible) void hideNativeBrowser()
+    let disposed = false
+
+    const attachExistingBrowser = async () => {
+      try {
+        const pageState = await readEmbeddedBrowserPageState(label)
+        if (disposed || !pageState.url) return
+        nativeBrowserOpenRef.current = true
+        setCurrentUrl(pageState.url)
+        updatePageUrl(pageState.url)
+        if (pageState.title) {
+          onTitleChange?.(pageState.title)
+        }
+        setStatus('ready')
+        schedulePostOpenBoundsSync(active)
+      } catch {
+        // No existing native browser for this label.
+      }
+    }
+
+    void attachExistingBrowser()
+
+    return () => {
+      disposed = true
+    }
+  }, [
+    active,
+    currentUrl,
+    embeddedBrowserAvailable,
+    label,
+    onTitleChange,
+    schedulePostOpenBoundsSync,
+    updatePageUrl,
+  ])
+
+  useEffect(() => {
+    if (!embeddedBrowserAvailable) return
+
+    if (!active) {
+      void hideEmbeddedBrowser().catch(error => {
+        console.error('Failed to hide embedded browser:', error)
+      })
       return
     }
 
-    if (nativeVisible) {
-      showNativeBrowser()
-      return
-    }
-
-    void hideNativeBrowser().catch(error => {
-      console.error('Failed to hide in-app browser:', error)
-    })
-  }, [currentUrl, hideNativeBrowser, nativeBrowserAvailable, nativeVisible, showNativeBrowser])
+    scheduleEmbeddedBrowserBoundsSync(active)
+  }, [active, embeddedBrowserAvailable, hideEmbeddedBrowser, scheduleEmbeddedBrowserBoundsSync])
 
   useEffect(() => {
-    if (!nativeVisible || !nativeBrowserAvailable) return
+    if (!embeddedBrowserAvailable || !currentUrl) return
+    const host = browserHostRef.current
+    if (!host) return
 
-    const viewport = viewportRef.current
-    if (!viewport) return
-
-    const observer = new ResizeObserver(updateNativeFrame)
-    observer.observe(viewport)
-    window.addEventListener('resize', updateNativeFrame)
+    const handleBoundsChange = () => scheduleEmbeddedBrowserBoundsSync(active)
+    const observer = new ResizeObserver(handleBoundsChange)
+    observeElementIfPresent(observer, host)
+    observeElementIfPresent(observer, host.parentElement)
+    observeElementIfPresent(observer, document.documentElement)
+    window.addEventListener('resize', handleBoundsChange)
+    window.visualViewport?.addEventListener('resize', handleBoundsChange)
+    schedulePostOpenBoundsSync(active)
 
     return () => {
       observer.disconnect()
-      window.removeEventListener('resize', updateNativeFrame)
+      window.removeEventListener('resize', handleBoundsChange)
+      window.visualViewport?.removeEventListener('resize', handleBoundsChange)
+      if (syncBoundsAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(syncBoundsAnimationFrameRef.current)
+      }
+      if (syncBoundsTimerRef.current !== null) {
+        window.clearTimeout(syncBoundsTimerRef.current)
+      }
     }
-  }, [nativeBrowserAvailable, nativeVisible, updateNativeFrame])
+  }, [
+    active,
+    currentUrl,
+    embeddedBrowserAvailable,
+    scheduleEmbeddedBrowserBoundsSync,
+    schedulePostOpenBoundsSync,
+  ])
 
   useEffect(() => {
-    if (!nativeBrowserAvailable) return
+    if (!active || !embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
 
-    let disposed = false
-    const unlistenCallbacks: Array<() => void> = []
+    const intervalId = window.setInterval(() => {
+      void refreshPageState()
+    }, EMBEDDED_BROWSER_STATE_INTERVAL_MS)
 
-    const attachListeners = async () => {
-      const { listen } = await import('@tauri-apps/api/event')
-      if (disposed) return
-
-      unlistenCallbacks.push(
-        await listen<InAppBrowserUrlChangedPayload>(IN_APP_BROWSER_URL_CHANGED_EVENT, event => {
-          if (
-            event.payload.label === WORKSPACE_BROWSER_LABEL &&
-            isSupportedBrowserUrl(event.payload.url)
-          ) {
-            updatePageUrl(event.payload.url)
-          }
-        }),
-        await listen<InAppBrowserTitleChangedPayload>(IN_APP_BROWSER_TITLE_CHANGED_EVENT, event => {
-          if (event.payload.label !== WORKSPACE_BROWSER_LABEL) return
-
-          const fallbackTitle = pageUrlRef.current
-            ? getFallbackBrowserTitle(pageUrlRef.current)
-            : null
-          onTitleChange?.(event.payload.title?.trim() || fallbackTitle)
-        }),
-        await listen<InAppBrowserFaviconChangedPayload>(
-          IN_APP_BROWSER_FAVICON_CHANGED_EVENT,
-          event => {
-            if (event.payload.label !== WORKSPACE_BROWSER_LABEL) return
-
-            const faviconUrl = event.payload.faviconUrl ?? event.payload.favicon_url ?? null
-            onFaviconChange?.(
-              faviconUrl?.trim() ||
-                (pageUrlRef.current ? getFallbackFaviconUrl(pageUrlRef.current) : null)
-            )
-          }
-        )
-      )
-    }
-
-    void attachListeners().catch(error => {
-      console.error('Failed to listen to in-app browser events:', error)
-    })
-
-    return () => {
-      disposed = true
-      unlistenCallbacks.forEach(unlisten => unlisten())
-    }
-  }, [nativeBrowserAvailable, onFaviconChange, onTitleChange, updatePageUrl])
+    return () => window.clearInterval(intervalId)
+  }, [active, embeddedBrowserAvailable, refreshPageState])
 
   useEffect(() => {
-    if (!nativeBrowserAvailable) return
-
-    const restoreNativeBrowser = () => {
-      if (!activeRef.current || !currentUrlRef.current) {
-        return
+    if (!active || !annotationMode || !embeddedBrowserAvailable || !nativeBrowserOpenRef.current) {
+      if (annotationMode) {
+        logBrowserAnnotation('consume effect inactive', {
+          label,
+          active,
+          annotationMode,
+          embeddedBrowserAvailable,
+          nativeBrowserOpen: nativeBrowserOpenRef.current,
+        })
       }
-
-      showNativeBrowser()
-    }
-    const handleVisibilityChange = () => {
-      if (document.hidden || !activeRef.current || !currentUrlRef.current) {
-        void hideNativeBrowser()
-        return
-      }
-
-      restoreNativeBrowser()
-    }
-    const handlePageHide = () => {
-      void hideNativeBrowser()
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('pagehide', handlePageHide)
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-      window.removeEventListener('pagehide', handlePageHide)
-      void closeNativeBrowser()
-    }
-  }, [closeNativeBrowser, hideNativeBrowser, nativeBrowserAvailable, showNativeBrowser])
-
-  const runBrowserCommand = async (command: () => Promise<void>) => {
-    if (!currentUrl) return
-    try {
-      await command()
-    } catch (error) {
-      console.error('Failed to control in-app browser:', error)
-      setStatus('error')
-      setError(t('workbench.browser_control_failed'))
-    }
-  }
-
-  const reloadCurrentUrl = (url: string) => {
-    if (!nativeBrowserAvailable) {
-      setCurrentUrl(null)
-      window.setTimeout(() => setCurrentUrl(url), 0)
       return
     }
 
-    showNativeBrowser()
-    void runBrowserCommand(() => reloadInAppBrowser(WORKSPACE_BROWSER_LABEL))
-  }
+    logBrowserAnnotation('consume effect active', {
+      label,
+      activePageUrl,
+      hasAddCodeComment: Boolean(onAddCodeComment),
+    })
+
+    const consumeAnnotations = async () => {
+      try {
+        const published = await evalEmbeddedBrowserJson<BrowserAnnotation[]>(
+          'window.__weworkBrowserAnnotationConsume?.() ?? []',
+          label
+        )
+        if (!Array.isArray(published)) {
+          logBrowserAnnotation('consume returned non-array payload', {
+            label,
+            payloadType: typeof published,
+          })
+          return
+        }
+        if (published.length === 0) {
+          if (annotationEmptyPollLogCountRef.current < 5) {
+            annotationEmptyPollLogCountRef.current += 1
+            logBrowserAnnotation('consume returned no annotations', {
+              label,
+              emptyPollCount: annotationEmptyPollLogCountRef.current,
+            })
+          }
+          return
+        }
+        logBrowserAnnotation('consume returned annotations', {
+          label,
+          count: published.length,
+          comments: published.map(annotation => annotation.comment),
+          hasAddCodeComment: Boolean(onAddCodeComment),
+        })
+        setAnnotations(current => [...current, ...published])
+        published.forEach(annotation => {
+          logBrowserAnnotation('forward annotation to workbench', {
+            label,
+            annotationId: annotation.id,
+            number: annotation.number,
+            commentLength: annotation.comment.length,
+          })
+          onAddCodeComment?.(
+            browserAnnotationContext(
+              annotation,
+              activePageUrl,
+              activePageUrl ? getFallbackBrowserTitle(activePageUrl) : null
+            )
+          )
+        })
+      } catch (error) {
+        console.error('Failed to consume embedded browser annotations:', error)
+        logBrowserAnnotation('consume annotations failed', {
+          label,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    const intervalId = window.setInterval(() => {
+      void consumeAnnotations()
+    }, 500)
+    void consumeAnnotations()
+
+    return () => {
+      logBrowserAnnotation('consume effect cleanup', { label })
+      window.clearInterval(intervalId)
+    }
+  }, [active, activePageUrl, annotationMode, embeddedBrowserAvailable, label, onAddCodeComment])
+
+  useEffect(() => {
+    return () => {
+      nativeBrowserOpenRef.current = false
+      if (consumeEmbeddedBrowserLabelTransfer(label)) return
+      void closeEmbeddedBrowser(label).catch(() => undefined)
+    }
+  }, [label])
+
+  useEffect(() => {
+    const handleDebugPanelVisibility = (event: Event) => {
+      const expanded = Boolean((event as CustomEvent<{ expanded?: boolean }>).detail?.expanded)
+      setDebugPanelExpanded(expanded)
+    }
+
+    window.addEventListener(
+      EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
+      handleDebugPanelVisibility
+    )
+    return () => {
+      window.removeEventListener(
+        EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
+        handleDebugPanelVisibility
+      )
+    }
+  }, [])
+
+  useEffect(() => {
+    void syncEmbeddedBrowserBounds(active).catch(error => {
+      console.error('Failed to sync embedded browser debug panel visibility:', error)
+    })
+  }, [active, debugPanelExpanded, syncEmbeddedBrowserBounds])
+
+  const runBrowserCommand = useCallback(
+    async (command: () => Promise<void>) => {
+      if (!currentUrl) return
+      try {
+        await command()
+        await refreshPageState()
+        setStatus('ready')
+      } catch (error) {
+        console.error('Failed to control embedded browser:', error)
+        setStatus('error')
+        setError(t('workbench.browser_control_failed'))
+      }
+    },
+    [currentUrl, refreshPageState, t]
+  )
+
+  const reloadCurrentUrl = useCallback(
+    (url: string) => {
+      if (!embeddedBrowserAvailable) {
+        setCurrentUrl(null)
+        window.setTimeout(() => setCurrentUrl(url), 0)
+        return
+      }
+
+      void runBrowserCommand(() => reloadEmbeddedBrowser(label))
+    },
+    [embeddedBrowserAvailable, label, runBrowserCommand]
+  )
+
+  const openBrowserUrl = useCallback(
+    (rawUrl: string) => {
+      const nextUrl = normalizeBrowserUrl(rawUrl)
+      if (!nextUrl) {
+        setStatus('error')
+        setError(t('workbench.browser_invalid_url'))
+        return
+      }
+
+      setAddress(nextUrl)
+      setError(null)
+
+      if (nextUrl === activePageUrl) {
+        setStatus('ready')
+        updatePageUrl(nextUrl)
+        reloadCurrentUrl(nextUrl)
+        return
+      }
+
+      updatePageUrl(nextUrl)
+
+      if (embeddedBrowserAvailable && nativeBrowserOpenRef.current) {
+        setStatus('loading')
+        void runBrowserCommand(() => navigateEmbeddedBrowser(nextUrl, label)).then(() => {
+          setCurrentUrl(nextUrl)
+        })
+        return
+      }
+
+      setCurrentUrl(nextUrl)
+      setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+    },
+    [
+      activePageUrl,
+      embeddedBrowserAvailable,
+      label,
+      reloadCurrentUrl,
+      runBrowserCommand,
+      t,
+      updatePageUrl,
+    ]
+  )
+
+  useEffect(() => {
+    if (!openRequest?.url) return
+    if (openRequest.label && openRequest.label !== label) return
+    if (handledOpenRequestIdRef.current === openRequest.id) return
+    handledOpenRequestIdRef.current = openRequest.id
+    openBrowserUrl(openRequest.url)
+  }, [label, openBrowserUrl, openRequest?.id, openRequest?.label, openRequest?.url])
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const nextUrl = normalizeBrowserUrl(address)
-    if (!nextUrl) {
-      setStatus('error')
-      setError(t('workbench.browser_invalid_url'))
-      return
-    }
-
-    setAddress(nextUrl)
-    setError(null)
-
-    if (nextUrl === activePageUrl) {
-      setStatus('ready')
-      updatePageUrl(nextUrl)
-      reloadCurrentUrl(nextUrl)
-      return
-    }
-
-    updatePageUrl(nextUrl)
-    setCurrentUrl(nextUrl)
-    setStatus(nativeBrowserAvailable ? 'loading' : 'ready')
+    openBrowserUrl(address)
   }
 
   const handleReload = () => {
@@ -489,52 +1035,98 @@ export function WorkspaceBrowserPanel({
         !active && 'hidden'
       )}
     >
-      <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border bg-background px-2">
-        <BrowserToolbarButton
-          testId="workspace-browser-back-button"
-          label={t('workbench.browser_back')}
-          disabled={!currentUrl || !nativeBrowserAvailable}
-          onClick={() => void runBrowserCommand(() => goBackInAppBrowser(WORKSPACE_BROWSER_LABEL))}
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </BrowserToolbarButton>
-        <BrowserToolbarButton
-          testId="workspace-browser-forward-button"
-          label={t('workbench.browser_forward')}
-          disabled={!currentUrl || !nativeBrowserAvailable}
-          onClick={() =>
-            void runBrowserCommand(() => goForwardInAppBrowser(WORKSPACE_BROWSER_LABEL))
-          }
-        >
-          <ArrowRight className="h-4 w-4" />
-        </BrowserToolbarButton>
-        <BrowserToolbarButton
-          testId="workspace-browser-reload-button"
-          label={t('workbench.browser_reload')}
-          disabled={!activePageUrl}
-          onClick={handleReload}
-        >
-          <RotateCw className="h-4 w-4" />
-        </BrowserToolbarButton>
-        <form onSubmit={handleSubmit} className="min-w-0 flex-1">
-          <input
-            data-testid="workspace-browser-url-input"
-            value={address}
-            onChange={event => setAddress(event.target.value)}
-            placeholder={t('workbench.browser_url_placeholder')}
-            className="h-8 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background"
-          />
-        </form>
-        <BrowserToolbarButton
-          testId="workspace-browser-open-external-button"
-          label={t('workbench.browser_open_external')}
-          disabled={!activePageUrl}
-          onClick={handleOpenExternal}
-        >
-          <ExternalLink className="h-4 w-4" />
-        </BrowserToolbarButton>
-      </div>
-      <div ref={viewportRef} className="relative min-h-0 flex-1 overflow-hidden bg-background">
+      {annotationMode ? (
+        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-blue-200 bg-blue-50 px-2 text-[13px] text-text-primary">
+          <BrowserToolbarButton
+            testId="workspace-browser-annotation-close-button"
+            label={t('workbench.browser_annotation_close')}
+            onClick={exitAnnotationMode}
+          >
+            <X className="h-4 w-4" />
+          </BrowserToolbarButton>
+          <BrowserToolbarButton
+            testId="workspace-browser-annotation-clear-button"
+            label={t('workbench.browser_annotation_clear')}
+            onClick={() => {
+              setAnnotations([])
+              void evalEmbeddedBrowser(
+                'window.__weworkBrowserAnnotationClear?.(); true',
+                label
+              ).catch(error => {
+                console.error('Failed to clear embedded browser annotations:', error)
+              })
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </BrowserToolbarButton>
+          <div className="min-w-0 flex-1 truncate text-center font-medium">
+            {t('workbench.browser_annotation_active', {
+              site: activePageUrl ? getFallbackBrowserTitle(activePageUrl) : t('workbench.browser'),
+            })}
+          </div>
+          {annotations.length > 0 ? (
+            <span
+              data-testid="workspace-browser-annotation-count"
+              className="rounded-md bg-blue-100 px-2 py-1 text-xs font-medium text-blue-700"
+            >
+              {t('workbench.browser_annotation_count', { count: annotations.length })}
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border bg-background px-2">
+          <BrowserToolbarButton
+            testId="workspace-browser-back-button"
+            label={t('workbench.browser_back')}
+            disabled={!currentUrl || !embeddedBrowserAvailable}
+            onClick={() => void runBrowserCommand(() => goBackEmbeddedBrowser(label))}
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </BrowserToolbarButton>
+          <BrowserToolbarButton
+            testId="workspace-browser-forward-button"
+            label={t('workbench.browser_forward')}
+            disabled={!currentUrl || !embeddedBrowserAvailable}
+            onClick={() => void runBrowserCommand(() => goForwardEmbeddedBrowser(label))}
+          >
+            <ArrowRight className="h-4 w-4" />
+          </BrowserToolbarButton>
+          <BrowserToolbarButton
+            testId="workspace-browser-reload-button"
+            label={t('workbench.browser_reload')}
+            disabled={!activePageUrl}
+            onClick={handleReload}
+          >
+            <RotateCw className="h-4 w-4" />
+          </BrowserToolbarButton>
+          <form onSubmit={handleSubmit} className="min-w-0 flex-1">
+            <input
+              data-testid="workspace-browser-url-input"
+              value={address}
+              onChange={event => setAddress(event.target.value)}
+              placeholder={t('workbench.browser_url_placeholder')}
+              className="h-8 w-full rounded-md border border-border bg-surface px-3 text-[13px] text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-primary focus:bg-background"
+            />
+          </form>
+          <BrowserToolbarButton
+            testId="workspace-browser-annotate-button"
+            label={t('workbench.browser_annotation_start')}
+            disabled={!activePageUrl || !embeddedBrowserAvailable}
+            onClick={() => void enterAnnotationMode()}
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+          </BrowserToolbarButton>
+          <BrowserToolbarButton
+            testId="workspace-browser-open-external-button"
+            label={t('workbench.browser_open_external')}
+            disabled={!activePageUrl}
+            onClick={handleOpenExternal}
+          >
+            <ExternalLink className="h-4 w-4" />
+          </BrowserToolbarButton>
+        </div>
+      )}
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-background pl-1">
         {!currentUrl && (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">
             <Globe2 className="mb-4 h-8 w-8 text-text-muted" />
@@ -546,7 +1138,7 @@ export function WorkspaceBrowserPanel({
             </p>
           </div>
         )}
-        {currentUrl && !nativeBrowserAvailable && (
+        {currentUrl && !embeddedBrowserAvailable && (
           <iframe
             key={currentUrl}
             data-testid="workspace-browser-frame"
@@ -555,12 +1147,21 @@ export function WorkspaceBrowserPanel({
             className="h-full w-full border-0 bg-background"
           />
         )}
-        {currentUrl && nativeBrowserAvailable && status === 'loading' && (
+        {currentUrl && embeddedBrowserAvailable && (
           <div
-            data-testid="workspace-browser-loading"
-            className="absolute inset-0 flex items-center justify-center bg-background"
+            ref={browserHostRef}
+            data-testid="workspace-browser-native-view"
+            className="relative h-full min-h-0 w-full bg-background"
+            aria-label={t('workbench.browser')}
           >
-            <Loader2 className="h-5 w-5 animate-spin text-text-secondary" />
+            {status === 'loading' && (
+              <div
+                data-testid="workspace-browser-loading"
+                className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/40"
+              >
+                <Loader2 className="h-5 w-5 animate-spin text-text-secondary" />
+              </div>
+            )}
           </div>
         )}
         {error && (
@@ -596,7 +1197,7 @@ function BrowserToolbarButton({
       data-testid={testId}
       disabled={disabled}
       onClick={onClick}
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
+      className="flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-45"
       aria-label={label}
       title={label}
     >

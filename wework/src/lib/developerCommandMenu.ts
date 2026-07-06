@@ -13,6 +13,7 @@ import { isTauriRuntime } from './runtime-environment'
 
 const MENU_ID = 'wework-developer-command-menu'
 const DEBUG_PANEL_ID = 'wework-debug-panel'
+const DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 const INSPECTOR_COMMAND = 'open_main_webview_devtools'
 const OPEN_LOG_DIRECTORY_COMMAND = 'open_app_log_directory'
 
@@ -194,9 +195,11 @@ function openDebugPanel() {
 
 function closeDebugPanel() {
   document.getElementById(DEBUG_PANEL_ID)?.remove()
+  emitDebugPanelVisibility(false)
 }
 
 function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
+  emitDebugPanelVisibility(expanded)
   const snapshot = getWorkbenchDebugSnapshot()
   root.innerHTML = ''
   root.className = expanded
@@ -257,6 +260,14 @@ function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
     event.preventDefault()
     renderDebugPanelShell(root, false)
   }
+}
+
+function emitDebugPanelVisibility(expanded: boolean) {
+  window.dispatchEvent(
+    new CustomEvent(DEBUG_PANEL_VISIBILITY_EVENT, {
+      detail: { expanded },
+    })
+  )
 }
 
 function renderDebugPanelBody(container: HTMLElement, snapshot: WorkbenchDebugSnapshot) {

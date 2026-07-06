@@ -35,6 +35,12 @@ import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import {
+  listenEmbeddedBrowserOpenRequests,
+  markEmbeddedBrowserLabelTransferred,
+  relabelEmbeddedBrowser,
+  type EmbeddedBrowserOpenRequest,
+} from '@/lib/embedded-browser'
 import { TaskForkDialog } from './TaskForkDialog'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
@@ -93,6 +99,31 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
 const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '17rem'
+const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
+
+interface PendingBlankBrowserMigration {
+  sourcePaneKey: string
+  browserLabel: string
+  rightPanelOpen: boolean
+  rightPanelView: RightWorkspacePanelView
+  rightPanelTabs: RightWorkspacePanelTab[]
+  createdAt: number
+}
+
+let latestBlankBrowserMigration: PendingBlankBrowserMigration | null = null
+
+function consumeLatestBlankBrowserMigration(): PendingBlankBrowserMigration | null {
+  if (!latestBlankBrowserMigration) return null
+  if (Date.now() - latestBlankBrowserMigration.createdAt > BLANK_BROWSER_MIGRATION_TTL_MS) {
+    latestBlankBrowserMigration = null
+    return null
+  }
+
+  const migration = latestBlankBrowserMigration
+  latestBlankBrowserMigration = null
+  markEmbeddedBrowserLabelTransferred(migration.browserLabel)
+  return migration
+}
 
 function getRuntimeWorkbenchPaneKeys(
   runtimeWork: RuntimeWorkListResponse | null | undefined
@@ -242,6 +273,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
   const paneKey = getWorkbenchPaneKey(pane)
+  const [initialBlankBrowserMigration] = useState<PendingBlankBrowserMigration | null>(() =>
+    currentRuntimeTask ? consumeLatestBlankBrowserMigration() : null
+  )
   const paneActive = useWorkbenchPaneActive()
   const paneSession = useWorkbenchPaneSession({ currentRuntimeTask })
   const projectWork = useWorkbenchProjectWorkControls({
@@ -265,10 +299,22 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isBootstrapping = state.isBootstrapping
   const runtimeWork = state.runtimeWork
   const devices = state.devices
-  const [rightPanelOpen, setRightPanelOpen] = useState(false)
-  const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
-  const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
+  const [rightPanelOpen, setRightPanelOpen] = useState(
+    () => initialBlankBrowserMigration?.rightPanelOpen ?? false
+  )
+  const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>(
+    () => initialBlankBrowserMigration?.rightPanelView ?? 'launcher'
+  )
+  const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>(
+    () => initialBlankBrowserMigration?.rightPanelTabs ?? []
+  )
+  const [migratedEmbeddedBrowserLabel, setMigratedEmbeddedBrowserLabel] = useState<string | null>(
+    () => initialBlankBrowserMigration?.browserLabel ?? null
+  )
   const temporaryChatTabSequence = useRef(0)
+  const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] = useState<
+    (EmbeddedBrowserOpenRequest & { id: number }) | null
+  >(null)
   const [rightPanelPlanContent, setRightPanelPlanContent] = useState<string | null>(null)
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
@@ -294,7 +340,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     targetBranchName: undefined,
     reloadDiff: undefined,
   })
-  const closeRightPanel = useCallback(() => setRightPanelOpen(false), [])
+  const closeRightPanel = useCallback(() => setRightPanelOpen(false), [setRightPanelOpen])
   const {
     width: rightSplitChatWidth,
     resizing: rightSplitResizing,
@@ -316,6 +362,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const floatingComposerClearance =
     floatingComposerHeight + FLOATING_COMPOSER_BOTTOM_OFFSET_PX + FLOATING_COMPOSER_MESSAGE_GAP_PX
+  const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
+    ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
+    : `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(paneKey)}`
+  const embeddedBrowserLabel = migratedEmbeddedBrowserLabel ?? defaultEmbeddedBrowserLabel
   const activeDeviceId =
     currentRuntimeTask?.deviceId ??
     getActiveWorkbenchDeviceId({
@@ -348,6 +398,59 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     effectiveWorkspaceTarget?.source !== 'runtime' &&
     !workspaceTargetUsesRemoteDevice &&
     !workspaceTargetUsesRemoteSource
+
+  useEffect(() => {
+    if (currentRuntimeTask || !rightPanelTabs.includes('browser')) {
+      if (latestBlankBrowserMigration?.sourcePaneKey === paneKey) {
+        latestBlankBrowserMigration = null
+      }
+      return
+    }
+
+    latestBlankBrowserMigration = {
+      sourcePaneKey: paneKey,
+      browserLabel: embeddedBrowserLabel,
+      rightPanelOpen,
+      rightPanelView,
+      rightPanelTabs,
+      createdAt: Date.now(),
+    }
+  }, [
+    currentRuntimeTask,
+    embeddedBrowserLabel,
+    paneKey,
+    rightPanelOpen,
+    rightPanelTabs,
+    rightPanelView,
+  ])
+
+  useEffect(() => {
+    if (!initialBlankBrowserMigration || !currentRuntimeTask) return
+    if (migratedEmbeddedBrowserLabel !== initialBlankBrowserMigration.browserLabel) return
+
+    let disposed = false
+    void relabelEmbeddedBrowser(
+      initialBlankBrowserMigration.browserLabel,
+      defaultEmbeddedBrowserLabel
+    )
+      .then(() => {
+        if (!disposed) {
+          setMigratedEmbeddedBrowserLabel(null)
+        }
+      })
+      .catch(error => {
+        console.error('Failed to migrate embedded browser label:', error)
+      })
+
+    return () => {
+      disposed = true
+    }
+  }, [
+    currentRuntimeTask,
+    defaultEmbeddedBrowserLabel,
+    initialBlankBrowserMigration,
+    migratedEmbeddedBrowserLabel,
+  ])
 
   useLayoutEffect(() => {
     const main = workbenchMainRef.current
@@ -402,7 +505,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       next[existingIndex] = activeBottomPanelContext
       return next
     })
-  }, [activeBottomPanelContext, bottomPanelWorkspaceKey])
+  }, [activeBottomPanelContext, bottomPanelWorkspaceKey, setBottomPanelContexts])
   const setCurrentBottomPanelOpen = useCallback(
     (next: boolean | ((open: boolean) => boolean)) => {
       rememberActiveBottomPanelContext()
@@ -422,6 +525,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onTerminalPanePinned,
       paneKey,
       rememberActiveBottomPanelContext,
+      setBottomPanelOpenByKey,
     ]
   )
   const bottomPanelContextsToRender = useMemo(() => {
@@ -511,25 +615,45 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         projectName: currentProject.name,
       })
     : t('workbench.empty_title', '我们该做什么？')
-  const openRightPanelTab = useCallback((tab: RightWorkspacePanelTab) => {
-    setRightPanelOpen(true)
-    setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
-    setRightPanelView(tab)
-  }, [])
-  const selectRightPanelTab = useCallback((tab: RightWorkspacePanelTab) => {
-    setRightPanelOpen(true)
-    setRightPanelView(tab)
-  }, [])
+  const openRightPanelTab = useCallback(
+    (tab: RightWorkspacePanelTab) => {
+      setRightPanelOpen(true)
+      setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
+      setRightPanelView(tab)
+    },
+    [setRightPanelOpen, setRightPanelTabs, setRightPanelView]
+  )
+  const selectRightPanelTab = useCallback(
+    (tab: RightWorkspacePanelTab) => {
+      setRightPanelOpen(true)
+      setRightPanelView(tab)
+    },
+    [setRightPanelOpen, setRightPanelView]
+  )
   const openTemporaryChatTab = useCallback(() => {
     temporaryChatTabSequence.current += 1
     openRightPanelTab(`chat:${Date.now()}-${temporaryChatTabSequence.current}`)
   }, [openRightPanelTab])
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserOpenRequests(request => {
+      if (request.label && request.label !== embeddedBrowserLabel) return
+      setEmbeddedBrowserOpenRequest(current => ({
+        ...request,
+        id: (current?.id ?? 0) + 1,
+      }))
+      openRightPanelTab('browser')
+    })
+
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [embeddedBrowserLabel, openRightPanelTab])
   const openAssistantPlan = useCallback(
     (content: string) => {
       setRightPanelPlanContent(content)
       openRightPanelTab('plan')
     },
-    [openRightPanelTab]
+    [openRightPanelTab, setRightPanelPlanContent]
   )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
@@ -546,7 +670,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
     },
-    [rightPanelView]
+    [rightPanelView, setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
 
   const openReviewFromDiffLoader = useCallback(
@@ -603,7 +727,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       }
     },
-    [openRightPanelTab, t]
+    [openRightPanelTab, setReviewState, t]
   )
 
   const openEnvironmentChangesReview = useCallback(
@@ -667,7 +791,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }))
       openRightPanelTab('files')
     },
-    [openRightPanelTab]
+    [openRightPanelTab, setOpenFileRequest]
   )
 
   const refreshReview = useCallback(() => {
@@ -769,7 +893,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       }
       return nextOpen
     })
-  }, [rightPanelTabs])
+  }, [rightPanelTabs, setRightPanelOpen, setRightPanelView])
   const toggleBottomPanel = useCallback(
     () => setCurrentBottomPanelOpen(open => !open),
     [setCurrentBottomPanelOpen]
@@ -1259,6 +1383,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               workspaceTargetError={workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
+              embeddedBrowserLabel={embeddedBrowserLabel}
+              embeddedBrowserOpenRequest={embeddedBrowserOpenRequest}
+              codeCommentCount={paneSession.codeCommentContexts.length}
               reviewViewOptions={reviewViewOptions}
               canOpenReview={Boolean(loadEnvironmentDiff && workspaceTarget)}
               onAddCodeComment={paneSession.addCodeComment}
@@ -1345,4 +1472,12 @@ function RightWorkspaceTitlebarLayoutSync({ open, width }: { open: boolean; widt
   }, [open, width])
 
   return null
+}
+
+function sanitizeEmbeddedBrowserLabelSegment(value: string) {
+  return value
+    .trim()
+    .split('')
+    .map(character => (/^[a-zA-Z0-9_-]$/.test(character) ? character : '-'))
+    .join('')
 }

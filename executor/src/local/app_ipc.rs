@@ -1149,6 +1149,25 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             &["python3", "-c", LOCAL_SKILLS_SCRIPT],
             Some(PostProcessor::Json),
         )),
+        "browser_relay_restart" => Some(command_definition(
+            "sh -lc <browser_relay_restart>",
+            &[
+                "sh",
+                "-lc",
+                "exec \"$HOME/.wegent-executor/bin/cdp-relay-server\" --restart",
+            ],
+            None,
+        )),
+        "browser_tool" => Some(command_definition(
+            "sh -lc <browser_tool>",
+            &[
+                "sh",
+                "-lc",
+                "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
+                "--",
+            ],
+            Some(PostProcessor::Json),
+        )),
         "turn_file_changes_review" => Some(command_definition(
             "python3 -c <turn_file_changes> review",
             &["python3", "-c", TURN_FILE_CHANGES_SCRIPT, "review"],

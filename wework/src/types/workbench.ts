@@ -24,6 +24,7 @@ import type {
   WorkbenchToolBlock,
   WorkbenchToolBlockStatus,
 } from '@wegent/chat-core'
+import type { CodeCommentContext } from './workspace-files'
 
 export type MessageRole = WorkbenchMessageRole
 export type MessageStatus = WorkbenchMessageStatus
@@ -70,6 +71,7 @@ export type WorkbenchMessage = Omit<
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
   runtimeGoalRequest?: boolean | null
+  codeComments?: CodeCommentContext[] | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null
 }
