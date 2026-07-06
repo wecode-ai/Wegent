@@ -19,11 +19,12 @@ import { ComposerTextarea } from './ComposerTextarea'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
+import { debugComposerEvent, textMetrics } from './composerDebug'
 
 interface CompactChatComposerProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: () => void
+  onSubmit: (submittedValue?: string) => void
   disabled: boolean
   disabledReason?: string
   placeholder: string
@@ -198,7 +199,16 @@ export function CompactChatComposer({
         className="flex w-full items-end gap-2"
         onSubmit={event => {
           event.preventDefault()
-          if (canSend) onSubmit()
+          const submittedValue = event.currentTarget.querySelector('textarea')?.value
+          debugComposerEvent('compact-form-submit', {
+            canSend,
+            propValue: textMetrics(value),
+            submittedValue: textMetrics(submittedValue),
+            attachmentsCount: attachments.length,
+            codeCommentsCount: codeComments.length,
+            disabled,
+          })
+          if (canSend) onSubmit(submittedValue)
         }}
       >
         <button

@@ -90,9 +90,11 @@ export type WorkbenchAction =
       type: 'project_cleared'
       standaloneDeviceId?: string | null
       standaloneWorkspacePath?: string | null
+      startFreshChat?: boolean
     }
   | { type: 'user_preferences_updated'; preferences: UserPreferences }
   | { type: 'standalone_device_preference_changed'; standaloneDeviceId: string | null }
+  | { type: 'blank_chat_committed' }
   | {
       type: 'runtime_task_opened'
       address: RuntimeTaskAddress
@@ -1099,7 +1101,9 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
             ? state.standaloneWorkspacePath
             : action.standaloneWorkspacePath,
         currentRuntimeTask: null,
-        standaloneChatKey: state.standaloneChatKey + 1,
+        standaloneChatKey: action.startFreshChat
+          ? state.standaloneChatKey + 1
+          : state.standaloneChatKey,
       }
     case 'user_preferences_updated':
       return {
@@ -1116,6 +1120,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
         ...state,
         standaloneDeviceId: action.standaloneDeviceId,
         standaloneWorkspacePath: null,
+      }
+    case 'blank_chat_committed':
+      return {
+        ...state,
+        standaloneChatKey: state.standaloneChatKey + 1,
       }
     case 'runtime_task_opened':
       return {
@@ -1147,7 +1156,6 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         currentRuntimeTask: null,
-        standaloneChatKey: state.standaloneChatKey + 1,
       }
     case 'error_set':
       return { ...state, error: action.error }

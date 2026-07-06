@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlocksDisplay } from './ToolBlocksDisplay'
 import type { ProcessingBlock } from '@/types/workbench'
@@ -178,7 +178,16 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('context-compaction-indicator')).toHaveTextContent(
       '正在自动压缩上下文'
     )
+    expect(screen.getByText('正在自动压缩上下文')).toHaveClass('waiting-thinking-text')
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
+  test('keeps completed context compaction status static', () => {
+    render(<ToolBlocksDisplay blocks={[completedContextCompactionBlock]} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByText('上下文已自动压缩')).not.toHaveClass('waiting-thinking-text')
   })
 
   test('renders completed web search tools as a Codex-style web search activity', () => {
@@ -430,6 +439,146 @@ describe('ToolBlocksDisplay', () => {
     expect(
       await screen.findByTestId('process-file-change-diff-copy-success-icon')
     ).toBeInTheDocument()
+  })
+
+  test('merges consecutive file change blocks into one activity row', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          completedFileChangesBlock,
+          {
+            ...completedFileChangesBlock,
+            id: 'file-changes-2',
+            createdAt: 1770000003001,
+            fileChanges: {
+              ...completedFileChangesBlock.fileChanges,
+              artifact_id: 'artifact-2',
+              additions: 3,
+              deletions: 0,
+              files: [
+                {
+                  path: 'scripts/env',
+                  change_type: 'modified',
+                  additions: 3,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    const fileChangeBlocks = screen.getAllByTestId('process-file-changes-block')
+    expect(fileChangeBlocks).toHaveLength(1)
+    expect(fileChangeBlocks[0]).toHaveTextContent('已编辑 1 个文件')
+    expect(fileChangeBlocks[0]).toHaveTextContent('+5')
+    expect(fileChangeBlocks[0]).toHaveTextContent('-1')
+  })
+
+  test('renders static file change stat bars for historical file changes', () => {
+    render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    const statBars = screen
+      .getByTestId('process-file-changes-block')
+      .querySelectorAll('.file-change-stat-block')
+    expect(statBars).toHaveLength(1)
+  })
+
+  test('keeps streaming file change stat animation until final diff replaces the summary', async () => {
+    const streamingSummaryBlock: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      status: 'streaming',
+      fileChanges: {
+        ...completedFileChangesBlock.fileChanges,
+        artifact_id: 'same-artifact',
+        additions: 1,
+        deletions: 0,
+        file_count: 1,
+        files: [
+          {
+            path: 'src/streaming.ts',
+            change_type: 'modified',
+            additions: 1,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      },
+    }
+    const updatedStreamingSummaryBlock: ProcessingBlock = {
+      ...streamingSummaryBlock,
+      fileChanges: {
+        ...streamingSummaryBlock.fileChanges,
+        additions: 5,
+        file_count: 5,
+        files: Array.from({ length: 5 }, (_, index) => ({
+          path: `src/file-${index}.ts`,
+          change_type: 'modified' as const,
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        })),
+      },
+    }
+    const finalSummaryBlock: ProcessingBlock = {
+      ...updatedStreamingSummaryBlock,
+      status: 'done',
+      fileChanges: {
+        ...updatedStreamingSummaryBlock.fileChanges,
+        additions: 4,
+        deletions: 0,
+        file_count: 1,
+        files: [
+          {
+            path: 'src/final.ts',
+            change_type: 'modified',
+            additions: 4,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      },
+    }
+
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[streamingSummaryBlock]} isStreaming={false} forceExpanded />
+    )
+
+    expect(
+      screen.getByTestId('process-file-changes-block').querySelectorAll('.file-change-stat-block')
+    ).toHaveLength(1)
+
+    rerender(
+      <ToolBlocksDisplay blocks={[updatedStreamingSummaryBlock]} isStreaming={true} forceExpanded />
+    )
+
+    await waitFor(() => {
+      const streamingStatBars = screen
+        .getByTestId('process-file-changes-block')
+        .querySelectorAll<HTMLElement>('.file-change-stat-block')
+      expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('+5')
+      expect(streamingStatBars).toHaveLength(1)
+      expect(
+        streamingStatBars[0].style.getPropertyValue('--file-change-stat-addition-height')
+      ).toBe('9.4px')
+    })
+
+    rerender(<ToolBlocksDisplay blocks={[finalSummaryBlock]} isStreaming={false} forceExpanded />)
+
+    const statBars = screen
+      .getByTestId('process-file-changes-block')
+      .querySelectorAll<HTMLElement>('.file-change-stat-block')
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('+4')
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('-0')
+    expect(statBars).toHaveLength(1)
+    expect(statBars[0].style.getPropertyValue('--file-change-stat-addition-height')).toBe('9.4px')
   })
 
   test('uses an edit icon for completed edit activity groups', () => {

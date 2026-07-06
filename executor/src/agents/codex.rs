@@ -32,6 +32,7 @@ use crate::{
     process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
+    runtime_work::codex_stream_debug_enabled,
 };
 
 use super::{model_id, prompt_text};
@@ -43,6 +44,10 @@ const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const MACOS_CODEX_APP_BINARY: &str = "/Applications/Codex.app/Contents/Resources/codex";
+const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
+    "features.apply_patch_streaming_events=true";
+const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
+    "suppress_unstable_features_warning=true";
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -1720,6 +1725,10 @@ fn log_codex_run_state_text(
     item: &Value,
     text: &str,
 ) {
+    if source == "delta" && !codex_stream_debug_enabled() {
+        return;
+    }
+
     log_executor_event(
         "codex run state text classification",
         &[
@@ -1771,6 +1780,14 @@ fn log_codex_run_state_error(params: &Value) {
 
 fn log_codex_raw_turn_message(message: &Value) {
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+    if matches!(
+        method,
+        "item/agentMessage/delta" | "item/reasoning/delta" | "item/reasoningSummary/delta"
+    ) && !codex_stream_debug_enabled()
+    {
+        return;
+    }
+
     if !matches!(
         method,
         "item/agentMessage/delta"
@@ -1924,6 +1941,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     launch_config
         .config_overrides
         .push(shell_path_config_override());
+    launch_config
+        .config_overrides
+        .extend(codex_streaming_patch_config_overrides());
 
     if let Some(model) = &model {
         launch_config
@@ -1995,6 +2015,13 @@ fn shell_path_config_override() -> String {
         env::var("PATH").ok().as_deref().unwrap_or_default(),
     );
     format!("shell_environment_policy.set.PATH={}", toml_value(&path))
+}
+
+fn codex_streaming_patch_config_overrides() -> Vec<String> {
+    vec![
+        CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned(),
+        CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned(),
+    ]
 }
 
 fn thread_config(
@@ -3224,6 +3251,26 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn codex_launch_config_enables_streaming_patch_updates() {
+        let request = ExecutionRequest {
+            prompt: Value::String("create a file".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5-codex",
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+
+        assert!(launch_config
+            .config_overrides
+            .contains(&CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned()));
+        assert!(launch_config
+            .config_overrides
+            .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
+    }
 
     #[test]
     fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {

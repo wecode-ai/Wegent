@@ -38,6 +38,7 @@ export interface WorkbenchDebugSnapshot {
     standaloneDeviceId: string | null
     standaloneWorkspacePath: string | null
     selectedDeviceWorkspaceId: number | null
+    composer: WorkbenchComposerDebugSnapshot | null
     cloudWorkStatus: CloudWorkStatus
   } | null
   pane: RuntimePaneDebugSnapshot | null
@@ -115,6 +116,14 @@ interface RuntimeWorkSummary {
   runningTaskCount: number
 }
 
+interface WorkbenchComposerDebugSnapshot {
+  scopeKey: string
+  standaloneChatKey: number
+  currentInputLength: number
+  scopedInputLengths: Record<string, number>
+  attachmentCount: number
+}
+
 interface MessageSummary {
   total: number
   byRole: Record<string, number>
@@ -160,10 +169,12 @@ export function updateWorkbenchDebugSnapshot({
   state,
   currentRuntimeTaskRunning,
   cloudWorkStatus,
+  composer = null,
 }: {
   state: WorkbenchState
   currentRuntimeTaskRunning: boolean
   cloudWorkStatus: CloudWorkStatus
+  composer?: WorkbenchComposerDebugSnapshot | null
 }) {
   const activeTask = findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)
   workbenchSnapshot = {
@@ -186,6 +197,7 @@ export function updateWorkbenchDebugSnapshot({
     standaloneDeviceId: state.standaloneDeviceId,
     standaloneWorkspacePath: state.standaloneWorkspacePath,
     selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
+    composer,
     cloudWorkStatus,
   }
 }

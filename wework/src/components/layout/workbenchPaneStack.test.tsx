@@ -85,6 +85,22 @@ describe('workbenchPaneStack', () => {
     expect(getWorkbenchPaneKey(basePane)).toBe(getWorkbenchPaneKey(resolvedPane))
   })
 
+  test('keeps the same blank pane key when project context is resolved later', () => {
+    expect(
+      getWorkbenchPaneKey({
+        currentRuntimeTask: null,
+        currentProject: null,
+        standaloneChatKey: 3,
+      })
+    ).toBe(
+      getWorkbenchPaneKey({
+        currentRuntimeTask: null,
+        currentProject: { id: 7, name: 'Wegent', tasks: [] },
+        standaloneChatKey: 3,
+      })
+    )
+  })
+
   test('keeps pinned runtime panes mounted beyond the normal cache limit', async () => {
     const panes: WorkbenchPaneIdentity[] = [
       { currentRuntimeTask: { deviceId: 'device-1', taskId: 101 }, currentProject: null },
@@ -197,6 +213,37 @@ describe('workbenchPaneStack', () => {
     expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('hi')
 
     await userEvent.click(screen.getByText('start fresh chat'))
+
+    expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('empty')
+  })
+
+  test('uses standalone chat key to create a fresh project chat pane', async () => {
+    function RuntimePaneStackProbe() {
+      const [standaloneChatKey, setStandaloneChatKey] = useState(0)
+      return (
+        <div>
+          <button type="button" onClick={() => setStandaloneChatKey(value => value + 1)}>
+            start fresh project chat
+          </button>
+          <CachedWorkbenchPaneStack
+            activePane={{
+              currentRuntimeTask: null,
+              currentProject: { id: 7, name: 'Wegent', tasks: [] },
+              standaloneChatKey,
+            }}
+            maxPanes={2}
+            renderPane={activePane => <StandaloneLocalStatePane pane={activePane} />}
+          />
+        </div>
+      )
+    }
+
+    render(<RuntimePaneStackProbe />)
+
+    await userEvent.click(screen.getByText('seed local message'))
+    expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('hi')
+
+    await userEvent.click(screen.getByText('start fresh project chat'))
 
     expect(screen.getByTestId('standalone-local-message')).toHaveTextContent('empty')
   })

@@ -349,6 +349,7 @@ function CollapsibleProcessingContent({
     }
     if (!keepMounted) setIsRendered(false)
   }
+  const allowOverflow = expanded && maxHeight === 'none'
 
   return (
     <div
@@ -357,7 +358,8 @@ function CollapsibleProcessingContent({
       inert={!expanded ? true : undefined}
       onTransitionEnd={handleTransitionEnd}
       className={[
-        'overflow-hidden transition-[max-height,opacity] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        'transition-[max-height,opacity] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        allowOverflow ? 'overflow-visible' : 'overflow-hidden',
         expanded ? 'opacity-100' : 'pointer-events-none opacity-0',
       ].join(' ')}
       style={{ maxHeight }}
@@ -366,7 +368,8 @@ function CollapsibleProcessingContent({
         <div
           ref={contentRef}
           className={[
-            'min-h-0 overflow-hidden transition-transform duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            'min-h-0 transition-transform duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            allowOverflow ? 'overflow-visible' : 'overflow-hidden',
             expanded ? 'translate-y-0' : '-translate-y-1',
           ].join(' ')}
         >
@@ -432,6 +435,7 @@ function ToolActivityGroup({
 
 function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
   const label = getContextCompactionLabel(block)
+  const isRunning = block.status !== 'done' && block.status !== 'error'
   const textClassName = block.status === 'error' ? 'text-red-500' : 'text-text-muted'
 
   return (
@@ -445,7 +449,9 @@ function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
         className={`inline-flex min-w-0 max-w-full items-center gap-1.5 text-[13px] font-semibold ${textClassName}`}
       >
         <Archive className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
-        <span className="min-w-0 truncate">{label}</span>
+        <span className={`min-w-0 truncate ${isRunning ? 'waiting-thinking-text' : ''}`}>
+          {label}
+        </span>
       </span>
       <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
     </div>

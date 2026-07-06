@@ -14,6 +14,7 @@ const DIFF_PREVIEW_DELAY_MS = 500
 const DIFF_PREVIEW_ESTIMATED_HEIGHT = 424
 const DIFF_PREVIEW_MAX_LINES = 240
 const DIFF_PREVIEW_MAX_WIDTH = 640
+const DIFF_PREVIEW_HORIZONTAL_OFFSET = 12
 const DIFF_PREVIEW_VIEWPORT_GUTTER = 32
 const DIFF_PREVIEW_VERTICAL_GAP = 8
 
@@ -322,7 +323,10 @@ function useDelayedDiffPreview(preview: DiffPreview | null) {
           Math.max(280, window.innerWidth - DIFF_PREVIEW_VIEWPORT_GUTTER * 2)
         )
         const maxLeft = window.innerWidth - width - DIFF_PREVIEW_VIEWPORT_GUTTER
-        const left = Math.min(Math.max(rect.left, DIFF_PREVIEW_VIEWPORT_GUTTER), maxLeft)
+        const left = Math.min(
+          Math.max(rect.left - DIFF_PREVIEW_HORIZONTAL_OFFSET, DIFF_PREVIEW_VIEWPORT_GUTTER),
+          maxLeft
+        )
         const top =
           nextPlacement === 'above'
             ? Math.max(DIFF_PREVIEW_VIEWPORT_GUTTER, rect.top - DIFF_PREVIEW_VERTICAL_GAP)

@@ -12,11 +12,12 @@ import { ComposerToolbar } from './ComposerToolbar'
 import { ComposerTextarea } from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
+import { debugComposerEvent, textMetrics } from './composerDebug'
 
 interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: () => void
+  onSubmit: (submittedValue?: string) => void
   disabled: boolean
   disabledReason?: string
   placeholder: string
@@ -172,7 +173,17 @@ export function ProjectChatComposer({
         onDrop={handleDrop}
         onSubmit={event => {
           event.preventDefault()
-          if (canSend) onSubmit()
+          const submittedValue = event.currentTarget.querySelector('textarea')?.value
+          debugComposerEvent('project-form-submit', {
+            canSend,
+            propValue: textMetrics(value),
+            submittedValue: textMetrics(submittedValue),
+            attachmentsCount: attachments.length,
+            codeCommentsCount: codeComments.length,
+            disabled,
+            isStreaming,
+          })
+          if (canSend) onSubmit(submittedValue)
         }}
       >
         <AttachmentBadges

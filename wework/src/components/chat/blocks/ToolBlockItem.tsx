@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { ChevronDown, Copy, CopyCheck, FileDiff, Search } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -135,13 +136,14 @@ function ProcessFileChangesBlockItem({
 }) {
   const { t } = useTranslation('chat')
   const summary = block.fileChanges
+  const isRunning = block.status !== 'done' && block.status !== 'error'
   const [expanded, setExpanded] = useState(false)
   const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null)
 
   if (!summary.files.length) return null
 
   return (
-    <div className="min-w-0 overflow-hidden text-[13px]" data-testid="process-file-changes-block">
+    <div className="min-w-0 overflow-visible text-[13px]" data-testid="process-file-changes-block">
       <button
         type="button"
         aria-expanded={expanded}
@@ -149,7 +151,8 @@ function ProcessFileChangesBlockItem({
         className="flex max-w-full items-center gap-1.5 text-text-muted hover:text-text-secondary"
       >
         <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
-        <span className="min-w-0 truncate">{fileChangesSummaryLabel(summary, t)}</span>
+        <span className="min-w-0 truncate">{fileChangesSummaryLabel(summary, t, isRunning)}</span>
+        <FileChangeLineStats summary={summary} isRunning={isRunning} />
         <ChevronDown
           className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
           strokeWidth={2}
@@ -196,12 +199,193 @@ function ProcessFileChangesBlockItem({
   )
 }
 
+type FileChangeStatBlock = {
+  id: string
+  additions: number
+  deletions: number
+}
+
+type FileChangeStatBlockStyle = CSSProperties & {
+  '--file-change-stat-addition-height': string
+  '--file-change-stat-deletion-height': string
+  '--file-change-stat-blocks-width': string
+  '--file-change-stat-x': string
+  '--file-change-stat-alpha': string
+}
+
+function FileChangeLineStats({
+  summary,
+  isRunning,
+}: {
+  summary: TurnFileChangesSummary
+  isRunning: boolean
+}) {
+  const [statBlocks, setStatBlocks] = useState<FileChangeStatBlock[]>([])
+  const visibleStatBlocks =
+    isRunning && statBlocks.length > 0 ? statBlocks : buildStaticFileChangeStatBlocks(summary)
+  const previousRef = useRef({
+    artifactId: summary.artifact_id,
+    additions: summary.additions,
+    deletions: summary.deletions,
+  })
+
+  useEffect(() => {
+    const previous = previousRef.current
+    if (previous.artifactId !== summary.artifact_id) {
+      previousRef.current = {
+        artifactId: summary.artifact_id,
+        additions: summary.additions,
+        deletions: summary.deletions,
+      }
+      setStatBlocks([])
+      return
+    }
+
+    const addedDelta = Math.max(0, summary.additions - previous.additions)
+    const deletedDelta = Math.max(0, summary.deletions - previous.deletions)
+    previousRef.current = {
+      artifactId: summary.artifact_id,
+      additions: summary.additions,
+      deletions: summary.deletions,
+    }
+
+    if (!isRunning || (addedDelta === 0 && deletedDelta === 0)) return
+
+    const now = Date.now()
+    setStatBlocks(current =>
+      [
+        ...current,
+        {
+          id: `${now}-${addedDelta}-${deletedDelta}`,
+          additions: addedDelta,
+          deletions: deletedDelta,
+        },
+      ].slice(-6)
+    )
+  }, [isRunning, summary.additions, summary.artifact_id, summary.deletions])
+
+  return (
+    <span className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums">
+      <span className="inline-flex items-center text-green-600">
+        +<AnimatedChangeNumber value={summary.additions} deltaPrefix="+" />
+      </span>
+      <span className="inline-flex items-center text-red-500">
+        -<AnimatedChangeNumber value={summary.deletions} deltaPrefix="-" />
+      </span>
+      {visibleStatBlocks.length > 0 ? <FileChangeStatBlocks blocks={visibleStatBlocks} /> : null}
+    </span>
+  )
+}
+
+function buildStaticFileChangeStatBlocks(summary: TurnFileChangesSummary): FileChangeStatBlock[] {
+  const changedFiles = summary.files.filter(file => !file.binary)
+  if (changedFiles.length > 0) {
+    return changedFiles.slice(-6).map(file => ({
+      id: `${file.path}:${file.additions}:${file.deletions}`,
+      additions: file.additions,
+      deletions: file.deletions,
+    }))
+  }
+
+  if (summary.additions === 0 && summary.deletions === 0) return []
+  return [
+    {
+      id: `${summary.artifact_id}:${summary.additions}:${summary.deletions}`,
+      additions: summary.additions,
+      deletions: summary.deletions,
+    },
+  ]
+}
+
+function AnimatedChangeNumber({ value, deltaPrefix }: { value: number; deltaPrefix: '+' | '-' }) {
+  const previousValueRef = useRef(value)
+  const [delta, setDelta] = useState(0)
+  const [animationId, setAnimationId] = useState(0)
+
+  useEffect(() => {
+    if (previousValueRef.current === value) return
+    const deltaValue = Math.abs(value - previousValueRef.current)
+    previousValueRef.current = value
+    setDelta(0)
+    const frame = requestAnimationFrame(() => {
+      setDelta(deltaValue)
+      setAnimationId(current => current + 1)
+    })
+    const timeout = window.setTimeout(() => setDelta(0), 560)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+    }
+  }, [value])
+
+  return (
+    <span className="file-change-delta-number">
+      <span className="file-change-rolling-viewport">
+        <span
+          key={`${value}-${animationId}`}
+          className={`file-change-rolling-value ${delta > 0 ? 'is-rolling' : ''}`}
+        >
+          {value}
+        </span>
+      </span>
+      {delta > 0 ? (
+        <span key={`${deltaPrefix}${delta}-${value}`} className="file-change-delta-badge">
+          {deltaPrefix}
+          {delta}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+function FileChangeStatBlocks({ blocks }: { blocks: FileChangeStatBlock[] }) {
+  const width = Math.max(6, (blocks.length - 1) * 7 + 6)
+
+  return (
+    <span
+      className="file-change-stat-blocks"
+      aria-hidden="true"
+      style={{ '--file-change-stat-blocks-width': `${width}px` } as FileChangeStatBlockStyle}
+    >
+      {blocks.map((block, index) => {
+        const age = blocks.length - index - 1
+        const additionHeight = block.additions > 0 ? Math.min(10, 3 + block.additions * 1.6) : 0
+        const deletionHeight = block.deletions > 0 ? Math.min(10, 3 + block.deletions * 1.6) : 0
+        return (
+          <span
+            key={block.id}
+            className="file-change-stat-block"
+            style={
+              {
+                '--file-change-stat-addition-height': `${additionHeight}px`,
+                '--file-change-stat-deletion-height': `${deletionHeight}px`,
+                '--file-change-stat-x': `${index * 7}px`,
+                '--file-change-stat-alpha': `${Math.max(0.28, 0.96 - age * 0.11)}`,
+              } as FileChangeStatBlockStyle
+            }
+          >
+            {block.additions > 0 ? <span className="file-change-stat-segment is-addition" /> : null}
+            {block.deletions > 0 ? <span className="file-change-stat-segment is-deletion" /> : null}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
 function fileChangesSummaryLabel(
   summary: TurnFileChangesSummary,
-  t: ReturnType<typeof useTranslation>['t']
+  t: ReturnType<typeof useTranslation>['t'],
+  isRunning = false
 ): string {
   const changeType = uniformChangeType(summary.files)
   const count = summary.file_count || summary.files.length
+  if (isRunning) {
+    if (changeType === 'created') return t('file_changes.creating_files', { count })
+    if (changeType === 'deleted') return t('file_changes.deleting_files', { count })
+    if (changeType === 'renamed') return t('file_changes.renaming_files', { count })
+    return t('file_changes.editing_files', { count })
+  }
   if (changeType === 'created') return t('file_changes.created_files', { count })
   if (changeType === 'deleted') return t('file_changes.deleted_files', { count })
   if (changeType === 'renamed') return t('file_changes.renamed_files', { count })

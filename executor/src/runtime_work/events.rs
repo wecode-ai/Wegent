@@ -12,11 +12,12 @@ use crate::{codex_phase::CodexAgentMessagePhaseTracker, protocol::ExecutionReque
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     notification_mapping::{
-        log_dropped_notification, log_text_mapping, map_text_chunk, notification_item_id,
-        TextChunkMapping,
+        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
+        notification_item_id, TextChunkMapping,
     },
     transcript::{
-        completed_workbench_block_from_notification, tool_update_from_notification,
+        completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
+        file_changes_update_from_patch_updated, tool_update_from_notification,
         workbench_block_from_notification,
     },
     util::{extract_text, is_completed_plan_item, item_id, now_ms, raw_string_field, string_field},
@@ -84,6 +85,7 @@ pub(crate) struct CodexNotificationEventMapper {
     root_thread_id: Option<String>,
     process_text: Option<ProcessTextStream>,
     process_text_count: usize,
+    final_text_offset: usize,
     plan_blocks: BTreeMap<String, String>,
 }
 
@@ -164,6 +166,15 @@ impl CodexNotificationEventMapper {
             }
             "item/plan/delta" => {
                 self.emit_plan_delta(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    notification.params,
+                );
+            }
+            "item/fileChange/patchUpdated" => {
+                self.emit_file_change_patch_updated(
                     event_tx,
                     device_id,
                     local_task_id,
@@ -259,6 +270,7 @@ impl CodexNotificationEventMapper {
                 );
             }
             "thread/started" => {
+                self.final_text_offset = 0;
                 self.observe_root_thread(notification.params);
             }
             "thread/goal/updated" => {
@@ -428,7 +440,7 @@ impl CodexNotificationEventMapper {
                 item_id,
                 delta,
             })) => {
-                log_text_mapping(
+                log_stream_text_mapping(
                     emit_context.local_task_id,
                     method,
                     "emit_process_delta",
@@ -446,7 +458,7 @@ impl CodexNotificationEventMapper {
                 true
             }
             Ok(Some(TextChunkMapping::FinalDelta { delta })) => {
-                log_text_mapping(
+                log_stream_text_mapping(
                     emit_context.local_task_id,
                     method,
                     "emit_final_delta",
@@ -455,13 +467,15 @@ impl CodexNotificationEventMapper {
                     &delta,
                 );
                 self.reset_process_text();
+                let offset = self.final_text_offset;
+                self.final_text_offset += delta.chars().count();
                 emit_response_event(
                     emit_context.event_tx,
                     emit_context.device_id,
                     "response.output_text.delta",
                     emit_context.local_task_id,
                     emit_context.request,
-                    json!({"delta": delta}),
+                    json!({"delta": delta, "offset": offset}),
                 );
                 true
             }
@@ -497,6 +511,7 @@ impl CodexNotificationEventMapper {
                     params,
                     "",
                 );
+                self.final_text_offset = 0;
                 true
             }
             Ok(None) => false,
@@ -612,6 +627,51 @@ impl CodexNotificationEventMapper {
                 }
             }),
         );
+    }
+
+    fn emit_file_change_patch_updated(
+        &mut self,
+        event_tx: &Option<broadcast::Sender<Value>>,
+        device_id: &str,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        params: &Value,
+    ) {
+        let Some((block_id, updates)) = file_changes_update_from_patch_updated(
+            params,
+            &request.subtask_id,
+            device_id,
+            request.cwd().unwrap_or_default(),
+            "streaming",
+        ) else {
+            return;
+        };
+
+        emit_response_event(
+            event_tx,
+            device_id,
+            "response.block.updated",
+            local_task_id,
+            request,
+            json!({"block_id": block_id, "updates": updates}),
+        );
+
+        if let Some(block) = file_changes_block_from_patch_updated(
+            params,
+            &request.subtask_id,
+            device_id,
+            request.cwd().unwrap_or_default(),
+            "streaming",
+        ) {
+            emit_response_event(
+                event_tx,
+                device_id,
+                "response.block.created",
+                local_task_id,
+                request,
+                json!({"block": block}),
+            );
+        }
     }
 
     fn reset_process_text(&mut self) {
@@ -1471,7 +1531,7 @@ mod tests {
             }),
         );
         mapper.map(
-            &Some(event_tx),
+            &Some(event_tx.clone()),
             "device-1",
             "local-1",
             &request,
@@ -1483,10 +1543,61 @@ mod tests {
                 }
             }),
         );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final",
+                    "delta": " More."
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "thread/started",
+                "params": {
+                    "thread": {
+                        "id": "root-thread-2"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/agentMessage/delta",
+                "params": {
+                    "itemId": "msg-final-2",
+                    "delta": "Next."
+                }
+            }),
+        );
 
-        let event = event_rx.try_recv().expect("event should be emitted");
-        assert_eq!(event["event"], "response.output_text.delta");
-        assert_eq!(event["payload"]["data"]["delta"], "Done.");
+        let first_event = event_rx.try_recv().expect("first event should be emitted");
+        let second_event = event_rx.try_recv().expect("second event should be emitted");
+        let next_event = event_rx
+            .try_recv()
+            .expect("next turn event should be emitted");
+        assert_eq!(first_event["event"], "response.output_text.delta");
+        assert_eq!(first_event["payload"]["data"]["delta"], "Done.");
+        assert_eq!(first_event["payload"]["data"]["offset"], 0);
+        assert_eq!(second_event["event"], "response.output_text.delta");
+        assert_eq!(second_event["payload"]["data"]["delta"], " More.");
+        assert_eq!(second_event["payload"]["data"]["offset"], 5);
+        assert_eq!(next_event["event"], "response.output_text.delta");
+        assert_eq!(next_event["payload"]["data"]["delta"], "Next.");
+        assert_eq!(next_event["payload"]["data"]["offset"], 0);
     }
 
     #[test]
@@ -2447,5 +2558,104 @@ mod tests {
         assert_eq!(block["file_changes"]["file_count"], 1);
         assert_eq!(block["file_changes"]["files"][0]["path"], "helloworld.html");
         assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn maps_started_codex_file_change_to_pending_file_changes_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "turn-1".to_owned(),
+            project_workspace_path: Some("/workspace/repo".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "file-change-1",
+                        "type": "fileChange",
+                        "status": "inProgress",
+                        "changes": [
+                            {
+                                "path": "/workspace/repo/helloworld.html",
+                                "kind": { "type": "add" },
+                                "diff": ""
+                            }
+                        ]
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("started file changes event should be emitted");
+        let block = &event["payload"]["data"]["block"];
+        assert_eq!(event["event"], "response.block.created");
+        assert_eq!(block["type"], "file_changes");
+        assert_eq!(block["status"], "pending");
+        assert_eq!(block["file_changes"]["additions"], 0);
+        assert_eq!(block["file_changes"]["deletions"], 0);
+    }
+
+    #[test]
+    fn maps_codex_patch_updates_to_streaming_file_changes_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "turn-1".to_owned(),
+            project_workspace_path: Some("/workspace/repo".to_owned()),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/fileChange/patchUpdated",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "itemId": "call-1",
+                    "changes": [
+                        {
+                            "path": "/workspace/repo/live.txt",
+                            "kind": { "type": "add" },
+                            "diff": "first\nsecond\n"
+                        }
+                    ]
+                }
+            }),
+        );
+
+        let updated = event_rx
+            .try_recv()
+            .expect("patch update should emit a block update");
+        assert_eq!(updated["event"], "response.block.updated");
+        assert_eq!(
+            updated["payload"]["data"]["block_id"],
+            "file-changes-call-1"
+        );
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["file_changes"]["additions"],
+            2
+        );
+
+        let created = event_rx
+            .try_recv()
+            .expect("patch update should ensure a block exists");
+        let block = &created["payload"]["data"]["block"];
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(block["id"], "file-changes-call-1");
+        assert_eq!(block["status"], "streaming");
     }
 }

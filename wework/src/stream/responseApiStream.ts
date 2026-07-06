@@ -70,11 +70,6 @@ function idField(record: Record<string, unknown>, key: string): string | undefin
   return undefined
 }
 
-function numberField(record: Record<string, unknown>, key: string): number {
-  const value = record[key]
-  return typeof value === 'number' ? value : 0
-}
-
 function optionalNumberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key]
   return typeof value === 'number' ? value : undefined
@@ -116,6 +111,12 @@ function parseRecord(value: unknown): Record<string, unknown> | undefined {
 function eventContent(payload: Record<string, unknown>): string {
   const result = eventResult(payload)
   return stringField(result, 'delta') ?? ''
+}
+
+function eventOffset(payload: Record<string, unknown>): number | undefined {
+  return (
+    optionalNumberField(payload, 'offset') ?? optionalNumberField(eventResult(payload), 'offset')
+  )
 }
 
 function completedContent(data: Record<string, unknown>): string | undefined {
@@ -298,6 +299,7 @@ function emitBlockUpdated(
     toolInput?: Record<string, unknown>
     toolOutput?: unknown
     content?: string
+    fileChanges?: ChatBlock['fileChanges']
   }
 ): void {
   if (!blockId) {
@@ -380,6 +382,7 @@ function emitResponseBlockUpdated(
 ): void {
   const updates = recordField(data, 'updates')
   const toolInput = parseRecord(updates.toolInput ?? updates.tool_input)
+  const fileChanges = parseRecord(updates.fileChanges ?? updates.file_changes)
   emitBlockUpdated(
     handlers,
     'response.block.updated',
@@ -391,6 +394,7 @@ function emitResponseBlockUpdated(
         toolOutput: updates.toolOutput ?? updates.tool_output,
       }),
       ...(toolInput && { toolInput }),
+      ...(fileChanges && { fileChanges: fileChanges as unknown as ChatBlock['fileChanges'] }),
       ...(typeof updates.status === 'string' && {
         status: updates.status as ChatBlock['status'],
       }),
@@ -492,7 +496,7 @@ export function emitResponseApiEvent(
     handlers.onChatChunk?.({
       ...base,
       content,
-      offset: numberField(payload, 'offset'),
+      ...(eventOffset(payload) !== undefined && { offset: eventOffset(payload) }),
       result: eventResult(payload),
     })
     return
@@ -510,7 +514,7 @@ export function emitResponseApiEvent(
     handlers.onChatChunk?.({
       ...base,
       content: '',
-      offset: numberField(payload, 'offset'),
+      ...(eventOffset(payload) !== undefined && { offset: eventOffset(payload) }),
       result: { reasoningChunk: content },
     })
     return
@@ -582,7 +586,7 @@ export function emitResponseApiEvent(
   if (eventName === 'response.completed') {
     handlers.onChatDone?.({
       ...base,
-      offset: numberField(payload, 'offset'),
+      ...(eventOffset(payload) !== undefined && { offset: eventOffset(payload) }),
       result: completedResult(data),
     })
     return

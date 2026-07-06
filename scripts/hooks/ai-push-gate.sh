@@ -12,7 +12,7 @@
 # Usage:
 #   git push                    (runs all checks)
 #   AI_VERIFIED=1 git push      (confirm docs checked and no updates needed)
-#   AI_PUSH_FULL_TESTS=1 git push  (also run full Python pytest suites)
+#   AI_PUSH_FULL_TESTS=1 git push  (also run full Python and Rust test suites)
 # =============================================================================
 
 # Don't exit on error - we want to run all checks and report at the end
@@ -35,7 +35,7 @@ NC='\033[0m' # No Color
 # frontend/.husky/pre-push so new-branch diffs can use the correct default branch.
 REMOTE_NAME="${1:-}"
 
-should_run_full_python_tests() {
+should_run_full_tests() {
     [ "${AI_PUSH_FULL_TESTS:-0}" = "1" ]
 }
 
@@ -80,7 +80,7 @@ maybe_run_full_python_tests() {
     local log_file="$3"
     local failed_check_name="$4"
 
-    if ! should_run_full_python_tests; then
+    if ! should_run_full_tests; then
         echo -e "   ${YELLOW}↪ Pytest: SKIPPED in pre-push (set AI_PUSH_FULL_TESTS=1 to run full suite)${NC}"
         return 0
     fi
@@ -369,9 +369,26 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         echo -e "   ${YELLOW}   Run 'pnpm install' from the repository root to install dependencies${NC}"
         WARNINGS+=("Wework: node_modules not found, checks skipped")
     else
-        echo -e "   Running ESLint..."
-        pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1
+        echo -e "   Running ESLint, TypeScript, and unit tests in parallel..."
+
+        pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1 &
+        ESLINT_PID=$!
+
+        pnpm --filter wework typecheck > "$TEMP_DIR/wework_tsc.log" 2>&1 &
+        TSC_PID=$!
+
+        pnpm --filter wework test > "$TEMP_DIR/wework_test.log" 2>&1 &
+        TEST_PID=$!
+
+        wait "$ESLINT_PID"
         ESLINT_EXIT=$?
+
+        wait "$TSC_PID"
+        TSC_EXIT=$?
+
+        wait "$TEST_PID"
+        TEST_EXIT=$?
+
         if [ $ESLINT_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ ESLint: PASSED${NC}"
         else
@@ -381,9 +398,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_LOGS+=("$TEMP_DIR/wework_eslint.log")
         fi
 
-        echo -e "   Running TypeScript check..."
-        pnpm --filter wework typecheck > "$TEMP_DIR/wework_tsc.log" 2>&1
-        TSC_EXIT=$?
         if [ $TSC_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
         else
@@ -393,9 +407,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_LOGS+=("$TEMP_DIR/wework_tsc.log")
         fi
 
-        echo -e "   Running unit tests..."
-        pnpm --filter wework test --coverage > "$TEMP_DIR/wework_test.log" 2>&1
-        TEST_EXIT=$?
         if [ $TEST_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"
         else
@@ -649,14 +660,28 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_LOGS+=("$TEMP_DIR/executor_fmt.log")
         fi
 
-        echo -e "   Running cargo test --all-features..."
-        if cargo test --all-features > "$TEMP_DIR/executor_test.log" 2>&1; then
+        echo -e "   Running cargo test --all-features --lib..."
+        if cargo test --all-features --lib > "$TEMP_DIR/executor_test.log" 2>&1; then
             echo -e "   ${GREEN}✅ cargo test: PASSED${NC}"
         else
             echo -e "   ${RED}❌ cargo test: FAILED${NC}"
             CHECK_FAILED=1
             FAILED_CHECKS+=("Executor cargo test")
             FAILED_LOGS+=("$TEMP_DIR/executor_test.log")
+        fi
+
+        if should_run_full_tests; then
+            echo -e "   Running full cargo test --all-features..."
+            if cargo test --all-features > "$TEMP_DIR/executor_full_test.log" 2>&1; then
+                echo -e "   ${GREEN}✅ full cargo test: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ full cargo test: FAILED${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Executor full cargo test")
+                FAILED_LOGS+=("$TEMP_DIR/executor_full_test.log")
+            fi
+        else
+            echo -e "   ${YELLOW}↪ Full cargo test: SKIPPED in pre-push (set AI_PUSH_FULL_TESTS=1 to run full suite)${NC}"
         fi
 
         echo -e "   Running cargo clippy..."

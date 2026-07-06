@@ -11,13 +11,14 @@ use crate::{codex_phase::CodexAgentMessagePhaseTracker, protocol::ExecutionReque
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     notification_mapping::{
-        log_dropped_notification, log_text_mapping, map_text_chunk, notification_item_id,
-        TextChunkMapping,
+        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
+        notification_item_id, TextChunkMapping,
     },
     response::RuntimeTaskLink,
     store::RuntimeWorkStore,
     transcript::{
-        completed_workbench_block_from_notification, tool_update_from_notification,
+        completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
+        file_changes_update_from_patch_updated, tool_update_from_notification,
         workbench_block_from_notification,
     },
     util::{
@@ -120,6 +121,32 @@ impl CodexNotificationCacheMapper {
                         "plan",
                         notification_item_id(params),
                         delta,
+                    );
+                }
+            }
+            "item/fileChange/patchUpdated" => {
+                if let Some(block) = file_changes_block_from_patch_updated(
+                    params,
+                    &request.subtask_id,
+                    request.device_id.as_deref().unwrap_or_default(),
+                    request.cwd().unwrap_or_default(),
+                    "streaming",
+                ) {
+                    cache_runtime_assistant_block(store, local_task_id, request, block);
+                }
+                if let Some((block_id, updates)) = file_changes_update_from_patch_updated(
+                    params,
+                    &request.subtask_id,
+                    request.device_id.as_deref().unwrap_or_default(),
+                    request.cwd().unwrap_or_default(),
+                    "streaming",
+                ) {
+                    update_runtime_assistant_block(
+                        store,
+                        local_task_id,
+                        request,
+                        &block_id,
+                        updates,
                     );
                 }
             }
@@ -248,7 +275,7 @@ impl CodexNotificationCacheMapper {
                 item_id,
                 delta,
             })) => {
-                log_text_mapping(
+                log_stream_text_mapping(
                     local_task_id,
                     method,
                     "cache_process_delta",
@@ -268,7 +295,7 @@ impl CodexNotificationCacheMapper {
                 true
             }
             Ok(Some(TextChunkMapping::FinalDelta { delta })) => {
-                log_text_mapping(
+                log_stream_text_mapping(
                     local_task_id,
                     method,
                     "cache_final_delta",

@@ -40,6 +40,83 @@ describe('reduceWorkbenchMessages', () => {
     })
   })
 
+  test('uses chunk offsets to ignore duplicate assistant chunks', () => {
+    const started = reduceWorkbenchMessages([], {
+      type: 'assistant_started',
+      subtaskId: '9'
+    })
+    const withHello = reduceWorkbenchMessages(started, {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: '你好',
+      offset: 0
+    })
+    const duplicated = reduceWorkbenchMessages(withHello, {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: '你好',
+      offset: 0
+    })
+    const completed = reduceWorkbenchMessages(duplicated, {
+      type: 'assistant_chunk',
+      subtaskId: '9',
+      content: '，世界',
+      offset: 2
+    })
+
+    expect(completed[0]).toMatchObject({
+      role: 'assistant',
+      content: '你好，世界',
+      status: 'streaming'
+    })
+  })
+
+  test('uses chunk offsets to append only uncovered overlap suffixes', () => {
+    const started = reduceWorkbenchMessages([], {
+      type: 'assistant_started',
+      subtaskId: '10'
+    })
+    const withPrefix = reduceWorkbenchMessages(started, {
+      type: 'assistant_chunk',
+      subtaskId: '10',
+      content: 'abcdef',
+      offset: 0
+    })
+    const overlapped = reduceWorkbenchMessages(withPrefix, {
+      type: 'assistant_chunk',
+      subtaskId: '10',
+      content: 'defghi',
+      offset: 3
+    })
+
+    expect(overlapped[0]).toMatchObject({
+      role: 'assistant',
+      content: 'abcdefghi',
+      status: 'streaming'
+    })
+  })
+
+  test('tracks chunk offsets when a chunk creates the assistant message', () => {
+    const withHello = reduceWorkbenchMessages([], {
+      type: 'assistant_chunk',
+      subtaskId: '11',
+      content: 'hello',
+      offset: 0
+    })
+    const duplicated = reduceWorkbenchMessages(withHello, {
+      type: 'assistant_chunk',
+      subtaskId: '11',
+      content: 'hello',
+      offset: 0
+    })
+
+    expect(duplicated[0]).toMatchObject({
+      role: 'assistant',
+      content: 'hello',
+      status: 'streaming'
+    })
+  })
+
   test('late assistant stream creates an assistant message when a user message has the same subtask id', () => {
     const state: WorkbenchMessage[] = [
       {

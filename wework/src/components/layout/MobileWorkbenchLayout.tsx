@@ -1,6 +1,5 @@
 import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
 import { memo, useEffect, useMemo, useState } from 'react'
-import { ChatInput } from '@/components/chat/ChatInput'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
@@ -42,6 +41,7 @@ import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkContro
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
+import { BufferedChatInput } from './BufferedChatInput'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
@@ -358,12 +358,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
                   />
                 ) : (
-                  <ChatInput
+                  <BufferedChatInput
                     value={paneSession.input}
                     onChange={paneSession.setInput}
                     onSubmit={paneSession.send}
                     disabled={composerDisabled}
-                    error={state.error}
+                    error={paneSession.error}
                     disabledReason={inlineComposerDisabledReason}
                     placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
                     projectChat={projectChatWithModelSelectorSignal}
@@ -447,12 +447,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 compact
                 className="mb-2"
               />
-              <ChatInput
+              <BufferedChatInput
                 value={paneSession.input}
                 onChange={paneSession.setInput}
                 onSubmit={paneSession.send}
                 disabled={composerDisabled}
-                error={state.error}
+                error={paneSession.error}
                 disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}

@@ -151,12 +151,46 @@ if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
 fi
 
 cd "$WEWORK_DIR"
+CONFIG_OVERRIDE=""
+cleanup() {
+  if [ -n "$CONFIG_OVERRIDE" ]; then
+    rm -f "$CONFIG_OVERRIDE"
+  fi
+}
+trap cleanup EXIT
+
 TAURI_ARGS=(build)
 if [ "$BUILD_PROFILE" = "dev" ]; then
   TAURI_ARGS+=(--debug)
 fi
 if [ "$RELEASE_DEVTOOLS" = "1" ]; then
+  CONFIG_OVERRIDE="$(mktemp "$WEWORK_DIR/src-tauri/tauri.devtools.XXXXXX.json")"
+  CONFIG_OVERRIDE="$CONFIG_OVERRIDE" python3 - <<'PY'
+import json
+import os
+
+with open("src-tauri/tauri.conf.json", "r", encoding="utf-8") as handle:
+    base_config = json.load(handle)
+
+windows = base_config.get("app", {}).get("windows", [])
+config = {
+    "app": {
+        "windows": [
+            {
+                **window,
+                "devtools": True,
+            }
+            for window in windows
+        ],
+    },
+}
+
+with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
   TAURI_ARGS+=(--features release-devtools)
+  TAURI_ARGS+=(--config "$CONFIG_OVERRIDE")
 fi
 if [ -n "$MACOS_BUILD_TARGET" ]; then
   TAURI_ARGS+=(--target "$MACOS_BUILD_TARGET")
