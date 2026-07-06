@@ -37,6 +37,7 @@ import type { SendAreaSectionProps } from './types'
 import type { DeviceInfo } from '@/apis/devices'
 import type { SubscriptionExecutionTargetType } from '@/types/subscription'
 import type { CompatibleProvider } from '@/utils/modelCompatibility'
+import { getSubscriptionTeamDisplayName } from './team-selection'
 
 const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
   [...devices].sort((left, right) => {
@@ -363,7 +364,7 @@ export function SendAreaSection({
               <SelectContent>
                 {teams.map(team => (
                   <SelectItem key={team.id} value={team.id.toString()}>
-                    {team.name}
+                    {getSubscriptionTeamDisplayName(team)}
                   </SelectItem>
                 ))}
               </SelectContent>
