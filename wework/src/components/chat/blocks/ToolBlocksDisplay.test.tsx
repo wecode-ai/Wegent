@@ -1,6 +1,6 @@
 import '@/i18n'
 
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlocksDisplay } from './ToolBlocksDisplay'
 import type { ProcessingBlock } from '@/types/workbench'
@@ -489,6 +489,96 @@ describe('ToolBlocksDisplay', () => {
       .getByTestId('process-file-changes-block')
       .querySelectorAll('.file-change-stat-block')
     expect(statBars).toHaveLength(1)
+  })
+
+  test('keeps streaming file change stat animation until final diff replaces the summary', async () => {
+    const streamingSummaryBlock: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      status: 'streaming',
+      fileChanges: {
+        ...completedFileChangesBlock.fileChanges,
+        artifact_id: 'same-artifact',
+        additions: 1,
+        deletions: 0,
+        file_count: 1,
+        files: [
+          {
+            path: 'src/streaming.ts',
+            change_type: 'modified',
+            additions: 1,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      },
+    }
+    const updatedStreamingSummaryBlock: ProcessingBlock = {
+      ...streamingSummaryBlock,
+      fileChanges: {
+        ...streamingSummaryBlock.fileChanges,
+        additions: 5,
+        file_count: 5,
+        files: Array.from({ length: 5 }, (_, index) => ({
+          path: `src/file-${index}.ts`,
+          change_type: 'modified' as const,
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        })),
+      },
+    }
+    const finalSummaryBlock: ProcessingBlock = {
+      ...updatedStreamingSummaryBlock,
+      status: 'done',
+      fileChanges: {
+        ...updatedStreamingSummaryBlock.fileChanges,
+        additions: 4,
+        deletions: 0,
+        file_count: 1,
+        files: [
+          {
+            path: 'src/final.ts',
+            change_type: 'modified',
+            additions: 4,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      },
+    }
+
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[streamingSummaryBlock]} isStreaming={false} forceExpanded />
+    )
+
+    expect(
+      screen.getByTestId('process-file-changes-block').querySelectorAll('.file-change-stat-block')
+    ).toHaveLength(1)
+
+    rerender(
+      <ToolBlocksDisplay blocks={[updatedStreamingSummaryBlock]} isStreaming={true} forceExpanded />
+    )
+
+    await waitFor(() => {
+      const streamingStatBars = screen
+        .getByTestId('process-file-changes-block')
+        .querySelectorAll<HTMLElement>('.file-change-stat-block')
+      expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('+5')
+      expect(streamingStatBars).toHaveLength(1)
+      expect(
+        streamingStatBars[0].style.getPropertyValue('--file-change-stat-addition-height')
+      ).toBe('9.4px')
+    })
+
+    rerender(<ToolBlocksDisplay blocks={[finalSummaryBlock]} isStreaming={false} forceExpanded />)
+
+    const statBars = screen
+      .getByTestId('process-file-changes-block')
+      .querySelectorAll<HTMLElement>('.file-change-stat-block')
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('+4')
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('-0')
+    expect(statBars).toHaveLength(1)
+    expect(statBars[0].style.getPropertyValue('--file-change-stat-addition-height')).toBe('9.4px')
   })
 
   test('uses an edit icon for completed edit activity groups', () => {

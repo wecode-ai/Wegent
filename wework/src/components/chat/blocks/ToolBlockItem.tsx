@@ -152,7 +152,7 @@ function ProcessFileChangesBlockItem({
       >
         <FileDiff className="h-4 w-4 shrink-0" strokeWidth={1.7} />
         <span className="min-w-0 truncate">{fileChangesSummaryLabel(summary, t, isRunning)}</span>
-        <FileChangeLineStats summary={summary} />
+        <FileChangeLineStats summary={summary} isRunning={isRunning} />
         <ChevronDown
           className={`h-3.5 w-3.5 shrink-0 transition-transform ${expanded ? '' : '-rotate-90'}`}
           strokeWidth={2}
@@ -213,10 +213,16 @@ type FileChangeStatBlockStyle = CSSProperties & {
   '--file-change-stat-alpha': string
 }
 
-function FileChangeLineStats({ summary }: { summary: TurnFileChangesSummary }) {
+function FileChangeLineStats({
+  summary,
+  isRunning,
+}: {
+  summary: TurnFileChangesSummary
+  isRunning: boolean
+}) {
   const [statBlocks, setStatBlocks] = useState<FileChangeStatBlock[]>([])
   const visibleStatBlocks =
-    statBlocks.length > 0 ? statBlocks : buildStaticFileChangeStatBlocks(summary)
+    isRunning && statBlocks.length > 0 ? statBlocks : buildStaticFileChangeStatBlocks(summary)
   const previousRef = useRef({
     artifactId: summary.artifact_id,
     additions: summary.additions,
@@ -243,7 +249,7 @@ function FileChangeLineStats({ summary }: { summary: TurnFileChangesSummary }) {
       deletions: summary.deletions,
     }
 
-    if (addedDelta === 0 && deletedDelta === 0) return
+    if (!isRunning || (addedDelta === 0 && deletedDelta === 0)) return
 
     const now = Date.now()
     setStatBlocks(current =>
@@ -256,7 +262,7 @@ function FileChangeLineStats({ summary }: { summary: TurnFileChangesSummary }) {
         },
       ].slice(-6)
     )
-  }, [summary.additions, summary.artifact_id, summary.deletions])
+  }, [isRunning, summary.additions, summary.artifact_id, summary.deletions])
 
   return (
     <span className="flex shrink-0 items-center gap-2 text-xs font-medium tabular-nums">
