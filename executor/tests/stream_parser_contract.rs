@@ -12,6 +12,7 @@ fn ndjson_parser_collects_claude_text_blocks_and_deltas() {
     let output = r#"
 {"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}
 {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}
 "#;
 
     let outcome = collect_ndjson_outcome(output);
@@ -62,7 +63,7 @@ fn ndjson_parser_skips_non_json_stdout_lines() {
 }
 
 #[test]
-fn ndjson_parser_ignores_incomplete_trailing_json_like_python_sdk() {
+fn ndjson_parser_fails_claude_stdout_without_result_message() {
     let output = r#"
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"partial"}]}}
 {"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"broken
@@ -70,12 +71,10 @@ fn ndjson_parser_ignores_incomplete_trailing_json_like_python_sdk() {
 
     let outcome = collect_ndjson_outcome(output);
 
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "partial".to_owned()
-        }
-    );
+    assert!(matches!(outcome, ExecutionOutcome::Failed { .. }));
+    if let ExecutionOutcome::Failed { message } = outcome {
+        assert!(message.contains("Claude stdout ended before result message"));
+    }
 }
 
 #[test]
