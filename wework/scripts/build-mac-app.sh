@@ -202,4 +202,5 @@ if [ "$NO_SIGN" = "1" ]; then
   TAURI_ARGS+=(--no-sign)
 fi
 
+WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 exec pnpm exec tauri "${TAURI_ARGS[@]}"
