@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
-import { ComposerTextarea } from './ComposerTextarea'
+import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
@@ -17,7 +17,7 @@ import { debugComposerEvent, textMetrics } from './composerDebug'
 interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: (submittedValue?: string) => void
+  onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
   disabledReason?: string
   placeholder: string

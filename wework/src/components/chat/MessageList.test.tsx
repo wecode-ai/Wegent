@@ -1008,7 +1008,7 @@ describe('MessageList', () => {
     expect(screen.getByText('我会继续看 lockfile。')).toBeInTheDocument()
   })
 
-  test('keeps cancelled assistant turns even when no processing blocks were persisted', () => {
+  test('shows stopped notice without duration when a cancelled assistant turn has no elapsed time', () => {
     render(
       <MessageList
         messages={[
@@ -1024,7 +1024,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 0s 后停止了')
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('已停止')
+    expect(screen.getByTestId('assistant-stopped-notice')).not.toHaveTextContent('0s')
   })
 
   test('uses compact spacing between messages and hover actions', () => {
@@ -1075,6 +1076,39 @@ describe('MessageList', () => {
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('实现 goal 功能')
     expect(screen.getByTestId('user-message-content').lastElementChild).toContainElement(
       screen.getByTestId('user-message-goal-badge')
+    )
+  })
+
+  test('renders attached comment badges on user messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-comment',
+            role: 'user',
+            content: '请根据我附加的批注内容继续处理。',
+            status: 'done',
+            createdAt: '2026-06-10T08:00:00Z',
+            codeComments: [
+              {
+                id: 'browser-comment-1',
+                filePath: 'browser:https://example.test/',
+                fileName: 'example.test',
+                startLine: 1,
+                endLine: 1,
+                selectedText: '{}',
+                comment: '这个导航太抢眼',
+                createdAt: '2026-06-10T08:00:00Z',
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('message-code-comment-context-badge')).toHaveTextContent('1 个评论')
+    expect(screen.getByTestId('user-message-content')).not.toHaveTextContent(
+      '<workspace_comment_context>'
     )
   })
 

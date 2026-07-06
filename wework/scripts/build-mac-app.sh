@@ -234,4 +234,5 @@ if [ "${WEWORK_ENABLE_DEVTOOLS:-}" = "1" ]; then
   TAURI_ARGS+=(--features devtools)
 fi
 
+WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 exec pnpm exec tauri "${TAURI_ARGS[@]}"

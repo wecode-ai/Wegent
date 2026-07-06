@@ -26,6 +26,7 @@ import type {
   WorkspaceTarget,
 } from '@/types/workspace-files'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import type { EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import { isEditableShortcutTarget } from '@/lib/keybindings'
@@ -85,6 +86,9 @@ interface RightWorkspacePanelProps {
   workspaceTargetError?: string | null
   review: RightWorkspaceReviewState
   planContent?: string | null
+  embeddedBrowserLabel?: string
+  embeddedBrowserOpenRequest?: (EmbeddedBrowserOpenRequest & { id: number }) | null
+  codeCommentCount?: number
   canOpenReview: boolean
   reviewViewOptions?: FileChangesReviewViewOption[]
   onAddCodeComment: (context: CodeCommentContext) => void
@@ -113,6 +117,9 @@ export function RightWorkspacePanel({
   workspaceTargetError,
   review,
   planContent,
+  embeddedBrowserLabel = 'workspace-browser',
+  embeddedBrowserOpenRequest,
+  codeCommentCount = 0,
   canOpenReview,
   reviewViewOptions,
   onAddCodeComment,
@@ -387,6 +394,10 @@ export function RightWorkspacePanel({
         {browserOpen && (
           <WorkspaceBrowserPanel
             active={visible && activeView === 'browser'}
+            label={embeddedBrowserLabel}
+            openRequest={embeddedBrowserOpenRequest}
+            codeCommentCount={codeCommentCount}
+            onAddCodeComment={onAddCodeComment}
             onFaviconChange={setBrowserFaviconUrl}
             onTitleChange={setBrowserTitle}
           />

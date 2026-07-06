@@ -97,9 +97,9 @@ cargo test --test manual_runtime_perf -- --ignored --nocapture
 
 Current local measurements:
 
-| Sample | File size | List | First open | Loaded switch | Append refresh |
-| --- | --- | ---: | ---: | ---: | ---: |
-| "Fix running task tool calls not shown" | about 61 MB | 13 ms | 2.09 s | 33 ms | 53 ms |
+| Sample                                  | File size   |  List | First open | Loaded switch | Append refresh |
+| --------------------------------------- | ----------- | ----: | ---------: | ------------: | -------------: |
+| "Fix running task tool calls not shown" | about 61 MB | 13 ms |     2.09 s |         33 ms |          53 ms |
 
 The current target is therefore met: list under 1 second, first open under 3 seconds, and loaded switch plus fresh-data refresh under 500 ms. The first cold parse for even larger extreme histories is still bounded by JSONL size, but loaded switching and append refresh no longer grow with total history length.
 
@@ -120,6 +120,16 @@ POST /api/runtime-work/cancel
 ```
 
 Backend forwards `deviceId + localTaskId` as `runtime.tasks.cancel`. The Rust executor Codex app-server path currently does not interrupt an in-flight turn across processes, so app mode returns `accepted: false`; the frontend should keep the queued state or wait for the current turn to finish. If `turn/interrupt` support is added later, it must still identify the task only by `deviceId + localTaskId`; `workspacePath` remains device-directory context.
+
+When the current Codex LocalTask is still replying, Wework can also send a queued user message as native guidance:
+
+```text
+POST /api/runtime-work/guidance
+```
+
+Backend only validates the user, device, and LocalTask ownership, then forwards `deviceId + localTaskId`, the user text, and the frontend-generated `clientGuidanceId` as device RPC `runtime.tasks.guidance`. The executor must find the running Codex turn and append the user text through Codex app-server's native guidance capability. If there is no active turn to guide, it should return `no_active_turn`; the frontend then sends the same message as a regular follow-up. `runtime.tasks.guidance` does not create central Task or Subtask rows, and it must not use `workspacePath` as task identity.
+
+The frontend must insert the local guidance user message at the current streaming assistant position immediately when guidance sending starts, not after `runtime.tasks.guidance` returns. That insertion splits the active assistant into a frozen "before guidance" message and a continuing "after guidance" message. The continuing assistant keeps the original `subtaskId` so later stream events land after the guidance message. Later `chat:chunk` or `chat:done` events may still carry full text, so the frontend trims the text prefix recorded at split time. This keeps live streaming order consistent with the refreshed transcript order.
 
 Continuing a LocalTask may include already uploaded attachment ids that are in the ready state. Backend verifies those attachments belong to the current user and converts them into executor attachment metadata. The executor downloads and converts the files on the target device before passing them to the runtime. The frontend never sends local attachment paths directly to Backend or executor.
 

@@ -48,6 +48,8 @@ from app.schemas.runtime_work import (
     RuntimeFileChangesRevertRequest,
     RuntimeFileChangesRevertResponse,
     RuntimeGlobalIMNotificationUpdateRequest,
+    RuntimeGuidanceRequest,
+    RuntimeGuidanceResponse,
     RuntimeIMNotificationSession,
     RuntimeIMNotificationSettingsResponse,
     RuntimeProjectRef,
@@ -580,6 +582,39 @@ async def send_runtime_message(
             detail=str(exc),
         ) from exc
     return _runtime_send_response(result, address.local_task_id)
+
+
+async def send_runtime_guidance(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeGuidanceRequest,
+) -> RuntimeGuidanceResponse:
+    """Steer an active LocalTask turn through the owning local executor."""
+
+    address = _normalized_address(request.address)
+    _ensure_owned_device(db, user_id, address.device_id)
+    _touch_workspace_mapping(db, user_id, address)
+    payload = {
+        **_runtime_task_address_payload(address),
+        "message": request.message,
+    }
+    if request.client_guidance_id:
+        payload["clientGuidanceId"] = request.client_guidance_id
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=address.device_id,
+            method="runtime.tasks.guidance",
+            payload=payload,
+            timeout_seconds=RUNTIME_SEND_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return _runtime_guidance_response(result, address.local_task_id)
 
 
 async def bind_runtime_task_to_im_sessions(
@@ -1814,6 +1849,23 @@ def _runtime_send_response(
         accepted=bool(result.get("accepted", True)),
         taskId=str(result.get("taskId") or local_task_id),
         error=result.get("error"),
+    )
+
+
+def _runtime_guidance_response(
+    result: dict[str, Any],
+    local_task_id: str,
+) -> RuntimeGuidanceResponse:
+    success = result.get("success")
+    accepted = bool(result.get("accepted", success is not False))
+    return RuntimeGuidanceResponse(
+        accepted=accepted,
+        success=success is not False,
+        taskId=str(result.get("taskId") or local_task_id),
+        guidanceId=result.get("guidanceId") or result.get("guidance_id"),
+        turnId=result.get("turnId") or result.get("turn_id"),
+        error=result.get("error"),
+        code=result.get("code"),
     )
 
 

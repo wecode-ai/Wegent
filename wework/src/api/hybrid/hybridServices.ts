@@ -383,6 +383,9 @@ export function createHybridWorkbenchServices(
     rollbackRuntimeTask(data: RuntimeRollbackRequest) {
       return routeByAddress(data.address).rollbackRuntimeTask(data)
     },
+    guideRuntimeTask(data) {
+      return routeByAddress(data.address).guideRuntimeTask(data)
+    },
     getRuntimeGoal(data) {
       return routeByAddress(data.address).getRuntimeGoal(data)
     },

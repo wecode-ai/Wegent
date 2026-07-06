@@ -627,12 +627,6 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
-        let method = if method == "runtime.tasks.guidance" {
-            "runtime.tasks.send"
-        } else {
-            method
-        };
-
         if method.starts_with("runtime.") {
             let Some(handler) = &self.runtime_work_handler else {
                 return Err(AppIpcError::new(
@@ -1153,6 +1147,25 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "ls_skills" => Some(command_definition(
             "python3 -c <local_skills>",
             &["python3", "-c", LOCAL_SKILLS_SCRIPT],
+            Some(PostProcessor::Json),
+        )),
+        "browser_relay_restart" => Some(command_definition(
+            "sh -lc <browser_relay_restart>",
+            &[
+                "sh",
+                "-lc",
+                "exec \"$HOME/.wegent-executor/bin/cdp-relay-server\" --restart",
+            ],
+            None,
+        )),
+        "browser_tool" => Some(command_definition(
+            "sh -lc <browser_tool>",
+            &[
+                "sh",
+                "-lc",
+                "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
+                "--",
+            ],
             Some(PostProcessor::Json),
         )),
         "turn_file_changes_review" => Some(command_definition(

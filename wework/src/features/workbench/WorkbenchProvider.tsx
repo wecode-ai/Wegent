@@ -722,6 +722,7 @@ export function WorkbenchProvider({
   const stableCheckoutEnvironmentBranch = useStableEvent(projectActions.checkoutEnvironmentBranch)
   const stableCreateEnvironmentBranch = useStableEvent(projectActions.createEnvironmentBranch)
   const stableSendRuntimePaneMessage = useStableEvent(runtimeMessaging.sendRuntimePaneMessage)
+  const stableSendRuntimePaneGuidance = useStableEvent(runtimeMessaging.sendRuntimePaneGuidance)
   const stableEditLastUserMessage = useStableEvent(runtimeMessaging.editLastUserMessage)
   const stableCancelRuntimePaneTask = useStableEvent(runtimeMessaging.cancelRuntimePaneTask)
   const stableSendCurrentInput = useStableEvent(runtimeMessaging.sendCurrentInput)
@@ -956,6 +957,7 @@ export function WorkbenchProvider({
     checkoutEnvironmentBranch: projectActions.checkoutEnvironmentBranch,
     createEnvironmentBranch: projectActions.createEnvironmentBranch,
     sendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
+    sendRuntimePaneGuidance: runtimeMessaging.sendRuntimePaneGuidance,
     editLastUserMessage: runtimeMessaging.editLastUserMessage,
     cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
     sendCurrentInput: runtimeMessaging.sendCurrentInput,
@@ -1027,6 +1029,7 @@ export function WorkbenchProvider({
       checkoutEnvironmentBranch: stableCheckoutEnvironmentBranch,
       createEnvironmentBranch: stableCreateEnvironmentBranch,
       sendRuntimePaneMessage: stableSendRuntimePaneMessage,
+      sendRuntimePaneGuidance: stableSendRuntimePaneGuidance,
       editLastUserMessage: stableEditLastUserMessage,
       cancelRuntimePaneTask: stableCancelRuntimePaneTask,
       sendCurrentInput: stableSendCurrentInput,
@@ -1089,6 +1092,7 @@ export function WorkbenchProvider({
       stableSelectProjectWorkspace,
       stableSelectStandaloneDevice,
       stableSendCurrentInput,
+      stableSendRuntimePaneGuidance,
       stableSendRuntimePaneMessage,
       stableSetRuntimeGoal,
       stableSetProjectExecutionMode,

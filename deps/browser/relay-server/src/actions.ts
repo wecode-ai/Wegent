@@ -9,7 +9,9 @@ import { getStoredRefs, parseRef } from "./snapshot.js";
 
 export type ActRequest =
   | { kind: "click"; ref: string; doubleClick?: boolean; button?: string; modifiers?: string[] }
+  | { kind: "clickAt"; x: number; y: number; doubleClick?: boolean; button?: string }
   | { kind: "type"; ref: string; text: string; submit?: boolean; slowly?: boolean }
+  | { kind: "insertText"; text: string }
   | { kind: "press"; key: string }
   | { kind: "hover"; ref: string }
   | { kind: "scrollIntoView"; ref: string }
@@ -174,6 +176,55 @@ export async function click(
       clickCount,
     });
 
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    if (ownsClient) {
+      client.close();
+    }
+  }
+}
+
+export async function clickAt(
+  x: number,
+  y: number,
+  opts?: { doubleClick?: boolean; button?: string; client?: BrowserClient }
+): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
+  try {
+    const button = opts?.button ?? "left";
+    const clickCount = opts?.doubleClick ? 2 : 1;
+    await client.send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x,
+      y,
+      button,
+      clickCount,
+    });
+    await client.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x,
+      y,
+      button,
+      clickCount,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    if (ownsClient) {
+      client.close();
+    }
+  }
+}
+
+export async function insertText(text: string, opts?: ActionExecOptions): Promise<ActResult> {
+  const client = opts?.client ?? (await createBrowserClient());
+  const ownsClient = !opts?.client;
+  try {
+    await client.send("Input.insertText", { text });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -819,12 +870,20 @@ export async function executeAction(
         modifiers: request.modifiers,
         client: opts?.client,
       });
+    case "clickAt":
+      return clickAt(request.x, request.y, {
+        doubleClick: request.doubleClick,
+        button: request.button,
+        client: opts?.client,
+      });
     case "type":
       return type(request.ref, request.text, {
         submit: request.submit,
         slowly: request.slowly,
         client: opts?.client,
       });
+    case "insertText":
+      return insertText(request.text, opts);
     case "press":
       return press(request.key, opts);
     case "hover":
