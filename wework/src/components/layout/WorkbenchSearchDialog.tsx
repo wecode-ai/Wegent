@@ -206,9 +206,6 @@ function WorkbenchSearchDialogPanel({
               </div>
               <div className="flex max-w-[150px] shrink-0 flex-col items-end gap-1 text-xs text-text-muted">
                 <span className="max-w-full truncate">{item.project?.name || item.deviceName}</span>
-                <span className="rounded bg-surface px-1.5 py-0.5 text-[11px] leading-4">
-                  {`⌘${index + 1}`}
-                </span>
               </div>
             </button>
           ))}

@@ -70,6 +70,7 @@ describe('WorkbenchSearchDialog', () => {
     expect(screen.getByTestId('workbench-search-result-0')).toHaveTextContent(
       '请执行 pwd 并返回结果'
     )
+    expect(screen.getByTestId('workbench-search-result-0')).not.toHaveTextContent('⌘1')
     expect(onSearchRuntimeWork).toHaveBeenCalledWith({ query: 'pwd', limit: 20 })
 
     await user.click(screen.getByTestId('workbench-search-result-0'))
