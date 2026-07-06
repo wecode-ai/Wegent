@@ -114,6 +114,8 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
     let mut usage = Value::Null;
     let mut retryable_api_error = false;
     let mut json_buffer = ClaudeStdoutJsonBuffer::default();
+    let mut saw_claude_message = false;
+    let mut saw_result_message = false;
     for (index, line) in output.lines().enumerate() {
         let line_number = index + 1;
         let Some(value) = (match json_buffer.push_line(line, line_number) {
@@ -135,6 +137,9 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
         };
         let line = line.trim();
         retryable_api_error |= contains_retryable_api_error(line);
+        if value.get("type").and_then(Value::as_str).is_some() {
+            saw_claude_message = true;
+        }
         if let Some(value) = value.get("session_id").and_then(Value::as_str) {
             let value = value.trim();
             if !value.is_empty() {
@@ -159,6 +164,7 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
             current_assistant_text.clear();
         }
         if value.get("type").and_then(Value::as_str) == Some("result") {
+            saw_result_message = true;
             if let Some(reason) = value
                 .get("stop_reason")
                 .and_then(Value::as_str)
@@ -222,8 +228,16 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
 
     let outcome = terminal_outcome
         .or_else(|| pending_error.map(|message| ExecutionOutcome::Failed { message }))
-        .unwrap_or(ExecutionOutcome::Completed {
-            content: final_text,
+        .unwrap_or_else(|| {
+            if saw_claude_message && !saw_result_message {
+                ExecutionOutcome::Failed {
+                    message: "Claude stdout ended before result message".to_owned(),
+                }
+            } else {
+                ExecutionOutcome::Completed {
+                    content: final_text,
+                }
+            }
         });
     ClaudeStreamSummary {
         outcome,

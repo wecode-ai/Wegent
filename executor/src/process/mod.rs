@@ -10,6 +10,10 @@ use std::{
     path::PathBuf,
     pin::Pin,
     process::Stdio,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
     time::Instant,
 };
@@ -19,6 +23,8 @@ use serde_json::{Map, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader},
     process::Command,
+    sync::mpsc::{unbounded_channel, UnboundedSender},
+    sync::oneshot,
     time::timeout,
 };
 
@@ -28,7 +34,7 @@ use crate::{
         proxy_deferred_mcp_tool, ClaudeFollowUpQuery, DeferredMcpResponseAction,
     },
     claude_session,
-    emitter::ResponsesEventBuilder,
+    emitter::{EventEnvelope, ResponsesEventBuilder},
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
@@ -40,7 +46,6 @@ use crate::{
 };
 
 const DEFAULT_STREAM_CHUNK_CHARS: usize = 20;
-const DEFAULT_STREAM_CHUNK_DELAY_MS: u64 = 0;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
 const MAX_API_ERROR_RETRIES: usize = 3;
 const DEBUG_CLAUDE_STDOUT_ENV: &str = "WEGENT_DEBUG_CLAUDE_STDOUT";
@@ -54,6 +59,123 @@ impl EventSink for NoopEventSink {
 
     fn send(&self, _event: crate::emitter::EventEnvelope) -> Self::SendFuture {
         std::future::ready(Ok(()))
+    }
+}
+
+#[derive(Clone)]
+struct StreamingEventDispatcher {
+    sender: UnboundedSender<QueuedStreamEvent>,
+    pending: Arc<AtomicUsize>,
+}
+
+struct QueuedStreamEvent {
+    kind: QueuedStreamEventKind,
+}
+
+enum QueuedStreamEventKind {
+    Callback {
+        event: EventEnvelope,
+        log_name: &'static str,
+        fields: Vec<(&'static str, String)>,
+    },
+    Flush {
+        done: oneshot::Sender<()>,
+    },
+}
+
+impl StreamingEventDispatcher {
+    fn new<S>(sink: S) -> Self
+    where
+        S: EventSink,
+    {
+        let (sender, mut receiver) = unbounded_channel::<QueuedStreamEvent>();
+        let pending = Arc::new(AtomicUsize::new(0));
+        let worker_pending = Arc::clone(&pending);
+        tokio::spawn(async move {
+            while let Some(queued) = receiver.recv().await {
+                match queued.kind {
+                    QueuedStreamEventKind::Callback {
+                        event,
+                        log_name,
+                        fields,
+                    } => {
+                        let started = Instant::now();
+                        let event_type = event.event_type.clone();
+                        let task_id = event.task_id.clone();
+                        let subtask_id = event.subtask_id.clone();
+                        let message_id = event.message_id.map(|value| value.to_string());
+                        if let Err(message) = sink.send(event).await {
+                            let mut fields = fields;
+                            fields.push(("error_len", message.len().to_string()));
+                            log_executor_event(log_name, &fields);
+                        }
+                        let remaining = worker_pending
+                            .fetch_sub(1, Ordering::Relaxed)
+                            .saturating_sub(1);
+                        let elapsed_ms = started.elapsed().as_millis();
+                        if elapsed_ms >= 1_000 {
+                            let fields = vec![
+                                ("task_id", task_id),
+                                ("subtask_id", subtask_id),
+                                ("event_type", event_type),
+                                ("elapsed_ms", elapsed_ms.to_string()),
+                                ("pending_depth", remaining.to_string()),
+                                ("message_id", message_id.unwrap_or_default()),
+                            ];
+                            log_executor_event("streaming callback dispatch slow", &fields);
+                        }
+                    }
+                    QueuedStreamEventKind::Flush { done } => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+        });
+        Self { sender, pending }
+    }
+
+    async fn flush(&self) {
+        let (done, wait) = oneshot::channel();
+        if self
+            .sender
+            .send(QueuedStreamEvent {
+                kind: QueuedStreamEventKind::Flush { done },
+            })
+            .is_err()
+        {
+            log_executor_event("streaming callback queue closed", &[]);
+            return;
+        }
+        let _ = wait.await;
+    }
+
+    fn send(
+        &self,
+        event: EventEnvelope,
+        log_name: &'static str,
+        fields: Vec<(&'static str, String)>,
+    ) {
+        let depth = self.pending.fetch_add(1, Ordering::Relaxed) + 1;
+        if depth % 100 == 0 {
+            let mut queue_fields = fields.clone();
+            queue_fields.push(("pending_depth", depth.to_string()));
+            queue_fields.push(("event_type", event.event_type.clone()));
+            log_executor_event("streaming callback queue depth", &queue_fields);
+        }
+        if self
+            .sender
+            .send(QueuedStreamEvent {
+                kind: QueuedStreamEventKind::Callback {
+                    event,
+                    log_name,
+                    fields,
+                },
+            })
+            .is_err()
+        {
+            self.pending.fetch_sub(1, Ordering::Relaxed);
+            log_executor_event("streaming callback queue closed", &[]);
+        }
     }
 }
 
@@ -793,6 +915,7 @@ where
     let mut lines = BufReader::new(stdout).lines();
     let mut line_number = 0usize;
     let mut json_buffer = ClaudeStdoutJsonBuffer::default();
+    let dispatcher = StreamingEventDispatcher::new(sink);
     while let Ok(Some(line)) = lines.next_line().await {
         line_number += 1;
         output.push_str(&line);
@@ -803,6 +926,7 @@ where
         let Some(value) = (match json_buffer.push_line(&line, line_number) {
             Ok(value) => value,
             Err(error) => {
+                dispatcher.flush().await;
                 return StreamingStdoutOutcome::InvalidJson {
                     stdout: output,
                     error,
@@ -813,11 +937,11 @@ where
         };
         if let Some(reasoning) = extract_reasoning(&value) {
             if !reasoning.is_empty() {
-                emit_reasoning_chunks(&sink, &builder, &reasoning, &task_id, &subtask_id).await;
+                emit_reasoning_chunks(&dispatcher, &builder, &reasoning, &task_id, &subtask_id);
             }
         }
         for tool_use in extract_claude_tool_uses(&value) {
-            emit_claude_tool_use(&sink, &builder, &tool_use, &task_id, &subtask_id).await;
+            emit_claude_tool_use(&dispatcher, &builder, &tool_use, &task_id, &subtask_id);
             tool_uses.insert(tool_use.id.clone(), tool_use);
         }
         for tool_result in extract_claude_tool_results(&value) {
@@ -829,15 +953,14 @@ where
                     input: Value::Object(Default::default()),
                 });
             emit_claude_tool_result(
-                &sink,
+                &dispatcher,
                 &builder,
                 &tool_use,
                 tool_result.content.as_deref(),
                 tool_result.is_error,
                 &task_id,
                 &subtask_id,
-            )
-            .await;
+            );
         }
         let Some(text) = extract_text(&value) else {
             continue;
@@ -845,8 +968,14 @@ where
         if text.is_empty() {
             continue;
         }
-        let emitted =
-            emit_text_chunks(&sink, &builder, &text, &mut offset, &task_id, &subtask_id).await;
+        let emitted = emit_text_chunks(
+            &dispatcher,
+            &builder,
+            &text,
+            &mut offset,
+            &task_id,
+            &subtask_id,
+        );
         let fields = vec![
             ("task_id", task_id.to_string()),
             ("subtask_id", subtask_id.to_string()),
@@ -855,80 +984,70 @@ where
         ];
         log_executor_event("streaming text chunks emitted", &fields);
     }
+    dispatcher.flush().await;
     StreamingStdoutOutcome::Success(output.trim().to_owned())
 }
 
-async fn emit_claude_tool_use<S>(
-    sink: &S,
+fn emit_claude_tool_use(
+    dispatcher: &StreamingEventDispatcher,
     builder: &ResponsesEventBuilder,
     tool_use: &ClaudeToolUse,
     task_id: &str,
     subtask_id: &str,
-) where
-    S: EventSink,
-{
+) {
     let event = builder.response_tool_block_created(&tool_use.id, &tool_use.name, &tool_use.input);
-    if let Err(message) = sink.send(event).await {
-        let fields = vec![
+    dispatcher.send(
+        event,
+        "streaming tool use callback failed",
+        vec![
             ("task_id", task_id.to_string()),
             ("subtask_id", subtask_id.to_string()),
             ("tool_use_id", tool_use.id.clone()),
-            ("error_len", message.len().to_string()),
-        ];
-        log_executor_event("streaming tool use callback failed", &fields);
-    }
+        ],
+    );
 }
 
-async fn emit_claude_tool_result<S>(
-    sink: &S,
+fn emit_claude_tool_result(
+    dispatcher: &StreamingEventDispatcher,
     builder: &ResponsesEventBuilder,
     tool_use: &ClaudeToolUse,
     output: Option<&str>,
     is_error: bool,
     task_id: &str,
     subtask_id: &str,
-) where
-    S: EventSink,
-{
+) {
     let event =
         builder.response_tool_block_updated(&tool_use.id, &tool_use.input, output, is_error);
-    if let Err(message) = sink.send(event).await {
-        let fields = vec![
+    dispatcher.send(
+        event,
+        "streaming tool result callback failed",
+        vec![
             ("task_id", task_id.to_string()),
             ("subtask_id", subtask_id.to_string()),
             ("tool_use_id", tool_use.id.clone()),
-            ("error_len", message.len().to_string()),
-        ];
-        log_executor_event("streaming tool result callback failed", &fields);
-    }
+        ],
+    );
 }
 
-async fn emit_reasoning_chunks<S>(
-    sink: &S,
+fn emit_reasoning_chunks(
+    dispatcher: &StreamingEventDispatcher,
     builder: &ResponsesEventBuilder,
     reasoning: &str,
     task_id: &str,
     subtask_id: &str,
-) where
-    S: EventSink,
-{
+) {
     let chunks = split_stream_text(reasoning, stream_chunk_chars());
-    let delay = Duration::from_millis(stream_chunk_delay_ms());
-    let should_delay = chunks.len() > 1 && !delay.is_zero();
     let chunk_count = chunks.len();
-    for (index, delta) in chunks.into_iter().enumerate() {
+    for delta in chunks {
         let event = builder.response_reasoning_delta(&delta);
-        if let Err(message) = sink.send(event).await {
-            let fields = vec![
+        dispatcher.send(
+            event,
+            "streaming reasoning callback failed",
+            vec![
                 ("task_id", task_id.to_string()),
                 ("subtask_id", subtask_id.to_string()),
-                ("error_len", message.len().to_string()),
-            ];
-            log_executor_event("streaming reasoning callback failed", &fields);
-        }
-        if should_delay && index + 1 < chunk_count {
-            tokio::time::sleep(delay).await;
-        }
+            ],
+        );
     }
     let fields = vec![
         ("task_id", task_id.to_string()),
@@ -939,35 +1058,27 @@ async fn emit_reasoning_chunks<S>(
     log_executor_event("streaming reasoning chunks emitted", &fields);
 }
 
-async fn emit_text_chunks<S>(
-    sink: &S,
+fn emit_text_chunks(
+    dispatcher: &StreamingEventDispatcher,
     builder: &ResponsesEventBuilder,
     text: &str,
     offset: &mut usize,
     task_id: &str,
     subtask_id: &str,
-) -> usize
-where
-    S: EventSink,
-{
+) -> usize {
     let chunks = split_stream_text(text, stream_chunk_chars());
-    let delay = Duration::from_millis(stream_chunk_delay_ms());
-    let should_delay = chunks.len() > 1 && !delay.is_zero();
     let chunk_count = chunks.len();
-    for (index, delta) in chunks.into_iter().enumerate() {
+    for delta in chunks {
         let event = builder.response_text_delta(&delta, *offset);
         *offset += delta.chars().count();
-        if let Err(message) = sink.send(event).await {
-            let fields = vec![
+        dispatcher.send(
+            event,
+            "streaming chunk callback failed",
+            vec![
                 ("task_id", task_id.to_string()),
                 ("subtask_id", subtask_id.to_string()),
-                ("error_len", message.len().to_string()),
-            ];
-            log_executor_event("streaming chunk callback failed", &fields);
-        }
-        if should_delay && index + 1 < chunk_count {
-            tokio::time::sleep(delay).await;
-        }
+            ],
+        );
     }
     chunk_count
 }
@@ -994,13 +1105,6 @@ fn stream_chunk_chars() -> usize {
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_STREAM_CHUNK_CHARS)
-}
-
-fn stream_chunk_delay_ms() -> u64 {
-    env::var("WEGENT_EXECUTOR_STREAM_CHUNK_DELAY_MS")
-        .ok()
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_STREAM_CHUNK_DELAY_MS)
 }
 
 async fn read_process_output<R>(output: R) -> String
@@ -1285,10 +1389,8 @@ mod tests {
     fn stream_chunk_defaults_are_tuned_for_smooth_device_chat() {
         let _lock = env_lock();
         let _chunk_chars = EnvGuard::remove("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS");
-        let _chunk_delay = EnvGuard::remove("WEGENT_EXECUTOR_STREAM_CHUNK_DELAY_MS");
 
         assert_eq!(stream_chunk_chars(), 20);
-        assert_eq!(stream_chunk_delay_ms(), 0);
     }
 
     #[test]
