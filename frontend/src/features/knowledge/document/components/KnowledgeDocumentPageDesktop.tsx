@@ -28,7 +28,7 @@ import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { useGroupKbs } from '../hooks/useGroupKbs'
 import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
-import { useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
+import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
@@ -296,13 +296,14 @@ export function KnowledgeDocumentPageDesktop({
         // Use history.pushState instead of router.push so Next.js doesn't unmount/remount
         // the entire page component. This works for both the main page and detail pages.
         sidebar.selectKb(fullKb)
+        setCurrentView(getDefaultKnowledgeView(fullKb.kb_type))
         // Update sidebar collapse synchronously (not via useEffect) so the
         // sidebar state is correct in the same render cycle as the selectedKb update
         updateSidebarCollapsed(fullKb.kb_type !== 'classic')
         navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
       }
     },
-    [sidebar, navigateToKbViaHistory, updateSidebarCollapsed]
+    [sidebar, setCurrentView, navigateToKbViaHistory, updateSidebarCollapsed]
   )
 
   const handleSelectAll = useCallback(() => {
