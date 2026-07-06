@@ -31,9 +31,9 @@ VERSION=""
 # Claude Code minimum version requirement
 # Claude Code defer requires 2.1.89+.
 MIN_CLAUDE_CODE_VERSION="2.1.89"
-MIN_CODEX_CLI_VERSION="0.137.0"
+MIN_CODEX_CLI_VERSION="0.142.5"
 MIN_NODE_VERSION="18"
-CODEX_CLI_PACKAGE="@openai/codex@0.137.0"
+CODEX_CLI_PACKAGE="@openai/codex@0.142.5"
 
 # Feature flags
 # Claude Code is bundled for Linux and Windows, but not for macOS
