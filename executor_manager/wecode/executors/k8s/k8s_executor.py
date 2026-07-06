@@ -697,6 +697,55 @@ class K8sExecutor(Executor):
             )
             return {"status": "failed", "pod_name": pod_name, "error_msg": str(e)}
 
+    def _is_warmpool_sandbox_reusable(self, sandbox_status: Dict[str, Any]) -> bool:
+        """Return whether an existing warm-pool sandbox has a usable Pod."""
+        return bool(
+            sandbox_status.get("exists")
+            and sandbox_status.get("phase") == "Running"
+            and sandbox_status.get("pod_name")
+            and sandbox_status.get("pod_ip")
+        )
+
+    def _handle_existing_warmpool_claim(
+        self,
+        warmpool_client,
+        executor_name: str,
+        task_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Reuse a healthy SandboxClaim or delete a stale one before recreation."""
+        existing_claim = warmpool_client.get_sandbox_claim(executor_name)
+        if not existing_claim:
+            return None
+
+        logger.info(
+            "SandboxClaim '%s' already exists for task %s, checking reusability",
+            executor_name,
+            task_id,
+        )
+        sandbox_status = warmpool_client.get_sandbox_status(executor_name)
+        if self._is_warmpool_sandbox_reusable(sandbox_status):
+            logger.info("Existing sandbox '%s' is running, reusing", executor_name)
+            return {"status": "success"}
+
+        if sandbox_status.get("phase") != "Running":
+            sandbox_status = self._wait_for_warmpool_sandbox_ready(
+                warmpool_client, executor_name, timeout=60
+            )
+            if self._is_warmpool_sandbox_reusable(sandbox_status or {}):
+                return {"status": "success"}
+
+        logger.warning(
+            "Existing SandboxClaim '%s' is not reusable for task %s: "
+            "phase=%s pod_name=%s pod_ip=%s; deleting before recreation",
+            executor_name,
+            task_id,
+            (sandbox_status or {}).get("phase"),
+            (sandbox_status or {}).get("pod_name"),
+            (sandbox_status or {}).get("pod_ip"),
+        )
+        warmpool_client.delete_sandbox_claim(executor_name)
+        return None
+
     def _create_pod_from_warmpool(
         self,
         task: Dict[str, Any],
@@ -753,33 +802,11 @@ class K8sExecutor(Executor):
         warmpool_client = WarmPoolClient(api_client, K8S_NAMESPACE)
 
         try:
-            # Check if SandboxClaim already exists (reuse existing sandbox)
-            existing_claim = warmpool_client.get_sandbox_claim(executor_name)
-            if existing_claim:
-                logger.info(
-                    f"SandboxClaim '{executor_name}' already exists for task {task_id}, reusing existing sandbox"
-                )
-                # Get sandbox status to retrieve pod info
-                sandbox_status = warmpool_client.get_sandbox_status(executor_name)
-                if (
-                    sandbox_status.get("exists")
-                    and sandbox_status.get("phase") == "Running"
-                ):
-                    logger.info(
-                        f"Existing sandbox '{executor_name}' is running, reusing"
-                    )
-                    return {"status": "success"}
-                else:
-                    # Sandbox exists but not running, wait for it to be ready
-                    sandbox_status = self._wait_for_warmpool_sandbox_ready(
-                        warmpool_client, executor_name, timeout=60
-                    )
-                    if sandbox_status:
-                        return {"status": "success"}
-                    return {
-                        "status": "failed",
-                        "error_msg": "Existing sandbox pod did not become ready in time",
-                    }
+            existing_claim_result = self._handle_existing_warmpool_claim(
+                warmpool_client, executor_name, task_id
+            )
+            if existing_claim_result:
+                return existing_claim_result
 
             # Create SandboxClaim CR (claims pod from warm pool)
             # Note: labels/annotations passed here are for the SandboxClaim CR itself,
@@ -965,6 +992,12 @@ class K8sExecutor(Executor):
         self, pod_name: str, executor_namespace: Optional[str] = None
     ) -> Dict[str, Any]:
         try:
+            claim_result = self._delete_warmpool_claim_for_executor(
+                pod_name, executor_namespace
+            )
+            if claim_result:
+                return claim_result
+
             core_v1 = self._get_core_v1_api()
             if core_v1 is None:
                 return {
@@ -998,6 +1031,18 @@ class K8sExecutor(Executor):
         except Exception as e:
             logger.error(f"Error deleting Kubernetes pod '{pod_name}': {e}")
             return {"status": "failed", "error_msg": f"Error: {e}"}
+
+    def _delete_warmpool_claim_for_executor(
+        self, executor_name: str, executor_namespace: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Delete the same-name SandboxClaim before falling back to Pod deletion."""
+        if executor_namespace and executor_namespace != K8S_NAMESPACE:
+            return None
+
+        claim_result = self.delete_sandbox_claim(executor_name)
+        if claim_result.get("status") == "not_found":
+            return None
+        return claim_result
 
     def delete_sandbox_claim(self, sandbox_claim_name: str) -> Dict[str, Any]:
         """Delete a SandboxClaim CR (for warm pool sandboxes).
