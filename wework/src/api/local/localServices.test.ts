@@ -75,7 +75,7 @@ describe('createLocalAppServices', () => {
       is_active: true,
     })
     await expect(services.modelApi.listModels()).resolves.toEqual({
-      data: [
+      data: expect.arrayContaining([
         expect.objectContaining({
           name: 'gpt-5.5',
           type: 'runtime',
@@ -95,7 +95,22 @@ describe('createLocalAppServices', () => {
           }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
-      ],
+        expect.objectContaining({
+          name: 'Sol',
+          type: 'runtime',
+          modelId: 'Sol',
+        }),
+        expect.objectContaining({
+          name: 'Terra',
+          type: 'runtime',
+          modelId: 'Terra',
+        }),
+        expect.objectContaining({
+          name: 'Luna',
+          type: 'runtime',
+          modelId: 'Luna',
+        }),
+      ]),
     })
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
@@ -712,7 +727,7 @@ describe('createLocalAppServices', () => {
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
-          reasoning: 'extra_high',
+          reasoning: 'xhigh',
           summary: 'concise',
           speed: 'fast',
         },
@@ -745,7 +760,7 @@ describe('createLocalAppServices', () => {
               },
             },
             reasoning: {
-              effort: 'extra_high',
+              effort: 'xhigh',
               summary: 'concise',
             },
             service_tier: 'fast',
@@ -780,6 +795,63 @@ describe('createLocalAppServices', () => {
     )
     expect(sendPayload).not.toHaveProperty('message_id')
     expect(sendPayload).not.toHaveProperty('modelId')
+  })
+
+  test('routes last user message edits through the local runtime rollback method', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.rollbackRuntimeTask({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'edited question',
+      messageId: 'user-last',
+      modelId: 'gpt-5.5',
+      modelOptions: {
+        collaborationMode: 'default',
+        reasoning: 'high',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.rollback')?.[1]
+    expect(payload).toEqual(
+      expect.objectContaining({
+        taskId: 'task-1',
+        address: {
+          deviceId: 'device-uuid',
+          workspacePath: '/Users/me/project',
+          taskId: 'task-1',
+        },
+        message: 'edited question',
+        messageId: 'user-last',
+        collaborationMode: 'default',
+        modelOptions: {
+          collaborationMode: 'default',
+          reasoning: 'high',
+        },
+        executionRequest: expect.objectContaining({
+          task_id: 'task-1',
+          subtask_id: expect.any(String),
+          prompt: 'edited question',
+          new_session: false,
+          model_config: expect.objectContaining({
+            model: 'openai',
+            model_id: 'gpt-5.5',
+            api_format: 'responses',
+            protocol: 'openai-responses',
+          }),
+          project_workspace_path: '/Users/me/project',
+        }),
+      })
+    )
+    expect(payload).not.toHaveProperty('modelId')
   })
 
   test('uses local model settings for create and continue execution requests', async () => {

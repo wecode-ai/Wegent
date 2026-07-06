@@ -65,6 +65,11 @@ interface ScrollableMessageAreaProps {
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (content: string) => void
+  onEditLastUserMessage?: (
+    message: WorkbenchMessage,
+    content: string
+  ) => Promise<boolean | void> | boolean | void
+  canEditLastUserMessage?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   autoScrollSuspended?: boolean
@@ -114,6 +119,10 @@ function areScrollableMessageAreaPropsEqual(
       ? 'onRequestUserInputIgnore'
       : null,
     previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
+    previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
+    previous.canEditLastUserMessage !== next.canEditLastUserMessage
+      ? 'canEditLastUserMessage'
+      : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -154,6 +163,8 @@ function ScrollableMessagePaneContent({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onEditLastUserMessage,
+  canEditLastUserMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   autoScrollSuspended = false,
@@ -659,6 +670,8 @@ function ScrollableMessagePaneContent({
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
+                onEditLastUserMessage={onEditLastUserMessage}
+                canEditLastUserMessage={canEditLastUserMessage}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}

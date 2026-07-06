@@ -1158,4 +1158,21 @@ mod tests {
             Some("http://env-backend.local:8000".to_owned())
         );
     }
+
+    #[test]
+    fn claude_task_skill_record_without_expected_hash_keeps_existing_cache() {
+        let record = json!({
+            "skill_id": 259904,
+            "namespace": "default",
+            "content_hash": "sha256:old",
+        });
+        let skill_ref = crate::services::skill_deployer::SkillRef {
+            skill_id: 259904,
+            namespace: "default".to_owned(),
+            is_public: false,
+            content_hash: None,
+        };
+
+        assert!(is_claude_task_skill_record_current(&record, &skill_ref));
+    }
 }

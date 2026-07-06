@@ -55,6 +55,18 @@ describe('DesktopSettingsMenu', () => {
     expect(mockCheckNow).toHaveBeenCalledTimes(1)
   })
 
+  test('renders the account area as a non-clickable muted group', () => {
+    renderMenu()
+
+    const accountGroup = screen.getByTestId('settings-account-group')
+    const accountItem = screen.getByTestId('account-menu-button')
+
+    expect(accountGroup).toHaveTextContent('user@example.com')
+    expect(accountItem.tagName).toBe('DIV')
+    expect(accountItem).toHaveClass('cursor-default', 'text-text-secondary')
+    expect(accountItem).not.toHaveClass('hover:bg-white/[0.08]')
+  })
+
   test('installs a discovered app update', async () => {
     mockUpdateState = {
       ...mockUpdateState,

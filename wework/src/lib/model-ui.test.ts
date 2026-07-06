@@ -2,10 +2,12 @@ import { describe, expect, test } from 'vitest'
 import {
   areModelsProtocolCompatible,
   getModelCompatibilityFamily,
+  getSelectedModelDisplayLabel,
   getControlsForModel,
   groupModelsByFamily,
   inferModelFamily,
   isSupportedModelFamily,
+  normalizeModelOptions,
 } from './model-ui'
 import type { UnifiedModel } from '@/types/api'
 
@@ -297,5 +299,27 @@ describe('model-ui', () => {
       'collaborationMode',
       'speed',
     ])
+  })
+
+  test('uses xhigh for ultra reasoning while accepting stored extra_high values', () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.5',
+      type: 'runtime',
+      displayName: 'gpt-5.5',
+      config: {
+        ui: { family: 'codex-official', modelLabel: 'gpt-5.5' },
+      },
+    }
+
+    const reasoningControl = getControlsForModel(model).find(control => control.id === 'reasoning')
+
+    expect(reasoningControl?.options.map(option => option.value)).toContain('xhigh')
+    expect(reasoningControl?.options.map(option => option.value)).not.toContain('extra_high')
+    expect(normalizeModelOptions(model, { reasoning: 'extra_high' })).toEqual({
+      reasoning: 'xhigh',
+    })
+    expect(getSelectedModelDisplayLabel(model, { reasoning: 'extra_high' })).toBe(
+      'gpt-5.5 Extra High'
+    )
   })
 })

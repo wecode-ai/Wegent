@@ -105,7 +105,7 @@ const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
         order: 30,
       },
       {
-        value: 'extra_high',
+        value: 'xhigh',
         label: 'Extra High',
         labelKey: 'workbench.intelligence_ultra',
         order: 40,
@@ -366,7 +366,7 @@ export function getModelDisplayLabel(
   const controlLabels = controls
     .filter(control => control.includeInLabel !== 'never')
     .map(control => {
-      const selected = options[control.id] ?? control.defaultValue
+      const selected = selectedControlValue(control, options)
       if (control.includeInLabel === 'whenNonDefault' && selected === control.defaultValue) {
         return ''
       }
@@ -401,6 +401,30 @@ function resolveOptionSummaryLabel(
   return option.summaryLabel || resolveOptionLabel(option, resolveLabel)
 }
 
+export function normalizeModelOptionValue(optionId: string, value?: string): string | undefined {
+  if (!value) return value
+  if (optionId !== 'reasoning') return value
+
+  const normalized = value.trim().toLowerCase().replace(/\s+/g, '_')
+  if (['extra_high', 'x_high', 'x-high', 'ultra'].includes(normalized)) {
+    return 'xhigh'
+  }
+  return value
+}
+
+export function normalizeModelOptionAliases(options: ModelOptions = {}): ModelOptions {
+  return Object.fromEntries(
+    Object.entries(options).map(([optionId, value]) => [
+      optionId,
+      normalizeModelOptionValue(optionId, value) ?? value,
+    ])
+  )
+}
+
+function selectedControlValue(control: ModelControlConfig, options: ModelOptions): string {
+  return normalizeModelOptionValue(control.id, options[control.id]) ?? control.defaultValue
+}
+
 export function getSelectedModelDisplayLabel(
   model: UnifiedModel | null,
   options: ModelOptions = {},
@@ -413,7 +437,7 @@ export function getSelectedModelDisplayLabel(
   const regionLabel = metadata.region ? (REGION_LABELS[metadata.region] ?? metadata.region) : ''
   const controlLabels = controls
     .map(control => {
-      const selected = options[control.id] ?? control.defaultValue
+      const selected = selectedControlValue(control, options)
       if (
         control.id !== 'reasoning' &&
         control.includeInLabel === 'whenNonDefault' &&
@@ -454,7 +478,7 @@ export function normalizeModelOptions(
   return Object.fromEntries(
     getControlsForModel(model)
       .filter(control => control.persistDefault !== false || options[control.id] !== undefined)
-      .map(control => [control.id, options[control.id] ?? control.defaultValue])
+      .map(control => [control.id, selectedControlValue(control, options)])
   )
 }
 

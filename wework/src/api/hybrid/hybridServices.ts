@@ -15,6 +15,7 @@ import type {
   DeviceInfo,
   DeviceWorkspacePrepareRequest,
   RuntimeArchivedConversationBulkResponse,
+  RuntimeRollbackRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeSendRequest,
@@ -378,6 +379,9 @@ export function createHybridWorkbenchServices(
     },
     sendRuntimeMessage(data: RuntimeSendRequest) {
       return routeByAddress(data.address).sendRuntimeMessage(data)
+    },
+    rollbackRuntimeTask(data: RuntimeRollbackRequest) {
+      return routeByAddress(data.address).rollbackRuntimeTask(data)
     },
     getRuntimeGoal(data) {
       return routeByAddress(data.address).getRuntimeGoal(data)

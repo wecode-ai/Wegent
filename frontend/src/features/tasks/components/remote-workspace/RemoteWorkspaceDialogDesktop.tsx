@@ -20,7 +20,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 
 import { TFunction } from 'i18next'
@@ -30,11 +29,13 @@ import {
   formatSize,
   getMimeTypeFromPreviewKind,
   resolvePreviewKind,
+  shouldUseFormattedTextPreview,
   type BreadcrumbSegment,
   type PreviewKind,
   type SortOption,
 } from './remote-workspace-utils'
 import { FilePreview } from '@/components/common/FilePreview'
+import { RemoteWorkspaceFormattedPreview } from './RemoteWorkspaceFormattedPreview'
 import {
   type RemoteWorkspaceDirectoryCache,
   RemoteWorkspaceDirectoryTree,
@@ -44,6 +45,7 @@ type RemoteWorkspaceDialogDesktopProps = {
   t: TFunction<'translation', undefined>
   rootPath: string
   currentPath: string
+  currentDirectoryEntry: RemoteWorkspaceTreeEntry
   breadcrumbs: BreadcrumbSegment[]
   directoryCache: RemoteWorkspaceDirectoryCache
   expandedDirectoryPaths: Set<string>
@@ -63,6 +65,7 @@ type RemoteWorkspaceDialogDesktopProps = {
   canGoParent: boolean
   isPreviewDialogOpen: boolean
   onDownload: (entry: RemoteWorkspaceTreeEntry) => void
+  onDownloadSelected: (entries: RemoteWorkspaceTreeEntry[]) => void
   onGoRoot: () => void
   onGoParent: () => void
   onRefresh: () => void
@@ -111,6 +114,7 @@ export function RemoteWorkspaceDialogDesktop({
   t,
   rootPath,
   currentPath,
+  currentDirectoryEntry,
   breadcrumbs,
   directoryCache,
   expandedDirectoryPaths,
@@ -147,6 +151,7 @@ export function RemoteWorkspaceDialogDesktop({
   onOpenEntry,
   onPreviewDialogOpenChange,
   onDownload,
+  onDownloadSelected,
 }: RemoteWorkspaceDialogDesktopProps) {
   const [isDownloadConfirmOpen, setIsDownloadConfirmOpen] = useState(false)
   const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false)
@@ -155,11 +160,17 @@ export function RemoteWorkspaceDialogDesktop({
     selectableEntries.length > 0 && selectableEntries.every(entry => selectedPaths.has(entry.path))
   const selectedCount = selectedPaths.size
   const detailEntry = selectedEntries.length === 1 ? selectedEntries[0] : null
-  const downloadableSelectedEntries = selectedEntries.filter(entry => !entry.is_directory)
+  const downloadableSelectedEntries =
+    selectedEntries.length > 0 ? selectedEntries : [currentDirectoryEntry]
   const downloadableSelectedCount = downloadableSelectedEntries.length
   const handleDownloadSelectedEntries = () => {
     if (downloadableSelectedCount === 1) {
-      onDownload(downloadableSelectedEntries[0])
+      const [entry] = downloadableSelectedEntries
+      if (entry.is_directory) {
+        void onDownloadSelected([entry])
+      } else {
+        onDownload(entry)
+      }
       return
     }
 
@@ -168,16 +179,9 @@ export function RemoteWorkspaceDialogDesktop({
     }
   }
   const handleConfirmDownloadSelectedEntries = () => {
-    downloadableSelectedEntries.forEach(entry => onDownload(entry))
+    void onDownloadSelected(downloadableSelectedEntries)
     setIsDownloadConfirmOpen(false)
   }
-  const handlePreviewDialogOpenChange = (open: boolean) => {
-    if (!open) {
-      setIsPreviewFullscreen(false)
-    }
-    onPreviewDialogOpenChange(open)
-  }
-
   useEffect(() => {
     if (!isPreviewDialogOpen) {
       setIsPreviewFullscreen(false)
@@ -185,23 +189,28 @@ export function RemoteWorkspaceDialogDesktop({
   }, [isPreviewDialogOpen])
 
   useEffect(() => {
-    if (!isPreviewFullscreen) {
+    if (!isPreviewDialogOpen) {
       return
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        setIsPreviewFullscreen(false)
+        event.stopPropagation()
+        if (isPreviewFullscreen) {
+          setIsPreviewFullscreen(false)
+          return
+        }
+        onPreviewDialogOpenChange(false)
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isPreviewFullscreen])
+    window.addEventListener('keydown', handleKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
+  }, [isPreviewDialogOpen, isPreviewFullscreen, onPreviewDialogOpenChange])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <section className="shrink-0 border-b border-border px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" onClick={onGoRoot}>
@@ -248,7 +257,7 @@ export function RemoteWorkspaceDialogDesktop({
           </Button>
           <Button
             type="button"
-            variant="outline"
+            variant={downloadableSelectedCount > 0 ? 'primary' : 'outline'}
             size="sm"
             disabled={downloadableSelectedCount === 0}
             onClick={handleDownloadSelectedEntries}
@@ -537,113 +546,109 @@ export function RemoteWorkspaceDialogDesktop({
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog
-        open={isPreviewDialogOpen && Boolean(previewEntry)}
-        onOpenChange={handlePreviewDialogOpenChange}
-      >
-        <DialogContent
+      {isPreviewDialogOpen && previewEntry && (
+        <div
+          role="dialog"
+          aria-label={t('remote_workspace.preview.title', 'Preview')}
+          aria-modal="false"
           className={
             isPreviewFullscreen
-              ? '!fixed !inset-0 !left-0 !top-0 !flex !h-dvh !w-screen !max-w-none !translate-x-0 !translate-y-0 !flex-col gap-0 overflow-hidden !rounded-none !border-0 p-0 sm:!rounded-none'
-              : '!flex !h-[90vh] !w-[96vw] !max-w-[1400px] !flex-col gap-0 overflow-hidden p-0'
+              ? 'fixed inset-0 z-50 flex h-dvh w-screen flex-col overflow-hidden bg-base'
+              : 'absolute inset-3 z-20 flex flex-col overflow-hidden rounded-lg border border-border bg-base shadow-xl'
           }
-          aria-label={t('remote_workspace.preview.title', 'Preview')}
-          hideCloseButton
-          preventEscapeClose={isPreviewFullscreen}
         >
-          {previewEntry && (
-            <>
-              <DialogTitle className="sr-only">
-                {t('remote_workspace.preview.title', 'Preview')}
-              </DialogTitle>
-              <DialogDescription className="sr-only">
-                {previewEntry.name} · {previewEntry.path}
-              </DialogDescription>
-              {/* Header - Same style as FilePreviewPage */}
-              <header className="flex items-center justify-between px-4 py-3 border-b border-border dark:border-gray-700 bg-white dark:bg-gray-900 shrink-0">
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-2xl">{getFileIcon(previewKind)}</span>
-                  <div className="min-w-0">
-                    <h1 className="font-medium text-text-primary truncate max-w-[200px] sm:max-w-[300px] md:max-w-[500px]">
-                      {previewEntry.name}
-                    </h1>
-                    <p className="text-xs text-text-secondary truncate max-w-[200px] sm:max-w-[300px] md:max-w-[500px]">
-                      {previewEntry.path}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setIsPreviewFullscreen(current => !current)}
-                    className="h-10 w-10"
-                    aria-label={
-                      isPreviewFullscreen
-                        ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
-                        : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
-                    }
-                    data-testid="remote-workspace-preview-fullscreen-button"
-                    title={
-                      isPreviewFullscreen
-                        ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
-                        : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
-                    }
-                  >
-                    {isPreviewFullscreen ? (
-                      <Minimize2 className="w-5 h-5" />
-                    ) : (
-                      <Maximize2 className="w-5 h-5" />
-                    )}
-                  </Button>
-                  <Button variant="primary" size="sm" onClick={() => onDownload(previewEntry)}>
-                    <Download className="w-4 h-4 mr-2" />
-                    {t('remote_workspace.actions.download')}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => onPreviewDialogOpenChange(false)}
-                    title={t('remote_workspace.actions.close', 'Close')}
-                  >
-                    <X className="w-5 h-5" />
-                  </Button>
-                </div>
-              </header>
-
-              {/* Preview Content */}
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface">
-                <div className="min-h-0 flex-1 overflow-hidden">
-                  {previewKind === 'unsupported' ? (
-                    <div className="flex h-full items-center justify-center">
-                      <p className="text-sm text-text-muted">
-                        {t('remote_workspace.preview.unsupported')}
-                      </p>
-                    </div>
-                  ) : previewEntry && previewBlob ? (
-                    <FilePreview
-                      fileBlob={previewBlob || undefined}
-                      filename={previewEntry.name}
-                      mimeType={getMimeTypeFromPreviewKind(previewKind, previewEntry.name)}
-                      fileSize={previewEntry.size}
-                      showToolbar={previewKind === 'image'}
-                      onDownload={() => onDownload(previewEntry)}
-                      onClose={() => onPreviewDialogOpenChange(false)}
-                    />
-                  ) : (
-                    <div className="flex h-full items-center justify-center">
-                      <p className="text-sm text-text-muted">
-                        {t('remote_workspace.preview.loading')}
-                      </p>
-                    </div>
-                  )}
-                </div>
+          <h2 className="sr-only">{t('remote_workspace.preview.title', 'Preview')}</h2>
+          <p className="sr-only">
+            {previewEntry.name} · {previewEntry.path}
+          </p>
+          <header className="flex shrink-0 items-center justify-between border-b border-border bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900">
+            <div className="flex items-center gap-3 min-w-0">
+              <span className="text-2xl">{getFileIcon(previewKind)}</span>
+              <div className="min-w-0">
+                <h1 className="font-medium text-text-primary truncate max-w-[200px] sm:max-w-[300px] md:max-w-[500px]">
+                  {previewEntry.name}
+                </h1>
+                <p className="text-xs text-text-secondary truncate max-w-[200px] sm:max-w-[300px] md:max-w-[500px]">
+                  {previewEntry.path}
+                </p>
               </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+            </div>
+
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setIsPreviewFullscreen(current => !current)}
+                className="h-10 w-10"
+                aria-label={
+                  isPreviewFullscreen
+                    ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
+                    : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
+                }
+                data-testid="remote-workspace-preview-fullscreen-button"
+                title={
+                  isPreviewFullscreen
+                    ? t('remote_workspace.actions.exit_fullscreen', 'Exit fullscreen')
+                    : t('remote_workspace.actions.fullscreen', 'Fullscreen preview')
+                }
+              >
+                {isPreviewFullscreen ? (
+                  <Minimize2 className="w-5 h-5" />
+                ) : (
+                  <Maximize2 className="w-5 h-5" />
+                )}
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => onDownload(previewEntry)}>
+                <Download className="w-4 h-4 mr-2" />
+                {t('remote_workspace.actions.download')}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onPreviewDialogOpenChange(false)}
+                aria-label={t('remote_workspace.actions.close', 'Close')}
+                data-testid="remote-workspace-preview-close-button"
+                title={t('remote_workspace.actions.close', 'Close')}
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+          </header>
+
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-surface">
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {previewKind === 'unsupported' ? (
+                <div className="flex h-full items-center justify-center">
+                  <p className="text-sm text-text-muted">
+                    {t('remote_workspace.preview.unsupported')}
+                  </p>
+                </div>
+              ) : previewEntry && previewBlob ? (
+                shouldUseFormattedTextPreview(previewEntry.name) ? (
+                  <RemoteWorkspaceFormattedPreview
+                    blob={previewBlob}
+                    filename={previewEntry.name}
+                  />
+                ) : (
+                  <FilePreview
+                    fileBlob={previewBlob || undefined}
+                    filename={previewEntry.name}
+                    mimeType={getMimeTypeFromPreviewKind(previewKind, previewEntry.name)}
+                    fileSize={previewEntry.size}
+                    showToolbar={previewKind === 'image'}
+                    onDownload={() => onDownload(previewEntry)}
+                    onClose={() => onPreviewDialogOpenChange(false)}
+                  />
+                )
+              ) : (
+                <div className="flex h-full items-center justify-center">
+                  <p className="text-sm text-text-muted">{t('remote_workspace.preview.loading')}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

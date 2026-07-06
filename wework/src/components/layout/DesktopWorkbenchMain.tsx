@@ -460,6 +460,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
   )
   const currentRuntimeTaskSupportsGoal = Boolean(currentRuntimeTask && activeDeviceSupportsGoal)
+  const canEditLastUserMessage = Boolean(
+    currentRuntimeTask && activeDeviceSupportsGoal && !paneSession.status.isBusy
+  )
   const composerSupportsGoal = currentRuntimeTask
     ? currentRuntimeTaskSupportsGoal
     : activeDeviceSupportsGoal
@@ -1051,6 +1054,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
                 onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
                 onOpenAssistantPlan={openAssistantPlan}
+                onEditLastUserMessage={paneSession.editLastUserMessage}
+                canEditLastUserMessage={canEditLastUserMessage}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
                 autoScrollSuspended={composerPointerActive}

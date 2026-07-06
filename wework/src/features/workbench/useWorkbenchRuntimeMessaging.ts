@@ -24,8 +24,9 @@ import {
 import type {
   Attachment,
   ChatSendPayload,
-  RuntimeTaskSummary,
   ModelOptions,
+  RuntimeRollbackRequest,
+  RuntimeTaskSummary,
   RuntimeDeviceWorkspace,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -175,6 +176,40 @@ export function useWorkbenchRuntimeMessaging({
       }
     },
     [executorClient, refreshWorkLists, reportError]
+  )
+
+  const editLastUserMessage = useCallback(
+    async (request: RuntimeRollbackRequest): Promise<boolean> => {
+      try {
+        const response = await executorClient.runtime.rollbackRuntimeTask(request)
+        if (!response.accepted) {
+          throw new Error(response.error || '编辑失败')
+        }
+        try {
+          await refreshWorkLists()
+        } catch (error) {
+          console.warn('[Wework] Runtime rollback accepted but work list refresh failed', {
+            taskId: response.taskId ?? request.address.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+        return true
+      } catch (error) {
+        console.warn('[Wework] Runtime rollback for last user message failed', {
+          taskId: request.address.taskId,
+          deviceId: request.address.deviceId,
+          workspacePath: request.address.workspacePath ?? null,
+          addressKeys: Object.keys(request.address as unknown as Record<string, unknown>).sort(),
+          error: error instanceof Error ? error.message : String(error),
+        })
+        dispatch({
+          type: 'error_set',
+          error: error instanceof Error ? error.message : '编辑失败',
+        })
+        return false
+      }
+    },
+    [dispatch, executorClient, refreshWorkLists]
   )
 
   const cancelRuntimePaneTask = useCallback(
@@ -878,6 +913,7 @@ export function useWorkbenchRuntimeMessaging({
 
   return {
     sendRuntimePaneMessage,
+    editLastUserMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
     retryFailedMessage,

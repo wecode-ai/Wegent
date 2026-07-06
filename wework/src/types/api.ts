@@ -483,6 +483,10 @@ export interface RuntimeSendRequest {
   request_user_input_response?: RequestUserInputResponse
 }
 
+export interface RuntimeRollbackRequest extends RuntimeSendRequest {
+  messageId?: string | null
+}
+
 export interface RequestUserInputResponseAnswer {
   answers: string[]
 }

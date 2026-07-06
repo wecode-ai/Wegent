@@ -32,6 +32,7 @@ import type {
   RequestUserInputResponse,
   RuntimeGoal,
   RuntimeGoalCreateInput,
+  RuntimeRollbackRequest,
   RuntimeSubagentActivityPayload,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -95,6 +96,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setRuntimeGoal,
     clearRuntimeGoal,
     sendRuntimePaneMessage,
+    editLastUserMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
     refreshWorkLists,
@@ -660,6 +662,72 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       getRuntimeModelFields,
       projectChat,
       sendRuntimePaneMessage,
+    ]
+  )
+
+  const editLastUserMessageInPane = useCallback(
+    async (message: WorkbenchMessage, content: string): Promise<boolean> => {
+      const submittedContent = content.trim()
+      if (!submittedContent) return false
+      if (!currentRuntimeTask) return false
+      if (paneStatus.isBusy) {
+        setError('当前回复仍在进行中，完成后再编辑')
+        return false
+      }
+
+      const currentMessages = messagesRef.current
+      const messageIndex = currentMessages.findIndex(item => item.id === message.id)
+      if (!isEditableLastUserMessage(currentMessages, messageIndex)) {
+        setError('只能编辑最后一轮已完成的问题')
+        return false
+      }
+
+      const previousMessages = currentMessages
+      const messageAttachments = message.attachments ?? []
+      const attachmentIds = remoteAttachmentIds(messageAttachments)
+      const attachments = localRuntimeAttachments(messageAttachments)
+      const editedMessage = createLocalUserMessage(submittedContent, messageAttachments, {
+        runtimeGoalRequest: message.runtimeGoalRequest === true,
+      })
+      const nextMessages = [...currentMessages.slice(0, messageIndex), editedMessage]
+      const request: RuntimeRollbackRequest = {
+        address: currentRuntimeTask,
+        message: submittedContent,
+        messageId: message.id,
+        ...getRuntimeModelFields(),
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      }
+
+      setSendPhase('submitting')
+      dispatchMessages({ type: 'reset', messages: nextMessages })
+      try {
+        const sent = await editLastUserMessage(request)
+        if (sent) {
+          setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
+          return true
+        }
+        dispatchMessages({ type: 'reset', messages: previousMessages })
+        setSendPhase('idle')
+        return false
+      } catch (error) {
+        dispatchMessages({ type: 'reset', messages: previousMessages })
+        setSendPhase('idle')
+        console.error('[Wework] Runtime last user message edit failed', {
+          address: runtimeAddressDebug(currentRuntimeTask),
+          messageId: message.id,
+          error,
+        })
+        setError('编辑失败')
+        return false
+      }
+    },
+    [
+      currentRuntimeTask,
+      dispatchMessages,
+      editLastUserMessage,
+      getRuntimeModelFields,
+      paneStatus.isBusy,
     ]
   )
 
@@ -1253,6 +1321,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
     send,
+    editLastUserMessage: editLastUserMessageInPane,
     sendRequestUserInputResponse,
     ignoreRequestUserInput,
     addCodeComment,
@@ -1374,6 +1443,20 @@ function createLocalUserMessage(
     createdAt: new Date().toISOString(),
     runtimeGoalRequest: options.runtimeGoalRequest ? true : undefined,
   }
+}
+
+function isEditableLastUserMessage(messages: WorkbenchMessage[], targetIndex: number): boolean {
+  if (targetIndex < 0 || targetIndex >= messages.length) return false
+
+  const target = messages[targetIndex]
+  if (target.role !== 'user') return false
+
+  const followingMessages = messages.slice(targetIndex + 1)
+  if (followingMessages.length === 0) return false
+  if (followingMessages.some(message => message.role === 'user')) return false
+  if (followingMessages.some(message => message.status === 'streaming')) return false
+
+  return followingMessages.some(message => message.role === 'assistant')
 }
 
 function seedRuntimePaneMessages(address: RuntimeTaskAddress, messages: WorkbenchMessage[]) {

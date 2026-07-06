@@ -722,6 +722,7 @@ export function WorkbenchProvider({
   const stableCheckoutEnvironmentBranch = useStableEvent(projectActions.checkoutEnvironmentBranch)
   const stableCreateEnvironmentBranch = useStableEvent(projectActions.createEnvironmentBranch)
   const stableSendRuntimePaneMessage = useStableEvent(runtimeMessaging.sendRuntimePaneMessage)
+  const stableEditLastUserMessage = useStableEvent(runtimeMessaging.editLastUserMessage)
   const stableCancelRuntimePaneTask = useStableEvent(runtimeMessaging.cancelRuntimePaneTask)
   const stableSendCurrentInput = useStableEvent(runtimeMessaging.sendCurrentInput)
   const stableRetryFailedMessage = useStableEvent(runtimeMessaging.retryFailedMessage)
@@ -952,6 +953,7 @@ export function WorkbenchProvider({
     checkoutEnvironmentBranch: projectActions.checkoutEnvironmentBranch,
     createEnvironmentBranch: projectActions.createEnvironmentBranch,
     sendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
+    editLastUserMessage: runtimeMessaging.editLastUserMessage,
     cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
     sendCurrentInput: runtimeMessaging.sendCurrentInput,
     retryFailedMessage: runtimeMessaging.retryFailedMessage,
@@ -1021,6 +1023,7 @@ export function WorkbenchProvider({
       checkoutEnvironmentBranch: stableCheckoutEnvironmentBranch,
       createEnvironmentBranch: stableCreateEnvironmentBranch,
       sendRuntimePaneMessage: stableSendRuntimePaneMessage,
+      editLastUserMessage: stableEditLastUserMessage,
       cancelRuntimePaneTask: stableCancelRuntimePaneTask,
       sendCurrentInput: stableSendCurrentInput,
       retryFailedMessage: stableRetryFailedMessage,
@@ -1045,6 +1048,7 @@ export function WorkbenchProvider({
       stableCommitEnvironmentChanges,
       stableCreateDeviceDirectory,
       stableCreateEnvironmentBranch,
+      stableEditLastUserMessage,
       stableCreateGitWorkspaceProject,
       stableCreateProject,
       stableDeleteDeviceWorkspace,
