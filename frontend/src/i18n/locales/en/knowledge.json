@@ -341,6 +341,7 @@
         "selected": "{{count}} selected",
         "selectedWithFolders": "{{docCount}} document(s) and {{folderCount}} folder(s) selected",
         "selectAll": "Select All",
+        "selectCurrentPage": "Select Current Page",
         "enable": "Enable",
         "disable": "Disable",
         "delete": "Delete",

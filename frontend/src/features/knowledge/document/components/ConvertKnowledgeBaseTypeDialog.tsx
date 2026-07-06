@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { updateKnowledgeBaseType } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
+import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 import type { KnowledgeBase, KnowledgeBaseType } from '@/types/knowledge'
 
 interface ConvertKnowledgeBaseTypeDialogProps {
@@ -54,8 +55,11 @@ export function ConvertKnowledgeBaseTypeDialog({
       onOpenChange(false)
       onSuccess?.(updatedKb)
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : t('document.knowledgeBase.defaultViewUpdateFailed')
+      const errorMessage = mapKnowledgeDocumentErrorMessage(
+        error,
+        t,
+        'document.knowledgeBase.defaultViewUpdateFailed'
+      )
       toast({
         variant: 'destructive',
         description: errorMessage,

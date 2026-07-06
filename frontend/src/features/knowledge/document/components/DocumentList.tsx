@@ -1199,7 +1199,11 @@ export function DocumentList({
                     ) : (
                       <Square className="w-3.5 h-3.5" />
                     )}
-                    <span>{t('document.document.batch.selectAll')}</span>
+                    <span>
+                      {paginationEnabled
+                        ? t('document.document.batch.selectCurrentPage')
+                        : t('document.document.batch.selectAll')}
+                    </span>
                   </button>
                   <span className="text-text-muted">
                     ({filteredDocuments.filter(doc => selectedIds.has(doc.id)).length}/
@@ -1259,6 +1263,11 @@ export function DocumentList({
                       <Checkbox
                         checked={isPartialSelected ? 'indeterminate' : isAllSelected}
                         onCheckedChange={handleSelectAll}
+                        aria-label={
+                          paginationEnabled
+                            ? t('document.document.batch.selectCurrentPage')
+                            : t('document.document.batch.selectAll')
+                        }
                         className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                       />
                     </div>

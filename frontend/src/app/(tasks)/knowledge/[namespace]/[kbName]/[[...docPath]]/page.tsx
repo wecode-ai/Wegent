@@ -187,6 +187,7 @@ function KnowledgeVirtualPageContent() {
         <TabsTrigger
           value="documents"
           aria-label={t('document.knowledgeBase.typeClassic')}
+          data-testid="knowledge-view-documents-trigger"
           className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
         >
           <FileText className="w-3.5 h-3.5" />
@@ -195,6 +196,7 @@ function KnowledgeVirtualPageContent() {
         <TabsTrigger
           value="notebook"
           aria-label={t('document.knowledgeBase.typeNotebook')}
+          data-testid="knowledge-view-notebook-trigger"
           className="gap-1 h-11 min-w-[44px] px-3 text-xs sm:h-7 sm:min-w-0 sm:px-2"
         >
           <BookOpen className="w-3.5 h-3.5" />

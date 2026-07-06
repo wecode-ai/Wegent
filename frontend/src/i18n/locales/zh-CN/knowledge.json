@@ -341,6 +341,7 @@
         "selected": "已选择 {{count}} 项",
         "selectedWithFolders": "已选择 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
         "selectAll": "选择所有",
+        "selectCurrentPage": "选择本页",
         "enable": "批量启用",
         "disable": "批量停用",
         "delete": "批量删除",

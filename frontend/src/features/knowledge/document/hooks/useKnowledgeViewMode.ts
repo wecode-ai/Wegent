@@ -20,9 +20,22 @@ export function getDefaultKnowledgeView(kbType?: KnowledgeBaseType | null): Know
   return DEFAULT_KNOWLEDGE_VIEW
 }
 
+const TASK_QUERY_KEYS = ['taskId', 'task_id', 'taskid'] as const
+
 function readBrowserView(): string | null {
   if (typeof window === 'undefined') return null
   return new URLSearchParams(window.location.search).get('view')
+}
+
+function removeTaskParams(url: URL): boolean {
+  let removed = false
+  for (const key of TASK_QUERY_KEYS) {
+    if (url.searchParams.has(key)) {
+      url.searchParams.delete(key)
+      removed = true
+    }
+  }
+  return removed
 }
 
 function replaceKnowledgeViewInUrl(view: KnowledgeView) {
@@ -30,9 +43,7 @@ function replaceKnowledgeViewInUrl(view: KnowledgeView) {
   const url = new URL(window.location.href)
   url.searchParams.set('view', view)
   if (view === 'documents') {
-    url.searchParams.delete('taskId')
-    url.searchParams.delete('task_id')
-    url.searchParams.delete('taskid')
+    removeTaskParams(url)
   }
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
 }
@@ -40,14 +51,8 @@ function replaceKnowledgeViewInUrl(view: KnowledgeView) {
 function removeTaskParamsForDocumentsView() {
   if (typeof window === 'undefined') return
   const url = new URL(window.location.href)
-  const hadTaskParam =
-    url.searchParams.has('taskId') ||
-    url.searchParams.has('task_id') ||
-    url.searchParams.has('taskid')
+  const hadTaskParam = removeTaskParams(url)
   if (!hadTaskParam) return
-  url.searchParams.delete('taskId')
-  url.searchParams.delete('task_id')
-  url.searchParams.delete('taskid')
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
 }
 

@@ -3,9 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from shared.models import RetrievalScope
 
@@ -40,6 +43,9 @@ class _FakeQaCountDb:
     def __init__(self, qa_pair_count):
         self.qa_pair_count = qa_pair_count
 
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="mysql"))
+
     def query(self, *args, **kwargs):
         return _FakeQaCountQuery(self.qa_pair_count)
 
@@ -64,6 +70,54 @@ def test_build_qa_query_plan_ignores_non_qa_chunks():
     )
 
     assert plan is None
+
+
+def test_build_qa_query_plan_uses_sqlite_json_and_scope_filter():
+    from app.models.knowledge import KnowledgeDocument
+    from app.services.rag.retrieval_service import RetrievalService
+
+    engine = create_engine("sqlite:///:memory:")
+    KnowledgeDocument.__table__.create(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    with session_factory() as db:
+        included_doc = KnowledgeDocument(
+            kind_id=1,
+            attachment_id=1,
+            name="included.md",
+            file_extension=".md",
+            user_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "qa_pair", "qa_pair_count": 3},
+        )
+        excluded_doc = KnowledgeDocument(
+            kind_id=1,
+            attachment_id=2,
+            name="excluded.md",
+            file_extension=".md",
+            user_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "qa_pair", "qa_pair_count": 5},
+        )
+        non_qa_doc = KnowledgeDocument(
+            kind_id=1,
+            attachment_id=3,
+            name="non-qa.md",
+            file_extension=".md",
+            user_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "sentence", "qa_pair_count": 9},
+        )
+        db.add_all([included_doc, excluded_doc, non_qa_doc])
+        db.commit()
+
+        plan = RetrievalService._build_qa_query_plan(
+            db=db,
+            knowledge_base_id=1,
+            scope=RetrievalScope(document_ids=[included_doc.id, non_qa_doc.id]),
+        )
+
+    assert plan == {"retrieval_profile": "qa_pair", "qa_pair_count": 3}
 
 
 @pytest.mark.asyncio

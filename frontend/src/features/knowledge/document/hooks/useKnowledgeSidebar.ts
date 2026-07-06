@@ -501,10 +501,6 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
         })
         .catch(error => {
           console.error('Failed to fetch full knowledge base data:', error)
-          if (latestSelectedKbIdRef.current === kb.id) {
-            setSelectedKb(null)
-            setSelectedKbId(null)
-          }
         })
     },
     [addRecentAccess]

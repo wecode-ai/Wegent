@@ -24,6 +24,10 @@ from llama_index.core import Document
 
 from knowledge_engine.ingestion.pipeline import build_ingestion_result
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "docs/discussions/assets/qa-index-eval"
+DEFAULT_REPORT = REPO_ROOT / "docs/discussions/260704_1015_QA文档当前分片评估基线.md"
+
 QUESTION_LINE_RE = re.compile(
     r"^\s*(?:\*\*)?(Q(?P<number>\d+)[：:]\s*(?P<question>.+?))(?:\*\*)?\s*$",
     re.MULTILINE,
@@ -448,13 +452,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("../docs/discussions/assets/qa-index-eval"),
+        default=DEFAULT_OUTPUT_DIR,
         help="Directory for generated samples and JSON artifacts.",
     )
     parser.add_argument(
         "--report",
         type=Path,
-        default=Path("../docs/discussions/260704_1015_QA文档当前分片评估基线.md"),
+        default=DEFAULT_REPORT,
         help="Markdown report path.",
     )
     return parser.parse_args()

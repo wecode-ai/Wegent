@@ -8,7 +8,7 @@ Kubernetes-style API schemas for cloud-native agent management
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import (
     AliasChoices,
@@ -900,8 +900,11 @@ class RetrievalConfig(BaseModel):
     retrieval_mode: str = Field(
         "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
     )
-    retrieval_mode_source: Optional[str] = Field(
-        None, description="Source of retrieval_mode: user, system_default, qa_profile"
+    retrieval_mode_source: Optional[Literal["user", "system_default", "qa_profile"]] = (
+        Field(
+            None,
+            description="Source of retrieval_mode: user, system_default, qa_profile",
+        )
     )
     top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
     score_threshold: float = Field(
