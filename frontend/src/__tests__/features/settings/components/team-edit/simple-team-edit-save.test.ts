@@ -43,7 +43,7 @@ const teamForm: SimpleTeamFormValue = {
   displayName: 'Support Agent',
   description: 'Answers customer questions',
   bindMode: ['chat'] as TaskType[],
-  hideToolDetails: true,
+  showFinalAnswerOnly: true,
   quickPhrases: ['  Create a support FAQ  ', '', 'Draft a customer reply'],
   icon: 'sparkles',
   requiresWorkspace: false,
@@ -143,7 +143,7 @@ describe('simple team edit save helpers', () => {
         },
       ],
       display_config: {
-        hide_tool_details: true,
+        show_final_answer_only: true,
       },
       quick_phrases: ['Create a support FAQ', 'Draft a customer reply'],
       namespace: 'default',
@@ -173,7 +173,7 @@ describe('simple team edit save helpers', () => {
       icon: undefined,
       requires_workspace: undefined,
       display_config: {
-        hide_tool_details: true,
+        show_final_answer_only: true,
       },
     })
   })

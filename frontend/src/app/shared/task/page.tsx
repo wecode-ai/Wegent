@@ -115,7 +115,7 @@ function SharedTaskContent() {
     proceedToLoginOrChat(token)
   }
 
-  const hideToolDetails = taskData?.display_config?.hide_tool_details === true
+  const showFinalAnswerOnly = taskData?.display_config?.show_final_answer_only === true
 
   const proceedToLoginOrChat = (token: string) => {
     // Check if user is already logged in
@@ -381,7 +381,7 @@ function SharedTaskContent() {
                     theme={theme}
                     t={t}
                     shareToken={searchParams.get('token') || undefined}
-                    hideToolDetailsOverride={hideToolDetails}
+                    showFinalAnswerOnlyOverride={showFinalAnswerOnly}
                   />
                 )
               })}
