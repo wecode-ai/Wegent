@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Artifact version label, for example 0.1.0 or v0.1.0"
+        description: "Optional Wework version override, for example 0.1.0 or v0.1.0. If empty, auto-increment from latest wework-vX.Y.Z tag"
         type: string
         required: false
   push:
@@ -29,19 +29,46 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Resolve release version
+      - name: Resolve Wework release version
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           set -euo pipefail
-          input_version="${{ github.event.inputs.version }}"
-          if [ -n "$input_version" ]; then
-            version="${input_version#v}"
+
+          validate_version() {
+            local version="$1"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Invalid Wework version '$version'. Expected MAJOR.MINOR.PATCH, for example 1.2.3." >&2
+              exit 1
+            fi
+          }
+
+          bump_patch() {
+            local version="$1"
+            IFS='.' read -r major minor patch <<< "$version"
+            echo "${major}.${minor}.$((patch + 1))"
+          }
+
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            version="${INPUT_VERSION#v}"
+            validate_version "$version"
           elif [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
             version="${GITHUB_REF_NAME#wework-v}"
+            validate_version "$version"
           else
-            version="$(node -p "require('./wework/package.json').version")-${GITHUB_SHA::7}"
+            latest_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)"
+            if [ -z "$latest_tag" ]; then
+              version="0.0.1"
+            else
+              latest_version="${latest_tag#wework-v}"
+              validate_version "$latest_version"
+              version="$(bump_patch "$latest_version")"
+            fi
           fi
 
           if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
