@@ -313,7 +313,7 @@ printf '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}
     let planner = AgentCommandPlanner::new(fake_claude.display().to_string(), "codex");
     let engine = AgentProcessEngine::new(planner);
     let request = ExecutionRequest {
-        task_id: 86,
+        task_id: "86".to_owned(),
         prompt: json!("run in proxied github repo"),
         bot: json!([{"id": 326, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "anthropic", "model_id": "claude-sonnet-4"}),
