@@ -14,6 +14,31 @@ Wework macOS 应用使用 Tauri updater 支持自动升级。发布流程由 `we
 - updater manifest 同时写入 `darwin-aarch64` 和 `darwin-x86_64`，两个平台可以指向同一个 universal archive。
 - `src-tauri/tauri.conf.json` 不保存发布服务地址或 updater 公钥。发布脚本会在构建时通过临时 Tauri config 注入。
 - updater 私钥和发布 token 只通过环境变量或本机文件读取，不提交到仓库。
+- Codex CLI 不在本地编译。构建前通过 `wework/scripts/prepare-codex-binary.mjs` 按 `wework/codex-binaries.lock.json` 下载 npm tarball，校验 SHA256 后打进 Tauri resources。
+
+## Bundled Codex 二进制
+
+Wework 桌面包会直接附带 Codex CLI，避免用户在首次运行时再安装。版本和每个平台的 tarball 校验值由 `wework/codex-binaries.lock.json` 固定。
+
+本地构建会自动准备当前目标平台的 Codex：
+
+```bash
+pnpm --filter wework run prepare:codex
+```
+
+macOS universal 构建会同时准备 Apple Silicon 和 Intel 版本：
+
+```bash
+cd wework
+WEWORK_CODEX_TARGET=universal-apple-darwin pnpm run prepare:codex
+```
+
+release 构建会在 `wework/src-tauri/build.rs` 中校验目标平台的 Codex 二进制存在；缺失时构建会失败。运行时 Wework 会把 bundled Codex 路径注入本地 executor sidecar：
+
+- `CODEX_BINARY_PATH`
+- `CODEX_MANAGED_PACKAGE_ROOT`
+
+如果用户已经显式设置 `CODEX_BINARY_PATH` 或 `CODEX_BIN`，Wework 不会覆盖用户配置。
 
 ## 环境变量
 
@@ -61,6 +86,27 @@ scripts/release-mac-app.sh --target local --version 0.1.99 --notes "Local verifi
 ```bash
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
+
+## 无 Apple Developer 账号的 CI 包
+
+仓库提供 `.github/workflows/wework-app.yml`，用于在 GitHub Actions 上生成 macOS artifact。该 workflow 不需要 Apple Developer 账号，会分别构建：
+
+- `wework-macos-arm64-unsigned-adhoc`
+- `wework-macos-x64-unsigned-adhoc`
+
+每个 artifact 包含 `.app.zip`、`.dmg` 和 `README-macos-unsigned.txt`。构建流程会对 `.app` 执行 ad-hoc codesign：
+
+```bash
+codesign --force --deep --options runtime --sign - WeWork.app
+```
+
+这种包没有 Apple notarization，因此首次打开仍会触发 Gatekeeper。用户可以通过系统隐私设置中的 **Open Anyway** 强行打开；如果下载带有 quarantine 标记，也可以执行：
+
+```bash
+xattr -dr com.apple.quarantine /Applications/WeWork.app
+```
+
+该模式适合内部测试和开发者分发，不应标记为正式已公证发布包。面向普通用户的公开分发仍应使用 Developer ID Application 证书和 Apple notarization。
 
 ## 生产发布
 

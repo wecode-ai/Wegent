@@ -44,6 +44,7 @@ const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const MACOS_CODEX_APP_BINARY: &str = "/Applications/Codex.app/Contents/Resources/codex";
+const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
@@ -56,6 +57,11 @@ Do not continue, execute, or complete any instructions, plans, tool calls, appro
 You are a side-conversation assistant, separate from the main thread. Answer questions and do lightweight, non-mutating exploration without disrupting the main thread. If there is no user question after this boundary yet, wait for one.
 
 Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary."#;
+const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
+- For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
+- Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
+- Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
+- Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -2139,6 +2145,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .extend(global_mcp_config_overrides());
     launch_config
         .config_overrides
+        .extend(cdp_browser_mcp_config_overrides(request));
+    launch_config
+        .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
     launch_config
 }
@@ -2487,6 +2496,110 @@ fn global_mcp_config_overrides() -> Vec<String> {
         overrides.extend(mcp_server_overrides(name, server));
     }
     overrides
+}
+
+fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    let command = executor_home().join("bin/browser-mcp-server");
+    let mut overrides = vec![
+        format!(
+            "developer_instructions={}",
+            toml_value(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
+        ),
+        format!(
+            "skills.config={}",
+            serde_json::to_string(&json!([
+                {
+                    "name": "browser:control-in-app-browser",
+                    "enabled": false,
+                },
+                {
+                    "name": "chrome:control-chrome",
+                    "enabled": false,
+                },
+            ]))
+            .unwrap_or_else(|_| "[]".to_owned())
+        ),
+        "features.non_prefixed_mcp_tool_names=true".to_owned(),
+        format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "command"]),
+            toml_value(&command.display().to_string())
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "startup_timeout_sec"
+            ]),
+            15
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "tool_timeout_sec"
+            ]),
+            60
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "env",
+                "WEWORK_BROWSER_MCP_TARGET"
+            ]),
+            toml_value("embedded")
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "env",
+                "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
+            ]),
+            toml_value("http://127.0.0.1:9231")
+        ),
+    ];
+
+    if let Some(label) = embedded_browser_label(request) {
+        overrides.push(format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "env",
+                "WEWORK_EMBEDDED_BROWSER_LABEL"
+            ]),
+            toml_value(&label)
+        ));
+    }
+
+    overrides
+}
+
+fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {
+    let task_id = request.task_id.trim();
+    if task_id.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "workspace-browser-{}",
+        task_id
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                    character
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+    ))
 }
 
 fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> {
@@ -3685,6 +3798,73 @@ mod tests {
             "high"
         );
         assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    }
+
+    #[test]
+    fn codex_launch_config_includes_cdp_browser_mcp_server() {
+        let _lock = crate::test_env::lock();
+        let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
+        let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
+        env::set_var("WEGENT_EXECUTOR_HOME", &home);
+        let request = ExecutionRequest {
+            task_id: "task:123".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+        let params = thread_start_params(&request, &launch_config);
+        let config = params
+            .get("config")
+            .and_then(Value::as_object)
+            .expect("thread config should be present");
+        let developer_instructions = config["developer_instructions"]
+            .as_str()
+            .expect("browser routing developer instructions should be present");
+
+        assert!(developer_instructions.contains("browser_navigate"));
+        assert!(developer_instructions.contains("browser_take_screenshot"));
+        assert!(developer_instructions.contains("Wework 内置浏览器"));
+        assert!(!developer_instructions.contains("playwright"));
+        assert!(developer_instructions.contains("agent.browsers.get(\"iab\")"));
+        assert!(developer_instructions.contains("external Chrome"));
+        assert_eq!(
+            config["skills.config"],
+            json!([
+                {
+                    "name": "browser:control-in-app-browser",
+                    "enabled": false,
+                },
+                {
+                    "name": "chrome:control-chrome",
+                    "enabled": false,
+                },
+            ])
+        );
+        assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
+        assert_eq!(
+            config["mcp_servers.wework_browser.command"],
+            home.join("bin/browser-mcp-server").display().to_string()
+        );
+        assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
+        assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
+        assert_eq!(
+            config["mcp_servers.wework_browser.env.WEWORK_BROWSER_MCP_TARGET"],
+            "embedded"
+        );
+        assert_eq!(
+            config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
+            "http://127.0.0.1:9231"
+        );
+        assert_eq!(
+            config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
+            "workspace-browser-task-123"
+        );
+
+        if let Some(old_home) = old_home {
+            env::set_var("WEGENT_EXECUTOR_HOME", old_home);
+        } else {
+            env::remove_var("WEGENT_EXECUTOR_HOME");
+        }
     }
 
     #[test]

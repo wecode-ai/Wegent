@@ -216,10 +216,10 @@ wegent-executor
 
 #### Claude Code 执行超时
 
-本地 executor 启动 Claude Code 子进程时，默认最长等待 1 小时。长时间代码生成、依赖安装或文件处理任务可以在这个时间内继续运行。若需要为特定环境调整该限制，可在启动 executor 前设置 `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS`。该配置只影响 Claude Code 子进程，不影响 native Codex app-server；Codex RPC 超时由 `WEGENT_CODEX_RPC_TIMEOUT_SECONDS` 控制。
+本地 executor 启动 Claude Code 子进程时，默认最长等待 24 小时。长时间代码生成、依赖安装或文件处理任务可以在这个时间内继续运行。若需要为特定环境调整该限制，可在启动 executor 前设置 `WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS`。该配置只影响 Claude Code 子进程，不影响 native Codex app-server；Codex RPC 超时由 `WEGENT_CODEX_RPC_TIMEOUT_SECONDS` 控制。
 
 ```bash
-export WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS=7200
+export WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS=172800
 wegent-executor
 ```
 

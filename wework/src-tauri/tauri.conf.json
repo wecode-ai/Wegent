@@ -50,6 +50,7 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/wegent-executor"],
+    "resources": ["binaries/codex/**/*"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

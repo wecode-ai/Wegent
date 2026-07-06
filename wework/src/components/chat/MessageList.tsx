@@ -14,6 +14,7 @@ import {
   Copy,
   File as FileIcon,
   FileText,
+  MessageSquare,
   Package,
   Pencil,
   Target,
@@ -614,6 +615,7 @@ function UserMessage({
     displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
   const showSourceBadge = isIMSource(message.source)
   const showGoalRequestBadge = message.runtimeGoalRequest === true
+  const codeCommentCount = message.codeComments?.length ?? 0
 
   return (
     <div
@@ -732,6 +734,17 @@ function UserMessage({
                   >
                     <Target className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>{t('workbench.goal_chip', '目标')}</span>
+                  </span>
+                </div>
+              )}
+              {codeCommentCount > 0 && (
+                <div className="mt-1.5 flex">
+                  <span
+                    data-testid="message-code-comment-context-badge"
+                    className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{t('workbench.code_comment_count', { count: codeCommentCount })}</span>
                   </span>
                 </div>
               )}

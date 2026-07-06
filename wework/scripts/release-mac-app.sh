@@ -601,6 +601,7 @@ if [ "$RELEASE_DEVTOOLS" = "1" ]; then
   TAURI_BUILD_ARGS+=(--features release-devtools)
 fi
 TAURI_BUILD_ARGS+=(--config "$config_override")
+WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 pnpm exec tauri "${TAURI_BUILD_ARGS[@]}"
 
 archive_path="$(find_update_archive)"

@@ -1,4 +1,4 @@
-mod in_app_browser;
+mod embedded_browser;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
@@ -1374,6 +1374,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .on_window_event(|window, event| {
@@ -1422,6 +1423,12 @@ pub fn run() {
             install_shutdown_signal_handler(app.handle().clone())
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
             #[cfg(desktop)]
+            if let Err(error) =
+                embedded_browser::start_embedded_browser_bridge(app.handle().clone())
+            {
+                log::warn!("Failed to start embedded browser bridge: {error}");
+            }
+            #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
                     log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
@@ -1430,13 +1437,17 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            in_app_browser::in_app_browser_go_back,
-            in_app_browser::in_app_browser_create,
-            in_app_browser::in_app_browser_go_forward,
-            in_app_browser::in_app_browser_page_favicon,
-            in_app_browser::in_app_browser_page_title,
-            in_app_browser::in_app_browser_reload,
-            in_app_browser::in_app_browser_set_frame,
+            embedded_browser::embedded_browser_close,
+            embedded_browser::embedded_browser_eval,
+            embedded_browser::embedded_browser_eval_json,
+            embedded_browser::embedded_browser_go_back,
+            embedded_browser::embedded_browser_go_forward,
+            embedded_browser::embedded_browser_navigate,
+            embedded_browser::embedded_browser_open,
+            embedded_browser::embedded_browser_page_state,
+            embedded_browser::embedded_browser_reload,
+            embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_set_bounds,
             local_terminal::close_local_terminal,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
