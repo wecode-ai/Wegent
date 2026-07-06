@@ -667,10 +667,10 @@ class RetrievalService:
             user_name=user_name,
         )
         retrieval_config = resolved_config.retrieval_config
-        retrieval_mode_source = (
-            retrieval_config.get("retrieval_mode_source")
+        retrieval_mode = (
+            retrieval_config.get("retrieval_mode")
             if isinstance(retrieval_config, dict)
-            else getattr(retrieval_config, "retrieval_mode_source", None)
+            else getattr(retrieval_config, "retrieval_mode", None)
         )
         query_plan = (
             self._build_qa_query_plan(
@@ -678,7 +678,7 @@ class RetrievalService:
                 knowledge_base_id=kb.id,
                 scope=scope,
             )
-            if retrieval_mode_source == "system_default"
+            if retrieval_mode == "vector"
             else None
         )
         result = await self._execute_runtime_query(

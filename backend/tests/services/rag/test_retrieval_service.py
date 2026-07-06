@@ -121,6 +121,99 @@ def test_build_qa_query_plan_uses_sqlite_json_and_scope_filter():
 
 
 @pytest.mark.asyncio
+async def test_retrieve_from_kb_internal_builds_qa_plan_for_vector_even_when_source_is_user():
+    from app.services.rag.retrieval_service import RetrievalService
+    from shared.models import (
+        RemoteKnowledgeBaseQueryConfig,
+        RuntimeEmbeddingModelConfig,
+        RuntimeRetrievalConfig,
+        RuntimeRetrieverConfig,
+    )
+
+    service = RetrievalService()
+    service._execute_runtime_query = AsyncMock(return_value={"records": []})
+    kb = SimpleNamespace(id=1, name="qa-kb")
+    kb_config = RemoteKnowledgeBaseQueryConfig(
+        knowledge_base_id=1,
+        index_owner_user_id=1,
+        retriever_config=RuntimeRetrieverConfig(
+            name="milvus",
+            namespace="default",
+            storage_config={"type": "milvus"},
+        ),
+        embedding_model_config=RuntimeEmbeddingModelConfig(
+            model_name="embed",
+            model_namespace="default",
+            resolved_config={},
+        ),
+        retrieval_config=RuntimeRetrievalConfig(
+            retrieval_mode="vector",
+            retrieval_mode_source="user",
+        ),
+    )
+
+    with patch.object(
+        RetrievalService,
+        "_build_qa_query_plan",
+        return_value={"retrieval_profile": "qa_pair", "qa_pair_count": 2},
+    ) as mock_build_plan:
+        await service._retrieve_from_kb_internal(
+            query="how to refund",
+            kb=kb,
+            db=MagicMock(),
+            knowledge_base_config=kb_config,
+        )
+
+    mock_build_plan.assert_called_once()
+    service._execute_runtime_query.assert_awaited_once()
+    assert service._execute_runtime_query.await_args.kwargs["query_plan"] == {
+        "retrieval_profile": "qa_pair",
+        "qa_pair_count": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_retrieve_from_kb_internal_skips_qa_plan_for_hybrid_mode():
+    from app.services.rag.retrieval_service import RetrievalService
+    from shared.models import (
+        RemoteKnowledgeBaseQueryConfig,
+        RuntimeEmbeddingModelConfig,
+        RuntimeRetrievalConfig,
+        RuntimeRetrieverConfig,
+    )
+
+    service = RetrievalService()
+    service._execute_runtime_query = AsyncMock(return_value={"records": []})
+    kb = SimpleNamespace(id=1, name="qa-kb")
+    kb_config = RemoteKnowledgeBaseQueryConfig(
+        knowledge_base_id=1,
+        index_owner_user_id=1,
+        retriever_config=RuntimeRetrieverConfig(
+            name="milvus",
+            namespace="default",
+            storage_config={"type": "milvus"},
+        ),
+        embedding_model_config=RuntimeEmbeddingModelConfig(
+            model_name="embed",
+            model_namespace="default",
+            resolved_config={},
+        ),
+        retrieval_config=RuntimeRetrievalConfig(retrieval_mode="hybrid"),
+    )
+
+    with patch.object(RetrievalService, "_build_qa_query_plan") as mock_build_plan:
+        await service._retrieve_from_kb_internal(
+            query="how to refund",
+            kb=kb,
+            db=MagicMock(),
+            knowledge_base_config=kb_config,
+        )
+
+    mock_build_plan.assert_not_called()
+    assert service._execute_runtime_query.await_args.kwargs["query_plan"] is None
+
+
+@pytest.mark.asyncio
 async def test_retrieve_for_chat_shell_no_longer_persists_subtask_context():
     from app.services.context.context_service import context_service
     from app.services.rag.retrieval_service import RetrievalService
