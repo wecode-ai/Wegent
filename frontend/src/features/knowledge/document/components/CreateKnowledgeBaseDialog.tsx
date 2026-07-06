@@ -202,10 +202,7 @@ export function CreateKnowledgeBaseDialog({
         rag_config_mode: ragConfigMode,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
-        guided_questions:
-          selectedKbType === 'notebook' && validGuidedQuestions.length > 0
-            ? validGuidedQuestions
-            : undefined,
+        guided_questions: validGuidedQuestions.length > 0 ? validGuidedQuestions : undefined,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
         selectedGroupId: showGroupSelector ? selectedGroupId : undefined,
@@ -399,7 +396,7 @@ export function CreateKnowledgeBaseDialog({
             onRetrievalConfigChange={setRetrievalConfig}
             retrievalScope={effectiveScope}
             retrievalGroupName={effectiveGroupName}
-            showGuidedQuestions={isNotebook}
+            showGuidedQuestions={true}
             guidedQuestions={guidedQuestions}
             onGuidedQuestionsChange={setGuidedQuestions}
           />

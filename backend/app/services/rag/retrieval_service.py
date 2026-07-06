@@ -666,9 +666,25 @@ class RetrievalService:
             db=db,
             user_name=user_name,
         )
+        retrieval_config = resolved_config.retrieval_config
+        retrieval_mode = (
+            retrieval_config.get("retrieval_mode")
+            if isinstance(retrieval_config, dict)
+            else getattr(retrieval_config, "retrieval_mode", None)
+        )
+        query_plan = (
+            self._build_qa_query_plan(
+                db=db,
+                knowledge_base_id=kb.id,
+                scope=scope,
+            )
+            if retrieval_mode == "vector"
+            else None
+        )
         result = await self._execute_runtime_query(
             query=query,
             search_hints=search_hints,
+            query_plan=query_plan,
             knowledge_base_config=resolved_config,
             scope=scope,
             metadata_condition=metadata_condition,
@@ -721,6 +737,7 @@ class RetrievalService:
         *,
         query: str,
         search_hints: SearchHints | None = None,
+        query_plan: dict[str, Any] | None = None,
         knowledge_base_config: RemoteKnowledgeBaseQueryConfig,
         scope: RetrievalScope | None = None,
         metadata_condition: Optional[Dict[str, Any]] = None,
@@ -739,12 +756,72 @@ class RetrievalService:
         return await executor.execute(
             knowledge_id=str(knowledge_base_config.knowledge_base_id),
             query=query,
+            query_plan=query_plan,
             search_hints=search_hints,
             retrieval_config=knowledge_base_config.retrieval_config,
             scope=scope,
             metadata_condition=metadata_condition,
             user_id=knowledge_base_config.index_owner_user_id,
         )
+
+    @staticmethod
+    def _build_qa_query_plan(
+        *,
+        db: Session,
+        knowledge_base_id: int,
+        scope: RetrievalScope | None = None,
+    ) -> dict[str, Any] | None:
+        from sqlalchemy import Integer, case, cast, func
+
+        from app.models.knowledge import KnowledgeDocument
+
+        bind = db.get_bind()
+        dialect_name = bind.dialect.name if bind is not None else None
+        if dialect_name == "mysql":
+            splitter_subtype = func.json_unquote(
+                func.json_extract(KnowledgeDocument.chunks, "$.splitter_subtype")
+            )
+            qa_pair_count_value = func.json_unquote(
+                func.json_extract(KnowledgeDocument.chunks, "$.qa_pair_count")
+            )
+        elif dialect_name == "sqlite":
+            splitter_subtype = func.json_extract(
+                KnowledgeDocument.chunks, "$.splitter_subtype"
+            )
+            qa_pair_count_value = func.json_extract(
+                KnowledgeDocument.chunks, "$.qa_pair_count"
+            )
+        else:
+            return None
+
+        qa_pair_count_expr = cast(qa_pair_count_value, Integer)
+        query = db.query(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (splitter_subtype == "qa_pair", qa_pair_count_expr),
+                        else_=0,
+                    )
+                ),
+                0,
+            )
+        ).select_from(KnowledgeDocument)
+        query = query.filter(
+            KnowledgeDocument.kind_id == knowledge_base_id,
+            KnowledgeDocument.is_active.is_(True),
+        )
+        if scope and scope.document_ids:
+            query = query.filter(KnowledgeDocument.id.in_(scope.document_ids))
+
+        qa_pair_count = int(query.scalar() or 0)
+
+        if qa_pair_count <= 0:
+            return None
+
+        return {
+            "retrieval_profile": "qa_pair",
+            "qa_pair_count": qa_pair_count,
+        }
 
     async def get_original_documents_from_knowledge_base(
         self,

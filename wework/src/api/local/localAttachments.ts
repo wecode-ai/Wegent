@@ -80,7 +80,7 @@ export function createLocalAttachmentApi(): LocalAttachmentApi {
       }
     },
     async deleteAttachment() {
-      // Draft files are intentionally left in place so already-sent local tasks
+      // Draft files are intentionally left in place so already-sent runtime tasks
       // can continue to resolve the absolute paths stored in their transcript.
     },
   }

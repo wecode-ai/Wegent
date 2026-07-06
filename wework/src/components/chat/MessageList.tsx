@@ -13,7 +13,9 @@ import {
   ChevronUp,
   Copy,
   File as FileIcon,
+  FileText,
   Package,
+  Pencil,
   Target,
 } from 'lucide-react'
 import type {
@@ -24,7 +26,14 @@ import type {
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
-import { getAttachmentTypeLabel, isImageAttachment } from '@/lib/attachments'
+import {
+  getAttachmentTextPreview,
+  getAttachmentTypeLabel,
+  isImageAttachment,
+  isTextAttachment,
+} from '@/lib/attachments'
+import { openLocalFile } from '@/lib/local-terminal'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
@@ -52,10 +61,10 @@ interface MessageListProps {
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (turnId: number) => Promise<string>
-  onRevertFileChanges?: (turnId: number) => Promise<TurnFileChangesSummary>
+  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
+  onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
-    turnId: number
+    subtaskId: string
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
@@ -65,6 +74,11 @@ interface MessageListProps {
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (content: string) => void
+  onEditLastUserMessage?: (
+    message: WorkbenchMessage,
+    content: string
+  ) => Promise<boolean | void> | boolean | void
+  canEditLastUserMessage?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   renderGapAfterMessage?: (
@@ -111,6 +125,8 @@ export const MessageList = memo(function MessageList({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onEditLastUserMessage,
+  canEditLastUserMessage = false,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   renderGapAfterMessage,
@@ -119,11 +135,27 @@ export const MessageList = memo(function MessageList({
   const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
   const [layoutWidth, setLayoutWidth] = useState(0)
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+  const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
+  const isTauri = isTauriRuntime()
   const visibleMessages = useMemo(() => messages.filter(shouldRenderMessage), [messages])
+  const editableLastUserMessageId = useMemo(
+    () =>
+      editableLastUserMessage(
+        visibleMessages,
+        canEditLastUserMessage && Boolean(onEditLastUserMessage)
+      )?.id ?? null,
+    [canEditLastUserMessage, onEditLastUserMessage, visibleMessages]
+  )
+  const activeEditingMessageId =
+    editingMessageId === editableLastUserMessageId ? editingMessageId : null
+  const activeSubmittingEditMessageId =
+    submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
-  const disableMessageContentVisibility = disableContentVisibility || isTextSelectionActive
+  const disableMessageContentVisibility =
+    disableContentVisibility || isTextSelectionActive || isTauri
   const messageIntrinsicHeights = useMemo(() => {
     return new Map(
       visibleMessages.map(message => [
@@ -133,8 +165,8 @@ export const MessageList = memo(function MessageList({
     )
   }, [layoutWidth, visibleMessages])
   const listLayoutClass = className
-    ? 'mx-auto flex min-w-0 flex-col gap-4 overflow-x-hidden pb-2 pt-8'
-    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 overflow-x-hidden px-6 pb-2 pt-8'
+    ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
+    : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
 
   useLayoutEffect(() => {
     const element = listRef.current
@@ -173,6 +205,10 @@ export const MessageList = memo(function MessageList({
   }, [])
 
   useEffect(() => {
+    if (isTauri) {
+      return
+    }
+
     const updateSelectionState = () => {
       const selection = document.getSelection?.()
       const root = listRef.current
@@ -206,7 +242,7 @@ export const MessageList = memo(function MessageList({
       document.removeEventListener('selectionchange', updateSelectionState)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [])
+  }, [isTauri])
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
     return null
@@ -220,7 +256,7 @@ export const MessageList = memo(function MessageList({
           <Fragment key={message.id}>
             <article
               className={[
-                'min-w-0 overflow-x-hidden',
+                'min-w-0',
                 disableMessageContentVisibility ? '' : '[content-visibility:auto]',
                 message.role === 'user' ? 'flex justify-end' : '',
               ].join(' ')}
@@ -233,7 +269,30 @@ export const MessageList = memo(function MessageList({
               data-testid={`message-${message.role}`}
             >
               {message.role === 'user' ? (
-                <UserMessage message={message} onOpenWorkspaceFile={onOpenWorkspaceFile} />
+                <UserMessage
+                  message={message}
+                  onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  editable={message.id === editableLastUserMessageId}
+                  editing={message.id === activeEditingMessageId}
+                  editSubmitting={message.id === activeSubmittingEditMessageId}
+                  onStartEdit={() => setEditingMessageId(message.id)}
+                  onCancelEdit={() => setEditingMessageId(null)}
+                  onSubmitEdit={async content => {
+                    if (!onEditLastUserMessage) return false
+                    setSubmittingEditMessageId(message.id)
+                    try {
+                      const result = await onEditLastUserMessage(message, content)
+                      if (result !== false) {
+                        setEditingMessageId(null)
+                      }
+                      return result
+                    } finally {
+                      setSubmittingEditMessageId(current =>
+                        current === message.id ? null : current
+                      )
+                    }
+                  }}
+                />
               ) : (
                 <AssistantMessage
                   message={message}
@@ -258,7 +317,7 @@ export const MessageList = memo(function MessageList({
         )
       })}
       {shouldShowWaitingIndicator && (
-        <article className="min-w-0 overflow-x-hidden" data-testid="message-assistant-waiting">
+        <article className="min-w-0" data-testid="message-assistant-waiting">
           <AssistantThinkingIndicator />
         </article>
       )}
@@ -309,6 +368,10 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'onRequestUserInputIgnore'
       : null,
     previous.onOpenAssistantPlan !== next.onOpenAssistantPlan ? 'onOpenAssistantPlan' : null,
+    previous.onEditLastUserMessage !== next.onEditLastUserMessage ? 'onEditLastUserMessage' : null,
+    previous.canEditLastUserMessage !== next.canEditLastUserMessage
+      ? 'canEditLastUserMessage'
+      : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -334,6 +397,31 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
   if (visibleContent.trim()) return true
 
   return getDisplayProcessingBlocks(message.blocks).length > 0
+}
+
+function editableLastUserMessage(
+  messages: WorkbenchMessage[],
+  canEdit: boolean
+): WorkbenchMessage | null {
+  if (!canEdit) return null
+
+  const lastUserIndex = findLastIndex(messages, message => message.role === 'user')
+  if (lastUserIndex === -1) return null
+
+  const followingMessages = messages.slice(lastUserIndex + 1)
+  if (followingMessages.length === 0) return null
+  if (followingMessages.some(message => message.status === 'streaming')) return null
+  if (!followingMessages.some(message => message.role === 'assistant')) return null
+
+  return messages[lastUserIndex] ?? null
+}
+
+function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item !== undefined && predicate(item)) return index
+  }
+  return -1
 }
 
 function getTurnStartMs(createdAt: string): number | undefined {
@@ -467,9 +555,21 @@ async function copyText(text: string) {
 function UserMessage({
   message,
   onOpenWorkspaceFile,
+  editable = false,
+  editing = false,
+  editSubmitting = false,
+  onStartEdit,
+  onCancelEdit,
+  onSubmitEdit,
 }: {
   message: WorkbenchMessage
   onOpenWorkspaceFile?: (path: string) => void
+  editable?: boolean
+  editing?: boolean
+  editSubmitting?: boolean
+  onStartEdit?: () => void
+  onCancelEdit?: () => void
+  onSubmitEdit?: (content: string) => Promise<boolean | void> | boolean | void
 }) {
   const { t } = useTranslation('common')
   const [isExpanded, setIsExpanded] = useState(false)
@@ -592,11 +692,22 @@ function UserMessage({
               />
             ))}
             {documentAttachments.map(attachment => (
-              <MessageDocumentAttachment key={attachment.id} attachment={attachment} />
+              <MessageDocumentAttachment
+                key={attachment.id}
+                attachment={attachment}
+                onOpenFile={onOpenWorkspaceFile}
+              />
             ))}
           </div>
         )}
-        {displayContent && (
+        {displayContent && editing ? (
+          <UserMessageEditForm
+            initialContent={displayContent}
+            submitting={editSubmitting}
+            onCancel={onCancelEdit}
+            onSubmit={onSubmitEdit}
+          />
+        ) : displayContent ? (
           <div
             className={[
               'overflow-hidden rounded-2xl bg-muted text-[13px] leading-5 text-text-primary',
@@ -643,7 +754,7 @@ function UserMessage({
               </button>
             )}
           </div>
-        )}
+        ) : null}
         {showSourceBadge && (
           <div
             data-testid="message-source-row"
@@ -653,7 +764,104 @@ function UserMessage({
           </div>
         )}
       </div>
-      <MessageHoverActions message={message} align="right" visible={areHoverActionsVisible} />
+      {!editing && (
+        <MessageHoverActions
+          message={message}
+          align="right"
+          visible={areHoverActionsVisible}
+          onEdit={editable ? onStartEdit : undefined}
+        />
+      )}
+    </div>
+  )
+}
+
+function UserMessageEditForm({
+  initialContent,
+  submitting,
+  onCancel,
+  onSubmit,
+}: {
+  initialContent: string
+  submitting: boolean
+  onCancel?: () => void
+  onSubmit?: (content: string) => Promise<boolean | void> | boolean | void
+}) {
+  const [draft, setDraft] = useState(initialContent)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const trimmedDraft = draft.trim()
+  const submitDisabled = submitting || trimmedDraft.length === 0
+
+  const resizeTextarea = () => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 280)}px`
+  }
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.focus()
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+    resizeTextarea()
+  }, [])
+
+  useLayoutEffect(() => {
+    resizeTextarea()
+  }, [draft])
+
+  const submit = () => {
+    if (submitDisabled) return
+    void onSubmit?.(trimmedDraft)
+  }
+
+  return (
+    <div
+      data-testid="edit-user-message-form"
+      className="w-[min(560px,80vw)] max-w-full rounded-2xl bg-muted px-3 py-2 text-[13px] leading-5 text-text-primary"
+    >
+      <textarea
+        ref={textareaRef}
+        data-testid="edit-user-message-textarea"
+        value={draft}
+        disabled={submitting}
+        onChange={event => setDraft(event.target.value)}
+        onKeyDown={event => {
+          if (event.nativeEvent.isComposing) return
+          if (event.key === 'Enter' && event.shiftKey) return
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            submit()
+            return
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            onCancel?.()
+          }
+        }}
+        className="block max-h-[280px] min-h-24 w-full resize-none overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-[13px] leading-5 text-text-primary outline-none focus:border-primary focus:ring-1 focus:ring-primary disabled:cursor-wait disabled:opacity-70"
+      />
+      <div className="mt-2 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          data-testid="cancel-edit-user-message-button"
+          disabled={submitting}
+          onClick={onCancel}
+          className="flex h-8 items-center justify-center rounded-md px-3 text-[13px] font-medium text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          data-testid="submit-edit-user-message-button"
+          disabled={submitDisabled}
+          onClick={submit}
+          className="flex h-8 items-center justify-center rounded-md bg-primary px-3 text-[13px] font-medium text-primary-contrast hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          发送
+        </button>
+      </div>
     </div>
   )
 }
@@ -772,7 +980,36 @@ function shouldUseBracesFileIcon(filename: string): boolean {
   return /\.(?:json|jsonc)$/i.test(filename)
 }
 
-function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
+function openableAttachmentPath(attachment: Attachment): string | null {
+  return attachment.local_path?.trim() || attachment.local_preview_url?.trim() || null
+}
+
+async function openLocalAttachmentPath(
+  path: string,
+  onOpenFile?: (path: string) => void
+): Promise<void> {
+  try {
+    await openLocalFile(path)
+  } catch (error) {
+    if (onOpenFile) {
+      onOpenFile(path)
+      return
+    }
+    console.error('Failed to open local attachment:', error)
+  }
+}
+
+function MessageDocumentAttachment({
+  attachment,
+  onOpenFile,
+}: {
+  attachment: Attachment
+  onOpenFile?: (path: string) => void
+}) {
+  if (isTextAttachment(attachment)) {
+    return <MessageTextAttachment attachment={attachment} onOpenFile={onOpenFile} />
+  }
+
   const typeLabel = getAttachmentTypeLabel(attachment)
 
   return (
@@ -788,6 +1025,60 @@ function MessageDocumentAttachment({ attachment }: { attachment: Attachment }) {
         <span className="truncate font-medium text-text-primary">{attachment.filename}</span>
         <span className="truncate text-text-muted">{typeLabel}</span>
       </span>
+    </div>
+  )
+}
+
+function MessageTextAttachment({
+  attachment,
+  onOpenFile,
+}: {
+  attachment: Attachment
+  onOpenFile?: (path: string) => void
+}) {
+  const preview = getAttachmentTextPreview(attachment) ?? attachment.filename
+  const attachmentPath = openableAttachmentPath(attachment)
+  const clickable = Boolean(attachmentPath)
+  const className =
+    'inline-flex h-9 max-w-[360px] items-center gap-2 rounded-full border border-border bg-muted px-3 text-left text-[13px] font-semibold leading-none text-text-primary shadow-sm'
+  const content = (
+    <>
+      <FileText
+        data-testid="message-text-attachment-icon"
+        className="h-3.5 w-3.5 shrink-0 text-text-muted"
+        strokeWidth={1.8}
+      />
+      <span data-testid="message-text-attachment-preview" className="min-w-0 truncate">
+        {preview}
+      </span>
+    </>
+  )
+
+  if (clickable && attachmentPath) {
+    return (
+      <button
+        type="button"
+        data-testid="message-text-attachment"
+        className={`${className} cursor-pointer hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2`}
+        aria-label={preview}
+        title={preview}
+        onClick={() => {
+          void openLocalAttachmentPath(attachmentPath, onOpenFile)
+        }}
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <div
+      data-testid="message-text-attachment"
+      className={className}
+      aria-label={preview}
+      title={preview}
+    >
+      {content}
     </div>
   )
 }
@@ -832,10 +1123,12 @@ function MessageHoverActions({
   message,
   align,
   visible,
+  onEdit,
 }: {
   message: WorkbenchMessage
   align: 'left' | 'right'
   visible: boolean
+  onEdit?: () => void
 }) {
   const [copied, setCopied] = useState(false)
   const resetCopiedAfterHideRef = useRef(false)
@@ -909,10 +1202,39 @@ function MessageHoverActions({
     </span>
   )
 
+  const editAction = onEdit ? (
+    <span
+      data-testid="edit-message-action"
+      className="group/edit relative flex h-6 w-6 items-center justify-center"
+    >
+      <button
+        type="button"
+        data-testid="edit-message-button"
+        onClick={event => {
+          if (event.detail > 0) {
+            event.currentTarget.blur()
+          }
+          onEdit()
+        }}
+        title="编辑"
+        className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-secondary"
+        aria-label="编辑消息"
+      >
+        <Pencil data-testid="edit-message-icon" className="h-3.5 w-3.5" />
+      </button>
+      <span
+        data-testid="edit-message-label"
+        className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-base px-1.5 py-0.5 text-xs text-text-secondary opacity-0 shadow-sm transition-opacity group-hover/edit:opacity-100"
+      >
+        编辑
+      </span>
+    </span>
+  ) : null
+
   const timeLabel = time ? (
     <span
       data-testid="message-hover-time"
-      className="select-text whitespace-nowrap px-1 text-xs text-text-muted"
+      className="select-none whitespace-nowrap px-1 text-xs text-text-muted"
     >
       {time}
     </span>
@@ -924,7 +1246,7 @@ function MessageHoverActions({
       onMouseLeave={handleLeaveActions}
       onTransitionEnd={handleActionsTransitionEnd}
       className={[
-        'flex min-h-5 select-text items-center gap-1 text-xs text-text-muted transition-opacity duration-150',
+        'flex min-h-5 select-none items-center gap-1 text-xs text-text-muted transition-opacity duration-150',
         visible ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0',
         align === 'right' ? 'justify-end' : 'justify-start',
       ].join(' ')}
@@ -933,9 +1255,11 @@ function MessageHoverActions({
         <>
           {timeLabel}
           {copyAction}
+          {editAction}
         </>
       ) : (
         <>
+          {editAction}
           {copyAction}
           {timeLabel}
         </>
@@ -1055,10 +1379,10 @@ function AssistantMessage({
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (turnId: number) => Promise<string>
-  onRevertFileChanges?: (turnId: number) => Promise<TurnFileChangesSummary>
+  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
+  onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
-    turnId: number
+    subtaskId: string
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
@@ -1103,12 +1427,12 @@ function AssistantMessage({
   // A file referenced in the response usually belongs to this turn's changes, so
   // route the link into the previous-turn diff review focused on that file. When
   // the turn has no recorded changes, fall back to the workspace file panel.
-  const fileChangesTurnId = message.fileChanges ? message.turnId : undefined
+  const fileChangesSubtaskId = message.fileChanges ? message.subtaskId : undefined
   const openFileFromLink = (path: string) => {
-    if (fileChangesTurnId && onLoadFileChangesDiff && onOpenFileChangesReview) {
+    if (fileChangesSubtaskId && onLoadFileChangesDiff && onOpenFileChangesReview) {
       onOpenFileChangesReview({
-        turnId: fileChangesTurnId,
-        loadDiff: () => onLoadFileChangesDiff(fileChangesTurnId),
+        subtaskId: fileChangesSubtaskId,
+        loadDiff: () => onLoadFileChangesDiff(fileChangesSubtaskId),
         reviewTitle: t('file_changes.previous_turn_label'),
         defaultFileTreeVisible: false,
         focusFilePath: path,
@@ -1120,7 +1444,7 @@ function AssistantMessage({
   const references = getAssistantReferences(message.references, visibleContent, message.fileChanges)
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px] leading-6 text-text-primary">
+    <div className="min-w-0 max-w-full text-[13px] leading-6 text-text-primary">
       <div
         className="w-full max-w-full"
         data-testid="message-hover-region"
@@ -1181,11 +1505,11 @@ function AssistantMessage({
           )}
           {canShowFinalArtifacts &&
           message.fileChanges &&
-          message.turnId &&
+          message.subtaskId &&
           onLoadFileChangesDiff &&
           onRevertFileChanges ? (
             <FileChangesCard
-              turnId={message.turnId}
+              subtaskId={message.subtaskId}
               summary={message.fileChanges}
               deviceOnline={devices.some(
                 device =>

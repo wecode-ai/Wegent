@@ -1,5 +1,9 @@
 import { resolveModelExecutionSelection } from '@/features/cloud-connection/modelExecution'
-import { getDefaultModelOptions, getModelCompatibilityFamily } from '@/lib/model-ui'
+import {
+  getDefaultModelOptions,
+  getModelCompatibilityFamily,
+  normalizeModelOptionAliases,
+} from '@/lib/model-ui'
 import type {
   ModelOptions,
   ModelSelectionConfig,
@@ -115,9 +119,10 @@ export function selectedModelExecutionFields(
   selectedModel: UnifiedModel | null,
   selectedModelOptions: ModelOptions
 ): Pick<RuntimeSendRequest, 'modelId' | 'modelType' | 'modelOptions'> {
+  const normalizedSelectedModelOptions = normalizeModelOptionAliases(selectedModelOptions)
   const modelOptions: ModelOptions = {
-    ...selectedModelOptions,
-    collaborationMode: selectedModelOptions.collaborationMode ?? 'default',
+    ...normalizedSelectedModelOptions,
+    collaborationMode: normalizedSelectedModelOptions.collaborationMode ?? 'default',
   }
   if (!selectedModel) {
     return { modelOptions }

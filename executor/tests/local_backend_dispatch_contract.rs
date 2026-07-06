@@ -59,9 +59,9 @@ async fn task_cancel_marks_registered_task_as_cancel_requested() {
     transport.handler("task:execute").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
     transport.handler("task:cancel").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
 
-    assert!(runner.is_cancel_requested(10, Some(20)));
+    assert!(runner.is_cancel_requested("10", Some("20")));
     let snapshot = runner.cancellation_snapshot();
-    assert_eq!(snapshot.cancel_requested_task_ids, vec![10]);
+    assert_eq!(snapshot.cancel_requested_task_ids, vec!["10".to_owned()]);
     assert!(snapshot.pending_task_ids.is_empty());
     assert!(snapshot.pending_subtask_ids.is_empty());
 }
@@ -81,16 +81,16 @@ async fn task_cancel_before_registration_is_stored_by_subtask_and_consumed_on_ex
 
     let pending = runner.cancellation_snapshot();
     assert!(pending.pending_task_ids.is_empty());
-    assert_eq!(pending.pending_subtask_ids, vec![20]);
+    assert_eq!(pending.pending_subtask_ids, vec!["20".to_owned()]);
     assert!(pending.cancel_requested_task_ids.is_empty());
 
     transport.handler("task:execute").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
 
     let consumed = runner.cancellation_snapshot();
-    assert!(runner.is_cancel_requested(10, Some(20)));
+    assert!(runner.is_cancel_requested("10", Some("20")));
     assert!(consumed.pending_task_ids.is_empty());
     assert!(consumed.pending_subtask_ids.is_empty());
-    assert_eq!(consumed.cancel_requested_task_ids, vec![10]);
+    assert_eq!(consumed.cancel_requested_task_ids, vec!["10".to_owned()]);
 }
 
 #[tokio::test]
@@ -107,7 +107,7 @@ async fn task_cancel_before_registration_without_subtask_is_stored_by_task() {
     transport.handler("task:cancel").unwrap()(json!({"task_id": 11})).await;
 
     let snapshot = runner.cancellation_snapshot();
-    assert_eq!(snapshot.pending_task_ids, vec![11]);
+    assert_eq!(snapshot.pending_task_ids, vec!["11".to_owned()]);
     assert!(snapshot.pending_subtask_ids.is_empty());
     assert!(snapshot.cancel_requested_task_ids.is_empty());
 }

@@ -13,12 +13,116 @@ describe('workbenchReducer', () => {
     expect(state.currentRuntimeTask).toBeNull()
   })
 
+  test('preserves the current blank chat draft when clearing the runtime task', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentProject: { id: 7, name: 'Repo', tasks: [] },
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        standaloneChatKey: 4,
+      },
+      { type: 'current_task_cleared' }
+    )
+
+    expect(state.currentRuntimeTask).toBeNull()
+    expect(state.standaloneChatKey).toBe(4)
+  })
+
+  test('preserves blank chat draft when returning to standalone chat', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        currentRuntimeTask: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        standaloneChatKey: 4,
+      },
+      {
+        type: 'project_cleared',
+        standaloneDeviceId: 'device-1',
+        standaloneWorkspacePath: null,
+      }
+    )
+
+    expect(state.currentRuntimeTask).toBeNull()
+    expect(state.standaloneChatKey).toBe(4)
+  })
+
+  test('creates a fresh blank chat draft when requested explicitly', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 4,
+      },
+      {
+        type: 'project_cleared',
+        standaloneDeviceId: 'device-1',
+        standaloneWorkspacePath: null,
+        startFreshChat: true,
+      }
+    )
+
+    expect(state.standaloneChatKey).toBe(5)
+  })
+
+  test('creates a fresh blank chat draft after the previous draft is committed', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 4,
+      },
+      { type: 'blank_chat_committed' }
+    )
+
+    expect(state.standaloneChatKey).toBe(5)
+  })
+
+  test('preserves blank chat draft when selecting a project', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 4,
+      },
+      {
+        type: 'project_selected',
+        project: { id: 7, name: 'Repo', tasks: [] },
+      }
+    )
+
+    expect(state.currentProject?.id).toBe(7)
+    expect(state.standaloneChatKey).toBe(4)
+  })
+
+  test('preserves blank chat draft when selecting a project workspace', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 4,
+      },
+      {
+        type: 'project_workspace_selected',
+        project: { id: 7, name: 'Repo', tasks: [] },
+        deviceWorkspaceId: null,
+      }
+    )
+
+    expect(state.currentProject?.id).toBe(7)
+    expect(state.pendingProjectWorkspaceProjectId).toBe(7)
+    expect(state.standaloneChatKey).toBe(4)
+  })
+
   test('stores runtime work separately from backend task lists', () => {
     const runtimeWork = {
       projects: [
         {
           project: { id: 7, name: 'Repo' },
-          totalLocalTasks: 1,
+          totalTasks: 1,
           deviceWorkspaces: [
             {
               id: 3,
@@ -28,9 +132,9 @@ describe('workbenchReducer', () => {
               available: true,
               workspacePath: '/repo/Wegent',
               label: 'Wegent',
-              localTasks: [
+              tasks: [
                 {
-                  localTaskId: 'codex-1',
+                  taskId: 'codex-1',
                   workspacePath: '/repo/Wegent',
                   title: 'Fix reconnect',
                   runtime: 'codex',
@@ -41,7 +145,7 @@ describe('workbenchReducer', () => {
         },
       ],
       chats: [],
-      totalLocalTasks: 1,
+      totalTasks: 1,
     }
 
     const state = workbenchReducer(initialWorkbenchState, {
@@ -63,7 +167,7 @@ describe('workbenchReducer', () => {
             key: 'local:/Users/me/Wegent',
             name: 'Wegent',
           },
-          totalLocalTasks: 0,
+          totalTasks: 0,
           deviceWorkspaces: [
             {
               id: null,
@@ -74,13 +178,13 @@ describe('workbenchReducer', () => {
               workspacePath: '/Users/me/Wegent',
               workspaceKind: 'workspace',
               mapped: true,
-              localTasks: [],
+              tasks: [],
             },
           ],
         },
       ],
       chats: [],
-      totalLocalTasks: 0,
+      totalTasks: 0,
     }
     const projectId = runtimeProjectUiId(runtimeWork.projects[0].project)
     const selected = workbenchReducer(initialWorkbenchState, {
@@ -122,7 +226,7 @@ describe('workbenchReducer', () => {
       currentRuntimeTask: {
         deviceId: 'device-1',
         workspacePath: '/workspace/old',
-        localTaskId: 'old-task',
+        taskId: 'old-task',
       },
     }
 
@@ -155,13 +259,13 @@ describe('workbenchReducer', () => {
       address: {
         deviceId: 'device-1',
         workspacePath: '/workspace/default',
-        localTaskId: 'runtime-1',
+        taskId: 'runtime-1',
       },
       project: null,
     })
 
     expect(opened.currentProject).toBeNull()
-    expect(opened.currentRuntimeTask?.localTaskId).toBe('runtime-1')
+    expect(opened.currentRuntimeTask?.taskId).toBe('runtime-1')
   })
 
   test('keeps project tasks only in the project list returned by the server', () => {
@@ -212,10 +316,10 @@ describe('workbenchReducer', () => {
             workspacePath: '/workspace/repo',
             available: true,
             mapped: false,
-            localTasks: [],
+            tasks: [],
           },
         ],
-        totalLocalTasks: 0,
+        totalTasks: 0,
       },
     })
 
@@ -280,7 +384,7 @@ describe('workbenchReducer', () => {
                 workspacePath: '/workspace/existing',
                 available: true,
                 mapped: true,
-                localTasks: [],
+                tasks: [],
               },
             ],
           },
@@ -291,10 +395,10 @@ describe('workbenchReducer', () => {
             workspacePath: '/workspace/new-project',
             available: true,
             mapped: false,
-            localTasks: [],
+            tasks: [],
           },
         ],
-        totalLocalTasks: 0,
+        totalTasks: 0,
       },
     })
 
@@ -352,9 +456,9 @@ describe('workbenchReducer', () => {
                 workspacePath: '/workspace/device-2',
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'task-b',
+                    taskId: 'task-b',
                     workspacePath: '/workspace/device-2',
                     title: 'Task B',
                     runtime: 'codex',
@@ -372,9 +476,9 @@ describe('workbenchReducer', () => {
                 workspacePath: '/workspace/device-1',
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'task-a',
+                    taskId: 'task-a',
                     workspacePath: '/workspace/device-1',
                     title: 'Task A',
                     runtime: 'codex',
@@ -385,7 +489,7 @@ describe('workbenchReducer', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 2,
+        totalTasks: 2,
       },
     })
 
@@ -402,9 +506,9 @@ describe('workbenchReducer', () => {
                 workspacePath: '/workspace/device-1',
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'task-a',
+                    taskId: 'task-a',
                     workspacePath: '/workspace/device-1',
                     title: 'Task A updated',
                     runtime: 'codex',
@@ -422,9 +526,9 @@ describe('workbenchReducer', () => {
                 workspacePath: '/workspace/device-2',
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'task-b',
+                    taskId: 'task-b',
                     workspacePath: '/workspace/device-2',
                     title: 'Task B updated',
                     runtime: 'codex',
@@ -435,15 +539,15 @@ describe('workbenchReducer', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 2,
+        totalTasks: 2,
       },
     })
 
     expect(
       refreshed.runtimeWork?.projects.map(project => runtimeProjectUiId(project.project))
     ).toEqual([1, 2])
-    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].localTasks[0]).toMatchObject({
-      localTaskId: 'task-a',
+    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0]).toMatchObject({
+      taskId: 'task-a',
       title: 'Task A updated',
     })
   })
@@ -502,7 +606,7 @@ describe('workbenchReducer', () => {
       ...initialWorkbenchState,
       currentRuntimeTask: {
         deviceId: 'local-device',
-        localTaskId: 'task-1',
+        taskId: 'task-1',
       },
     }
 
@@ -526,9 +630,9 @@ describe('workbenchReducer', () => {
             workspacePath: '/Users/me/chat',
             available: true,
             mapped: true,
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'task-1',
+                taskId: 'task-1',
                 workspacePath: '/Users/me/chat',
                 title: 'Chat',
                 runtime: 'codex',
@@ -539,13 +643,13 @@ describe('workbenchReducer', () => {
             ],
           },
         ],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
     })
 
     expect(refreshed.currentRuntimeTask).toEqual({
       deviceId: 'device-uuid',
-      localTaskId: 'task-1',
+      taskId: 'task-1',
       workspacePath: '/Users/me/chat',
       runtimeHandle: {
         threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
@@ -582,13 +686,13 @@ describe('workbenchReducer', () => {
                 available: false,
                 workspacePath: '/workspace/repo',
                 mapped: true,
-                localTasks: [],
+                tasks: [],
               },
             ],
           },
         ],
         chats: [],
-        totalLocalTasks: 0,
+        totalTasks: 0,
       },
     })
 
@@ -620,15 +724,15 @@ describe('workbenchReducer', () => {
                 workspacePath: '/workspace/repo',
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'task-a',
+                    taskId: 'task-a',
                     workspacePath: '/workspace/repo',
                     title: 'Task A',
                     runtime: 'codex',
                   },
                   {
-                    localTaskId: 'task-b',
+                    taskId: 'task-b',
                     workspacePath: '/workspace/repo',
                     title: 'Task B',
                     runtime: 'codex',
@@ -639,7 +743,7 @@ describe('workbenchReducer', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 2,
+        totalTasks: 2,
       },
     })
 
@@ -655,22 +759,22 @@ describe('workbenchReducer', () => {
                 workspacePath: '/workspace/repo',
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'task-b',
+                    taskId: 'task-b',
                     workspacePath: '/workspace/repo',
                     title: 'Task B updated',
                     runtime: 'codex',
                     running: true,
                   },
                   {
-                    localTaskId: 'task-a',
+                    taskId: 'task-a',
                     workspacePath: '/workspace/repo',
                     title: 'Task A updated',
                     runtime: 'codex',
                   },
                   {
-                    localTaskId: 'task-c',
+                    taskId: 'task-c',
                     workspacePath: '/workspace/repo',
                     title: 'Task C',
                     runtime: 'codex',
@@ -681,16 +785,14 @@ describe('workbenchReducer', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 3,
+        totalTasks: 3,
       },
     })
 
     expect(
-      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].localTasks.map(
-        task => task.localTaskId
-      )
+      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)
     ).toEqual(['task-a', 'task-b', 'task-c'])
-    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].localTasks[1]).toMatchObject({
+    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[1]).toMatchObject({
       title: 'Task B updated',
       running: true,
     })
@@ -713,9 +815,9 @@ describe('workbenchReducer', () => {
                 projectId: 7,
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/workspace/repo',
                     title: 'Create cloud config',
                     runtime: 'codex',
@@ -727,7 +829,7 @@ describe('workbenchReducer', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
     })
 
@@ -745,9 +847,9 @@ describe('workbenchReducer', () => {
                 projectId: 7,
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'codex-1',
+                    taskId: 'codex-1',
                     workspacePath: '/workspace/repo/.worktrees/codex-1',
                     title: 'Create cloud config',
                     runtime: 'codex',
@@ -760,21 +862,21 @@ describe('workbenchReducer', () => {
           },
         ],
         chats: [],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       },
     })
 
     const taskItems =
       refreshed.runtimeWork?.projects.flatMap(project =>
-        project.deviceWorkspaces.flatMap(workspace => workspace.localTasks)
+        project.deviceWorkspaces.flatMap(workspace => workspace.tasks)
       ) ?? []
 
-    expect(taskItems.map(task => task.localTaskId)).toEqual(['codex-1'])
+    expect(taskItems.map(task => task.taskId)).toEqual(['codex-1'])
     expect(taskItems[0]).toMatchObject({
       workspacePath: '/workspace/repo/.worktrees/codex-1',
       status: 'running',
     })
-    expect(refreshed.runtimeWork?.totalLocalTasks).toBe(1)
+    expect(refreshed.runtimeWork?.totalTasks).toBe(1)
   })
 
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {
@@ -794,9 +896,9 @@ describe('workbenchReducer', () => {
                 projectId: 7,
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'project-task',
+                    taskId: 'project-task',
                     workspacePath: '/workspace/shared',
                     title: 'Project task',
                     runtime: 'codex',
@@ -813,15 +915,15 @@ describe('workbenchReducer', () => {
             workspaceKind: 'chat',
             available: true,
             mapped: true,
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'chat-b',
+                taskId: 'chat-b',
                 workspacePath: '/workspace/shared',
                 title: 'Chat B',
                 runtime: 'codex',
               },
               {
-                localTaskId: 'chat-a',
+                taskId: 'chat-a',
                 workspacePath: '/workspace/shared',
                 title: 'Chat A',
                 runtime: 'codex',
@@ -829,7 +931,7 @@ describe('workbenchReducer', () => {
             ],
           },
         ],
-        totalLocalTasks: 3,
+        totalTasks: 3,
       },
     })
 
@@ -847,9 +949,9 @@ describe('workbenchReducer', () => {
                 projectId: 7,
                 available: true,
                 mapped: true,
-                localTasks: [
+                tasks: [
                   {
-                    localTaskId: 'project-task',
+                    taskId: 'project-task',
                     workspacePath: '/workspace/shared',
                     title: 'Project task updated',
                     runtime: 'codex',
@@ -866,21 +968,21 @@ describe('workbenchReducer', () => {
             workspaceKind: 'chat',
             available: true,
             mapped: true,
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'chat-a',
+                taskId: 'chat-a',
                 workspacePath: '/workspace/shared',
                 title: 'Chat A updated',
                 runtime: 'codex',
               },
               {
-                localTaskId: 'chat-b',
+                taskId: 'chat-b',
                 workspacePath: '/workspace/shared',
                 title: 'Chat B updated',
                 runtime: 'codex',
               },
               {
-                localTaskId: 'chat-c',
+                taskId: 'chat-c',
                 workspacePath: '/workspace/shared',
                 title: 'Chat C',
                 runtime: 'codex',
@@ -888,16 +990,16 @@ describe('workbenchReducer', () => {
             ],
           },
         ],
-        totalLocalTasks: 4,
+        totalTasks: 4,
       },
     })
 
-    expect(refreshed.runtimeWork?.chats[0].localTasks.map(task => task.localTaskId)).toEqual([
+    expect(refreshed.runtimeWork?.chats[0].tasks.map(task => task.taskId)).toEqual([
       'chat-b',
       'chat-a',
       'chat-c',
     ])
-    expect(refreshed.runtimeWork?.chats[0].localTasks[0]).toMatchObject({
+    expect(refreshed.runtimeWork?.chats[0].tasks[0]).toMatchObject({
       title: 'Chat B updated',
     })
   })

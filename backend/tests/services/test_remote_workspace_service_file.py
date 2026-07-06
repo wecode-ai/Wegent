@@ -4,7 +4,10 @@
 
 from unittest.mock import Mock, patch
 
-from app.services.remote_workspace_service import RemoteWorkspaceService
+from app.services.remote_workspace_service import (
+    REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS,
+    RemoteWorkspaceService,
+)
 
 
 def test_stream_file_download_sets_attachment_disposition():
@@ -35,6 +38,37 @@ def test_stream_file_download_sets_attachment_disposition():
         )
 
     assert "attachment" in response.headers["Content-Disposition"]
+
+
+def test_stream_file_zip_download_appends_zip_extension():
+    service = RemoteWorkspaceService(executor_manager_url="http://executor-manager")
+
+    with (
+        patch.object(service, "_get_task_detail", return_value={"subtasks": []}),
+        patch.object(
+            service,
+            "normalize_and_validate_workspace_path",
+            return_value="/workspace/demo",
+        ),
+        patch.object(
+            service, "_ensure_sandbox_available", return_value="http://sandbox"
+        ),
+        patch.object(
+            service,
+            "_download_file",
+            return_value=(b"zip", "application/zip"),
+        ),
+    ):
+        response = service.stream_file(
+            db=Mock(),
+            task_id=1,
+            user_id=100,
+            path="/workspace/demo",
+            disposition="attachment",
+        )
+
+    assert response.media_type == "application/zip"
+    assert "demo.zip" in response.headers["Content-Disposition"]
 
 
 def test_stream_file_inline_sets_inline_disposition():
@@ -140,4 +174,35 @@ def test_stream_file_reads_running_sandbox_via_envd_files_endpoint():
     client.get.assert_called_once_with(
         "http://sandbox-runtime/files",
         params={"path": "/home/user/README.md"},
+    )
+
+
+def test_download_file_uses_archive_friendly_timeout():
+    service = RemoteWorkspaceService(
+        executor_manager_url="http://executor-manager",
+        request_timeout=5.0,
+    )
+    client = Mock()
+    response = Mock()
+    response.status_code = 200
+    response.content = b"zip"
+    response.headers = {"content-type": "application/zip"}
+    response.text = "zip"
+    client.get.return_value = response
+    client.__enter__ = Mock(return_value=client)
+    client.__exit__ = Mock(return_value=False)
+
+    with patch(
+        "app.services.remote_workspace_service.httpx.Client", return_value=client
+    ) as client_factory:
+        content, content_type = service._download_file(
+            task_id=1,
+            executor_name="executor",
+            path="/workspace/1/demo",
+        )
+
+    assert content == b"zip"
+    assert content_type == "application/zip"
+    client_factory.assert_called_once_with(
+        timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS
     )

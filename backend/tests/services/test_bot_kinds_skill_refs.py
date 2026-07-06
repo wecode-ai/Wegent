@@ -16,8 +16,20 @@ def test_get_skill_refs_handles_duplicate_group_skill_names_without_crash(mocker
     query.all.side_effect = [
         [],
         [
-            SimpleNamespace(name="dup-skill", id=101, namespace="group-a"),
-            SimpleNamespace(name="dup-skill", id=202, namespace="group-a"),
+            SimpleNamespace(
+                name="dup-skill",
+                id=101,
+                namespace="group-a",
+                user_id=8,
+                json={},
+            ),
+            SimpleNamespace(
+                name="dup-skill",
+                id=202,
+                namespace="group-a",
+                user_id=9,
+                json={},
+            ),
         ],
         [],
     ]

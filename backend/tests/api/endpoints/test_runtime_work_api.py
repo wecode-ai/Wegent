@@ -18,7 +18,7 @@ def test_list_runtime_work_endpoint_uses_current_user(
         return_value={
             "projects": [],
             "chats": [],
-            "totalLocalTasks": 0,
+            "totalTasks": 0,
         }
     )
     monkeypatch.setattr(
@@ -28,7 +28,7 @@ def test_list_runtime_work_endpoint_uses_current_user(
     response = test_client.get("/api/runtime-work", headers=_auth_headers(test_token))
 
     assert response.status_code == 200
-    assert response.json()["totalLocalTasks"] == 0
+    assert response.json()["totalTasks"] == 0
     assert "client_origin" not in service_mock.await_args.kwargs
 
 
@@ -165,7 +165,7 @@ def test_runtime_transcript_endpoint_dispatches_address(
 
     service_mock = AsyncMock(
         return_value={
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
             "messages": [],
@@ -181,14 +181,14 @@ def test_runtime_transcript_endpoint_dispatches_address(
         json={
             "deviceId": "device-1",
             "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "limit": 25,
             "beforeCursor": "offset:120",
         },
     )
 
     assert response.status_code == 200
-    assert response.json()["localTaskId"] == "codex-1"
+    assert response.json()["taskId"] == "codex-1"
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
     assert service_mock.await_args.kwargs["address"].limit == 25
     assert service_mock.await_args.kwargs["address"].before_cursor == "offset:120"
@@ -208,7 +208,7 @@ def test_runtime_search_endpoint_dispatches_request(
                     "address": {
                         "deviceId": "device-1",
                         "workspacePath": "/repo/Wegent",
-                        "localTaskId": "codex-1",
+                        "taskId": "codex-1",
                     },
                     "runtime": "codex",
                     "title": "执行 pwd",
@@ -253,7 +253,7 @@ def test_runtime_archive_endpoint_dispatches_address(
     service_mock = AsyncMock(
         return_value={
             "accepted": True,
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "error": None,
         }
@@ -268,7 +268,7 @@ def test_runtime_archive_endpoint_dispatches_address(
         json={
             "deviceId": "device-1",
             "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
         },
     )
 
@@ -287,7 +287,7 @@ def test_runtime_rename_endpoint_dispatches_request(
     service_mock = AsyncMock(
         return_value={
             "accepted": True,
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "error": None,
         }
@@ -303,7 +303,7 @@ def test_runtime_rename_endpoint_dispatches_request(
             "address": {
                 "deviceId": "device-1",
                 "workspacePath": "/repo/Wegent",
-                "localTaskId": "codex-1",
+                "taskId": "codex-1",
             },
             "title": "对齐需求核心点",
         },
@@ -326,7 +326,7 @@ def test_runtime_cancel_endpoint_dispatches_address(
     service_mock = AsyncMock(
         return_value={
             "accepted": True,
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "error": None,
         }
@@ -341,7 +341,7 @@ def test_runtime_cancel_endpoint_dispatches_address(
         json={
             "deviceId": "device-1",
             "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
         },
     )
 
@@ -413,7 +413,7 @@ def test_archived_conversations_delete_bulk_endpoint_dispatches_items(
                 {
                     "deviceId": "device-1",
                     "workspacePath": "/repo/Wegent",
-                    "localTaskId": "codex-1",
+                    "taskId": "codex-1",
                 }
             ]
         },
@@ -627,7 +627,7 @@ def test_runtime_task_im_notification_subscribe_endpoint_dispatches_address(
         return_value={
             "address": {
                 "deviceId": "device-1",
-                "localTaskId": "codex-1",
+                "taskId": "codex-1",
             },
             "subscribed": True,
             "sessionKeys": ["session-1"],
@@ -645,7 +645,7 @@ def test_runtime_task_im_notification_subscribe_endpoint_dispatches_address(
         json={
             "address": {
                 "deviceId": "device-1",
-                "localTaskId": "codex-1",
+                "taskId": "codex-1",
             },
             "sessionKeys": ["session-1"],
         },
@@ -669,7 +669,7 @@ def test_runtime_task_im_notification_unsubscribe_endpoint_dispatches_address(
         return_value={
             "address": {
                 "deviceId": "device-1",
-                "localTaskId": "codex-1",
+                "taskId": "codex-1",
             },
             "subscribed": False,
             "sessionKeys": [],
@@ -686,7 +686,7 @@ def test_runtime_task_im_notification_unsubscribe_endpoint_dispatches_address(
         headers=_auth_headers(test_token),
         json={
             "deviceId": "device-1",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
         },
     )
 

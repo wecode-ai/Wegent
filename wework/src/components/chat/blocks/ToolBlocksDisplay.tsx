@@ -161,45 +161,59 @@ export function ToolBlocksDisplay({
     [displayItems]
   )
   const hasPlanResponse = blocks.some(block => block.type === 'plan' && block.content.trim())
+  const hasRunningBlock = blocks.some(block => block.status !== 'done' && block.status !== 'error')
   const isLockedOpen = forceExpanded || (isRunning && !hasFinalContent) || hasPlanResponse
   const expanded = isLockedOpen || userExpanded
   const canToggleSummary = showSummary && !isLockedOpen && rows.length > 0
+  const collapsedRunningItems = useMemo(
+    () =>
+      !expanded && hasRunningBlock
+        ? displayItems.filter(item => isRunningProcessingDisplayItem(item))
+        : [],
+    [displayItems, expanded, hasRunningBlock]
+  )
   const processingContent = useMemo(
-    () => (
-      <div className="flex min-w-0 flex-col gap-3 pt-0.5">
-        {displayItems.map(item => {
-          if (item.type === 'request_user_input') {
-            return isAnsweredRequestUserInputBlock(item.block) ? (
-              <RequestUserInputSummary key={item.id} payload={item.block.renderPayload} />
-            ) : (
-              <RequestUserInputCard
+    () =>
+      expanded ? (
+        <div className="flex min-w-0 flex-col gap-3 pt-0.5">
+          {displayItems.map(item => {
+            if (item.type === 'request_user_input') {
+              return isAnsweredRequestUserInputBlock(item.block) ? (
+                <RequestUserInputSummary key={item.id} payload={item.block.renderPayload} />
+              ) : (
+                <RequestUserInputCard
+                  key={item.id}
+                  payload={item.block.renderPayload}
+                  disabled={item.block.status === 'error'}
+                  onSubmit={onRequestUserInputSubmit}
+                  onIgnore={() => onRequestUserInputIgnore?.(item.block.renderPayload)}
+                />
+              )
+            }
+
+            return item.type === 'activity_group' ? (
+              <ToolActivityGroup
                 key={item.id}
-                payload={item.block.renderPayload}
-                disabled={item.block.status === 'error'}
-                onSubmit={onRequestUserInputSubmit}
-                onIgnore={() => onRequestUserInputIgnore?.(item.block.renderPayload)}
+                row={item}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+              />
+            ) : isContextCompactionToolBlock(item.block) ? (
+              <ContextCompactionIndicator key={item.id} block={item.block} />
+            ) : (
+              <ToolBlockItem
+                key={item.id}
+                block={item.block}
+                stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onOpenAssistantPlan={onOpenAssistantPlan}
               />
             )
-          }
-
-          return item.type === 'activity_group' ? (
-            <ToolActivityGroup key={item.id} row={item} onOpenWorkspaceFile={onOpenWorkspaceFile} />
-          ) : isContextCompactionToolBlock(item.block) ? (
-            <ContextCompactionIndicator key={item.id} block={item.block} />
-          ) : (
-            <ToolBlockItem
-              key={item.id}
-              block={item.block}
-              stateKey={stateKey ? `${stateKey}:${item.id}` : undefined}
-              onOpenWorkspaceFile={onOpenWorkspaceFile}
-              onOpenAssistantPlan={onOpenAssistantPlan}
-            />
-          )
-        })}
-      </div>
-    ),
+          })}
+        </div>
+      ) : null,
     [
       displayItems,
+      expanded,
       onOpenWorkspaceFile,
       onOpenAssistantPlan,
       onRequestUserInputIgnore,
@@ -237,11 +251,46 @@ export function ToolBlocksDisplay({
           </button>
         </div>
       ) : null}
-      <CollapsibleProcessingContent expanded={expanded} keepMounted>
+      <CollapsibleProcessingContent expanded={expanded}>
         {processingContent}
       </CollapsibleProcessingContent>
+      {collapsedRunningItems.length > 0 && (
+        <div className="flex min-w-0 flex-col gap-3 pt-0.5">
+          {collapsedRunningItems.map(item =>
+            item.type === 'activity_group' ? (
+              <ToolActivityGroup
+                key={item.id}
+                row={item}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+              />
+            ) : item.type === 'request_user_input' ? null : isContextCompactionToolBlock(
+                item.block
+              ) ? (
+              <ContextCompactionIndicator key={item.id} block={item.block} />
+            ) : (
+              <ToolBlockItem
+                key={item.id}
+                block={item.block}
+                stateKey={stateKey ? `${stateKey}:${item.id}:running` : undefined}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onOpenAssistantPlan={onOpenAssistantPlan}
+              />
+            )
+          )}
+        </div>
+      )}
     </div>
   )
+}
+
+function isRunningProcessingDisplayItem(item: ProcessingDisplayItem): boolean {
+  if (item.type === 'request_user_input') {
+    return item.block.status !== 'done' && item.block.status !== 'error'
+  }
+  if (item.type === 'activity_group') {
+    return item.blocks.some(block => block.status !== 'done' && block.status !== 'error')
+  }
+  return item.block.status !== 'done' && item.block.status !== 'error'
 }
 
 function CollapsibleProcessingContent({
@@ -300,6 +349,7 @@ function CollapsibleProcessingContent({
     }
     if (!keepMounted) setIsRendered(false)
   }
+  const allowOverflow = expanded && maxHeight === 'none'
 
   return (
     <div
@@ -308,7 +358,8 @@ function CollapsibleProcessingContent({
       inert={!expanded ? true : undefined}
       onTransitionEnd={handleTransitionEnd}
       className={[
-        'overflow-hidden transition-[max-height,opacity] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        'transition-[max-height,opacity] duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        allowOverflow ? 'overflow-visible' : 'overflow-hidden',
         expanded ? 'opacity-100' : 'pointer-events-none opacity-0',
       ].join(' ')}
       style={{ maxHeight }}
@@ -317,7 +368,8 @@ function CollapsibleProcessingContent({
         <div
           ref={contentRef}
           className={[
-            'min-h-0 overflow-hidden transition-transform duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            'min-h-0 transition-transform duration-[260ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+            allowOverflow ? 'overflow-visible' : 'overflow-hidden',
             expanded ? 'translate-y-0' : '-translate-y-1',
           ].join(' ')}
         >
@@ -383,6 +435,7 @@ function ToolActivityGroup({
 
 function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
   const label = getContextCompactionLabel(block)
+  const isRunning = block.status !== 'done' && block.status !== 'error'
   const textClassName = block.status === 'error' ? 'text-red-500' : 'text-text-muted'
 
   return (
@@ -396,7 +449,9 @@ function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
         className={`inline-flex min-w-0 max-w-full items-center gap-1.5 text-[13px] font-semibold ${textClassName}`}
       >
         <Archive className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
-        <span className="min-w-0 truncate">{label}</span>
+        <span className={`min-w-0 truncate ${isRunning ? 'waiting-thinking-text' : ''}`}>
+          {label}
+        </span>
       </span>
       <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
     </div>

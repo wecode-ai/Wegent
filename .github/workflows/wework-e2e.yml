@@ -1,0 +1,100 @@
+name: Wework E2E
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - '.github/workflows/wework-e2e.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'packages/chat-core/**'
+      - 'wework/**'
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+    paths:
+      - '.github/workflows/wework-e2e.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'packages/chat-core/**'
+      - 'wework/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  wework-e2e:
+    name: Wework E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-wework-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-playwright-
+
+      - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: ./wework
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Playwright system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: ./wework
+        run: pnpm exec playwright install-deps chromium
+
+      - name: Run Wework E2E tests
+        env:
+          CI: true
+        run: pnpm --filter wework e2e
+
+      - name: Upload Wework Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-playwright-report
+          path: wework/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Wework Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-playwright-traces
+          path: wework/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

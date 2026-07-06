@@ -123,7 +123,7 @@ fn coordinate_mode_collects_member_bot_skills_for_deployment() {
 #[test]
 fn deployment_plan_passes_task_id_for_shared_skill_auth() {
     let request = ExecutionRequest {
-        task_id: 5_258_563,
+        task_id: "5_258_563".to_owned(),
         auth_token: Some("token".to_owned()),
         team_namespace: Some("default".to_owned()),
         extra: serde_json::Map::from_iter([(
@@ -150,7 +150,7 @@ fn deployment_plan_passes_task_id_for_shared_skill_auth() {
     )
     .unwrap();
 
-    assert_eq!(plan.task_id, Some(5_258_563));
+    assert_eq!(plan.task_id.as_deref(), Some("5_258_563"));
     assert_eq!(plan.auth_token, "token");
     assert_eq!(plan.team_namespace, "default");
     assert_eq!(plan.skills_dir, PathBuf::from("/tmp/skills"));

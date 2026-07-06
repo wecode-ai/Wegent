@@ -802,19 +802,28 @@ impl AppIpcServer {
 
                         if let Some(response) = response {
                             let ok = response.get("ok").and_then(Value::as_bool);
+                            let elapsed_ms = started_at.elapsed().as_millis();
                             log_app_ipc_request(
                                 "app IPC request finished",
                                 request_id.as_deref(),
                                 method.as_deref(),
-                                Some(started_at.elapsed().as_millis()),
+                                Some(elapsed_ms),
                                 ok,
                             );
+                            if ok == Some(false) {
+                                log_app_ipc_response_error(
+                                    request_id.as_deref(),
+                                    method.as_deref(),
+                                    elapsed_ms,
+                                    &response,
+                                );
+                            }
                             if response_tx.send(response).await.is_err() {
                                 log_app_ipc_request(
                                     "app IPC response dropped",
                                     request_id.as_deref(),
                                     method.as_deref(),
-                                    Some(started_at.elapsed().as_millis()),
+                                    Some(elapsed_ms),
                                     ok,
                                 );
                             }
@@ -943,6 +952,34 @@ fn log_app_ipc_request(
         fields.push(("ok", ok.to_string()));
     }
     write_executor_log_line(&format_executor_log(event, &fields));
+}
+
+fn log_app_ipc_response_error(
+    request_id: Option<&str>,
+    method: Option<&str>,
+    elapsed_ms: u128,
+    response: &Value,
+) {
+    let error = response.get("error").and_then(Value::as_object);
+    let code = error
+        .and_then(|value| value.get("code"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let message = error
+        .and_then(|value| value.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown error");
+    let mut fields = Vec::new();
+    if let Some(request_id) = request_id {
+        fields.push(("request_id", request_id.to_owned()));
+    }
+    if let Some(method) = method {
+        fields.push(("method", method.to_owned()));
+    }
+    fields.push(("elapsed_ms", elapsed_ms.to_string()));
+    fields.push(("code", code.to_owned()));
+    fields.push(("error", message.to_owned()));
+    write_executor_log_line(&format_executor_log("app IPC request failed", &fields));
 }
 
 pub fn app_ipc_socket_path() -> PathBuf {

@@ -422,7 +422,9 @@ async def get_sandbox(sandbox_id: str, http_request: Request):
     # Try to find sandbox by e2b_sandbox_id in metadata
     sandbox = await _find_sandbox_by_e2b_id(manager, sandbox_id)
 
-    if sandbox is None:
+    if sandbox is not None:
+        sandbox = await manager.get_sandbox(sandbox.sandbox_id)
+    else:
         # Fallback: try direct lookup (for internal sandbox_id)
         sandbox = await manager.get_sandbox(sandbox_id)
 

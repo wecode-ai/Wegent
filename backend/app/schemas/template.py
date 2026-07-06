@@ -14,6 +14,11 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from app.schemas.subscription import (
+    SUBSCRIPTION_MAX_TIMEOUT_SECONDS,
+    SUBSCRIPTION_MIN_TIMEOUT_SECONDS,
+)
+
 # --- Template resource sub-configs ---
 
 
@@ -77,7 +82,10 @@ class TemplateResourceSubscriptionConfig(BaseModel):
     )
     retryCount: int = Field(1, ge=0, le=3, description="Retry count on failure")
     timeoutSeconds: int = Field(
-        600, ge=60, le=3600, description="Execution timeout in seconds"
+        600,
+        ge=SUBSCRIPTION_MIN_TIMEOUT_SECONDS,
+        le=SUBSCRIPTION_MAX_TIMEOUT_SECONDS,
+        description="Execution timeout in seconds",
     )
 
 

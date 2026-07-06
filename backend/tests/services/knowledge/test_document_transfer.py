@@ -502,6 +502,30 @@ def test_transfer_documents_updates_document_counts(test_db: Session) -> None:
 
 
 @pytest.mark.unit
+def test_transfer_to_notebook_default_view_kb_allows_more_than_50_documents(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-large-notebook-transfer")
+    source_kb_id = _create_kb(test_db, owner.id, "source-large-notebook-transfer")
+    target_kb_id = _create_kb(test_db, owner.id, "target-large-notebook-transfer")
+    source_doc = _create_document(test_db, source_kb_id, owner.id, "extra-doc.md")
+    for index in range(50):
+        _create_document(test_db, target_kb_id, owner.id, f"existing-{index}.md")
+
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_kb_id,
+        target_kb_id=target_kb_id,
+        document_ids=[source_doc.id],
+        folder_ids=[],
+        user_id=owner.id,
+    )
+
+    assert result.success is True
+    assert KnowledgeService.get_document_count(test_db, target_kb_id) == 51
+
+
+@pytest.mark.unit
 @patch("app.services.knowledge.knowledge_transfer._get_delete_gateway")
 @patch(
     "app.services.knowledge.orchestrator.KnowledgeOrchestrator._schedule_indexing_celery"

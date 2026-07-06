@@ -121,6 +121,16 @@ impl CodexGlobalProjectIndex {
         self.project_state_loaded
     }
 
+    pub fn is_projectless_thread(&self, thread_id: &str) -> bool {
+        self.projectless_thread_ids.contains(thread_id)
+    }
+
+    pub fn thread_workspace_hint(&self, thread_id: &str) -> Option<&str> {
+        self.thread_workspace_root_hints
+            .get(thread_id)
+            .map(String::as_str)
+    }
+
     pub fn project_for_path(&self, workspace_path: &str) -> Option<&CodexGlobalProject> {
         let normalized = normalize_workspace_path(workspace_path);
         self.projects

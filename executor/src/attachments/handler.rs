@@ -15,7 +15,7 @@ pub struct AttachmentTask {
     pub project_id: Option<i64>,
     pub git_url: Option<String>,
     pub project_workspace_path: Option<PathBuf>,
-    pub user_subtask_id: Option<i64>,
+    pub user_subtask_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,8 +66,8 @@ pub trait AttachmentDownloadClient {
 
 pub fn download_attachments_with(
     task: &AttachmentTask,
-    task_id: i64,
-    subtask_id: i64,
+    task_id: &str,
+    subtask_id: &str,
     prompt: &Value,
     workspace_root: &Path,
     downloader: &impl AttachmentDownloadClient,
@@ -98,12 +98,12 @@ pub fn download_attachments_with(
     let (workspace, project_layout) = resolve_attachment_workspace(task, task_id, workspace_root);
     let attachment_subtask_id = resolve_attachment_subtask_id(
         &task.attachments,
-        task.user_subtask_id.unwrap_or(subtask_id),
+        task.user_subtask_id.as_deref().unwrap_or(subtask_id),
     );
     let config = AttachmentDownloaderConfig {
         workspace,
-        task_id: task_id.to_string(),
-        subtask_id: attachment_subtask_id.to_string(),
+        task_id: task_id.to_owned(),
+        subtask_id: attachment_subtask_id.clone(),
         auth_token: auth_token.to_owned(),
         project_layout,
     };
@@ -116,7 +116,7 @@ pub fn download_attachments_with(
             prompt,
             &result.success,
             &result.failed,
-            Some(task_id),
+            Some(task_id.to_owned()),
             Some(attachment_subtask_id),
         );
 
@@ -143,13 +143,13 @@ pub fn download_attachments_with(
 
 fn resolve_attachment_workspace(
     task: &AttachmentTask,
-    task_id: i64,
+    task_id: &str,
     workspace_root: &Path,
 ) -> (PathBuf, bool) {
     if let Some(project_workspace) = project_workspace(task, workspace_root) {
         return (project_workspace.join(".wegent/attachments"), true);
     }
-    (workspace_root.join(task_id.to_string()), false)
+    (workspace_root.join(task_id), false)
 }
 
 fn project_workspace(task: &AttachmentTask, workspace_root: &Path) -> Option<PathBuf> {
@@ -171,11 +171,11 @@ fn project_workspace(task: &AttachmentTask, workspace_root: &Path) -> Option<Pat
     )
 }
 
-fn resolve_attachment_subtask_id(attachments: &[AttachmentRecord], fallback: i64) -> i64 {
+fn resolve_attachment_subtask_id(attachments: &[AttachmentRecord], fallback: &str) -> String {
     attachments
         .iter()
-        .find_map(|attachment| attachment.subtask_id)
-        .unwrap_or(fallback)
+        .find_map(|attachment| attachment.subtask_id.clone())
+        .unwrap_or_else(|| fallback.to_owned())
 }
 
 fn is_vision_prompt(prompt: &Value) -> bool {

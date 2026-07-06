@@ -8,6 +8,7 @@ import {
   listenLocalTerminalExit,
   listenLocalTerminalOutput,
   localPathExists,
+  openLocalFile,
   openLocalWorkspace,
   resizeLocalTerminal,
   startLocalTerminal,
@@ -185,6 +186,26 @@ describe('local-terminal', () => {
     expect(invokeMock).toHaveBeenCalledWith('open_local_workspace', {
       opener: 'vscode',
       path: '/Users/me/project',
+    })
+  })
+
+  test('opens a local file with the native default app', async () => {
+    setNavigatorValue(
+      'userAgent',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
+    )
+    setNavigatorValue('platform', 'MacIntel')
+    setNavigatorValue('maxTouchPoints', 0)
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    invokeMock.mockResolvedValue(undefined)
+
+    await openLocalFile(' /Users/me/project/.wegent/attachments/draft/1/paste.txt ')
+
+    expect(invokeMock).toHaveBeenCalledWith('open_local_file', {
+      path: '/Users/me/project/.wegent/attachments/draft/1/paste.txt',
     })
   })
 

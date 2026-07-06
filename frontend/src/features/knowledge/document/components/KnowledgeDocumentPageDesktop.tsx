@@ -28,6 +28,7 @@ import { useNamespaceRoleMap } from '../hooks/useNamespaceRoleMap'
 import { useGroupKbs } from '../hooks/useGroupKbs'
 import { useKnowledgeUrlSync } from '../hooks/useKnowledgeUrlSync'
 import { useKnowledgeBaseDialogs } from '../hooks/useKnowledgeBaseDialogs'
+import { getDefaultKnowledgeView, useKnowledgeViewMode } from '../hooks/useKnowledgeViewMode'
 import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
@@ -37,6 +38,7 @@ import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledg
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
 import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
 import { MigrateKnowledgeBaseDialog } from './MigrateKnowledgeBaseDialog'
+import type { KnowledgeViewState } from './KnowledgeDocumentPage'
 import {
   canCreateKnowledgeBaseInNamespace,
   canManageKnowledgeBase,
@@ -54,12 +56,15 @@ interface KnowledgeDocumentPageDesktopProps {
   initialKbName?: string
   /** Initial document path to auto-open (from virtual URL path segments) */
   initialDocPath?: string
+  /** Notifies the parent shell so it can render page-level view controls */
+  onKnowledgeViewStateChange?: (state: KnowledgeViewState) => void
 }
 
 export function KnowledgeDocumentPageDesktop({
   initialKbNamespace,
   initialKbName,
   initialDocPath,
+  onKnowledgeViewStateChange,
 }: KnowledgeDocumentPageDesktopProps = {}) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
@@ -74,6 +79,19 @@ export function KnowledgeDocumentPageDesktop({
 
   // Knowledge sidebar hook
   const sidebar = useKnowledgeSidebar()
+  const { currentView, setCurrentView } = useKnowledgeViewMode(
+    sidebar.selectedKb?.kb_type,
+    sidebar.selectedKb?.id
+  )
+  const selectedKbId = sidebar.selectedKb?.id
+
+  useEffect(() => {
+    onKnowledgeViewStateChange?.({
+      visible: Boolean(selectedKbId),
+      currentView,
+      onViewChange: setCurrentView,
+    })
+  }, [currentView, onKnowledgeViewStateChange, selectedKbId, setCurrentView])
   const sourceViews = useKnowledgeSourceViews()
   const namespaceRoleMap = useNamespaceRoleMap()
 
@@ -89,7 +107,7 @@ export function KnowledgeDocumentPageDesktop({
     personalSharedWithMe: sidebar.personalSharedWithMe,
   })
 
-  // Sidebar collapse state - auto-collapse when notebook KB is selected
+  // Sidebar collapse state - auto-collapse in Notebook view
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('knowledge-sidebar-collapsed') === 'true'
@@ -224,10 +242,10 @@ export function KnowledgeDocumentPageDesktop({
     reloadGroupKbs,
   })
 
-  // Auto-collapse sidebar when a notebook KB is selected
+  // Auto-collapse sidebar in Notebook view.
   useEffect(() => {
     if (sidebar.selectedKb) {
-      if (sidebar.selectedKb.kb_type === 'notebook') {
+      if (currentView === 'notebook') {
         updateSidebarCollapsed(true)
       } else {
         updateSidebarCollapsed(false)
@@ -235,7 +253,7 @@ export function KnowledgeDocumentPageDesktop({
     } else {
       updateSidebarCollapsed(false)
     }
-  }, [sidebar.selectedKb, updateSidebarCollapsed])
+  }, [sidebar.selectedKb, currentView, updateSidebarCollapsed])
 
   // Get selected group info
   const selectedGroup = useMemo((): KnowledgeGroup | null => {
@@ -274,17 +292,21 @@ export function KnowledgeDocumentPageDesktop({
     (kb: KnowledgeBase | { id: number; name: string; namespace: string }) => {
       const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
       if (fullKb) {
+        const isKbSwitch = fullKb.id !== sidebar.selectedKbId
         // Always update state and URL without causing a page remount to avoid UI flickering.
         // Use history.pushState instead of router.push so Next.js doesn't unmount/remount
         // the entire page component. This works for both the main page and detail pages.
         sidebar.selectKb(fullKb)
+        if (isKbSwitch) {
+          setCurrentView(getDefaultKnowledgeView(fullKb.kb_type))
+        }
         // Update sidebar collapse synchronously (not via useEffect) so the
         // sidebar state is correct in the same render cycle as the selectedKb update
-        updateSidebarCollapsed(fullKb.kb_type === 'notebook')
+        updateSidebarCollapsed(fullKb.kb_type !== 'classic')
         navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
       }
     },
-    [sidebar, navigateToKbViaHistory, updateSidebarCollapsed]
+    [sidebar, setCurrentView, navigateToKbViaHistory, updateSidebarCollapsed]
   )
 
   const handleSelectAll = useCallback(() => {
@@ -460,6 +482,7 @@ export function KnowledgeDocumentPageDesktop({
           groupInfo={selectedKbGroupInfo}
           onGroupClick={handleGroupClick}
           initialDocPath={currentDocPath}
+          currentView={currentView}
         />
       )
     }

@@ -22,53 +22,53 @@ use crate::{
 pub trait LocalTaskController: Send + Sync + 'static {
     fn cancel_task<'a>(
         &'a self,
-        task_id: i64,
-        subtask_id: Option<i64>,
+        task_id: String,
+        subtask_id: Option<String>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
 
     fn close_task_session<'a>(
         &'a self,
-        task_id: i64,
+        task_id: String,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
 
-    fn running_task_ids(&self) -> Vec<i64>;
+    fn running_task_ids(&self) -> Vec<String>;
 }
 
 #[derive(Clone, Default)]
 pub struct LocalRunningTaskTracker {
-    inner: Arc<Mutex<BTreeSet<i64>>>,
+    inner: Arc<Mutex<BTreeSet<String>>>,
 }
 
 impl LocalRunningTaskTracker {
-    pub fn add(&self, task_id: i64) {
+    pub fn add(&self, task_id: String) {
         self.inner
             .lock()
             .expect("running task lock")
             .insert(task_id);
     }
 
-    pub fn remove(&self, task_id: i64) {
+    pub fn remove(&self, task_id: &str) {
         self.inner
             .lock()
             .expect("running task lock")
-            .remove(&task_id);
+            .remove(task_id);
     }
 
     pub fn set<I>(&self, task_ids: I)
     where
-        I: IntoIterator<Item = i64>,
+        I: IntoIterator<Item = String>,
     {
         let mut running = self.inner.lock().expect("running task lock");
         running.clear();
         running.extend(task_ids);
     }
 
-    pub fn running_task_ids(&self) -> Vec<i64> {
+    pub fn running_task_ids(&self) -> Vec<String> {
         self.inner
             .lock()
             .expect("running task lock")
             .iter()
-            .copied()
+            .cloned()
             .collect()
     }
 }
@@ -82,7 +82,7 @@ where
     engine: E,
     sink: S,
     running_tasks: LocalRunningTaskTracker,
-    handles: Arc<Mutex<BTreeMap<i64, ManagedTaskHandle>>>,
+    handles: Arc<Mutex<BTreeMap<String, ManagedTaskHandle>>>,
 }
 
 struct ManagedTaskHandle {
@@ -104,18 +104,18 @@ where
         }
     }
 
-    async fn abort_task(&self, task_id: i64, message: &str) -> bool {
+    async fn abort_task(&self, task_id: String, message: &str) -> bool {
         let Some(state) = self
             .handles
             .lock()
             .expect("managed task lock")
             .remove(&task_id)
         else {
-            self.running_tasks.remove(task_id);
+            self.running_tasks.remove(&task_id);
             return false;
         };
         state.handle.abort();
-        self.running_tasks.remove(task_id);
+        self.running_tasks.remove(&task_id);
         let _ = self
             .sink
             .send(state.builder.error(message, "cancelled"))
@@ -131,20 +131,20 @@ where
 {
     fn cancel_task<'a>(
         &'a self,
-        task_id: i64,
-        _subtask_id: Option<i64>,
+        task_id: String,
+        _subtask_id: Option<String>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move { self.abort_task(task_id, "Task cancelled").await })
     }
 
     fn close_task_session<'a>(
         &'a self,
-        task_id: i64,
+        task_id: String,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move { self.abort_task(task_id, "Task session closed").await })
     }
 
-    fn running_task_ids(&self) -> Vec<i64> {
+    fn running_task_ids(&self) -> Vec<String> {
         self.running_tasks.running_task_ids()
     }
 }
@@ -162,7 +162,7 @@ where
         let running_tasks = self.running_tasks.clone();
         let handles = Arc::clone(&self.handles);
         Box::pin(async move {
-            let task_id = request.task_id;
+            let task_id = request.task_id.clone();
             let builder = local_event_builder(&request);
             if let Err(message) = sink
                 .send(builder.response_created(request.resolved_shell_type().as_deref()))
@@ -174,7 +174,7 @@ where
                 };
             }
 
-            running_tasks.add(task_id);
+            running_tasks.add(task_id.clone());
             let mut guard = handles.lock().expect("managed task lock");
             let handle = tokio::spawn(run_managed_task(
                 engine,
@@ -200,16 +200,16 @@ async fn run_managed_task<E, S>(
     builder: ResponsesEventBuilder,
     request: ExecutionRequest,
     running_tasks: LocalRunningTaskTracker,
-    handles: Arc<Mutex<BTreeMap<i64, ManagedTaskHandle>>>,
+    handles: Arc<Mutex<BTreeMap<String, ManagedTaskHandle>>>,
 ) where
     E: AgentEngine,
     S: EventSink,
 {
-    let task_id = request.task_id;
+    let task_id = request.task_id.clone();
     let outcome = engine
         .run_with_events(request, sink.clone(), builder.clone())
         .await;
-    running_tasks.remove(task_id);
+    running_tasks.remove(&task_id);
     handles.lock().expect("managed task lock").remove(&task_id);
 
     let event = match outcome {
@@ -230,7 +230,7 @@ fn local_event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
         .get("model_id")
         .and_then(Value::as_str)
         .unwrap_or("");
-    ResponsesEventBuilder::new(request.task_id, request.subtask_id, model)
+    ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model)
         .with_message_id(request.message_id)
         .with_executor_info(
             request.executor_name.as_deref(),

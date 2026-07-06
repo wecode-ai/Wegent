@@ -357,7 +357,7 @@ fn claude_command_resumes_saved_task_session() {
     )
     .unwrap();
     let request = ExecutionRequest {
-        task_id: 77,
+        task_id: "77".to_owned(),
         prompt: json!("follow up"),
         bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "claude", "model_id": "claude-3-5-sonnet"}),
@@ -383,7 +383,7 @@ fn claude_command_sends_interactive_form_answer_as_tool_result_query() {
     )
     .unwrap();
     let request = ExecutionRequest {
-        task_id: 77,
+        task_id: "77".to_owned(),
         prompt: json!("ignored when answering interactive form"),
         bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
         extra: serde_json::Map::from_iter([(
@@ -448,7 +448,7 @@ fn claude_command_prefers_executor_home_session_over_legacy_workspace() {
     )
     .unwrap();
     let request = ExecutionRequest {
-        task_id: 77,
+        task_id: "77".to_owned(),
         prompt: json!("follow up"),
         bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "claude", "model_id": "claude-3-5-sonnet"}),
@@ -471,7 +471,7 @@ fn claude_command_ignores_legacy_workspace_task_session_file() {
     fs::create_dir_all(&session_dir).unwrap();
     fs::write(session_dir.join(".claude_session_id"), "legacy-session\n").unwrap();
     let request = ExecutionRequest {
-        task_id: 77,
+        task_id: "77".to_owned(),
         prompt: json!("follow up"),
         bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "claude", "model_id": "claude-3-5-sonnet"}),
@@ -490,7 +490,7 @@ fn claude_command_seeds_inherited_session_when_no_saved_session_exists() {
     let executor_home = unique_dir("claude-session-inherited-home");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
     let request = ExecutionRequest {
-        task_id: 77,
+        task_id: "77".to_owned(),
         prompt: json!("fork follow up"),
         bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
         inherited_sessions: vec![json!({
@@ -544,7 +544,7 @@ fn claude_command_new_session_deletes_saved_and_legacy_sessions_and_skips_resume
     )
     .unwrap();
     let request = ExecutionRequest {
-        task_id: 77,
+        task_id: "77".to_owned(),
         new_session: true,
         prompt: json!("fresh stage"),
         bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
@@ -570,7 +570,7 @@ fn claude_command_does_not_resume_nonpositive_task_sessions() {
     fs::create_dir_all(&session_dir).unwrap();
     fs::write(session_dir.join(".claude_session_id_987"), "stale-zero\n").unwrap();
     let request = ExecutionRequest {
-        task_id: 0,
+        task_id: "0".to_owned(),
         prompt: json!("fresh"),
         bot: json!([{"id": 987, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "claude", "model_id": "claude-3-5-sonnet"}),
@@ -592,7 +592,7 @@ fn claude_command_rejects_unsafe_string_bot_id_for_session_filename() {
     fs::create_dir_all(task_dir.join(".claude_session_id_x")).unwrap();
     fs::write(workspace_root.join("escape"), "escaped-session\n").unwrap();
     let request = ExecutionRequest {
-        task_id: 77,
+        task_id: "77".to_owned(),
         prompt: json!("follow up"),
         bot: json!([{"id": "x/../../escape", "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "claude", "model_id": "claude-3-5-sonnet"}),
@@ -613,7 +613,7 @@ fn claude_command_uses_workspace_task_dir_for_chat_turn_state() {
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let request = ExecutionRequest {
-        task_id: 42,
+        task_id: "42".to_owned(),
         prompt: json!("remember this"),
         bot: json!([{"id": 7, "shell_type": "ClaudeCode"}]),
         model_config: json!({"model": "claude", "model_id": "claude-3-5-sonnet"}),
@@ -713,7 +713,7 @@ fn claude_standalone_project_zero_keeps_global_capabilities_and_project_header()
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let _process_headers = EnvGuard::remove("ANTHROPIC_CUSTOM_HEADERS");
     let request = ExecutionRequest {
-        task_id: 1904,
+        task_id: "1904".to_owned(),
         prompt: json!("standalone chat"),
         extra: serde_json::Map::from_iter([
             ("project_id".to_owned(), json!(0)),
@@ -747,7 +747,7 @@ fn claude_standalone_project_zero_with_task_skills_keeps_global_config_and_uses_
     let _home = EnvGuard::set("HOME", &home.display().to_string());
     let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
     let request = ExecutionRequest {
-        task_id: 1905,
+        task_id: "1905".to_owned(),
         prompt: json!("standalone chat with skills"),
         bot: json!([{"id": 1905, "shell_type": "ClaudeCode"}]),
         extra: serde_json::Map::from_iter([
@@ -779,8 +779,8 @@ fn claude_command_injects_task_identity_env() {
     let _identity = EnvGuard::remove("WEGENT_SKILL_IDENTITY_TOKEN");
     let _user = EnvGuard::remove("WEGENT_SKILL_USER_NAME");
     let request = ExecutionRequest {
-        task_id: 525,
-        subtask_id: 626,
+        task_id: "525".to_owned(),
+        subtask_id: "626".to_owned(),
         prompt: json!("use task scoped skills"),
         auth_token: Some("task-jwt".to_owned()),
         skill_identity_token: Some("skill-jwt".to_owned()),

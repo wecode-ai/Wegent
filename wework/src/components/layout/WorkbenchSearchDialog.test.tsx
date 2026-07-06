@@ -17,7 +17,7 @@ describe('WorkbenchSearchDialog', () => {
           address: {
             deviceId: 'device-1',
             workspacePath: '/repo/Wegent',
-            localTaskId: 'codex-1',
+            taskId: 'codex-1',
           },
           runtime: 'codex',
           title: '执行 pwd',
@@ -34,7 +34,7 @@ describe('WorkbenchSearchDialog', () => {
         },
       ],
     })
-    const onOpenRuntimeLocalTask = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
     const onClose = vi.fn()
 
     render(
@@ -42,7 +42,7 @@ describe('WorkbenchSearchDialog', () => {
         open
         onClose={onClose}
         onSearchRuntimeWork={onSearchRuntimeWork}
-        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+        onOpenRuntimeTask={onOpenRuntimeTask}
       />
     )
 
@@ -57,10 +57,10 @@ describe('WorkbenchSearchDialog', () => {
     await user.click(screen.getByTestId('workbench-search-result-0'))
 
     await waitFor(() => {
-      expect(onOpenRuntimeLocalTask).toHaveBeenCalledWith({
+      expect(onOpenRuntimeTask).toHaveBeenCalledWith({
         deviceId: 'device-1',
         workspacePath: '/repo/Wegent',
-        localTaskId: 'codex-1',
+        taskId: 'codex-1',
       })
     })
     expect(onClose).toHaveBeenCalledTimes(1)
@@ -75,7 +75,7 @@ describe('WorkbenchSearchDialog', () => {
         open
         onClose={vi.fn()}
         onSearchRuntimeWork={onSearchRuntimeWork}
-        onOpenRuntimeLocalTask={vi.fn()}
+        onOpenRuntimeTask={vi.fn()}
       />
     )
 

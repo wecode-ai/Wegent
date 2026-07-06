@@ -8,6 +8,7 @@ mod codex_rollout;
 mod events;
 pub mod fork_transfer;
 mod handler;
+mod notification_mapping;
 mod response;
 mod runtime_handle_messages;
 mod store;
@@ -17,3 +18,4 @@ mod transcript_page;
 mod util;
 
 pub use handler::RuntimeWorkRpcHandler;
+pub(crate) use notification_mapping::codex_stream_debug_enabled;

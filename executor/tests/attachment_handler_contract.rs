@@ -85,8 +85,8 @@ fn non_vision_list_prompt_still_downloads_attachments() {
 
     let result = download_attachments_with(
         &task_with_attachment(attachment(274, "xxx.md")),
-        1233,
-        1642,
+        "1233",
+        "1642",
         &prompt,
         Path::new("/tmp"),
         &downloader,
@@ -111,8 +111,8 @@ fn string_prompt_does_not_inject_layout_guidance_in_local_mode() {
 
     let result = download_attachments_with(
         &task_with_attachment(attachment(274, "xxx.md")),
-        1233,
-        1642,
+        "1233",
+        "1642",
         &json!("summarize this attachment"),
         Path::new("/Users/test/.wegent-executor/workspace"),
         &downloader,
@@ -136,7 +136,7 @@ fn project_zero_workspace_downloads_to_project_attachment_layout() {
     let mut source_attachment = attachment(16, "image.png");
     source_attachment.mime_type = Some("image/png".to_owned());
     source_attachment.file_size = Some(3);
-    source_attachment.subtask_id = Some(45);
+    source_attachment.subtask_id = Some("45".to_owned());
     let mut downloaded = source_attachment.clone();
     downloaded.local_path = Some(local_image.clone());
     let downloader = FakeDownloader::with_success(downloaded);
@@ -146,13 +146,13 @@ fn project_zero_workspace_downloads_to_project_attachment_layout() {
         project_id: Some(0),
         git_url: None,
         project_workspace_path: Some(project_workspace.clone()),
-        user_subtask_id: Some(45),
+        user_subtask_id: Some("45".to_owned()),
     };
 
     let result = download_attachments_with(
         &task,
-        31,
-        46,
+        "31",
+        "46",
         &json!([{
             "type": "input_text",
             "text": format!("<attachment>[Image Attachment: image.png | ID: 16 | File Path(already in sandbox): {sandbox_path}]</attachment>")

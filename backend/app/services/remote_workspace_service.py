@@ -25,6 +25,7 @@ from app.services.adapters.task_kinds import task_kinds_service
 WORKSPACE_ROOT = "/workspace"
 SANDBOX_HOME_ROOT = "/home/user"
 SANDBOX_RUNNING_STATUS = "running"
+REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS = 130.0
 LOG_PREVIEW_LIMIT = 300
 # Maximum file size allowed for download via browser (50 MB)
 MAX_DOWNLOAD_FILE_SIZE = 50 * 1024 * 1024
@@ -206,7 +207,6 @@ class RemoteWorkspaceService:
                 path=normalized_path,
             )
 
-        # Enforce maximum download file size
         if len(content) > MAX_DOWNLOAD_FILE_SIZE:
             logger.warning(
                 "[remote_workspace] stream_file rejected task_id=%s user_id=%s normalized_path=%s size=%s exceeds_limit=%s",
@@ -221,7 +221,10 @@ class RemoteWorkspaceService:
                 detail=f"File exceeds maximum download size of {MAX_DOWNLOAD_FILE_SIZE // (1024 * 1024)} MB",
             )
 
-        filename = posixpath.basename(normalized_path) or "download"
+        filename = self._download_filename(
+            path=normalized_path,
+            content_type=content_type,
+        )
         response = StreamingResponse(
             iter([content]),
             media_type=content_type or "application/octet-stream",
@@ -297,6 +300,14 @@ class RemoteWorkspaceService:
             len(content),
         )
         return content, filename
+
+    def _download_filename(self, path: str, content_type: str | None) -> str:
+        filename = posixpath.basename(path) or "download"
+        media_type = (content_type or "").split(";", maxsplit=1)[0].strip().lower()
+        if media_type in {"application/zip", "application/x-zip-compressed"}:
+            if not filename.lower().endswith(".zip"):
+                return f"{filename}.zip"
+        return filename
 
     def _build_content_disposition(self, disposition: str, filename: str) -> str:
         try:
@@ -706,7 +717,7 @@ class RemoteWorkspaceService:
         )
 
         try:
-            with httpx.Client(timeout=self.request_timeout) as client:
+            with httpx.Client(timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
                 response = client.get(
                     file_url,
                     params={"path": path},
@@ -843,7 +854,7 @@ class RemoteWorkspaceService:
             params["executor_name"] = executor_name
 
         try:
-            with httpx.Client(timeout=self.request_timeout) as client:
+            with httpx.Client(timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
                 response = client.get(
                     file_url,
                     params=params,

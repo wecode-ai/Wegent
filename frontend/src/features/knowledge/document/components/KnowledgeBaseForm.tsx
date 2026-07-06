@@ -55,7 +55,7 @@ interface KnowledgeBaseFormProps {
   retrievalGroupName?: string
   retrievalReadOnly?: boolean
   retrievalPartialReadOnly?: boolean
-  /** Whether to show guided questions section (only for notebook type) */
+  /** Whether to show Notebook guided questions configuration */
   showGuidedQuestions?: boolean
   /** Guided questions list (max 3) */
   guidedQuestions?: string[]

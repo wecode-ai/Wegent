@@ -847,7 +847,7 @@ describe('TaskStateMachine', () => {
     expect(retryingMessage).toMatchObject({
       status: 'streaming',
       content: '',
-      turnId: 42,
+      subtaskId: 42,
       messageId: 7,
       result: { shell_type: 'Chat' },
     })
@@ -1601,7 +1601,7 @@ describe('TaskStateMachine', () => {
       status: 'completed',
       content: 'ask',
       timestamp: Date.now(),
-      turnId: 1,
+      subtaskId: 1,
       messageId: 1,
     })
     machine.handleChatStart(77, 'Chat', 2)

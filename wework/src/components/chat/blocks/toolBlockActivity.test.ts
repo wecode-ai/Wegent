@@ -15,12 +15,48 @@ function tool(
 ): ToolBlock {
   return {
     id,
-    turnId: 1,
+    subtaskId: 1,
     type: 'tool',
     toolName,
     toolInput: toolName === 'exec_command' ? { cmd: command } : { command },
     status,
     createdAt: 1770000000000,
+  }
+}
+
+function fileChangesBlock(
+  id: string,
+  path: string,
+  additions: number,
+  deletions: number,
+  createdAt = 1770000000000
+): ProcessingBlock {
+  return {
+    id,
+    subtaskId: 1,
+    type: 'file_changes',
+    status: 'done',
+    createdAt,
+    fileChanges: {
+      version: 1,
+      status: 'active',
+      artifact_id: id,
+      device_id: 'device-1',
+      workspace_path: '/tmp/project',
+      file_count: 1,
+      additions,
+      deletions,
+      files: [
+        {
+          path,
+          change_type: 'modified',
+          additions,
+          deletions,
+          binary: false,
+        },
+      ],
+      diff: `diff --git a/${path} b/${path}\n@@ -1 +1 @@\n-old\n+new`,
+    },
   }
 }
 
@@ -51,7 +87,7 @@ describe('toolBlockActivity', () => {
       summarizeToolBlocks([
         {
           id: 'cmdline-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'bash',
           toolInput: { commandLine: 'find . -name package.json' },
@@ -113,7 +149,7 @@ describe('toolBlockActivity', () => {
       summarizeToolBlocks([
         {
           id: 'guidance-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'conversation_guidance',
           toolInput: { message: 'follow this file' },
@@ -128,7 +164,7 @@ describe('toolBlockActivity', () => {
     const rows = buildProcessingDisplayRows([
       {
         id: 'guidance-1',
-        turnId: 1,
+        subtaskId: 1,
         type: 'tool',
         toolName: 'conversation_guidance',
         toolInput: { message: 'follow this file' },
@@ -137,7 +173,7 @@ describe('toolBlockActivity', () => {
       },
       {
         id: 'stdin-1',
-        turnId: 1,
+        subtaskId: 1,
         type: 'tool',
         toolName: 'write_stdin',
         toolInput: { session_id: 90870, chars: '' },
@@ -153,12 +189,60 @@ describe('toolBlockActivity', () => {
     })
   })
 
+  test('merges consecutive file changes into a single display row', () => {
+    const rows = buildProcessingDisplayRows([
+      fileChangesBlock('file-changes-1', 'src/config.ts', 3, 3),
+      fileChangesBlock('file-changes-2', 'src/config.ts', 3, 0, 1770000000001),
+    ])
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      type: 'block',
+      id: 'file-changes-file-changes-1-file-changes-2',
+      block: {
+        type: 'file_changes',
+        fileChanges: {
+          file_count: 1,
+          additions: 6,
+          deletions: 3,
+          files: [
+            {
+              path: 'src/config.ts',
+              additions: 6,
+              deletions: 3,
+            },
+          ],
+        },
+      },
+    })
+  })
+
+  test('does not merge file changes across ordinary activity', () => {
+    const rows = buildProcessingDisplayRows([
+      fileChangesBlock('file-changes-1', 'src/config.ts', 3, 3),
+      {
+        id: 'text-1',
+        subtaskId: 1,
+        type: 'text',
+        content: 'Explaining the edit.',
+        status: 'done',
+        createdAt: 1770000000001,
+      },
+      fileChangesBlock('file-changes-2', 'src/config.ts', 3, 0, 1770000000002),
+    ])
+
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toMatchObject({ type: 'block', id: 'file-changes-1' })
+    expect(rows[1]).toMatchObject({ type: 'block', id: 'text-1' })
+    expect(rows[2]).toMatchObject({ type: 'block', id: 'file-changes-2' })
+  })
+
   test('classifies Claude multi-file edit tools as edit activity', () => {
     expect(
       summarizeToolBlocks([
         {
           id: 'edit-1',
-          turnId: 1,
+          subtaskId: 1,
           type: 'tool',
           toolName: 'MultiEdit',
           toolInput: {
@@ -180,7 +264,7 @@ describe('toolBlockActivity', () => {
   test('groups completed tools while preserving context compaction and running tools as standalone rows', () => {
     const thinking: ProcessingBlock = {
       id: 'thinking-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'thinking',
       content: 'Reading context',
       status: 'done',
@@ -190,7 +274,7 @@ describe('toolBlockActivity', () => {
       thinking,
       {
         id: 'text-1',
-        turnId: 1,
+        subtaskId: 1,
         type: 'text',
         content: 'Let me inspect package files.',
         status: 'done',
@@ -199,7 +283,7 @@ describe('toolBlockActivity', () => {
       tool('read-before-1', 'cat README.md'),
       {
         id: 'ctx-1',
-        turnId: 1,
+        subtaskId: 1,
         type: 'tool',
         toolName: 'context_compaction',
         status: 'done',

@@ -1,4 +1,5 @@
-import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
+import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
+import type { FileChangesBlock, ProcessingBlock, ToolBlock } from '@/types/workbench'
 import {
   getFileInputPaths,
   getInputField,
@@ -55,6 +56,7 @@ export function buildProcessingDisplayRows(
   const groupCompletedTools = options.groupCompletedTools ?? true
   const rows: ProcessingDisplayRow[] = []
   let completedTools: ToolBlock[] = []
+  let consecutiveFileChanges: FileChangesBlock[] = []
   const hasFileChangesBlock = blocks.some(block => block.type === 'file_changes')
 
   const flushCompletedTools = () => {
@@ -68,9 +70,20 @@ export function buildProcessingDisplayRows(
     completedTools = []
   }
 
+  const flushFileChanges = () => {
+    if (consecutiveFileChanges.length === 0) return
+    const block =
+      consecutiveFileChanges.length === 1
+        ? consecutiveFileChanges[0]
+        : mergeConsecutiveFileChanges(consecutiveFileChanges)
+    rows.push({ type: 'block', id: block.id, block })
+    consecutiveFileChanges = []
+  }
+
   for (const block of blocks) {
     if (block.type === 'tool' && isContextCompactionToolName(block.toolName)) {
       flushCompletedTools()
+      flushFileChanges()
       rows.push({ type: 'block', id: block.id, block })
       continue
     }
@@ -83,17 +96,81 @@ export function buildProcessingDisplayRows(
       continue
     }
 
+    if (block.type === 'file_changes') {
+      flushCompletedTools()
+      consecutiveFileChanges.push(block)
+      continue
+    }
+
     if (groupCompletedTools && block.type === 'tool' && isCompletedToolBlock(block)) {
+      flushFileChanges()
       completedTools.push(block)
       continue
     }
 
     flushCompletedTools()
+    flushFileChanges()
     rows.push({ type: 'block', id: block.id, block })
   }
 
   flushCompletedTools()
+  flushFileChanges()
   return rows
+}
+
+function mergeConsecutiveFileChanges(blocks: FileChangesBlock[]): FileChangesBlock {
+  const first = blocks[0]
+  const latest = blocks[blocks.length - 1]
+  const summaries = blocks.map(block => block.fileChanges)
+  const files = mergeFileChangeItems(summaries.flatMap(summary => summary.files))
+  const diff = summaries
+    .map(summary => summary.diff?.trim())
+    .filter((value): value is string => Boolean(value))
+    .join('\n')
+
+  return {
+    ...latest,
+    id: `file-changes-${first.id}-${latest.id}`,
+    fileChanges: {
+      ...latest.fileChanges,
+      artifact_id: summaries.map(summary => summary.artifact_id).join(':'),
+      additions: sumFileChangeValues(summaries, 'additions'),
+      deletions: sumFileChangeValues(summaries, 'deletions'),
+      file_count: files.length,
+      files,
+      ...(diff ? { diff } : {}),
+      revertible: summaries.every(summary => summary.revertible !== false),
+    },
+  }
+}
+
+function mergeFileChangeItems(files: TurnFileChangeItem[]): TurnFileChangeItem[] {
+  const merged = new Map<string, TurnFileChangeItem>()
+
+  files.forEach(file => {
+    const key = `${file.old_path ?? ''}\0${file.path}`
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, { ...file })
+      return
+    }
+
+    merged.set(key, {
+      ...file,
+      additions: existing.additions + file.additions,
+      deletions: existing.deletions + file.deletions,
+      binary: existing.binary || file.binary,
+    })
+  })
+
+  return Array.from(merged.values())
+}
+
+function sumFileChangeValues(
+  summaries: TurnFileChangesSummary[],
+  key: 'additions' | 'deletions'
+): number {
+  return summaries.reduce((sum, summary) => sum + summary[key], 0)
 }
 
 export function summarizeToolBlocks(blocks: ToolBlock[]): string {

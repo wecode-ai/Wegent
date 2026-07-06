@@ -10,6 +10,7 @@ import type {
   DeviceWorkspacePrepareResponse,
   DeviceWorkspaceUpsert,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeRollbackRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -45,11 +46,20 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { HttpClient } from './http'
+import type { KeybindingOverride } from '@/lib/keybindings'
 
 export function createRuntimeWorkApi(client: HttpClient) {
   return {
     listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       return client.get('/runtime-work')
+    },
+    getKeybindings(): Promise<{ keybindings: KeybindingOverride[] }> {
+      return client.get('/runtime-work/keybindings')
+    },
+    updateKeybindings(data: {
+      keybindings: KeybindingOverride[]
+    }): Promise<{ keybindings: KeybindingOverride[] }> {
+      return client.put('/runtime-work/keybindings', data)
     },
     upsertDeviceWorkspace(data: DeviceWorkspaceUpsert): Promise<DeviceWorkspaceResponse> {
       return client.post('/runtime-work/device-workspaces', data)
@@ -82,6 +92,9 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/send', data)
+    },
+    rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
+      return client.post('/runtime-work/rollback', data)
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return client.post('/runtime-work/goal/get', data)

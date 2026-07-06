@@ -178,6 +178,21 @@ describe('ChromeTitlebar', () => {
     disableTauri()
   })
 
+  test('starts native dragging from the empty right workspace titlebar area', async () => {
+    mockUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)')
+    enableTauri()
+    render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
+
+    const rightPanelDragRegion = screen.getByTestId('titlebar-right-panel-drag-region')
+    expect(screen.getByTestId('titlebar-right-panel')).toContainElement(rightPanelDragRegion)
+    fireEvent.mouseDown(within(rightPanelDragRegion).getByTestId('macos-titlebar-drag-region'), {
+      button: 0,
+    })
+
+    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1))
+    disableTauri()
+  })
+
   test('shows right spacer in Tauri runtime on Windows', () => {
     mockUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
     enableTauri()

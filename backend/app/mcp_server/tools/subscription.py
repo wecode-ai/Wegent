@@ -408,7 +408,7 @@ def _format_preview_table(
         "preserve_history": "Whether to preserve conversation history",
         "history_message_count": "Number of history messages to preserve (0-50)",
         "retry_count": "Retry count on failure (0-3)",
-        "timeout_seconds": "Execution timeout in seconds (60-3600)",
+        "timeout_seconds": "Execution timeout in seconds (60-86400)",
         "expiration_type": "Expiration type: fixed_date or duration_days",
         "expiration_fixed_date": "Fixed expiration date in ISO format",
         "expiration_duration_days": "Days until expiration (1-3650)",
@@ -690,7 +690,7 @@ async def preview_subscription(
         "preserve_history": "Whether to preserve conversation history",
         "history_message_count": "Number of history messages to preserve (0-50)",
         "retry_count": "Retry count on failure (0-3)",
-        "timeout_seconds": "Execution timeout in seconds (60-3600)",
+        "timeout_seconds": "Execution timeout in seconds (60-86400)",
     },
 )
 def create_subscription(

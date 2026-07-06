@@ -75,7 +75,7 @@ const runtimeWork: RuntimeWorkListResponse = {
           available: true,
           workspacePath: '/repo/Wegent',
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
         {
           id: 102,
@@ -86,7 +86,7 @@ const runtimeWork: RuntimeWorkListResponse = {
           available: false,
           workspacePath: '/repo/Wegent',
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
       ],
     },
@@ -102,13 +102,13 @@ const runtimeWork: RuntimeWorkListResponse = {
           available: true,
           workspacePath: '/workspace/notes',
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
       ],
     },
   ],
   chats: [],
-  totalLocalTasks: 0,
+  totalTasks: 0,
 }
 
 describe('ProjectWorkBar', () => {
@@ -122,7 +122,7 @@ describe('ProjectWorkBar', () => {
         runtimeWork={{
           projects: [],
           chats: [],
-          totalLocalTasks: 0,
+          totalTasks: 0,
         }}
         currentProjectId={undefined}
         currentStandaloneDeviceId={null}
@@ -167,7 +167,7 @@ describe('ProjectWorkBar', () => {
         runtimeWork={{
           projects: [],
           chats: [],
-          totalLocalTasks: 0,
+          totalTasks: 0,
         }}
         currentProjectId={undefined}
         currentStandaloneDeviceId={null}
@@ -351,7 +351,7 @@ describe('ProjectWorkBar', () => {
         runtimeWork={{
           projects: [],
           chats: [],
-          totalLocalTasks: 0,
+          totalTasks: 0,
         }}
         currentProjectId={undefined}
         currentStandaloneDeviceId="remote-device"
@@ -472,7 +472,7 @@ describe('ProjectWorkBar', () => {
         runtimeWork={{
           projects: [],
           chats: [],
-          totalLocalTasks: 0,
+          totalTasks: 0,
         }}
         currentProjectId={undefined}
         currentStandaloneDeviceId={null}
@@ -752,13 +752,13 @@ describe('ProjectWorkBar', () => {
               workspacePath: '/Users/me/Wegent',
               workspaceKind: 'workspace',
               mapped: true,
-              localTasks: [],
+              tasks: [],
             },
           ],
         },
       ],
       chats: [],
-      totalLocalTasks: 0,
+      totalTasks: 0,
     }
     const projectId = runtimeProjectUiId(runtimeLocalWork.projects[0].project)
 

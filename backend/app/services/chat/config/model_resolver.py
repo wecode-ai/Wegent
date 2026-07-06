@@ -224,6 +224,37 @@ def build_default_headers_with_placeholders(
     return result_headers
 
 
+# Prefix identifying the agent/team identity header group forwarded to the model
+# backend (e.g. wegent-agent-namespace, wegent-agent-name). New identity fields
+# should reuse this prefix so they share the empty-strip behavior.
+WEGENT_IDENTITY_HEADER_PREFIX = "wegent-agent-"
+
+
+def strip_empty_wegent_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop wegent-agent-* headers whose value is empty.
+
+    Placeholder resolution yields "" when a data source is missing (e.g.
+    non-Team execution paths such as wizard/correction that carry no team
+    context). Emitting blank identity headers is undesirable, so only the
+    wegent-agent-* group is removed when empty; all other headers (including
+    the legacy ``user`` header) keep their existing behavior.
+
+    Args:
+        headers: Default headers after placeholder replacement.
+
+    Returns:
+        Headers with empty wegent-agent-* entries removed.
+    """
+    return {
+        key: value
+        for key, value in headers.items()
+        if not (
+            key.lower().startswith(WEGENT_IDENTITY_HEADER_PREFIX)
+            and (value is None or (isinstance(value, str) and not value.strip()))
+        )
+    }
+
+
 def _process_model_config_placeholders(
     model_config: Dict[str, Any],
     user_id: int,
@@ -269,6 +300,18 @@ def _process_model_config_placeholders(
     if "user" not in effective_task_data:
         effective_task_data = {**effective_task_data, "user": user_info}
 
+    # Expose Team (UI "Agent") identity as a nested object so placeholders can use
+    # the same dotted style as ${task_data.user.name}, e.g. ${task_data.team.name}.
+    # Derived from the flat ExecutionRequest fields; absent context resolves to "".
+    if "team" not in effective_task_data:
+        effective_task_data = {
+            **effective_task_data,
+            "team": {
+                "name": effective_task_data.get("team_name") or "",
+                "namespace": effective_task_data.get("team_namespace") or "",
+            },
+        }
+
     # Build data_sources for placeholder replacement
     # This mirrors the chat.py logic for handling ${user.name}, ${task_data.user.name}, etc.
     data_sources = {
@@ -295,6 +338,9 @@ def _process_model_config_placeholders(
         processed_headers = build_default_headers_with_placeholders(
             raw_default_headers, data_sources
         )
+        # Drop wegent-agent-* identity headers that resolved to empty (e.g. paths
+        # without Team context), so we never emit blank identity headers.
+        processed_headers = strip_empty_wegent_headers(processed_headers)
         model_config["default_headers"] = processed_headers
         logger.info(f"[model_resolver] Processed default_headers with placeholders")
 

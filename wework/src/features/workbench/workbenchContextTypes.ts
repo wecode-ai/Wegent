@@ -20,6 +20,7 @@ import type {
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeRollbackRequest,
   RuntimeIMNotificationSettingsResponse,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -52,23 +53,34 @@ export type ProjectMutationOptions = {
   refreshWorkLists?: boolean
 }
 
-export type ArchiveRuntimeLocalTaskOptions = {
+export type ArchiveRuntimeTaskOptions = {
   force?: boolean
 }
 
-export type ArchiveRuntimeLocalTaskResult = {
+export type ArchiveRuntimeTaskResult = {
   status: 'archived' | 'dirty_worktree' | 'failed'
 }
 
-export type ArchiveRuntimeConversationsResult = ArchiveRuntimeLocalTaskResult
+export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
 export interface SendCurrentInputOptions {
   codeCommentContexts?: CodeCommentContext[]
   initialGoal?: RuntimeGoalCreateInput | null
+  onError?: (error: string) => void
   onRuntimeTaskOptimisticOpen?: (
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void
+}
+
+export interface CreateTemporaryRuntimeTaskOptions {
+  project?: ProjectWithTasks | null
+  source?: RuntimeTaskAddress | null
+  onError?: (error: string) => void
+}
+
+export interface RuntimePaneActionOptions {
+  onError?: (error: string) => void
 }
 
 export interface WorkbenchContextValue {
@@ -83,6 +95,7 @@ export interface WorkbenchContextValue {
     selectedModel: UnifiedModel | null
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
+    input: string
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -94,6 +107,7 @@ export interface WorkbenchContextValue {
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
     onBlockedModelSelect: (model: UnifiedModel, message?: string) => void
+    setInput: (value: string) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
     handleFileSelect: (files: File | File[]) => Promise<void>
@@ -119,29 +133,29 @@ export interface WorkbenchContextValue {
   startNewChat: () => void
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
-  openRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void>
+  openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
   searchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
   loadRuntimeTranscriptForPane: RuntimeTranscriptLoader
   subscribeRuntimeTaskStream: (
     address: RuntimeTaskAddress,
     handlers: RuntimeTaskStreamHandlers
   ) => () => void
-  renameRuntimeLocalTask: (address: RuntimeTaskAddress, title: string) => Promise<void>
-  archiveRuntimeLocalTask: (
+  renameRuntimeTask: (address: RuntimeTaskAddress, title: string) => Promise<void>
+  archiveRuntimeTask: (
     address: RuntimeTaskAddress,
-    options?: ArchiveRuntimeLocalTaskOptions
-  ) => Promise<ArchiveRuntimeLocalTaskResult>
+    options?: ArchiveRuntimeTaskOptions
+  ) => Promise<ArchiveRuntimeTaskResult>
   archiveProjectConversations: (
     runtimeProjectKey: string,
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
   archiveProjectsConversations: (
     runtimeProjectKeys: string[],
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
   archiveChatConversations: (
     addresses: RuntimeTaskAddress[],
-    options?: ArchiveRuntimeLocalTaskOptions
+    options?: ArchiveRuntimeTaskOptions
   ) => Promise<ArchiveRuntimeConversationsResult>
   forkCurrentRuntimeTask: (target: RuntimeTaskForkTarget) => Promise<void>
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
@@ -213,20 +227,31 @@ export interface WorkbenchContextValue {
     branchName: string,
     workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
-  sendRuntimePaneMessage: (request: RuntimeSendRequest) => Promise<boolean>
-  cancelRuntimePaneTask: (address: RuntimeTaskAddress) => Promise<boolean>
+  sendRuntimePaneMessage: (
+    request: RuntimeSendRequest,
+    options?: RuntimePaneActionOptions
+  ) => Promise<boolean>
+  editLastUserMessage: (request: RuntimeRollbackRequest) => Promise<boolean>
+  cancelRuntimePaneTask: (
+    address: RuntimeTaskAddress,
+    options?: RuntimePaneActionOptions
+  ) => Promise<boolean>
   sendCurrentInput: (
     inputOverride?: string,
     options?: SendCurrentInputOptions
   ) => Promise<boolean | RuntimeTaskAddress>
+  createTemporaryRuntimeTask: (
+    input: string,
+    options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
   retryFailedMessage: (messageId: string, messagesOverride?: WorkbenchMessage[]) => Promise<void>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
-    turnId: number,
+    subtaskId: string,
     messagesOverride?: WorkbenchMessage[]
   ) => Promise<string>
   revertTurnFileChanges: (
-    turnId: number,
+    subtaskId: string,
     messagesOverride?: WorkbenchMessage[]
   ) => Promise<TurnFileChangesSummary>
 }

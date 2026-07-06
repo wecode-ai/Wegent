@@ -402,7 +402,7 @@ function createMessageStyleSampleCard(
     `status: ${sample.status}`,
     `runtimeStatus: ${sample.runtimeStatus ?? 'null'}`,
     `runtimeMessageIndex: ${sample.runtimeMessageIndex ?? 'null'}`,
-    `turnId: ${sample.turnId ?? 'null'}`,
+    `subtaskId: ${sample.subtaskId ?? 'null'}`,
     `blocks: ${sample.blockCount} (${sample.runningBlockCount} running)`,
     `completedAt: ${sample.completedAt ?? 'null'}`,
   ].forEach(line => {
