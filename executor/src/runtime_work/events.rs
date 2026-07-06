@@ -13,7 +13,7 @@ use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     notification_mapping::{
         log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
-        notification_item_id, TextChunkMapping,
+        map_tool_output_delta, notification_item_id, TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -87,6 +87,7 @@ pub(crate) struct CodexNotificationEventMapper {
     process_text_count: usize,
     final_text_offset: usize,
     plan_blocks: BTreeMap<String, String>,
+    tool_output_deltas: BTreeMap<String, String>,
 }
 
 struct ProcessTextStream {
@@ -162,6 +163,16 @@ impl CodexNotificationEventMapper {
                     request,
                     notification.params,
                     message.get("id"),
+                );
+            }
+            "item/tool/outputDelta"
+            | "item/commandExecution/outputDelta"
+            | "process/outputDelta"
+            | "command/exec/outputDelta" => {
+                self.emit_tool_output_delta(
+                    &emit_context,
+                    &notification.method,
+                    notification.params,
                 );
             }
             "item/plan/delta" => {
@@ -308,6 +319,48 @@ impl CodexNotificationEventMapper {
                 );
             }
         }
+    }
+
+    fn emit_tool_output_delta(
+        &mut self,
+        emit_context: &EventEmitContext<'_>,
+        method: &str,
+        params: &Value,
+    ) {
+        let mapping = match map_tool_output_delta(method, params) {
+            Ok(Some(mapping)) => mapping,
+            Ok(None) => return,
+            Err(reason) => {
+                log_dropped_notification(
+                    emit_context.local_task_id,
+                    &emit_context.request.task_id,
+                    &emit_context.request.subtask_id,
+                    method,
+                    params,
+                    reason,
+                );
+                return;
+            }
+        };
+        let content = self
+            .tool_output_deltas
+            .entry(mapping.tool_use_id.clone())
+            .or_default();
+        content.push_str(&mapping.delta);
+        emit_response_event(
+            emit_context.event_tx,
+            emit_context.device_id,
+            "response.block.updated",
+            emit_context.local_task_id,
+            emit_context.request,
+            json!({
+                "block_id": mapping.tool_use_id,
+                "updates": {
+                    "tool_output": content.clone(),
+                    "status": "streaming",
+                }
+            }),
+        );
     }
 
     fn emit_process_text_delta(
@@ -2513,6 +2566,67 @@ mod tests {
         assert_eq!(block["status"], "pending");
         assert_eq!(block["render_payload"]["kind"], "request_user_input");
         assert_eq!(block["render_payload"]["questions"][0]["id"], "goal");
+    }
+
+    #[test]
+    fn maps_codex_exec_output_delta_to_tool_output_update() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "exec_command_output_delta",
+                    "call_id": "call-1",
+                    "stream": "stdout",
+                    "chunk": "one"
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "exec_command_output_delta",
+                    "call_id": "call-1",
+                    "stream": "stdout",
+                    "chunk": " two"
+                }
+            }),
+        );
+
+        let first = event_rx
+            .try_recv()
+            .expect("first output delta should update the tool block");
+        assert_eq!(first["event"], "response.block.updated");
+        assert_eq!(first["payload"]["data"]["block_id"], "call-1");
+        assert_eq!(first["payload"]["data"]["updates"]["tool_output"], "one");
+        assert_eq!(first["payload"]["data"]["updates"]["status"], "streaming");
+
+        let second = event_rx
+            .try_recv()
+            .expect("second output delta should update the tool block");
+        assert_eq!(second["event"], "response.block.updated");
+        assert_eq!(second["payload"]["data"]["block_id"], "call-1");
+        assert_eq!(
+            second["payload"]["data"]["updates"]["tool_output"],
+            "one two"
+        );
+        assert_eq!(second["payload"]["data"]["updates"]["status"], "streaming");
     }
 
     #[test]
