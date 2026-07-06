@@ -524,6 +524,8 @@ VERSION="$next_version" \
 UPDATER_ENDPOINT="${download_base_url%/}/latest.json" \
 UPDATER_PUBKEY="$UPDATER_PUBKEY" \
 SIGNING_IDENTITY="$app_sign_identity" \
+RELEASE_DEVTOOLS="$RELEASE_DEVTOOLS" \
+BASE_TAURI_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json" \
 ENABLE_INSECURE_TRANSPORT="$([ "$TARGET" = "local" ] && printf 'true' || printf 'false')" \
 CONFIG_OVERRIDE="$config_override" \
 python3 - <<'PY'
@@ -552,6 +554,19 @@ if identity:
 
 if os.environ["ENABLE_INSECURE_TRANSPORT"] == "true":
     config["plugins"]["updater"]["dangerousInsecureTransportProtocol"] = True
+
+if os.environ["RELEASE_DEVTOOLS"] == "1":
+    with open(os.environ["BASE_TAURI_CONFIG"], "r", encoding="utf-8") as handle:
+        base_config = json.load(handle)
+    config["app"] = {
+        "windows": [
+            {
+                **window,
+                "devtools": True,
+            }
+            for window in base_config.get("app", {}).get("windows", [])
+        ],
+    }
 
 with open(os.environ["CONFIG_OVERRIDE"], "w", encoding="utf-8") as handle:
     json.dump(config, handle, indent=2)

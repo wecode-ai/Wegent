@@ -145,7 +145,7 @@ pub fn in_app_browser_create(
     let app_for_page_load = app.clone();
     let label_for_page_load = label.clone();
 
-    let builder = tauri::WebviewBuilder::new(&label, tauri::WebviewUrl::External(parsed_url))
+    let mut builder = tauri::WebviewBuilder::new(&label, tauri::WebviewUrl::External(parsed_url))
         .accept_first_mouse(true)
         .focused(false)
         .initialization_script(INIT_SCRIPT)
@@ -185,6 +185,11 @@ pub fn in_app_browser_create(
                 );
             }
         });
+
+    #[cfg(any(debug_assertions, feature = "release-devtools"))]
+    {
+        builder = builder.devtools(true);
+    }
 
     window
         .add_child(
