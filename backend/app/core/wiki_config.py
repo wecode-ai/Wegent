@@ -46,9 +46,7 @@ class WikiSettings(BaseSettings):
         "guide",
         "deep",
     ]
-    INTERNAL_API_TOKEN: str = (
-        "weki"  # Internal authentication token for content write API
-    )
+    INTERNAL_API_TOKEN: str
 
     class Config:
         env_file = ".env"
