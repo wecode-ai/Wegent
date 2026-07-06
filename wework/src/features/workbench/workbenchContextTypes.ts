@@ -19,6 +19,7 @@ import type {
   RuntimeGoalGetResponse,
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
+  RuntimeGuidanceRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeRollbackRequest,
   RuntimeIMNotificationSettingsResponse,
@@ -81,6 +82,12 @@ export interface CreateTemporaryRuntimeTaskOptions {
 
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
+}
+
+export interface RuntimePaneGuidanceResult {
+  sent: boolean
+  code?: string | null
+  error?: string | null
 }
 
 export interface WorkbenchContextValue {
@@ -231,6 +238,7 @@ export interface WorkbenchContextValue {
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
+  sendRuntimePaneGuidance: (request: RuntimeGuidanceRequest) => Promise<RuntimePaneGuidanceResult>
   editLastUserMessage: (request: RuntimeRollbackRequest) => Promise<boolean>
   cancelRuntimePaneTask: (
     address: RuntimeTaskAddress,

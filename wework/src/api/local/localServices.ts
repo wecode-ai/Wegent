@@ -17,6 +17,8 @@ import type {
   RuntimeRollbackRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
+  RuntimeGuidanceRequest,
+  RuntimeGuidanceResponse,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -1450,6 +1452,18 @@ function createRuntimeWorkApi(
         payloadKeys: Object.keys(payload).sort(),
       })
       return request('runtime.tasks.rollback', payload)
+    },
+    async guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
+      const localDeviceId = await getLocalDeviceId()
+      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
+        .address as RuntimeTaskAddress
+      return request('runtime.tasks.guidance', {
+        taskId: normalizedAddress.taskId,
+        address: normalizedAddress,
+        message: data.message,
+        ...(data.clientGuidanceId ? { clientGuidanceId: data.clientGuidanceId } : {}),
+        ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
+      })
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)

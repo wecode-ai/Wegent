@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { ChatInput, type ChatInputProps } from '@/components/chat/ChatInput'
+import { ChatInput, type ChatInputProps, type ChatSubmitOptions } from '@/components/chat/ChatInput'
 
 export function BufferedChatInput({ value, onSubmit, ...props }: ChatInputProps) {
   const [draftState, setDraftState] = useState(() => ({
@@ -15,9 +15,13 @@ export function BufferedChatInput({ value, onSubmit, ...props }: ChatInputProps)
   )
 
   const handleSubmit = useCallback(
-    (valueOverride?: string) => {
+    (valueOverride?: string, options?: ChatSubmitOptions) => {
       const submittedDraft = valueOverride ?? draft
-      void onSubmit(submittedDraft)
+      if (options === undefined) {
+        void onSubmit(submittedDraft)
+      } else {
+        void onSubmit(submittedDraft, options)
+      }
       if (submittedDraft.trim()) {
         setDraftState({ sourceValue: value, draft: '' })
       }

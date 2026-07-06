@@ -16,10 +16,14 @@ import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
 import { debugComposerEvent, textMetrics } from './composerDebug'
 
+export interface ComposerSubmitOptions {
+  guideWhenBusy?: boolean
+}
+
 interface ComposerTextareaProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: (submittedValue?: string) => void
+  onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   canSend: boolean
   disabled?: boolean
   placeholder: string
@@ -966,14 +970,20 @@ export function ComposerTextarea({
     const canSubmitCurrentValue = submittedValue.trim().length > 0 || canSend
 
     event.preventDefault()
+    const guideWhenBusy = event.metaKey || event.ctrlKey
     debugComposerEvent('keydown-enter-submit-decision', {
       canSend,
       canSubmitCurrentValue,
+      guideWhenBusy,
       submittedValue: textMetrics(submittedValue),
       propValue: textMetrics(value),
     })
     if (canSubmitCurrentValue) {
-      onSubmit(submittedValue)
+      if (guideWhenBusy) {
+        onSubmit(submittedValue, { guideWhenBusy: true })
+      } else {
+        onSubmit(submittedValue)
+      }
     } else {
       debugComposerEvent('keydown-enter-submit-skipped-empty', {
         submittedValue: textMetrics(submittedValue),

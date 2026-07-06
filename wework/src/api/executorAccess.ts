@@ -13,6 +13,8 @@ import type {
   RuntimeGoalSetResponse,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
+  RuntimeGuidanceRequest,
+  RuntimeGuidanceResponse,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
@@ -88,6 +90,7 @@ export interface ExecutorRuntimeClient {
   ) => Promise<RuntimeFileChangesRevertResponse>
   sendRuntimeMessage: (data: RuntimeSendRequest) => Promise<RuntimeSendResponse>
   rollbackRuntimeTask: (data: RuntimeRollbackRequest) => Promise<RuntimeSendResponse>
+  guideRuntimeTask: (data: RuntimeGuidanceRequest) => Promise<RuntimeGuidanceResponse>
   getRuntimeGoal: (data: RuntimeGoalGetRequest) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (data: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (data: RuntimeGoalClearRequest) => Promise<RuntimeGoalClearResponse>

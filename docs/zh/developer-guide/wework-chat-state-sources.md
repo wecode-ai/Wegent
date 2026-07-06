@@ -16,20 +16,20 @@ sidebar_position: 18
 
 ## 状态信源清单
 
-| 状态 | 唯一信源 | 派生值/使用方 | 维护规则 |
-| --- | --- | --- | --- |
-| 消息内容与消息状态 | `useWorkbenchPaneSession.messages` | `MessageList`、导出、文件变更、request user input | 只能通过 transcript reset 或 `reduceWorkbenchMessages` 更新 |
-| assistant 是否正在输出 | `paneSession.status.isAssistantStreaming` | 桌面/移动 composer 的暂停按钮、关闭任务提示 | 由 `messages` 中最后一个 `assistant + streaming` 消息派生，布局层不能自行扫描 |
-| 本地发送阶段 | `sendPhase: idle/submitting/awaiting_assistant` | `status.isSubmitting`、`status.isWaitingForAssistantIndicator`、兼容字段 `sending/waitingForAssistant` | API 调用中为 `submitting`，请求被 runtime 接受后为 `awaiting_assistant`，收到 start/done/error 或 transcript 已结算后回到 `idle` |
-| 当前 runtime 执行快照 | `getRuntimePaneTaskExecution(state.runtimeWork, address)` | `status.taskExecution`、队列推进、`currentRuntimeTaskRunning` | 只能从 `RuntimeWorkListResponse.localTasks[].running/status` 读取 |
-| pane 是否忙碌 | `paneSession.status.isBusy` | 当前 pane 队列是否可推进 | 由 `isSubmitting`、`isAwaitingAssistant`、`isAssistantStreaming`、`taskExecution.running` 合成 |
-| 队列消息 | `queuedMessages` | `ConversationQueuePanel`、自动发送下一条 follow-up | 只在 pane session 内增删改；推进条件必须使用 `status.canSendQueuedMessage` |
-| 引导消息 | `guidanceMessages` | `ConversationQueuePanel` | 当前为 pane-local 状态，不能参与 composer 运行态判断 |
-| transcript 加载与分页 | `transcriptLoading`、`transcriptHasMoreBefore`、`transcriptBeforeCursor`、`loadedTranscriptRanges` | 滚动加载、turn navigation | 只由 transcript API 响应更新 |
-| runtime goal | `threadGoal` + `pendingGoalState` | goal bar、goal draft、首条消息 initial goal | 已持久化目标来自 runtime goal API；新建任务前目标暂存在 pending seed |
-| request user input 已处理集合 | `answeredRequestUserInputIds` | 隐藏已响应/忽略的 request user input 卡片 | 只由提交或忽略动作更新 |
-| 附件/模型/技能选择 | `projectChat` context | send payload、composer 控件 | 当前 LocalTask 内选项锁定由 `projectChat.isOptionsLocked` 派生 |
-| 设备可用性 | `state.devices` + 当前任务/项目设备选择 | composer disabled reason、设备提示 | 只用于发送前置条件，不参与 assistant streaming 判断 |
+| 状态                          | 唯一信源                                                                                           | 派生值/使用方                                                                                          | 维护规则                                                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| 消息内容与消息状态            | `useWorkbenchPaneSession.messages`                                                                 | `MessageList`、导出、文件变更、request user input                                                      | 只能通过 transcript reset 或 `reduceWorkbenchMessages` 更新                                                                      |
+| assistant 是否正在输出        | `paneSession.status.isAssistantStreaming`                                                          | 桌面/移动 composer 的暂停按钮、关闭任务提示                                                            | 由 `messages` 中最后一个 `assistant + streaming` 消息派生，布局层不能自行扫描                                                    |
+| 本地发送阶段                  | `sendPhase: idle/submitting/awaiting_assistant`                                                    | `status.isSubmitting`、`status.isWaitingForAssistantIndicator`、兼容字段 `sending/waitingForAssistant` | API 调用中为 `submitting`，请求被 runtime 接受后为 `awaiting_assistant`，收到 start/done/error 或 transcript 已结算后回到 `idle` |
+| 当前 runtime 执行快照         | `getRuntimePaneTaskExecution(state.runtimeWork, address)`                                          | `status.taskExecution`、队列推进、`currentRuntimeTaskRunning`                                          | 只能从 `RuntimeWorkListResponse.localTasks[].running/status` 读取                                                                |
+| pane 是否忙碌                 | `paneSession.status.isBusy`                                                                        | 当前 pane 队列是否可推进                                                                               | 由 `isSubmitting`、`isAwaitingAssistant`、`isAssistantStreaming`、`taskExecution.running` 合成                                   |
+| 队列消息                      | `queuedMessages`                                                                                   | `ConversationQueuePanel`、自动发送下一条 follow-up                                                     | 只在 pane session 内增删改；推进条件必须使用 `status.canSendQueuedMessage`                                                       |
+| 引导消息                      | `queuedMessages` + `messages` 中的本地 user message                                                | `ConversationQueuePanel`、`MessageList`                                                                | 发送引导时先把队列消息标记为 sending，再立即在当前 streaming assistant 位置插入本地 user message；不能等引导 RPC 返回后再插入    |
+| transcript 加载与分页         | `transcriptLoading`、`transcriptHasMoreBefore`、`transcriptBeforeCursor`、`loadedTranscriptRanges` | 滚动加载、turn navigation                                                                              | 只由 transcript API 响应更新                                                                                                     |
+| runtime goal                  | `threadGoal` + `pendingGoalState`                                                                  | goal bar、goal draft、首条消息 initial goal                                                            | 已持久化目标来自 runtime goal API；新建任务前目标暂存在 pending seed                                                             |
+| request user input 已处理集合 | `answeredRequestUserInputIds`                                                                      | 隐藏已响应/忽略的 request user input 卡片                                                              | 只由提交或忽略动作更新                                                                                                           |
+| 附件/模型/技能选择            | `projectChat` context                                                                              | send payload、composer 控件                                                                            | 当前 LocalTask 内选项锁定由 `projectChat.isOptionsLocked` 派生                                                                   |
+| 设备可用性                    | `state.devices` + 当前任务/项目设备选择                                                            | composer disabled reason、设备提示                                                                     | 只用于发送前置条件，不参与 assistant streaming 判断                                                                              |
 
 ## Runtime 事件流
 
@@ -39,6 +39,18 @@ sidebar_position: 18
 4. `chat:chunk` 和 block 事件只更新 `messages`。
 5. `chat:done`、`chat:error`、取消事件通过 reducer 结算 assistant 消息，并触发 work list 刷新。
 6. 如果 runtime work 与消息状态不一致，不做兜底结算；必须修正缺失的 stream event、transcript 数据或 reducer action。
+
+## 引导消息顺序
+
+运行中的 Codex LocalTask 支持把队列消息作为原生引导发送。引导是当前 turn 内的用户输入，不是新的 follow-up turn，所以 UI 必须在发送开始时就把本地用户消息插入到当前 assistant 中间：
+
+1. 将对应 `queuedMessages` 项标记为 `sending`，提示文案为“正在引导当前对话”。
+2. 用同一个本地消息 id 和 `createdAt` 创建 user message，并把当前 streaming assistant 拆成两段。
+3. 引导前 assistant 冻结为 done，移除 `subtaskId`，后续 stream 不再写入它。
+4. 引导后 assistant 继续保留原 `subtaskId`，并先放入一条 `conversation_guidance` tool block，用于标记引导位置。
+5. 后续 `chat:chunk` 和 `chat:done` 可能携带完整文本，必须按拆分时记录的 assistant 文本前缀裁剪后再进入 reducer。
+
+不要把引导成功后的 user message append 到对话底部，也不要等 `runtime.tasks.guidance` 返回后才拆分 assistant；这会让引导请求等待期间产生的 assistant 文本出现在用户引导消息之前，造成流式显示和刷新后 transcript 顺序不一致。
 
 ## 右侧临时聊天
 
