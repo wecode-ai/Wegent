@@ -27,6 +27,7 @@ pub(crate) struct RuntimeTaskLink {
     pub updated_at: i64,
     pub runtime_handle: Value,
     pub parent: Option<Value>,
+    pub ephemeral: bool,
     #[serde(skip)]
     pub list_order: Option<usize>,
     #[serde(skip)]
@@ -47,6 +48,7 @@ impl RuntimeTaskLink {
             updated_at: now_ms(),
             runtime_handle: json!({}),
             parent: None,
+            ephemeral: false,
             list_order: None,
             group_workspace_path: None,
         }
@@ -72,6 +74,7 @@ impl RuntimeTaskLink {
             updated_at: now_ms(),
             runtime_handle,
             parent: Some(parent),
+            ephemeral: false,
             list_order: None,
             group_workspace_path: None,
         }
@@ -124,7 +127,8 @@ impl RuntimeTaskLink {
                 .as_ref()
                 .map(|link| link.runtime_handle.clone())
                 .unwrap_or_else(|| json!({})),
-            parent: local_link.and_then(|link| link.parent),
+            parent: local_link.as_ref().and_then(|link| link.parent.clone()),
+            ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
             list_order: None,
             group_workspace_path: None,
         }
@@ -162,6 +166,7 @@ impl Default for RuntimeTaskLink {
             updated_at: now_ms(),
             runtime_handle: json!({}),
             parent: None,
+            ephemeral: false,
             list_order: None,
             group_workspace_path: None,
         }
@@ -243,9 +248,9 @@ pub(crate) fn workspace_response(
 
     let mut workspaces = groups
         .into_iter()
-        .map(|(workspace_path, (workspace, mut local_tasks))| {
-            local_tasks.sort_by(compare_runtime_task_links);
-            let updated_at = local_tasks
+        .map(|(workspace_path, (workspace, mut tasks))| {
+            tasks.sort_by(compare_runtime_task_links);
+            let updated_at = tasks
                 .iter()
                 .map(|link| link.updated_at)
                 .max()
@@ -269,7 +274,7 @@ pub(crate) fn workspace_response(
                 "workspaceKind": infer_workspace_kind(&workspace_path),
                 "label": label,
                 "workspaceSource": workspace_source,
-                "localTasks": local_tasks
+                "tasks": tasks
                     .into_iter()
                     .map(local_task_json)
                     .collect::<Vec<_>>(),
@@ -375,7 +380,7 @@ pub(crate) fn search_result_item(
 ) -> Value {
     json!({
         "address": runtime_task_address(link, device_id),
-        "localTaskId": link.local_task_id,
+        "taskId": link.local_task_id,
         "workspacePath": link.workspace_path,
         "runtime": link.runtime,
         "title": link.title,
@@ -406,7 +411,7 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     );
 
     let mut task = Map::new();
-    task.insert("localTaskId".to_owned(), Value::String(link.local_task_id));
+    task.insert("taskId".to_owned(), Value::String(link.local_task_id));
     task.insert(
         "workspacePath".to_owned(),
         Value::String(link.workspace_path.clone()),
@@ -440,7 +445,7 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
 fn archived_conversation_item(link: &RuntimeTaskLink, device_id: &str) -> Value {
     json!({
         "id": link.local_task_id,
-        "localTaskId": link.local_task_id,
+        "taskId": link.local_task_id,
         "title": link.title,
         "projectKey": link.workspace_path,
         "projectName": workspace_label(&link.workspace_path),
@@ -459,7 +464,7 @@ fn runtime_task_address(link: &RuntimeTaskLink, device_id: &str) -> Value {
     json!({
         "deviceId": device_id,
         "workspacePath": link.workspace_path,
-        "localTaskId": link.local_task_id,
+        "taskId": link.local_task_id,
     })
 }
 

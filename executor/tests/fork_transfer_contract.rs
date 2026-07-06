@@ -320,7 +320,7 @@ fn payload_validation_and_transfer_retry_archive_merge_match_rpc_contracts() {
         "source": {
             "deviceId": "source-device",
             "workspacePath": "/source/Wegent",
-            "localTaskId": "codex-1"
+            "taskId": "codex-1"
         },
         "workspacePath": "/target/Wegent",
         "forkPackage": {

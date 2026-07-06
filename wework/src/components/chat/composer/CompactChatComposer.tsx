@@ -15,15 +15,16 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
-import { ComposerTextarea } from './ComposerTextarea'
+import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
+import { debugComposerEvent, textMetrics } from './composerDebug'
 
 interface CompactChatComposerProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: () => void
+  onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
   disabledReason?: string
   placeholder: string
@@ -91,6 +92,14 @@ export function CompactChatComposer({
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
   const explicitLineCount = value.split('\n').length
+  const handleShowTextAttachment = (attachment: Attachment) => {
+    const text = attachment.text_content
+    if (!text) return
+
+    onChange(value ? `${value}\n${text}` : text)
+    onRemoveAttachment(attachment.id)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   const handleImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
@@ -145,6 +154,7 @@ export function CompactChatComposer({
         errors={attachmentErrors}
         codeComments={codeComments}
         onRemoveAttachment={onRemoveAttachment}
+        onShowTextAttachment={handleShowTextAttachment}
         onClearCodeComments={onClearCodeComments}
       />
       <input
@@ -189,7 +199,16 @@ export function CompactChatComposer({
         className="flex w-full items-end gap-2"
         onSubmit={event => {
           event.preventDefault()
-          if (canSend) onSubmit()
+          const submittedValue = event.currentTarget.querySelector('textarea')?.value
+          debugComposerEvent('compact-form-submit', {
+            canSend,
+            propValue: textMetrics(value),
+            submittedValue: textMetrics(submittedValue),
+            attachmentsCount: attachments.length,
+            codeCommentsCount: codeComments.length,
+            disabled,
+          })
+          if (canSend) onSubmit(submittedValue)
         }}
       >
         <button

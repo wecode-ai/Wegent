@@ -8,7 +8,7 @@
  * Subscription Options Section - Trigger, Task Type, Repository
  */
 
-import { useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Clock, AlertCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Input } from '@/components/ui/input'
@@ -31,6 +31,15 @@ import type { SubscriptionOptionsSectionProps } from './types'
 
 // Minimum interval in minutes
 const MIN_INTERVAL_MINUTES = 15
+const MIN_TIMEOUT_MINUTES = 1
+const MAX_TIMEOUT_MINUTES = 24 * 60
+const CUSTOM_TIMEOUT_VALUE = 'custom'
+const TIMEOUT_PRESETS = [
+  { seconds: 10 * 60, minutes: 10 },
+  { seconds: 60 * 60, hours: 1 },
+  { seconds: 6 * 60 * 60, hours: 6 },
+  { seconds: 24 * 60 * 60, hours: 24 },
+]
 
 /**
  * Validate interval trigger configuration
@@ -89,6 +98,14 @@ export function SubscriptionOptionsSection({
   setDurationDays,
 }: SubscriptionOptionsSectionProps) {
   const { t } = useTranslation('feed')
+  const isPresetTimeout = TIMEOUT_PRESETS.some(preset => preset.seconds === timeoutSeconds)
+  const [isCustomTimeout, setIsCustomTimeout] = useState(!isPresetTimeout)
+  const timeoutSelectValue =
+    isCustomTimeout || !isPresetTimeout ? CUSTOM_TIMEOUT_VALUE : timeoutSeconds.toString()
+
+  useEffect(() => {
+    setIsCustomTimeout(!isPresetTimeout)
+  }, [isPresetTimeout, timeoutSeconds])
 
   const handleTriggerTypeChange = useCallback(
     (value: SubscriptionTriggerType) => {
@@ -111,6 +128,50 @@ export function SubscriptionOptionsSection({
       setSelectedBranch(branch)
     },
     [setSelectedBranch]
+  )
+
+  const handleTimeoutMinutesChange = useCallback(
+    (value: string) => {
+      const timeoutMinutes = Number(value)
+      if (!Number.isFinite(timeoutMinutes)) {
+        return
+      }
+
+      const boundedMinutes = Math.min(
+        MAX_TIMEOUT_MINUTES,
+        Math.max(MIN_TIMEOUT_MINUTES, Math.floor(timeoutMinutes))
+      )
+      setTimeoutSeconds(boundedMinutes * 60)
+    },
+    [setTimeoutSeconds]
+  )
+
+  const handleTimeoutPresetChange = useCallback(
+    (value: string) => {
+      if (value === CUSTOM_TIMEOUT_VALUE) {
+        setIsCustomTimeout(true)
+        return
+      }
+
+      const timeoutSecondsValue = Number(value)
+      if (!Number.isFinite(timeoutSecondsValue)) {
+        return
+      }
+      setIsCustomTimeout(false)
+      setTimeoutSeconds(timeoutSecondsValue)
+    },
+    [setTimeoutSeconds]
+  )
+
+  const formatTimeoutPresetLabel = useCallback(
+    (preset: (typeof TIMEOUT_PRESETS)[number]) => {
+      if ('minutes' in preset) {
+        return `${preset.minutes} ${t('timeout_minutes')} (${t('default')})`
+      }
+
+      return `${preset.hours} ${t('unit_hours')}`
+    },
+    [t]
   )
 
   const renderTriggerConfig = () => {
@@ -329,28 +390,39 @@ export function SubscriptionOptionsSection({
 
         <div className="space-y-2">
           <Label className="text-sm font-medium">{t('timeout_seconds')}</Label>
-          <Select
-            value={timeoutSeconds.toString()}
-            onValueChange={value => setTimeoutSeconds(parseInt(value))}
-          >
-            <SelectTrigger className="h-10">
+          <Select value={timeoutSelectValue} onValueChange={handleTimeoutPresetChange}>
+            <SelectTrigger className="h-10" data-testid="timeout-preset-select">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="60">1 {t('timeout_minute')}</SelectItem>
-              <SelectItem value="120">2 {t('timeout_minutes')}</SelectItem>
-              <SelectItem value="300">5 {t('timeout_minutes')}</SelectItem>
-              <SelectItem value="600">
-                10 {t('timeout_minutes')} ({t('default')})
-              </SelectItem>
-              <SelectItem value="900">15 {t('timeout_minutes')}</SelectItem>
-              <SelectItem value="1800">30 {t('timeout_minutes')}</SelectItem>
-              <SelectItem value="3600">60 {t('timeout_minutes')}</SelectItem>
+              {TIMEOUT_PRESETS.map(preset => (
+                <SelectItem key={preset.seconds} value={preset.seconds.toString()}>
+                  {formatTimeoutPresetLabel(preset)}
+                </SelectItem>
+              ))}
+              <SelectItem value={CUSTOM_TIMEOUT_VALUE}>{t('custom_minute')}</SelectItem>
             </SelectContent>
           </Select>
+          {timeoutSelectValue === CUSTOM_TIMEOUT_VALUE && (
+            <div className="relative">
+              <Input
+                type="number"
+                min={MIN_TIMEOUT_MINUTES}
+                max={MAX_TIMEOUT_MINUTES}
+                step={1}
+                value={Math.ceil(timeoutSeconds / 60)}
+                onChange={event => handleTimeoutMinutesChange(event.target.value)}
+                className="h-10 pr-14"
+                data-testid="timeout-minutes-input"
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-muted">
+                {t('timeout_minutes')}
+              </span>
+            </div>
+          )}
+          <p className="text-xs text-text-muted">{t('timeout_hint')}</p>
         </div>
       </div>
-      <p className="text-xs text-text-muted -mt-2">{t('timeout_hint')}</p>
 
       {/* Expiration Settings */}
       <div className="rounded-lg border border-border bg-background p-4">

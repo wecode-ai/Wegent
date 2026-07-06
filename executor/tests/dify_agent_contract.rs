@@ -18,7 +18,7 @@ use wegent_executor::{
 #[test]
 fn dify_config_merges_bot_env_and_prompt_params() {
     let request = ExecutionRequest {
-        task_id: 123,
+        task_id: "123".to_owned(),
         prompt: json!(
             "[EXTERNAL_API_PARAMS]{\"language\":\"zh-CN\",\"priority\":10}[/EXTERNAL_API_PARAMS] Hello Dify"
         ),
@@ -63,7 +63,7 @@ async fn dify_engine_calls_chat_streaming_api() {
     });
 
     let request = ExecutionRequest {
-        task_id: 321,
+        task_id: "321".to_owned(),
         prompt: json!("Hello Dify"),
         bot: json!([{
             "shell_type": "Dify",
@@ -90,7 +90,7 @@ async fn dify_engine_calls_chat_streaming_api() {
     assert_eq!(payload["response_mode"], "streaming");
     assert_eq!(payload["user"], "task-321");
     assert_eq!(payload["auto_generate_name"], true);
-    assert_eq!(saved_dify_task_id(321).as_deref(), Some("dify-task-1"));
+    assert_eq!(saved_dify_task_id("321").as_deref(), Some("dify-task-1"));
     server.abort();
 }
 

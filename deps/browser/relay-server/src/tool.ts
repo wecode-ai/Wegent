@@ -110,16 +110,20 @@ function isChromeRunning(): boolean {
 }
 
 function getChromeUserDataDir(): string {
-  const defaultDir = path.join(os.homedir(), ".config", "google-chrome");
-  if (fs.existsSync(defaultDir)) {
-    return defaultDir;
-  }
-  return path.join(os.homedir(), ".wegent-executor", "browser", "chrome-profile");
+  return (
+    process.env.CHROME_USER_DATA_DIR ||
+    path.join(os.homedir(), ".wegent-executor", "browser", "chrome-profile")
+  );
 }
 
 function getChromeLaunchArgs(url?: string): string[] {
+  const extensionPath = getExtensionPath();
   return [
     `--user-data-dir=${getChromeUserDataDir()}`,
+    "--remote-debugging-port=9225",
+    "--remote-allow-origins=*",
+    `--load-extension=${extensionPath}`,
+    `--disable-extensions-except=${extensionPath}`,
     "--no-first-run",
     "--no-default-browser-check",
     url || "about:blank",
@@ -210,24 +214,6 @@ If it is not installed yet:
 }
 
 function openUrlInChrome(url: string): void {
-  // On macOS, use osascript to open URL in Chrome
-  if (os.platform() === "darwin") {
-    try {
-      spawn("osascript", ["-e", `
-        tell application "Google Chrome"
-          activate
-          open location "${url}"
-        end tell
-      `], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
-    } catch {
-      // Ignore errors
-    }
-    return;
-  }
-
   const chromePath = process.env.CHROME_PATH || getChromePath();
   if (!chromePath) {
     return;
@@ -248,7 +234,7 @@ async function waitForConnection(maxWaitMs: number = 5000): Promise<boolean> {
   const startTime = Date.now();
   while (Date.now() - startTime < maxWaitMs) {
     const status = await getStatus();
-    if (status.extensionConnected) {
+    if (status.extensionConnected || status.directConnected) {
       return true;
     }
     await new Promise(r => setTimeout(r, 500));
@@ -329,7 +315,9 @@ Workflow:
             type: "string",
             enum: [
               "click",
+              "clickAt",
               "type",
+              "insertText",
               "press",
               "hover",
               "scrollIntoView",
@@ -344,6 +332,8 @@ Workflow:
             ],
           },
           ref: { type: "string", description: "Element ref from snapshot (e.g., e1, e2)" },
+          x: { type: "number", description: "Viewport x coordinate for clickAt action" },
+          y: { type: "number", description: "Viewport y coordinate for clickAt action" },
           text: { type: "string", description: "Text for type action" },
           key: { type: "string", description: "Key for press action" },
           submit: { type: "boolean", description: "Press Enter after typing" },
@@ -440,14 +430,14 @@ async function tryEnsureConnected(params: BrowserToolParams): Promise<{
 }> {
   const status = await getStatus();
 
-  if (!status.relayRunning) {
+  if (!status.relayRunning && !status.directConnected) {
     return {
       connected: false,
       error: "Relay server not running. Start it with: cdp-relay-server",
     };
   }
 
-  if (status.extensionConnected) {
+  if (status.extensionConnected || status.directConnected) {
     return { connected: true };
   }
 
@@ -461,8 +451,8 @@ async function tryEnsureConnected(params: BrowserToolParams): Promise<{
       return { connected: false, error: launchResult.message };
     }
   } else if (targetUrl) {
-    // Chrome is running but extension not connected - open the target page first
-    // Extension may auto-attach to the new tab
+    // The controlled profile is already running. Open the target page there and
+    // let the bundled extension auto-attach to the active tab.
     openUrlInChrome(targetUrl);
   }
 
@@ -622,10 +612,9 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
         if (!params.url) {
           return { ok: false, error: "url is required for open action" };
         }
-        // Check if there's a temporary tab (weibo.com or chrome://extensions) to reuse
+        // Check if there's a temporary browser-owned tab to reuse.
         const tabs = await listTabs();
         const tempTab = tabs.find(t =>
-          t.url.includes("weibo.com") ||
           t.url.startsWith("chrome://extensions") ||
           t.url === "chrome://newtab/" ||
           t.url === "about:blank"
@@ -780,6 +769,7 @@ export async function executeBrowserTool(params: BrowserToolParams): Promise<Bro
         data: {
           relayRunning: status.relayRunning,
           extensionConnected: status.extensionConnected,
+          directConnected: status.directConnected,
           attachedTabs: status.targets.length,
           targets: status.targets,
           ...(params.ensure

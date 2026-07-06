@@ -14,17 +14,18 @@ const DIFF_PREVIEW_DELAY_MS = 500
 const DIFF_PREVIEW_ESTIMATED_HEIGHT = 424
 const DIFF_PREVIEW_MAX_LINES = 240
 const DIFF_PREVIEW_MAX_WIDTH = 640
+const DIFF_PREVIEW_HORIZONTAL_OFFSET = 12
 const DIFF_PREVIEW_VIEWPORT_GUTTER = 32
 const DIFF_PREVIEW_VERTICAL_GAP = 8
 
 interface FileChangesCardProps {
-  turnId: number
+  subtaskId: string
   summary: TurnFileChangesSummary
   deviceOnline: boolean
-  onLoadDiff: (turnId: number) => Promise<string>
-  onRevert: (turnId: number) => Promise<TurnFileChangesSummary>
+  onLoadDiff: (subtaskId: string) => Promise<string>
+  onRevert: (subtaskId: string) => Promise<TurnFileChangesSummary>
   onOpenReview?: (request: {
-    turnId: number
+    subtaskId: string
     loadDiff: () => Promise<string>
     reviewTitle?: string
     defaultFileTreeVisible?: boolean
@@ -54,6 +55,7 @@ function FileChangeRow({
   const diffPreview = buildFileDiffPreview(file, summary)
   const {
     close: closeDiffPreview,
+    closeFromPreview: closeDiffPreviewFromPreview,
     keepOpen: keepDiffPreviewOpen,
     openAfterDelay: openDiffPreviewAfterDelay,
     placement: diffPreviewPlacement,
@@ -118,7 +120,8 @@ function FileChangeRow({
             placement={diffPreviewPlacement}
             position={diffPreviewPosition}
             onPointerEnter={keepDiffPreviewOpen}
-            onPointerLeave={closeDiffPreview}
+            onPointerDown={keepDiffPreviewOpen}
+            onPointerLeave={closeDiffPreviewFromPreview}
           />
         ) : null}
       </div>
@@ -144,6 +147,7 @@ function FileChangeSummaryTrigger({
   const diffPreview = buildFileDiffPreview(file, summary)
   const {
     close: closeDiffPreview,
+    closeFromPreview: closeDiffPreviewFromPreview,
     keepOpen: keepDiffPreviewOpen,
     openAfterDelay: openDiffPreviewAfterDelay,
     placement: diffPreviewPlacement,
@@ -209,7 +213,8 @@ function FileChangeSummaryTrigger({
           placement={diffPreviewPlacement}
           position={diffPreviewPosition}
           onPointerEnter={keepDiffPreviewOpen}
-          onPointerLeave={closeDiffPreview}
+          onPointerDown={keepDiffPreviewOpen}
+          onPointerLeave={closeDiffPreviewFromPreview}
         />
       ) : null}
     </div>
@@ -271,6 +276,7 @@ function useDelayedDiffPreview(preview: DiffPreview | null) {
   const triggerRef = useRef<HTMLDivElement | null>(null)
   const closeTimerRef = useRef<number | null>(null)
   const openTimerRef = useRef<number | null>(null)
+  const previewPointerInsideRef = useRef(false)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [placement, setPlacement] = useState<DiffPreviewPlacement>('above')
   const [position, setPosition] = useState<DiffPreviewPosition>()
@@ -317,7 +323,10 @@ function useDelayedDiffPreview(preview: DiffPreview | null) {
           Math.max(280, window.innerWidth - DIFF_PREVIEW_VIEWPORT_GUTTER * 2)
         )
         const maxLeft = window.innerWidth - width - DIFF_PREVIEW_VIEWPORT_GUTTER
-        const left = Math.min(Math.max(rect.left, DIFF_PREVIEW_VIEWPORT_GUTTER), maxLeft)
+        const left = Math.min(
+          Math.max(rect.left - DIFF_PREVIEW_HORIZONTAL_OFFSET, DIFF_PREVIEW_VIEWPORT_GUTTER),
+          maxLeft
+        )
         const top =
           nextPlacement === 'above'
             ? Math.max(DIFF_PREVIEW_VIEWPORT_GUTTER, rect.top - DIFF_PREVIEW_VERTICAL_GAP)
@@ -332,11 +341,16 @@ function useDelayedDiffPreview(preview: DiffPreview | null) {
   }
 
   const keepOpen = () => {
+    previewPointerInsideRef.current = true
     clearCloseTimer()
   }
 
   const close = () => {
     clearOpenTimer()
+    if (previewPointerInsideRef.current) {
+      clearCloseTimer()
+      return
+    }
     clearCloseTimer()
     closeTimerRef.current = window.setTimeout(() => {
       setPreviewOpen(false)
@@ -344,8 +358,14 @@ function useDelayedDiffPreview(preview: DiffPreview | null) {
     }, DIFF_PREVIEW_CLOSE_DELAY_MS)
   }
 
+  const closeFromPreview = () => {
+    previewPointerInsideRef.current = false
+    close()
+  }
+
   return {
     close,
+    closeFromPreview,
     keepOpen,
     openAfterDelay,
     placement,
@@ -356,12 +376,14 @@ function useDelayedDiffPreview(preview: DiffPreview | null) {
 }
 
 function FileChangeDiffPreview({
+  onPointerDown,
   onPointerEnter,
   onPointerLeave,
   preview,
   placement,
   position,
 }: {
+  onPointerDown: () => void
   onPointerEnter: () => void
   onPointerLeave: () => void
   preview: DiffPreview
@@ -379,6 +401,7 @@ function FileChangeDiffPreview({
         transform: placement === 'above' ? 'translateY(-100%)' : undefined,
       }}
       className="pointer-events-auto fixed z-[9999] max-w-[calc(100vw-4rem)] select-text overflow-hidden rounded-xl border border-border bg-popover text-left text-text-primary shadow-2xl"
+      onPointerDown={onPointerDown}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
@@ -565,7 +588,7 @@ function parseDiffPreviewLines(lines: string[]): DiffPreviewLine[] {
 }
 
 export function FileChangesCard({
-  turnId,
+  subtaskId,
   summary,
   deviceOnline,
   onLoadDiff,
@@ -588,8 +611,8 @@ export function FileChangesCard({
 
   const openReview = (focusFilePath?: string) => {
     onOpenReview?.({
-      turnId,
-      loadDiff: () => onLoadDiff(turnId),
+      subtaskId,
+      loadDiff: () => onLoadDiff(subtaskId),
       reviewTitle: t('file_changes.previous_turn_label'),
       defaultFileTreeVisible: false,
       focusFilePath,
@@ -600,7 +623,7 @@ export function FileChangesCard({
     setReverting(true)
     setActionError(undefined)
     try {
-      await onRevert(turnId)
+      await onRevert(subtaskId)
       setConfirmOpen(false)
     } catch (error) {
       setActionError(getErrorMessage(error, t('file_changes.revert_failed')))

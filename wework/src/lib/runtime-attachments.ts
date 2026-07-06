@@ -5,7 +5,11 @@ function hasLocalPath(attachment: Attachment): boolean {
 }
 
 export function localRuntimeAttachments(attachments: Attachment[]): Attachment[] {
-  return attachments.filter(hasLocalPath)
+  return attachments.filter(hasLocalPath).map(attachment => {
+    const runtimeAttachment = { ...attachment }
+    delete runtimeAttachment.text_content
+    return runtimeAttachment
+  })
 }
 
 export function remoteAttachmentIds(attachments: Attachment[]): number[] {

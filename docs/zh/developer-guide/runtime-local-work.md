@@ -97,9 +97,9 @@ cargo test --test manual_runtime_perf -- --ignored --nocapture
 
 当前本机实测结果：
 
-| 样本 | 文件大小 | 列表 | 首次打开 | 已加载切换 | append 刷新 |
-| --- | --- | ---: | ---: | ---: | ---: |
-| “修复进行中任务未显示 tool 调用” | 约 61 MB | 13 ms | 2.09 s | 33 ms | 53 ms |
+| 样本                             | 文件大小 |  列表 | 首次打开 | 已加载切换 | append 刷新 |
+| -------------------------------- | -------- | ----: | -------: | ---------: | ----------: |
+| “修复进行中任务未显示 tool 调用” | 约 61 MB | 13 ms |   2.09 s |      33 ms |       53 ms |
 
 因此当前目标达到列表 1 秒以内、首次打开 3 秒以内、已加载切换和获取最新数据 500 ms 以内。更大的极端历史首次冷解析仍受 JSONL 文件大小限制，但加载后切换和 append 刷新不再随历史总长度增长。
 
@@ -120,6 +120,16 @@ POST /api/runtime-work/cancel
 ```
 
 Backend 将 `deviceId + localTaskId` 转发为 `runtime.tasks.cancel`。Rust executor 的 Codex app-server 路径当前不会跨进程中断正在运行的 turn，因此 app 模式会返回 `accepted: false`，前端应保留队列状态或等待当前 turn 结束。后续如果实现 `turn/interrupt`，仍必须只使用 `deviceId + localTaskId` 定位任务，`workspacePath` 只是设备目录上下文。
+
+如果当前 Codex LocalTask 正在回复，Wework 还可以把队列中的用户输入作为原生引导发送：
+
+```text
+POST /api/runtime-work/guidance
+```
+
+Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + localTaskId`、用户文本和前端生成的 `clientGuidanceId` 转发为设备 RPC `runtime.tasks.guidance`。executor 必须定位正在运行的 Codex turn，并通过 Codex app-server 原生引导能力把用户文本追加到当前 turn；如果没有可引导的活跃 turn，应返回 `no_active_turn`，前端再把这条消息按普通 follow-up 发送。`runtime.tasks.guidance` 不创建新的中心库任务或子任务，也不把 `workspacePath` 当成任务身份。
+
+前端发送引导时必须立即把本地用户消息插入到当前 streaming assistant 的位置，而不是等待 `runtime.tasks.guidance` 返回。插入时把当前 assistant 拆成“引导前”和“引导后”两个消息：引导前消息冻结为 done，引导后消息继续保留原 `subtaskId` 接收后续 stream。后续 `chat:chunk`/`chat:done` 仍可能带完整文本，因此前端要按拆分时记录的文本前缀裁剪后续内容，确保流式显示和刷新后的 transcript 顺序一致。
 
 继续 LocalTask 时可以携带已经上传并处于 ready 状态的 attachment id。Backend 会校验这些附件属于当前用户并转换成 executor 需要的附件元数据，executor 再在目标设备上下载、转换并交给 runtime。前端不会把本机附件路径直接发送给 Backend 或 executor。
 
@@ -143,7 +153,7 @@ executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unar
 
 如果被归档的 LocalTask 使用 Git worktree，Wework 会先在该任务的 `deviceId + workspacePath` 上执行 `git status --porcelain`。工作树干净时，归档成功后会通过设备命令执行 `git worktree remove --force` 删除对应 worktree 目录；存在未提交代码时，前端先提示用户，默认不归档也不删除目录。用户选择强制归档后，Wework 会继续归档并强制删除该 worktree，因此未提交变更不会被保留。这个清理只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。
 
-在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到当前工作区的 `.wegent/attachments` 目录，并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 Tauri asset protocol 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
+在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到当前工作区的 `.wegent/attachments` 目录，并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 Tauri asset protocol 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Tauri App 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 Tauri `convertFileSrc` 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 

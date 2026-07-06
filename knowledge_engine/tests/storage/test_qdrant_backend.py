@@ -5,11 +5,32 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from llama_index.core.schema import TextNode
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client.http import models as qdrant_models
 
 from knowledge_engine.retrieval.filters import parse_metadata_filters
 from shared.models import RetrievalScope
+
+
+class TestProcessQueryResults:
+    @patch("knowledge_engine.storage.qdrant_backend.QdrantClient")
+    def test_process_query_results_returns_display_text(self, mock_client_class):
+        from knowledge_engine.storage.qdrant_backend import QdrantBackend
+
+        mock_client_class.return_value = MagicMock()
+        backend = QdrantBackend({"url": "http://localhost:6333"})
+        node = TextNode(
+            text="Question-only retrieval text",
+            metadata={"display_text": "Q: question\n\nA: full answer"},
+        )
+
+        result = backend._process_query_results(
+            MagicMock(nodes=[node], similarities=[0.9]),
+            score_threshold=0.1,
+        )
+
+        assert result["records"][0]["content"] == "Q: question\n\nA: full answer"
 
 
 class TestDeleteDocument:

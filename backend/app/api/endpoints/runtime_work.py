@@ -25,6 +25,8 @@ from app.schemas.runtime_work import (
     RuntimeFileChangesRevertRequest,
     RuntimeFileChangesRevertResponse,
     RuntimeGlobalIMNotificationUpdateRequest,
+    RuntimeGuidanceRequest,
+    RuntimeGuidanceResponse,
     RuntimeIMNotificationSettingsResponse,
     RuntimeSendRequest,
     RuntimeSendResponse,
@@ -218,6 +220,25 @@ async def send_runtime_message_endpoint(
     """Continue a native runtime LocalTask through the owning local executor."""
 
     return await runtime_work_service.send_runtime_message(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/guidance",
+    response_model=RuntimeGuidanceResponse,
+    response_model_by_alias=True,
+)
+async def send_runtime_guidance_endpoint(
+    request: RuntimeGuidanceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Steer an active native runtime turn through the owning local executor."""
+
+    return await runtime_work_service.send_runtime_guidance(
         db=db,
         user_id=current_user.id,
         request=request,

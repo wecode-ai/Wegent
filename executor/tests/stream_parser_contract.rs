@@ -12,6 +12,7 @@ fn ndjson_parser_collects_claude_text_blocks_and_deltas() {
     let output = r#"
 {"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}
 {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}
 "#;
 
     let outcome = collect_ndjson_outcome(output);
@@ -22,6 +23,58 @@ fn ndjson_parser_collects_claude_text_blocks_and_deltas() {
             content: "hello world".to_owned()
         }
     );
+}
+
+#[test]
+fn ndjson_parser_uses_last_assistant_message_as_final_content() {
+    let output = r#"
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"done"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"final"},{"type":"text","text":" answer"}]}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}
+"#;
+
+    let outcome = collect_ndjson_outcome(output);
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "final answer".to_owned()
+        }
+    );
+}
+
+#[test]
+fn ndjson_parser_skips_non_json_stdout_lines() {
+    let output = r#"
+[SandboxDebug] enabled
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}
+"#;
+
+    let outcome = collect_ndjson_outcome(output);
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "done".to_owned()
+        }
+    );
+}
+
+#[test]
+fn ndjson_parser_fails_claude_stdout_without_result_message() {
+    let output = r#"
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"partial"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"broken
+"#;
+
+    let outcome = collect_ndjson_outcome(output);
+
+    assert!(matches!(outcome, ExecutionOutcome::Failed { .. }));
+    if let ExecutionOutcome::Failed { message } = outcome {
+        assert!(message.contains("Claude stdout ended before result message"));
+    }
 }
 
 #[test]

@@ -627,12 +627,6 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
-        let method = if method == "runtime.tasks.guidance" {
-            "runtime.tasks.send"
-        } else {
-            method
-        };
-
         if method.starts_with("runtime.") {
             let Some(handler) = &self.runtime_work_handler else {
                 return Err(AppIpcError::new(
@@ -802,19 +796,28 @@ impl AppIpcServer {
 
                         if let Some(response) = response {
                             let ok = response.get("ok").and_then(Value::as_bool);
+                            let elapsed_ms = started_at.elapsed().as_millis();
                             log_app_ipc_request(
                                 "app IPC request finished",
                                 request_id.as_deref(),
                                 method.as_deref(),
-                                Some(started_at.elapsed().as_millis()),
+                                Some(elapsed_ms),
                                 ok,
                             );
+                            if ok == Some(false) {
+                                log_app_ipc_response_error(
+                                    request_id.as_deref(),
+                                    method.as_deref(),
+                                    elapsed_ms,
+                                    &response,
+                                );
+                            }
                             if response_tx.send(response).await.is_err() {
                                 log_app_ipc_request(
                                     "app IPC response dropped",
                                     request_id.as_deref(),
                                     method.as_deref(),
-                                    Some(started_at.elapsed().as_millis()),
+                                    Some(elapsed_ms),
                                     ok,
                                 );
                             }
@@ -943,6 +946,34 @@ fn log_app_ipc_request(
         fields.push(("ok", ok.to_string()));
     }
     write_executor_log_line(&format_executor_log(event, &fields));
+}
+
+fn log_app_ipc_response_error(
+    request_id: Option<&str>,
+    method: Option<&str>,
+    elapsed_ms: u128,
+    response: &Value,
+) {
+    let error = response.get("error").and_then(Value::as_object);
+    let code = error
+        .and_then(|value| value.get("code"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let message = error
+        .and_then(|value| value.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or("unknown error");
+    let mut fields = Vec::new();
+    if let Some(request_id) = request_id {
+        fields.push(("request_id", request_id.to_owned()));
+    }
+    if let Some(method) = method {
+        fields.push(("method", method.to_owned()));
+    }
+    fields.push(("elapsed_ms", elapsed_ms.to_string()));
+    fields.push(("code", code.to_owned()));
+    fields.push(("error", message.to_owned()));
+    write_executor_log_line(&format_executor_log("app IPC request failed", &fields));
 }
 
 pub fn app_ipc_socket_path() -> PathBuf {
@@ -1116,6 +1147,25 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "ls_skills" => Some(command_definition(
             "python3 -c <local_skills>",
             &["python3", "-c", LOCAL_SKILLS_SCRIPT],
+            Some(PostProcessor::Json),
+        )),
+        "browser_relay_restart" => Some(command_definition(
+            "sh -lc <browser_relay_restart>",
+            &[
+                "sh",
+                "-lc",
+                "exec \"$HOME/.wegent-executor/bin/cdp-relay-server\" --restart",
+            ],
+            None,
+        )),
+        "browser_tool" => Some(command_definition(
+            "sh -lc <browser_tool>",
+            &[
+                "sh",
+                "-lc",
+                "payload=${1:?browser tool payload is required}; exec \"$HOME/.wegent-executor/bin/browser-tool\" \"$payload\"",
+                "--",
+            ],
             Some(PostProcessor::Json),
         )),
         "turn_file_changes_review" => Some(command_definition(

@@ -733,25 +733,6 @@ class KnowledgeTransferService:
                 target_kb_id=target_kb_id,
             )
 
-        # Check document limit for notebook mode target knowledge base
-        target_kb_spec = target_kb.json.get("spec", {})
-        target_kb_type = target_kb_spec.get("kbType", "notebook")
-        if target_kb_type == "notebook":
-            current_count = KnowledgeService.get_document_count(db, target_kb_id)
-            if (
-                current_count + len(all_doc_ids)
-                > KnowledgeService.NOTEBOOK_MAX_DOCUMENTS
-            ):
-                raise CustomHTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"Cannot transfer to notebook mode knowledge base: "
-                        f"transfer would exceed the limit of {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS} documents. "
-                        f"Current: {current_count}, transferring: {len(all_doc_ids)}"
-                    ),
-                    error_code=NOTEBOOK_DOC_LIMIT_EXCEEDED,
-                )
-
         KnowledgeTransferService.validate_transfer_document_names(
             db=db,
             all_doc_ids=all_doc_ids,

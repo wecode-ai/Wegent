@@ -1,10 +1,10 @@
 export interface TrayTaskMenuAddress {
   deviceId: string
-  localTaskId: string
+  taskId: string
 }
 
 export function createTrayTaskMenuId(address: TrayTaskMenuAddress): string {
-  return `${encodeURIComponent(address.deviceId)}:${encodeURIComponent(address.localTaskId)}`
+  return `${encodeURIComponent(address.deviceId)}:${encodeURIComponent(String(address.taskId))}`
 }
 
 export function parseTrayTaskMenuId(id: string): TrayTaskMenuAddress | null {
@@ -14,9 +14,11 @@ export function parseTrayTaskMenuId(id: string): TrayTaskMenuAddress | null {
   }
 
   try {
+    const taskId = decodeURIComponent(parts[1]).trim()
+    if (!taskId) return null
     return {
       deviceId: decodeURIComponent(parts[0]),
-      localTaskId: decodeURIComponent(parts[1]),
+      taskId,
     }
   } catch {
     return null

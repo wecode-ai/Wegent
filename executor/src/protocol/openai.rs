@@ -38,8 +38,8 @@ impl OpenAIResponsesRequest {
         let (prompt, history) = convert_input(self.raw.get("input").cloned());
 
         ExecutionRequest {
-            task_id: get_i64(&metadata, "task_id", 0),
-            subtask_id: get_i64(&metadata, "subtask_id", 0),
+            task_id: get_id_string(&metadata, "task_id").unwrap_or_default(),
+            subtask_id: get_id_string(&metadata, "subtask_id").unwrap_or_default(),
             team_namespace: get_string(&metadata, "team_namespace"),
             bot: metadata
                 .get("bot")
@@ -69,6 +69,10 @@ impl OpenAIResponsesRequest {
                 .unwrap_or(false),
             new_session: metadata
                 .get("new_session")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            ephemeral: metadata
+                .get("ephemeral")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             fork_runtime: metadata.get("fork_runtime").cloned(),
@@ -245,6 +249,7 @@ const KNOWN_METADATA_KEYS: &[&str] = &[
     "kb_tool_access_mode",
     "skip_git_clone",
     "new_session",
+    "ephemeral",
     "fork_runtime",
     "inherited_sessions",
     "type",
@@ -262,10 +267,6 @@ const KNOWN_METADATA_KEYS: &[&str] = &[
     "skill_identity_token",
 ];
 
-fn get_i64(object: &Map<String, Value>, key: &str, default: i64) -> i64 {
-    object.get(key).and_then(read_i64_value).unwrap_or(default)
-}
-
 fn get_i64_optional(object: &Map<String, Value>, key: &str) -> Option<i64> {
     object.get(key).and_then(read_i64_value)
 }
@@ -275,6 +276,18 @@ fn get_string(object: &Map<String, Value>, key: &str) -> Option<String> {
         .get(key)
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
+}
+
+fn get_id_string(object: &Map<String, Value>, key: &str) -> Option<String> {
+    object.get(key).and_then(id_value_string)
+}
+
+fn id_value_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 fn project_workspace_path(metadata: &Map<String, Value>) -> Option<String> {

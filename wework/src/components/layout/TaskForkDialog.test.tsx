@@ -14,7 +14,7 @@ function source(overrides: Partial<RuntimeTaskAddress> = {}): RuntimeTaskAddress
   return {
     deviceId: 'local-1',
     workspacePath: '/workspace/current',
-    localTaskId: 'runtime-current',
+    taskId: 'runtime-current',
     ...overrides,
   }
 }
@@ -26,7 +26,7 @@ function workspace(overrides: Partial<RuntimeDeviceWorkspace> = {}): RuntimeDevi
     deviceStatus: 'online',
     available: true,
     workspacePath: '/workspace/current',
-    localTasks: [],
+    tasks: [],
     ...overrides,
   }
 }
@@ -37,14 +37,14 @@ function runtimeWork(workspaces: RuntimeDeviceWorkspace[]): RuntimeWorkListRespo
       {
         project: { id: 7, name: 'Project' },
         deviceWorkspaces: workspaces,
-        totalLocalTasks: workspaces.reduce(
-          (total, deviceWorkspace) => total + deviceWorkspace.localTasks.length,
+        totalTasks: workspaces.reduce(
+          (total, deviceWorkspace) => total + deviceWorkspace.tasks.length,
           0
         ),
       },
     ],
     chats: [],
-    totalLocalTasks: 0,
+    totalTasks: 0,
   }
 }
 
@@ -177,9 +177,9 @@ describe('TaskForkDialog', () => {
               project: { id: 7, name: 'Project' },
               deviceWorkspaces: [
                 workspace({
-                  localTasks: [
+                  tasks: [
                     {
-                      localTaskId: 'runtime-current',
+                      taskId: 'runtime-current',
                       workspacePath: '/workspace/current',
                       title: 'Current task',
                       runtime: 'codex',
@@ -193,7 +193,7 @@ describe('TaskForkDialog', () => {
                   workspaceKind: 'worktree',
                 }),
               ],
-              totalLocalTasks: 1,
+              totalTasks: 1,
             },
             {
               project: { id: 8, name: 'Other Project' },
@@ -204,7 +204,7 @@ describe('TaskForkDialog', () => {
                   workspacePath: '/workspace/unrelated',
                 }),
               ],
-              totalLocalTasks: 0,
+              totalTasks: 0,
             },
           ],
           chats: [
@@ -214,7 +214,7 @@ describe('TaskForkDialog', () => {
               workspacePath: '/workspace/chat-history',
             }),
           ],
-          totalLocalTasks: 1,
+          totalTasks: 1,
         }}
         currentProject={{ id: 7, name: 'Project', tasks: [] }}
         requiresStop={false}
@@ -257,9 +257,9 @@ describe('TaskForkDialog', () => {
         source={source()}
         runtimeWork={runtimeWork([
           workspace({
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'runtime-current',
+                taskId: 'runtime-current',
                 workspacePath: '/workspace/current',
                 title: 'Current task',
                 runtime: 'codex',

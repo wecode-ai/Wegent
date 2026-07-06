@@ -1,13 +1,13 @@
 import '@/i18n'
 
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlocksDisplay } from './ToolBlocksDisplay'
 import type { ProcessingBlock } from '@/types/workbench'
 
 const completedCommandBlock: ProcessingBlock = {
   id: 'call-1',
-  turnId: 1,
+  subtaskId: 1,
   type: 'tool',
   toolName: 'bash',
   toolInput: { command: 'pwd' },
@@ -19,7 +19,7 @@ const completedCommandBlock: ProcessingBlock = {
 const completedWebSearchBlocks: ProcessingBlock[] = [
   {
     id: 'web-search-1',
-    turnId: 1,
+    subtaskId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -35,7 +35,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
   },
   {
     id: 'web-search-2',
-    turnId: 1,
+    subtaskId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -47,7 +47,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
   },
   {
     id: 'web-open-1',
-    turnId: 1,
+    subtaskId: 1,
     type: 'tool',
     toolName: 'web_search',
     toolInput: {
@@ -61,7 +61,7 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
 
 const completedFileChangesBlock: ProcessingBlock = {
   id: 'file-changes-1',
-  turnId: 1,
+  subtaskId: 1,
   type: 'file_changes',
   status: 'done',
   createdAt: 1770000003000,
@@ -178,7 +178,16 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('context-compaction-indicator')).toHaveTextContent(
       '正在自动压缩上下文'
     )
+    expect(screen.getByText('正在自动压缩上下文')).toHaveClass('waiting-thinking-text')
     expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
+  test('keeps completed context compaction status static', () => {
+    render(<ToolBlocksDisplay blocks={[completedContextCompactionBlock]} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    expect(screen.getByText('上下文已自动压缩')).not.toHaveClass('waiting-thinking-text')
   })
 
   test('renders completed web search tools as a Codex-style web search activity', () => {
@@ -218,7 +227,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'read-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -229,7 +238,7 @@ describe('ToolBlocksDisplay', () => {
           },
           {
             id: 'read-command-2',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -258,7 +267,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'rg-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -271,7 +280,7 @@ describe('ToolBlocksDisplay', () => {
           },
           {
             id: 'rg-command-2',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -282,7 +291,7 @@ describe('ToolBlocksDisplay', () => {
           },
           {
             id: 'git-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -323,7 +332,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'rg-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -334,7 +343,7 @@ describe('ToolBlocksDisplay', () => {
           },
           {
             id: 'read-command-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'bash',
             toolInput: {
@@ -367,7 +376,7 @@ describe('ToolBlocksDisplay', () => {
           completedGuidanceBlock,
           {
             id: 'stdin-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'write_stdin',
             toolInput: { session_id: 90870, chars: '' },
@@ -386,7 +395,13 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.queryByText('已执行')).not.toBeInTheDocument()
   })
 
-  test('renders file changes inside completed processing details', () => {
+  test('renders file changes inside completed processing details', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+
     render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
@@ -402,10 +417,168 @@ describe('ToolBlocksDisplay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /已编辑 env/ }))
 
-    expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent('OLD_ENV=remote')
+    const diff = screen.getByTestId('process-file-change-diff')
+    expect(diff).toHaveClass('max-h-[16rem]', 'select-text', 'overscroll-contain')
+    expect(diff).toHaveTextContent('OLD_ENV=remote')
     expect(screen.getByTestId('process-file-change-diff')).toHaveTextContent(
       'BACKEND_URL=127.0.0.1'
     )
+
+    const headerContent = screen.getByTestId('process-file-change-diff-header-content')
+    const copyButton = screen.getByTestId('copy-process-file-change-diff-button')
+    expect(headerContent).toHaveTextContent(/env.*\+2.*-1/)
+    expect(
+      headerContent.compareDocumentPosition(copyButton) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(copyButton).toHaveAttribute('title', '复制代码')
+
+    fireEvent.click(copyButton)
+    expect(writeText).toHaveBeenCalledWith(
+      ['-OLD_ENV=remote', '+OLD_ENV=local', '+BACKEND_URL=127.0.0.1'].join('\n')
+    )
+    expect(
+      await screen.findByTestId('process-file-change-diff-copy-success-icon')
+    ).toBeInTheDocument()
+  })
+
+  test('merges consecutive file change blocks into one activity row', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          completedFileChangesBlock,
+          {
+            ...completedFileChangesBlock,
+            id: 'file-changes-2',
+            createdAt: 1770000003001,
+            fileChanges: {
+              ...completedFileChangesBlock.fileChanges,
+              artifact_id: 'artifact-2',
+              additions: 3,
+              deletions: 0,
+              files: [
+                {
+                  path: 'scripts/env',
+                  change_type: 'modified',
+                  additions: 3,
+                  deletions: 0,
+                  binary: false,
+                },
+              ],
+            },
+          },
+        ]}
+        isStreaming={false}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    const fileChangeBlocks = screen.getAllByTestId('process-file-changes-block')
+    expect(fileChangeBlocks).toHaveLength(1)
+    expect(fileChangeBlocks[0]).toHaveTextContent('已编辑 1 个文件')
+    expect(fileChangeBlocks[0]).toHaveTextContent('+5')
+    expect(fileChangeBlocks[0]).toHaveTextContent('-1')
+  })
+
+  test('renders static file change stat bars for historical file changes', () => {
+    render(<ToolBlocksDisplay blocks={[completedFileChangesBlock]} isStreaming={false} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
+
+    const statBars = screen
+      .getByTestId('process-file-changes-block')
+      .querySelectorAll('.file-change-stat-block')
+    expect(statBars).toHaveLength(1)
+  })
+
+  test('keeps streaming file change stat animation until final diff replaces the summary', async () => {
+    const streamingSummaryBlock: ProcessingBlock = {
+      ...completedFileChangesBlock,
+      status: 'streaming',
+      fileChanges: {
+        ...completedFileChangesBlock.fileChanges,
+        artifact_id: 'same-artifact',
+        additions: 1,
+        deletions: 0,
+        file_count: 1,
+        files: [
+          {
+            path: 'src/streaming.ts',
+            change_type: 'modified',
+            additions: 1,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      },
+    }
+    const updatedStreamingSummaryBlock: ProcessingBlock = {
+      ...streamingSummaryBlock,
+      fileChanges: {
+        ...streamingSummaryBlock.fileChanges,
+        additions: 5,
+        file_count: 5,
+        files: Array.from({ length: 5 }, (_, index) => ({
+          path: `src/file-${index}.ts`,
+          change_type: 'modified' as const,
+          additions: 1,
+          deletions: 0,
+          binary: false,
+        })),
+      },
+    }
+    const finalSummaryBlock: ProcessingBlock = {
+      ...updatedStreamingSummaryBlock,
+      status: 'done',
+      fileChanges: {
+        ...updatedStreamingSummaryBlock.fileChanges,
+        additions: 4,
+        deletions: 0,
+        file_count: 1,
+        files: [
+          {
+            path: 'src/final.ts',
+            change_type: 'modified',
+            additions: 4,
+            deletions: 0,
+            binary: false,
+          },
+        ],
+      },
+    }
+
+    const { rerender } = render(
+      <ToolBlocksDisplay blocks={[streamingSummaryBlock]} isStreaming={false} forceExpanded />
+    )
+
+    expect(
+      screen.getByTestId('process-file-changes-block').querySelectorAll('.file-change-stat-block')
+    ).toHaveLength(1)
+
+    rerender(
+      <ToolBlocksDisplay blocks={[updatedStreamingSummaryBlock]} isStreaming={true} forceExpanded />
+    )
+
+    await waitFor(() => {
+      const streamingStatBars = screen
+        .getByTestId('process-file-changes-block')
+        .querySelectorAll<HTMLElement>('.file-change-stat-block')
+      expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('+5')
+      expect(streamingStatBars).toHaveLength(1)
+      expect(
+        streamingStatBars[0].style.getPropertyValue('--file-change-stat-addition-height')
+      ).toBe('9.4px')
+    })
+
+    rerender(<ToolBlocksDisplay blocks={[finalSummaryBlock]} isStreaming={false} forceExpanded />)
+
+    const statBars = screen
+      .getByTestId('process-file-changes-block')
+      .querySelectorAll<HTMLElement>('.file-change-stat-block')
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('+4')
+    expect(screen.getByTestId('process-file-changes-block')).toHaveTextContent('-0')
+    expect(statBars).toHaveLength(1)
+    expect(statBars[0].style.getPropertyValue('--file-change-stat-addition-height')).toBe('9.4px')
   })
 
   test('uses an edit icon for completed edit activity groups', () => {
@@ -414,7 +587,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'patch-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'apply_patch',
             toolInput: {
@@ -447,7 +620,7 @@ describe('ToolBlocksDisplay', () => {
         blocks={[
           {
             id: 'patch-1',
-            turnId: 1,
+            subtaskId: 1,
             type: 'tool',
             toolName: 'apply_patch',
             toolInput: {
@@ -737,7 +910,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live thinking is visible', () => {
     const thinkingBlock: ProcessingBlock = {
       id: 'thinking-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'thinking',
       content: 'Reading files',
       status: 'streaming',
@@ -753,7 +926,7 @@ describe('ToolBlocksDisplay', () => {
   test('does not duplicate the generic thinking indicator when live process text is visible', () => {
     const textBlock: ProcessingBlock = {
       id: 'text-1',
-      turnId: 1,
+      subtaskId: 1,
       type: 'text',
       content: 'Let me explore the repository structure.',
       status: 'streaming',
@@ -770,7 +943,7 @@ describe('ToolBlocksDisplay', () => {
     const onSubmit = vi.fn()
     const block: ProcessingBlock = {
       id: 'request-1',
-      turnId: 9,
+      subtaskId: 9,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'pending',
@@ -809,7 +982,7 @@ describe('ToolBlocksDisplay', () => {
   test('can hide request user input blocks when the composer owns them', () => {
     const block: ProcessingBlock = {
       id: 'request-1',
-      turnId: 9,
+      subtaskId: 9,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'pending',
@@ -835,7 +1008,7 @@ describe('ToolBlocksDisplay', () => {
   test('shows answered request user input blocks as summaries while hiding pending blocks', () => {
     const pendingBlock: ProcessingBlock = {
       id: 'request-pending',
-      turnId: 9,
+      subtaskId: 9,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'done',
@@ -848,7 +1021,7 @@ describe('ToolBlocksDisplay', () => {
     }
     const answeredBlock: ProcessingBlock = {
       id: 'request-answered',
-      turnId: 10,
+      subtaskId: 10,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'done',
@@ -881,7 +1054,7 @@ describe('ToolBlocksDisplay', () => {
   test('can hide pending request user input blocks by request id', () => {
     const block: ProcessingBlock = {
       id: 'request-1',
-      turnId: 9,
+      subtaskId: 9,
       type: 'tool',
       toolName: 'request_user_input',
       status: 'pending',

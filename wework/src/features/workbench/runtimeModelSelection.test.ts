@@ -99,11 +99,14 @@ describe('runtimeModelSelection', () => {
       },
     }
 
-    expect(selectedModelExecutionFields(providerModel, { speed: 'fast' })).toEqual({
+    expect(
+      selectedModelExecutionFields(providerModel, { speed: 'fast', reasoning: 'extra_high' })
+    ).toEqual({
       modelId: 'Doubao-Seed-2.0-pro-260215',
       modelType: 'runtime',
       modelOptions: {
         speed: 'fast',
+        reasoning: 'xhigh',
         collaborationMode: 'default',
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',

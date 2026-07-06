@@ -72,10 +72,10 @@ export interface ProjectWorkControls {
   onWorktreeBranchChange?: (branchName: string | null) => void
 }
 
-interface ChatInputProps {
+export interface ChatInputProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: () => void
+  onSubmit: (valueOverride?: string, options?: ChatSubmitOptions) => void | Promise<void>
   disabled: boolean
   error?: string | null
   disabledReason?: string
@@ -102,6 +102,10 @@ interface ChatInputProps {
   onPauseGoal?: () => void
   onResumeGoal?: () => void
   onClearGoal?: () => void
+}
+
+export interface ChatSubmitOptions {
+  guideWhenBusy?: boolean
 }
 
 export function ChatInput({

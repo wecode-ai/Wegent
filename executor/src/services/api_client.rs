@@ -71,7 +71,7 @@ where
     E: SkillArchiveExtractor,
 {
     team_namespace: String,
-    task_id: Option<i64>,
+    task_id: Option<String>,
     client: &'a C,
     extractor: &'a E,
 }
@@ -86,7 +86,7 @@ where
 
     pub fn new(
         team_namespace: impl Into<String>,
-        task_id: Option<i64>,
+        task_id: Option<String>,
         client: &'a C,
         extractor: &'a E,
     ) -> Self {
@@ -152,7 +152,7 @@ where
             "/api/v1/kinds/skills?name={skill_name}&namespace={}",
             self.team_namespace
         );
-        if let Some(task_id) = self.task_id {
+        if let Some(task_id) = &self.task_id {
             path.push_str(&format!("&task_id={task_id}"));
         }
         path
@@ -160,7 +160,7 @@ where
 
     fn download_path(&self, skill_id: i64, namespace: &str) -> String {
         let mut path = format!("/api/v1/kinds/skills/{skill_id}/download?namespace={namespace}");
-        if let Some(task_id) = self.task_id {
+        if let Some(task_id) = &self.task_id {
             path.push_str(&format!("&task_id={task_id}"));
         }
         path

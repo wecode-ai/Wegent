@@ -1,6 +1,5 @@
 import { ArrowLeftRight, Bot, Menu, MessageCircle } from 'lucide-react'
-import { memo, useEffect, useState } from 'react'
-import { ChatInput } from '@/components/chat/ChatInput'
+import { memo, useEffect, useMemo, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
@@ -31,25 +30,36 @@ import {
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
 import { TaskForkDialog } from './TaskForkDialog'
-import { CachedWorkbenchPaneStack, type WorkbenchPaneIdentity } from './workbenchPaneStack'
+import {
+  CachedWorkbenchPaneStack,
+  getRunningRuntimeWorkbenchPaneKeys,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneStack'
 import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
+import { BufferedChatInput } from './BufferedChatInput'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
   const activePane: WorkbenchPaneIdentity = {
     currentRuntimeTask: state.currentRuntimeTask,
     currentProject: state.currentProject,
+    standaloneChatKey: state.standaloneChatKey,
   }
+  const pinnedPaneKeys = useMemo(
+    () => getRunningRuntimeWorkbenchPaneKeys(state.runtimeWork),
+    [state.runtimeWork]
+  )
 
   return (
     <CachedWorkbenchPaneStack
       activePane={activePane}
       maxPanes={1}
+      pinnedKeys={pinnedPaneKeys}
       className="h-dvh"
       renderPane={renderMobileWorkbenchPane}
     />
@@ -77,7 +87,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     startNewChat: onNewChat,
     startStandaloneChat: onStartStandaloneChat,
     selectProject: onSelectProject,
-    openRuntimeLocalTask: onOpenRuntimeLocalTask,
+    openRuntimeTask: onOpenRuntimeTask,
     createProject: onCreateProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
     prepareDeviceWorkspace: onPrepareDeviceWorkspace,
@@ -149,6 +159,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
       standaloneDeviceId: effectiveProjectWork.currentStandaloneDeviceId,
     })
   const activeDevice = findWorkbenchDevice(state.devices, activeDeviceId)
+  const canEditLastUserMessage = Boolean(
+    currentRuntimeTask &&
+    (activeDevice?.device_type === 'local' || activeDeviceId === 'local-device') &&
+    !paneSession.status.isBusy
+  )
   const activeDeviceUnavailable = Boolean(activeDeviceId) && !isWorkbenchDeviceOnline(activeDevice)
   const showConversationDeviceBanner =
     Boolean(activeDeviceId) && (!activeDevice || activeDevice.status === 'offline')
@@ -291,7 +306,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               onLoadTranscriptGap={paneSession.loadTranscriptGap}
               conversationKey={
                 currentRuntimeTask
-                  ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.localTaskId}`
+                  ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
                   : null
               }
               className="h-full"
@@ -301,8 +316,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 void retryFailedMessage(message.id, paneMessages)
               }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
-              onLoadFileChangesDiff={turnId => loadTurnFileChangesDiff(turnId, paneMessages)}
-              onRevertFileChanges={turnId => revertTurnFileChanges(turnId, paneMessages)}
+              onLoadFileChangesDiff={subtaskId => loadTurnFileChangesDiff(subtaskId, paneMessages)}
+              onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
+              onEditLastUserMessage={paneSession.editLastUserMessage}
+              canEditLastUserMessage={canEditLastUserMessage}
               onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
               onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
               hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
@@ -348,12 +365,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
                   />
                 ) : (
-                  <ChatInput
+                  <BufferedChatInput
                     value={paneSession.input}
                     onChange={paneSession.setInput}
                     onSubmit={paneSession.send}
                     disabled={composerDisabled}
-                    error={state.error}
+                    error={paneSession.error}
                     disabledReason={inlineComposerDisabledReason}
                     placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
                     projectChat={projectChatWithModelSelectorSignal}
@@ -437,12 +454,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 compact
                 className="mb-2"
               />
-              <ChatInput
+              <BufferedChatInput
                 value={paneSession.input}
                 onChange={paneSession.setInput}
                 onSubmit={paneSession.send}
                 disabled={composerDisabled}
-                error={state.error}
+                error={paneSession.error}
                 disabledReason={inlineComposerDisabledReason}
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
@@ -492,7 +509,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         onUpdateProjectName={onUpdateProjectName}
         onRemoveProject={onRemoveProject}
         onSelectProject={onSelectProject}
-        onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+        onOpenRuntimeTask={onOpenRuntimeTask}
         onRefreshWorkLists={onRefreshWorkLists}
       />
       <ContinueInImDialog
@@ -500,7 +517,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         {...continueInIm.dialog}
       />
       <TaskForkDialog
-        key={forkDialogOpen ? `open-${currentRuntimeTask?.localTaskId ?? 'none'}` : 'closed'}
+        key={forkDialogOpen ? `open-${currentRuntimeTask?.taskId ?? 'none'}` : 'closed'}
         open={forkDialogOpen}
         source={currentRuntimeTask}
         runtimeWork={state.runtimeWork}

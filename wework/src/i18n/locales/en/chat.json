@@ -16,6 +16,7 @@
     "running": "Working"
   },
   "assistant_status": {
+    "stopped": "Stopped",
     "stopped_after": "You stopped after {{duration}}"
   },
   "request_user_input": {
@@ -52,6 +53,10 @@
     "open_label": "Open {{path}}"
   },
   "file_changes": {
+    "editing_files": "Editing {{count}} files",
+    "creating_files": "Creating {{count}} files",
+    "deleting_files": "Deleting {{count}} files",
+    "renaming_files": "Renaming {{count}} files",
     "edited_files": "Edited {{count}} files",
     "created_files": "Created {{count}} files",
     "deleted_files": "Deleted {{count}} files",
@@ -66,6 +71,7 @@
     "review": "Review",
     "review_title": "Changes from this turn",
     "preview_file_label": "Preview file changes for {{path}}",
+    "copy_code": "Copy code",
     "revert": "Revert",
     "confirm_revert_title": "Revert this turn's file changes?",
     "confirm_revert_description": "The workspace changes only when the reverse patch applies safely. Later changes are never overwritten.",
@@ -159,7 +165,7 @@
       },
       "container_error": {
         "title": "Task service error",
-        "description": "The container or local task service is temporarily unavailable. Try again later."
+        "description": "The container or runtime task service is temporarily unavailable. Try again later."
       },
       "content_filter": {
         "title": "Content triggered security review and was rejected",

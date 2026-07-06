@@ -12,8 +12,8 @@ function runtimeWorkWithTasks(tasks: Array<{ running?: boolean }>): RuntimeWorkL
             deviceId: 'local-device',
             available: true,
             workspacePath: '/workspace',
-            localTasks: tasks.map((task, index) => ({
-              localTaskId: `task-${index}`,
+            tasks: tasks.map((task, index) => ({
+              taskId: `task-${index}`,
               workspacePath: '/workspace',
               title: `Task ${index}`,
               runtime: 'codex',
@@ -24,7 +24,7 @@ function runtimeWorkWithTasks(tasks: Array<{ running?: boolean }>): RuntimeWorkL
       },
     ],
     chats: [],
-    totalLocalTasks: tasks.length,
+    totalTasks: tasks.length,
   }
 }
 
@@ -40,9 +40,9 @@ describe('runtime task close guard', () => {
             deviceId: 'local-device',
             available: true,
             workspacePath: '/chat',
-            localTasks: [
+            tasks: [
               {
-                localTaskId: 'chat-task',
+                taskId: 'chat-task',
                 workspacePath: '/chat',
                 title: 'Chat task',
                 runtime: 'claude_code',
@@ -51,7 +51,7 @@ describe('runtime task close guard', () => {
             ],
           },
         ],
-        totalLocalTasks: 1,
+        totalTasks: 1,
       })
     ).toBe(true)
   })

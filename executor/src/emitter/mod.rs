@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventEnvelope {
     pub event_type: String,
-    pub task_id: i64,
-    pub subtask_id: i64,
+    pub task_id: String,
+    pub subtask_id: String,
     pub data: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_id: Option<i64>,
@@ -23,8 +23,8 @@ pub struct EventEnvelope {
 
 #[derive(Debug, Clone)]
 pub struct ResponsesEventBuilder {
-    task_id: i64,
-    subtask_id: i64,
+    task_id: String,
+    subtask_id: String,
     model: String,
     response_id: String,
     item_id: String,
@@ -35,10 +35,16 @@ pub struct ResponsesEventBuilder {
 }
 
 impl ResponsesEventBuilder {
-    pub fn new(task_id: i64, subtask_id: i64, model: impl Into<String>) -> Self {
+    pub fn new(
+        task_id: impl Into<String>,
+        subtask_id: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
+        let task_id = task_id.into();
+        let subtask_id = subtask_id.into();
         Self {
             task_id,
-            subtask_id,
+            subtask_id: subtask_id.clone(),
             model: model.into(),
             response_id: default_response_id(),
             item_id: format!("msg_{subtask_id}"),
@@ -272,8 +278,8 @@ impl ResponsesEventBuilder {
     fn envelope(&self, event_type: &str, data: Value) -> EventEnvelope {
         EventEnvelope {
             event_type: event_type.to_owned(),
-            task_id: self.task_id,
-            subtask_id: self.subtask_id,
+            task_id: self.task_id.clone(),
+            subtask_id: self.subtask_id.clone(),
             data,
             message_id: self.message_id,
             executor_name: self.executor_name.clone(),

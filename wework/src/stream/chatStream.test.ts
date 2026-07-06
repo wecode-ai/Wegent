@@ -17,22 +17,20 @@ describe('createChatStream', () => {
 
     stream.subscribe({ onChatChunk })
     listeners.get('response.output_text.delta')?.({
-      task_id: 0,
-      subtask_id: 202,
-      device_id: 'device-1',
-      local_task_id: 'codex-1',
+      taskId: 'codex-1',
+      subtaskId: '202',
+      deviceId: 'device-1',
       runtime: 'codex',
-      data: { delta: 'hello' },
+      data: { delta: 'hello', offset: 0 },
     })
 
     expect(onChatChunk).toHaveBeenCalledWith({
-      task_id: 0,
-      subtask_id: 202,
-      device_id: 'device-1',
-      local_task_id: 'codex-1',
+      taskId: 'codex-1',
+      subtaskId: '202',
+      deviceId: 'device-1',
       content: 'hello',
       offset: 0,
-      result: { delta: 'hello' },
+      result: { delta: 'hello', offset: 0 },
     })
   })
 

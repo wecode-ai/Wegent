@@ -1,4 +1,4 @@
-mod in_app_browser;
+mod embedded_browser;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
@@ -616,6 +616,30 @@ fn open_local_workspace_with_app(_app_name: &str, _path: &str) -> Result<(), Str
     Err("Opening a local workspace is only supported on macOS".to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn open_local_file_with_default_app(path: &str) -> Result<(), String> {
+    let output = std::process::Command::new("open")
+        .arg(path)
+        .output()
+        .map_err(|error| format!("Failed to run macOS open command: {error}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        Err("Failed to open local file".to_string())
+    } else {
+        Err(stderr)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn open_local_file_with_default_app(_path: &str) -> Result<(), String> {
+    Err("Opening a local file is only supported on macOS".to_string())
+}
+
 #[tauri::command]
 fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
     let opener =
@@ -629,6 +653,17 @@ fn open_local_workspace(opener: String, path: String) -> Result<(), String> {
     }
 
     open_local_workspace_with_app(app_name, &path)
+}
+
+#[tauri::command]
+fn open_local_file(path: String) -> Result<(), String> {
+    let path = normalized_non_empty(path).ok_or_else(|| "Local file path is empty".to_string())?;
+
+    if !std::path::Path::new(&path).is_file() {
+        return Err("Local file does not exist".to_string());
+    }
+
+    open_local_file_with_default_app(&path)
 }
 
 #[derive(serde::Serialize)]
@@ -959,9 +994,23 @@ fn open_task_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, task_id: &s
 
 #[cfg(desktop)]
 fn quit_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    shutdown_local_executor_for_app(app);
+    app.exit(0);
+}
+
+#[cfg(desktop)]
+fn shutdown_local_executor_for_app<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let state = app.state::<local_executor::LocalExecutorState>();
     local_executor::shutdown_local_executor(&state);
-    app.exit(0);
+}
+
+#[cfg(desktop)]
+fn install_shutdown_signal_handler(app: tauri::AppHandle) -> Result<(), String> {
+    ctrlc::set_handler(move || {
+        shutdown_local_executor_for_app(&app);
+        app.exit(130);
+    })
+    .map_err(|error| format!("Failed to install shutdown signal handler: {error}"))
 }
 
 #[derive(serde::Deserialize)]
@@ -1321,11 +1370,12 @@ mod tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .on_window_event(|window, event| {
@@ -1371,6 +1421,15 @@ pub fn run() {
             #[cfg(desktop)]
             setup_system_tray(app)?;
             #[cfg(desktop)]
+            install_shutdown_signal_handler(app.handle().clone())
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            #[cfg(desktop)]
+            if let Err(error) =
+                embedded_browser::start_embedded_browser_bridge(app.handle().clone())
+            {
+                log::warn!("Failed to start embedded browser bridge: {error}");
+            }
+            #[cfg(desktop)]
             if env_flag_enabled(WEBVIEW_DEVTOOLS_ENV) {
                 if let Err(error) = open_main_webview_devtools_impl(app.handle()) {
                     log::warn!("Failed to open Web Inspector from {WEBVIEW_DEVTOOLS_ENV}: {error}");
@@ -1385,13 +1444,17 @@ pub fn run() {
             wecode::local_executor::get_local_executor_auth_token,
             wecode::local_executor::get_startup_env,
             wecode::local_executor::kill_executor_processes,
-            in_app_browser::in_app_browser_go_back,
-            in_app_browser::in_app_browser_create,
-            in_app_browser::in_app_browser_go_forward,
-            in_app_browser::in_app_browser_page_favicon,
-            in_app_browser::in_app_browser_page_title,
-            in_app_browser::in_app_browser_reload,
-            in_app_browser::in_app_browser_set_frame,
+            embedded_browser::embedded_browser_close,
+            embedded_browser::embedded_browser_eval,
+            embedded_browser::embedded_browser_eval_json,
+            embedded_browser::embedded_browser_go_back,
+            embedded_browser::embedded_browser_go_forward,
+            embedded_browser::embedded_browser_navigate,
+            embedded_browser::embedded_browser_open,
+            embedded_browser::embedded_browser_page_state,
+            embedded_browser::embedded_browser_reload,
+            embedded_browser::embedded_browser_relabel,
+            embedded_browser::embedded_browser_set_bounds,
             local_terminal::close_local_terminal,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
@@ -1411,6 +1474,7 @@ pub fn run() {
             save_text_file_to_downloads,
             local_path_exists,
             wecode::local_executor::open_executor_logs_directory,
+            open_local_file,
             open_local_workspace,
             read_dropped_files,
             save_local_attachment_file,
@@ -1421,6 +1485,16 @@ pub fn run() {
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        #[cfg(desktop)]
+        if matches!(
+            event,
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+        ) {
+            shutdown_local_executor_for_app(app_handle);
+        }
+    });
 }

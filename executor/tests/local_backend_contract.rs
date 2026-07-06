@@ -85,7 +85,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
         transport.clone(),
         StaticCapabilityReporter,
     );
-    client.set_running_task_ids([10, 20]);
+    client.set_running_task_ids(["10".to_owned(), "20".to_owned()]);
 
     let accepted = client.send_heartbeat(Duration::from_secs(2)).await.unwrap();
 
@@ -94,7 +94,7 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].event, "device:heartbeat");
     assert_eq!(calls[0].payload["device_id"], "device-1");
-    assert_eq!(calls[0].payload["running_task_ids"], json!([10, 20]));
+    assert_eq!(calls[0].payload["running_task_ids"], json!(["10", "20"]));
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
@@ -109,7 +109,7 @@ async fn local_backend_event_sink_emits_responses_api_event_names() {
     let transport = RecordingTransport::default();
     let client = LocalBackendClient::new(local_backend_config(), transport.clone());
     let sink = LocalBackendEventSink::new(client);
-    let event = ResponsesEventBuilder::new(1, 2, "claude")
+    let event = ResponsesEventBuilder::new("1", "2", "claude")
         .with_response_id("resp-test")
         .response_completed("done");
 
@@ -141,8 +141,9 @@ async fn local_backend_task_execute_handler_runs_agent_and_emits_events() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-claude",
         r#"#!/bin/sh
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"local done"}]}}'
-"#,
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"local done"}]}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"#,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let transport = RecordingTransport::default();
@@ -183,10 +184,11 @@ async fn local_backend_task_execute_streams_claude_stdout_before_completion() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-streaming-claude",
         r#"#!/bin/sh
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}'
-sleep 0.1
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":" world"}]}}'
-"#,
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}'
+	sleep 0.1
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":" world"}]}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"#,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let transport = RecordingTransport::default();
@@ -231,10 +233,11 @@ async fn local_backend_task_execute_streams_claude_thinking_deltas_before_text()
     let fake_claude = write_fake_executable(
         "fake-local-backend-thinking-claude",
         r#"#!/bin/sh
-printf '%s\n' '{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking image"}}'
-sleep 0.1
-printf '%s\n' '{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}'
-"#,
+	printf '%s\n' '{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checking image"}}'
+	sleep 0.1
+	printf '%s\n' '{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"#,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let transport = RecordingTransport::default();
@@ -277,12 +280,12 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
     let fake_claude = write_fake_executable(
         "fake-local-backend-assistant-thinking-claude",
         r#"#!/bin/sh
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"abcdef"},{"type":"text","text":"answer"}]}}'
-"#,
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"abcdef"},{"type":"text","text":"answer"}]}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"#,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let _chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS", "3");
-    let _chunk_delay = EnvGuard::set("WEGENT_EXECUTOR_STREAM_CHUNK_DELAY_MS", "0");
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
@@ -323,11 +326,12 @@ async fn local_backend_task_execute_streams_claude_tool_use_blocks() {
     let fake_claude = write_fake_executable(
         "fake-local-backend-tool-claude",
         r##"#!/bin/sh
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"Read_0","name":"Read","input":{"file_path":"README.md"}}]}}'
-sleep 0.1
-printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"Read_0","content":"# Project"}]}}'
-printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"read done"}]}}'
-"##,
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"Read_0","name":"Read","input":{"file_path":"README.md"}}]}}'
+	sleep 0.1
+	printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"Read_0","content":"# Project"}]}}'
+	printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"read done"}]}}'
+	printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
+	"##,
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let transport = RecordingTransport::default();
@@ -390,8 +394,9 @@ async fn local_backend_task_execute_splits_large_claude_assistant_message_into_d
         "fake-local-backend-large-assistant-claude",
         &format!(
             r#"#!/bin/sh
-printf '%s\n' '{}'
-"#,
+	printf '%s\n' '{}'
+	printf '%s\n' '{{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}}'
+	"#,
             claude_event
         ),
     );

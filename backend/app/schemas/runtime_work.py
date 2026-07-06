@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 RuntimeName = Literal["codex", "claude_code"]
 LocalTaskStatus = Literal["active", "archived"]
@@ -22,7 +22,12 @@ class RuntimeTaskAddress(BaseModel):
 
     device_id: str = Field(..., alias="deviceId", min_length=1)
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
-    local_task_id: str = Field(..., alias="localTaskId", min_length=1)
+    local_task_id: str = Field(
+        ...,
+        alias="taskId",
+        validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
+        min_length=1,
+    )
 
 
 class RuntimeTranscriptRequest(RuntimeTaskAddress):
@@ -87,7 +92,11 @@ class LocalTaskSummary(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    local_task_id: str = Field(..., alias="localTaskId")
+    local_task_id: str = Field(
+        ...,
+        alias="taskId",
+        validation_alias=AliasChoices("taskId", "localTaskId", "local_task_id"),
+    )
     workspace_path: str = Field(..., alias="workspacePath")
     workspace_kind: RuntimeWorkspaceKind = Field(
         default="workspace",
@@ -182,7 +191,7 @@ class RuntimeProjectRef(BaseModel):
 
 
 class RuntimeDeviceWorkspace(BaseModel):
-    """Device workspace with online LocalTasks attached."""
+    """Device workspace with runtime tasks attached."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -211,9 +220,9 @@ class RuntimeDeviceWorkspace(BaseModel):
     mapped: bool
     available: bool
     error: Optional[str] = None
-    local_tasks: list[LocalTaskSummary] = Field(
+    tasks: list[LocalTaskSummary] = Field(
         default_factory=list,
-        alias="localTasks",
+        alias="tasks",
     )
 
 
@@ -230,7 +239,7 @@ class RuntimeProjectWork(BaseModel):
 
 
 class RuntimeWorkListResponse(BaseModel):
-    """Project -> Device Workspace -> LocalTask workbench tree."""
+    """Project -> Device Workspace -> runtime task workbench tree."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -239,7 +248,7 @@ class RuntimeWorkListResponse(BaseModel):
         default_factory=list,
         alias="chats",
     )
-    total_local_tasks: int = Field(..., alias="totalLocalTasks")
+    total_tasks: int = Field(..., alias="totalTasks")
 
 
 class ArchivedConversationsListRequest(BaseModel):
@@ -346,7 +355,7 @@ class RuntimeTranscriptResponse(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    local_task_id: str = Field(..., alias="localTaskId")
+    local_task_id: str = Field(..., alias="taskId")
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     title: Optional[str] = None
@@ -421,8 +430,36 @@ class RuntimeSendResponse(BaseModel):
     """Acknowledgement from the runtime send RPC."""
 
     accepted: bool
-    local_task_id: str = Field(..., alias="localTaskId")
+    local_task_id: str = Field(..., alias="taskId")
     error: Optional[str] = None
+
+
+class RuntimeGuidanceRequest(BaseModel):
+    """Request to steer an active native runtime turn."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    message: str = Field(..., min_length=1)
+    client_guidance_id: Optional[str] = Field(
+        default=None,
+        alias="clientGuidanceId",
+        validation_alias=AliasChoices("clientGuidanceId", "client_guidance_id"),
+    )
+
+
+class RuntimeGuidanceResponse(BaseModel):
+    """Acknowledgement from the runtime guidance RPC."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    success: bool = True
+    local_task_id: str = Field(..., alias="taskId")
+    guidance_id: Optional[str] = Field(default=None, alias="guidanceId")
+    turn_id: Optional[str] = Field(default=None, alias="turnId")
+    error: Optional[str] = None
+    code: Optional[str] = None
 
 
 class RuntimeWorkspaceOpenRequest(BaseModel):
@@ -570,7 +607,7 @@ class RuntimeTaskArchiveResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     accepted: bool
-    local_task_id: str = Field(..., alias="localTaskId")
+    local_task_id: str = Field(..., alias="taskId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
     error: Optional[str] = None
 
@@ -590,7 +627,7 @@ class RuntimeTaskCancelResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     accepted: bool
-    local_task_id: str = Field(..., alias="localTaskId")
+    local_task_id: str = Field(..., alias="taskId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
     error: Optional[str] = None
 
@@ -634,7 +671,7 @@ class RuntimeTaskCreateResponse(BaseModel):
 
     accepted: bool
     device_id: str = Field(..., alias="deviceId")
-    local_task_id: str = Field(..., alias="localTaskId")
+    local_task_id: str = Field(..., alias="taskId")
     workspace_path: str = Field(..., alias="workspacePath")
     runtime: RuntimeName
     error: Optional[str] = None

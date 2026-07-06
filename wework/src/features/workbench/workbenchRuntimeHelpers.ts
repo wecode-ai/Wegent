@@ -3,7 +3,7 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   DeviceInfo,
-  LocalTaskSummary,
+  RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
@@ -25,21 +25,26 @@ export async function createConversationWorkspace(
     getHomeDirectory: (deviceId: string) => Promise<string>
   },
   deviceId: string,
-  message: string
+  message: string,
+  taskId: string
 ): Promise<string> {
   const homeDirectory = await deviceApi.getHomeDirectory(deviceId)
-  const workspacePath = buildConversationWorkspacePath(homeDirectory, message)
+  const workspacePath = buildConversationWorkspacePath(homeDirectory, message, taskId)
   await deviceApi.createDirectory(deviceId, workspacePath)
   return workspacePath
 }
 
-function buildConversationWorkspacePath(homeDirectory: string, message: string): string {
+function buildConversationWorkspacePath(
+  homeDirectory: string,
+  message: string,
+  taskId: string
+): string {
   return joinDevicePath(
     homeDirectory,
     'Documents',
     'Codex',
     formatConversationWorkspaceDate(new Date()),
-    slugifyConversationWorkspaceName(message)
+    conversationWorkspaceName(message, taskId)
   )
 }
 
@@ -56,13 +61,22 @@ function slugifyConversationWorkspaceName(message: string): string {
   return trimConversationWorkspaceName(name || DEFAULT_CONVERSATION_WORKSPACE_NAME)
 }
 
+function conversationWorkspaceName(message: string, taskId: string): string {
+  const suffix = taskId
+    .replace(/[^A-Za-z0-9]+/g, '')
+    .slice(-8)
+    .toLowerCase()
+  const name = slugifyConversationWorkspaceName(message)
+  return suffix ? `${name}-${suffix}` : name
+}
+
 function trimConversationWorkspaceName(name: string): string {
   const trimmed = name.slice(0, MAX_CONVERSATION_WORKSPACE_NAME_LENGTH).replace(/-+$/g, '')
   return trimmed || DEFAULT_CONVERSATION_WORKSPACE_NAME
 }
 
 export function getRuntimeTaskRouteKey(route: RuntimeTaskRoute): string {
-  return `${route.deviceId}:${route.localTaskId}:${route.workspacePath ?? ''}`
+  return `${route.deviceId}:${route.taskId}:${route.workspacePath ?? ''}`
 }
 
 function matchesRequestedWorkspacePath(
@@ -81,7 +95,7 @@ export function isSameRuntimeTaskIdentity(
   return Boolean(
     address &&
     address.deviceId === route.deviceId &&
-    address.localTaskId === route.localTaskId &&
+    address.taskId === route.taskId &&
     matchesRequestedWorkspacePath(address.workspacePath, route.workspacePath)
   )
 }
@@ -93,14 +107,14 @@ export function isSameRuntimeTaskAddress(
   return Boolean(
     left &&
     left.deviceId === right.deviceId &&
-    left.localTaskId === right.localTaskId &&
+    left.taskId === right.taskId &&
     matchesRequestedWorkspacePath(left.workspacePath, right.workspacePath)
   )
 }
 
 function workspaceTaskAddresses(workspaces: RuntimeDeviceWorkspace[]): RuntimeTaskAddress[] {
   return workspaces.flatMap(workspace =>
-    workspace.localTasks.map(task => runtimeTaskAddressFromWorkspace(workspace, task))
+    workspace.tasks.map(task => runtimeTaskAddressFromWorkspace(workspace, task))
   )
 }
 
@@ -116,12 +130,13 @@ export function getRuntimeTaskWorkspacePath(
 
 function runtimeTaskAddressFromWorkspace(
   workspace: RuntimeDeviceWorkspace,
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
 ): RuntimeTaskAddress {
   return {
     deviceId: workspace.deviceId,
+    taskId: task.taskId,
     workspacePath: getRuntimeTaskWorkspacePath(workspace, task),
-    localTaskId: task.localTaskId,
+    ...(task.taskId ? { taskId: task.taskId } : {}),
     ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
   }
 }
@@ -174,10 +189,10 @@ export function writeLastProjectId(userId: number, projectId: number) {
   }
 }
 
-export function findRuntimeLocalTask(
+export function findRuntimeTask(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   address: RuntimeTaskAddress | null | undefined
-): LocalTaskSummary | null {
+): RuntimeTaskSummary | null {
   if (!runtimeWork || !address) return null
   const workspaces = [
     ...runtimeWork.chats,
@@ -186,7 +201,7 @@ export function findRuntimeLocalTask(
 
   for (const workspace of workspaces) {
     if (workspace.deviceId !== address.deviceId) continue
-    const task = workspace.localTasks.find(item => item.localTaskId === address.localTaskId)
+    const task = workspace.tasks.find(item => item.taskId === address.taskId)
     if (task) return task
   }
 
@@ -272,7 +287,19 @@ export function buildRuntimeTaskTitle(message: string, fallback?: string): strin
   return title ? title.slice(0, 100) : EMPTY_MESSAGE_TASK_TITLE
 }
 
-export function createRuntimeLocalTaskId(runtime: RuntimeTaskCreateRequest['runtime']): string {
+function stableRuntimeTaskId(value: string): number {
+  let hash = 0
+  for (const char of value) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  }
+  return (hash % 1_000_000_000) + 1
+}
+
+export function createRuntimeTaskIdFromSeed(seed: string): string {
+  return `runtime-${stableRuntimeTaskId(seed)}`
+}
+
+export function createRuntimeTaskId(runtime: RuntimeTaskCreateRequest['runtime']): string {
   const prefix = runtime === 'codex' ? 'codex' : 'runtime'
   const randomId =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'

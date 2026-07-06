@@ -9,14 +9,15 @@ import { cn } from '@/lib/utils'
 import type { ProjectWorkControls } from '../ChatInput'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerToolbar } from './ComposerToolbar'
-import { ComposerTextarea } from './ComposerTextarea'
+import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
+import { debugComposerEvent, textMetrics } from './composerDebug'
 
 interface ProjectChatComposerProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: () => void
+  onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
   disabledReason?: string
   placeholder: string
@@ -115,6 +116,14 @@ export function ProjectChatComposer({
     const files = Array.from(event.dataTransfer.files)
     if (files.length > 0) onFileSelect(files)
   }
+  const handleShowTextAttachment = (attachment: Attachment) => {
+    const text = attachment.text_content
+    if (!text) return
+
+    onChange(value ? `${value}\n${text}` : text)
+    onRemoveAttachment(attachment.id)
+    window.requestAnimationFrame(() => textareaRef.current?.focus())
+  }
 
   useEffect(() => {
     if (!isTauriRuntime()) return
@@ -164,7 +173,17 @@ export function ProjectChatComposer({
         onDrop={handleDrop}
         onSubmit={event => {
           event.preventDefault()
-          if (canSend) onSubmit()
+          const submittedValue = event.currentTarget.querySelector('textarea')?.value
+          debugComposerEvent('project-form-submit', {
+            canSend,
+            propValue: textMetrics(value),
+            submittedValue: textMetrics(submittedValue),
+            attachmentsCount: attachments.length,
+            codeCommentsCount: codeComments.length,
+            disabled,
+            isStreaming,
+          })
+          if (canSend) onSubmit(submittedValue)
         }}
       >
         <AttachmentBadges
@@ -173,6 +192,7 @@ export function ProjectChatComposer({
           errors={attachmentErrors}
           codeComments={codeComments}
           onRemoveAttachment={onRemoveAttachment}
+          onShowTextAttachment={handleShowTextAttachment}
           onClearCodeComments={onClearCodeComments}
         />
         {disabledReason && (

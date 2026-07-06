@@ -94,14 +94,14 @@ describe('localExecutor', () => {
   })
 
   test('sends local executor requests through the native app command', async () => {
-    invokeMock.mockResolvedValue({ projects: [], chats: [], totalLocalTasks: 0 })
+    invokeMock.mockResolvedValue({ projects: [], chats: [], totalTasks: 0 })
 
     await expect(
       requestLocalExecutor('runtime.tasks.list', { includeArchived: false })
     ).resolves.toEqual({
       projects: [],
       chats: [],
-      totalLocalTasks: 0,
+      totalTasks: 0,
     })
     expect(invokeMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_COMMANDS.request, {
       method: 'runtime.tasks.list',
@@ -121,7 +121,7 @@ describe('localExecutor', () => {
       id: 1,
       payload: {
         event: 'response.completed',
-        payload: { localTaskId: 'task-1' },
+        payload: { taskId: 'task-1' },
       },
     })
     cleanup()
@@ -129,7 +129,7 @@ describe('localExecutor', () => {
     expect(listenMock).toHaveBeenCalledWith(LOCAL_EXECUTOR_EVENT, expect.any(Function))
     expect(handler).toHaveBeenCalledWith({
       event: 'response.completed',
-      payload: { localTaskId: 'task-1' },
+      payload: { taskId: 'task-1' },
     })
     expect(unlisten).toHaveBeenCalled()
   })

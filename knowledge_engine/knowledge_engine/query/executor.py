@@ -12,6 +12,7 @@ from knowledge_engine.retrieval.hierarchical import (
     collect_parent_node_ids,
     merge_parent_records,
 )
+from knowledge_engine.retrieval.query_planning import build_qa_search_hint_plan
 from knowledge_engine.retrieval.search_hints import resolve_search_queries
 from shared.models import RetrievalScope, RuntimeRetrievalConfig, SearchHints
 
@@ -42,6 +43,8 @@ class QueryExecutor:
             query_plan=query_plan,
             search_hints=search_hints,
         )
+        self._apply_retrieval_profile_policy(retrieval_setting)
+        self._apply_qa_search_hints(query, retrieval_setting)
         resolved_queries = resolve_search_queries(query, retrieval_setting)
         resolved_scope = self._normalize_scope(scope)
         self._ensure_retrieval_scope_supported(resolved_scope)
@@ -106,6 +109,8 @@ class QueryExecutor:
                 "keywords",
                 "phrases",
                 "hint_source",
+                "retrieval_profile",
+                "qa_pair_count",
             ):
                 if field in query_plan:
                     retrieval_setting[field] = query_plan[field]
@@ -116,6 +121,59 @@ class QueryExecutor:
                 else dict(search_hints)
             )
         return retrieval_setting
+
+    def _apply_retrieval_profile_policy(
+        self,
+        retrieval_setting: dict[str, Any],
+    ) -> None:
+        if retrieval_setting.get("retrieval_profile") != "qa_pair":
+            return
+
+        if retrieval_setting.get("retrieval_mode") != "vector":
+            retrieval_setting.setdefault("effective_retrieval_policy", "configured")
+            return
+
+        supported_modes = self._get_supported_retrieval_modes()
+        if "hybrid" not in supported_modes:
+            retrieval_setting.setdefault(
+                "effective_retrieval_policy",
+                "qa_pair_hybrid_unsupported",
+            )
+            return
+
+        retrieval_setting["retrieval_mode_before_policy"] = "vector"
+        retrieval_setting["retrieval_mode"] = "hybrid"
+        retrieval_setting.setdefault("vector_weight", 0.6)
+        retrieval_setting.setdefault("keyword_weight", 0.4)
+        retrieval_setting["effective_retrieval_policy"] = "qa_pair_hybrid"
+
+    def _get_supported_retrieval_modes(self) -> list[str]:
+        getter = getattr(self.storage_backend, "get_supported_retrieval_methods", None)
+        if callable(getter):
+            return list(getter())
+        return ["vector"]
+
+    @staticmethod
+    def _apply_qa_search_hints(
+        query: str,
+        retrieval_setting: dict[str, Any],
+    ) -> None:
+        if retrieval_setting.get("retrieval_profile") != "qa_pair":
+            return
+        if any(
+            retrieval_setting.get(field)
+            for field in ("dense_query", "sparse_query", "keywords", "phrases")
+        ):
+            return
+        if retrieval_setting.get("search_hints"):
+            return
+
+        plan = build_qa_search_hint_plan(query)
+        retrieval_setting["dense_query"] = plan.dense_query
+        retrieval_setting["sparse_query"] = plan.sparse_query
+        retrieval_setting["keywords"] = plan.keywords
+        retrieval_setting["phrases"] = plan.phrases
+        retrieval_setting["hint_source"] = "qa_pair_profile"
 
     @staticmethod
     def _normalize_scope(

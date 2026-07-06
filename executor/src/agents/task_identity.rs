@@ -9,8 +9,8 @@ use crate::protocol::ExecutionRequest;
 pub(super) fn task_identity_env(request: &ExecutionRequest) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
 
-    if request.task_id > 0 {
-        env.insert("WEGENT_TASK_ID".to_owned(), request.task_id.to_string());
+    if !request.task_id.trim().is_empty() {
+        env.insert("WEGENT_TASK_ID".to_owned(), request.task_id.clone());
     }
     if let Some(auth_token) = non_empty(request.auth_token.as_deref()) {
         env.insert("AUTH_TOKEN".to_owned(), auth_token.to_owned());

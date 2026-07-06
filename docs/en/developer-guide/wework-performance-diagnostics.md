@@ -37,6 +37,20 @@ The **Debug Panel** command in the Developer Commands menu helps diagnose the cu
 
 The Debug Panel can be expanded, collapsed, refreshed, copied as a snapshot, and cleared. When collapsed, it leaves only a small status bar in the lower-right corner so it does not block the main UI.
 
+## Local Codex Streaming Logs
+
+The local executor keeps Codex delta details enabled by default so developers can diagnose streaming order, phase classification, and final-content overwrite issues. By default, it records raw Codex delta events and run-state classification summaries.
+
+To avoid excessive logs in debug builds during long responses or high-frequency token output, runtime work cache/emit mapping logs are disabled by default. Those logs add extra records for the cache path and UI event dispatch path of the same delta, and are only needed when diagnosing local runtime work routing.
+
+Available environment variables:
+
+```text
+WEGENT_CODEX_STREAM_DEBUG=0          # disable raw Codex delta / classification details
+WEGENT_CODEX_STREAM_DEBUG=1          # enable raw Codex delta / classification details (default)
+WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # enable runtime work cache/emit mapping details
+```
+
 ## Collected Data
 
 When enabled, the diagnostics module records:
@@ -51,7 +65,25 @@ The latest 300 events are kept in memory and exposed through `window.__WEWORK_PE
 
 ## Capturing Evidence
 
-If Web Inspector is available in a debug or release build, run this after the app becomes slow:
+Normal release builds do not compile Tauri Web Inspector support. To investigate a release build, first create a diagnostics build:
+
+```bash
+pnpm --filter wework build:mac:devtools
+```
+
+To create an updater-compatible diagnostics build through the macOS release script, use:
+
+```bash
+bash wework/scripts/release-mac-app.sh --target local --devtools
+```
+
+You can also set `WEWORK_RELEASE_DEVTOOLS=1`. After launching the diagnostics build, press the hidden shortcut to open **Developer Commands**, then select **Open Web Inspector**. To open it automatically at startup, use:
+
+```bash
+WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork
+```
+
+After Web Inspector opens, run this when the app becomes slow:
 
 ```js
 window.__WEWORK_PERF__.snapshot();

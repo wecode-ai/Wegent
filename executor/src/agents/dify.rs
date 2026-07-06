@@ -98,9 +98,9 @@ async fn run_dify(client: Client, request: ExecutionRequest) -> Result<String, S
     validate_config(&config)?;
     let app_mode = fetch_app_mode(&client, &config).await;
     if app_mode == "workflow" {
-        call_workflow_api(&client, &config, request.task_id).await
+        call_workflow_api(&client, &config, &request.task_id).await
     } else {
-        call_chat_api(&client, &config, request.task_id).await
+        call_chat_api(&client, &config, &request.task_id).await
     }
 }
 
@@ -124,7 +124,7 @@ async fn fetch_app_mode(client: &Client, config: &DifyRequestConfig) -> String {
 async fn call_chat_api(
     client: &Client,
     config: &DifyRequestConfig,
-    task_id: i64,
+    task_id: &str,
 ) -> Result<String, String> {
     let mut payload = json!({
         "inputs": config.params,
@@ -191,7 +191,7 @@ async fn call_chat_api(
 async fn call_workflow_api(
     client: &Client,
     config: &DifyRequestConfig,
-    task_id: i64,
+    task_id: &str,
 ) -> Result<String, String> {
     let mut inputs = config.params.clone();
     if !inputs.contains_key("query") && !inputs.contains_key("user_query") {
@@ -333,36 +333,36 @@ fn string_env(env: &Map<String, Value>, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn conversations() -> &'static Mutex<HashMap<i64, String>> {
-    static CONVERSATIONS: OnceLock<Mutex<HashMap<i64, String>>> = OnceLock::new();
+fn conversations() -> &'static Mutex<HashMap<String, String>> {
+    static CONVERSATIONS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     CONVERSATIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn dify_task_ids() -> &'static Mutex<HashMap<i64, String>> {
-    static DIFY_TASK_IDS: OnceLock<Mutex<HashMap<i64, String>>> = OnceLock::new();
+fn dify_task_ids() -> &'static Mutex<HashMap<String, String>> {
+    static DIFY_TASK_IDS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     DIFY_TASK_IDS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn conversation_id(task_id: i64) -> Option<String> {
-    conversations().lock().ok()?.get(&task_id).cloned()
+fn conversation_id(task_id: &str) -> Option<String> {
+    conversations().lock().ok()?.get(task_id).cloned()
 }
 
-fn save_conversation_id(task_id: i64, conversation_id: String) {
+fn save_conversation_id(task_id: &str, conversation_id: String) {
     if let Ok(mut conversations) = conversations().lock() {
-        conversations.insert(task_id, conversation_id);
+        conversations.insert(task_id.to_owned(), conversation_id);
     }
 }
 
-pub fn saved_dify_task_id(task_id: i64) -> Option<String> {
-    dify_task_ids().lock().ok()?.get(&task_id).cloned()
+pub fn saved_dify_task_id(task_id: &str) -> Option<String> {
+    dify_task_ids().lock().ok()?.get(task_id).cloned()
 }
 
-fn save_dify_task_id(task_id: i64, dify_task_id: &str) {
+fn save_dify_task_id(task_id: &str, dify_task_id: &str) {
     let dify_task_id = dify_task_id.trim();
     if dify_task_id.is_empty() {
         return;
     }
     if let Ok(mut task_ids) = dify_task_ids().lock() {
-        task_ids.insert(task_id, dify_task_id.to_owned());
+        task_ids.insert(task_id.to_owned(), dify_task_id.to_owned());
     }
 }

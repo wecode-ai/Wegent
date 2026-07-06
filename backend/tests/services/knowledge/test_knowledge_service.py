@@ -11,7 +11,11 @@ import pytest
 
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
-from app.schemas.knowledge import KnowledgeBaseCreate
+from app.schemas.knowledge import (
+    DocumentSourceType,
+    KnowledgeBaseCreate,
+    KnowledgeDocumentCreate,
+)
 from app.services.context import context_service
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
@@ -54,6 +58,64 @@ class TestKnowledgeServiceCreateKnowledgeBase:
         assert isinstance(retrieval_config, dict)
         assert retrieval_config["retriever_name"] == "retriever-1"
         assert retrieval_config["embedding_config"]["model_name"] == "embedding-1"
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDefaultViewSemantics:
+    def test_notebook_default_view_allows_more_than_50_documents(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="large-notebook-kb", kb_type="notebook"),
+        )
+
+        for index in range(51):
+            KnowledgeService.create_document(
+                db=test_db,
+                knowledge_base_id=knowledge_base_id,
+                user_id=test_user.id,
+                data=KnowledgeDocumentCreate(
+                    name=f"doc-{index}.md",
+                    file_extension="md",
+                    file_size=100,
+                    source_type=DocumentSourceType.TEXT,
+                ),
+            )
+
+        assert KnowledgeService.get_document_count(test_db, knowledge_base_id) == 51
+
+    def test_default_view_can_be_changed_to_notebook_with_more_than_50_documents(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="large-documents-kb", kb_type="classic"),
+        )
+        for index in range(51):
+            KnowledgeService.create_document(
+                db=test_db,
+                knowledge_base_id=knowledge_base_id,
+                user_id=test_user.id,
+                data=KnowledgeDocumentCreate(
+                    name=f"doc-{index}.md",
+                    file_extension="md",
+                    file_size=100,
+                    source_type=DocumentSourceType.TEXT,
+                ),
+            )
+
+        updated = KnowledgeService.update_knowledge_base_type(
+            db=test_db,
+            knowledge_base_id=knowledge_base_id,
+            user_id=test_user.id,
+            new_type="notebook",
+        )
+
+        assert updated is not None
+        assert updated.json["spec"]["kbType"] == "notebook"
 
 
 @pytest.mark.unit

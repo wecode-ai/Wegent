@@ -62,7 +62,9 @@ export function EnvironmentInfoPopover({
   const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
   const deviceTitle = [deviceLabel, deviceDisplayName].filter(Boolean).join(' · ')
   const hasGitInfo = Boolean(info.branchName?.trim())
-  const canShowBranchSelector = hasGitInfo
+  const canShowBranchSelector = Boolean(onListBranches && onCheckoutBranch)
+  const hasDiffStats = Boolean(info.additions || info.deletions)
+  const showChangesSection = hasDiffStats || hasGitInfo || canShowBranchSelector
   const environmentInfoLabel = t('workbench.environment_info')
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
@@ -232,7 +234,7 @@ export function EnvironmentInfoPopover({
               )}
             </section>
 
-            {hasGitInfo && (
+            {showChangesSection && (
               <section
                 data-testid="environment-git-section"
                 className="space-y-0.5 border-t border-border pt-3"
@@ -255,7 +257,7 @@ export function EnvironmentInfoPopover({
                     <span className="text-red-500">{deletions}</span>
                   </span>
                 </button>
-                {canShowBranchSelector && onListBranches && onCheckoutBranch && (
+                {onListBranches && onCheckoutBranch && (
                   <BranchSelector
                     variant="environment"
                     currentBranch={info.branchName}
@@ -266,88 +268,92 @@ export function EnvironmentInfoPopover({
                     onCreateBranch={onCreateBranch}
                   />
                 )}
-                <button
-                  type="button"
-                  data-testid="environment-commit-button"
-                  disabled={!onCommitChanges || commitStatus === 'committing'}
-                  onClick={() => {
-                    setCommitFormOpen(open => !open)
-                    setCommitError(null)
-                  }}
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
-                >
-                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                    <GitCommit className="h-[18px] w-[18px]" />
-                  </span>
-                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                    {t('workbench.environment_commit', '提交')}
-                  </span>
-                  {commitStatus === 'success' && (
-                    <span className="shrink-0 text-xs text-green-500">
-                      {t('workbench.environment_committed', '已提交')}
-                    </span>
-                  )}
-                </button>
-                {commitFormOpen && (
-                  <form className="mb-2 ml-[30px] mt-1 space-y-2" onSubmit={handleSubmitCommit}>
-                    <input
-                      data-testid="environment-commit-message-input"
-                      value={commitMessage}
-                      onChange={event => setCommitMessage(event.target.value)}
-                      className="h-8 w-full rounded-md border border-border bg-background px-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-text-primary"
-                      placeholder={t('workbench.environment_commit_message', '提交说明')}
-                      autoFocus
-                    />
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        data-testid="environment-cancel-commit-button"
-                        onClick={() => {
-                          setCommitFormOpen(false)
-                          setCommitError(null)
-                        }}
-                        className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-hover hover:text-text-primary"
-                      >
-                        {t('workbench.environment_commit_cancel', '取消')}
-                      </button>
-                      <button
-                        type="submit"
-                        data-testid="environment-confirm-commit-button"
-                        disabled={!commitMessage.trim() || commitStatus === 'committing'}
-                        className="h-7 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {commitStatus === 'committing'
-                          ? t('workbench.environment_committing', '提交中')
-                          : t('workbench.environment_commit_confirm', '确认')}
-                      </button>
-                    </div>
-                  </form>
+                {hasGitInfo && (
+                  <>
+                    <button
+                      type="button"
+                      data-testid="environment-commit-button"
+                      disabled={!onCommitChanges || commitStatus === 'committing'}
+                      onClick={() => {
+                        setCommitFormOpen(open => !open)
+                        setCommitError(null)
+                      }}
+                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+                    >
+                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                        <GitCommit className="h-[18px] w-[18px]" />
+                      </span>
+                      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                        {t('workbench.environment_commit', '提交')}
+                      </span>
+                      {commitStatus === 'success' && (
+                        <span className="shrink-0 text-xs text-green-500">
+                          {t('workbench.environment_committed', '已提交')}
+                        </span>
+                      )}
+                    </button>
+                    {commitFormOpen && (
+                      <form className="mb-2 ml-[30px] mt-1 space-y-2" onSubmit={handleSubmitCommit}>
+                        <input
+                          data-testid="environment-commit-message-input"
+                          value={commitMessage}
+                          onChange={event => setCommitMessage(event.target.value)}
+                          className="h-8 w-full rounded-md border border-border bg-background px-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-text-primary"
+                          placeholder={t('workbench.environment_commit_message', '提交说明')}
+                          autoFocus
+                        />
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            data-testid="environment-cancel-commit-button"
+                            onClick={() => {
+                              setCommitFormOpen(false)
+                              setCommitError(null)
+                            }}
+                            className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-hover hover:text-text-primary"
+                          >
+                            {t('workbench.environment_commit_cancel', '取消')}
+                          </button>
+                          <button
+                            type="submit"
+                            data-testid="environment-confirm-commit-button"
+                            disabled={!commitMessage.trim() || commitStatus === 'committing'}
+                            className="h-7 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {commitStatus === 'committing'
+                              ? t('workbench.environment_committing', '提交中')
+                              : t('workbench.environment_commit_confirm', '确认')}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                    <button
+                      type="button"
+                      data-testid="create-pull-request-button"
+                      disabled={!info.createPullRequestUrl}
+                      onClick={handleCreatePullRequest}
+                      className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
+                    >
+                      <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
+                        <GitPullRequest className="h-[18px] w-[18px]" />
+                      </span>
+                      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                        {t('workbench.environment_create_pr', '创建拉取请求')}
+                      </span>
+                    </button>
+
+                    <div className="my-4 h-px bg-border" />
+
+                    <section>
+                      <h3 className="mb-3 text-[13px] text-text-secondary">
+                        {t('workbench.environment_sources', '来源')}
+                      </h3>
+                      <p className="text-[13px] text-text-muted">
+                        {t('workbench.environment_no_sources', '暂无来源')}
+                      </p>
+                    </section>
+                  </>
                 )}
-                <button
-                  type="button"
-                  data-testid="create-pull-request-button"
-                  disabled={!info.createPullRequestUrl}
-                  onClick={handleCreatePullRequest}
-                  className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
-                >
-                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                    <GitPullRequest className="h-[18px] w-[18px]" />
-                  </span>
-                  <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                    {t('workbench.environment_create_pr', '创建拉取请求')}
-                  </span>
-                </button>
-
-                <div className="my-4 h-px bg-border" />
-
-                <section>
-                  <h3 className="mb-3 text-[13px] text-text-secondary">
-                    {t('workbench.environment_sources', '来源')}
-                  </h3>
-                  <p className="text-[13px] text-text-muted">
-                    {t('workbench.environment_no_sources', '暂无来源')}
-                  </p>
-                </section>
               </section>
             )}
           </div>

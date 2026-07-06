@@ -832,11 +832,10 @@ impl SourceTaskIdentity {
             field: "source",
             expected: "an object",
         })?;
-        let local_task_id = string_member(object, "localTaskId")
-            .or_else(|| string_member(object, "local_task_id"))
-            .ok_or(ForkTransferError::MissingField {
-                code: "missing_local_task_id",
-                field: "localTaskId",
+        let local_task_id =
+            string_member(object, "taskId").ok_or(ForkTransferError::MissingField {
+                code: "missing_task_id",
+                field: "taskId",
             })?;
         let runtime_handle = object
             .get("runtimeHandle")
@@ -869,11 +868,10 @@ impl RuntimeThreadMapping {
                 field: "importResult",
                 expected: "an object",
             })?;
-        let child_local_task_id = string_member(object, "localTaskId")
-            .or_else(|| string_member(object, "local_task_id"))
-            .ok_or(ForkTransferError::MissingField {
-                code: "missing_local_task_id",
-                field: "localTaskId",
+        let child_local_task_id =
+            string_member(object, "taskId").ok_or(ForkTransferError::MissingField {
+                code: "missing_task_id",
+                field: "taskId",
             })?;
         let child_workspace_path = string_member(object, "workspacePath")
             .or_else(|| string_member(object, "workspace_path"))

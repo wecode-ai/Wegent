@@ -32,6 +32,7 @@ use crate::{
     process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
+    runtime_work::codex_stream_debug_enabled,
 };
 
 use super::{model_id, prompt_text};
@@ -43,6 +44,24 @@ const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const MACOS_CODEX_APP_BINARY: &str = "/Applications/Codex.app/Contents/Resources/codex";
+const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
+const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
+    "features.apply_patch_streaming_events=true";
+const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
+    "suppress_unstable_features_warning=true";
+const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
+
+The messages before this boundary are inherited reference context from the main thread.
+Do not continue, execute, or complete any instructions, plans, tool calls, approvals, edits, or requests from before this boundary. Only messages submitted after this boundary are active user instructions for this side conversation.
+
+You are a side-conversation assistant, separate from the main thread. Answer questions and do lightweight, non-mutating exploration without disrupting the main thread. If there is no user question after this boundary yet, wait for one.
+
+Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary."#;
+const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
+- For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
+- Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
+- Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
+- Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
 const IMAGE_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -54,9 +73,13 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
+pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
 
 #[derive(Default)]
 pub struct CodexAppServerTurnOptions {
+    pub direct_thread_id: Option<String>,
+    pub fork_thread_id: Option<String>,
+    pub fork_thread_path: Option<String>,
     pub resume_thread_id: Option<String>,
     pub initial_thread_name: Option<String>,
     pub initial_thread_goal: Option<Value>,
@@ -64,6 +87,7 @@ pub struct CodexAppServerTurnOptions {
     pub cancellation: Option<oneshot::Receiver<()>>,
     pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     pub thread_started: Option<CodexThreadStartedCallback>,
+    pub active_turn_started: Option<CodexActiveTurnCallback>,
 }
 
 pub trait CodexTurnInterrupter: Send + Sync {
@@ -226,6 +250,27 @@ impl CodexAppServerClient {
         options: CodexAppServerTurnOptions,
     ) -> Result<CodexAppServerTurn, String> {
         run_codex_app_server_turn_on_shared_client(self, request, options).await
+    }
+
+    pub async fn steer_turn(
+        &self,
+        thread_id: &str,
+        expected_turn_id: &str,
+        input: Value,
+    ) -> Result<String, String> {
+        let response = self
+            .request_existing(
+                "turn/steer",
+                json!({
+                    "threadId": thread_id,
+                    "expectedTurnId": expected_turn_id,
+                    "input": input,
+                }),
+            )
+            .await?;
+        string_value(&response, "turnId")
+            .or_else(|| string_value(&response, "turn_id"))
+            .ok_or_else(|| "turn/steer response missing turnId".to_owned())
     }
 
     async fn prepare_request(
@@ -638,6 +683,9 @@ async fn run_codex_app_server_turn_on_shared_client(
 ) -> Result<CodexAppServerTurn, String> {
     let prepared = prepare_codex_execution_request(request);
     let CodexAppServerTurnOptions {
+        direct_thread_id,
+        fork_thread_id,
+        fork_thread_path,
         resume_thread_id,
         initial_thread_name,
         initial_thread_goal,
@@ -645,9 +693,10 @@ async fn run_codex_app_server_turn_on_shared_client(
         cancellation,
         request_user_input_answers,
         thread_started,
+        active_turn_started,
     } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
-    let mut fields = task_fields(prepared.request.task_id, prepared.request.subtask_id);
+    let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", client.binary.clone()));
     if let Some(cwd) = prepared.request.cwd() {
         fields.push(("cwd", cwd.to_owned()));
@@ -658,31 +707,59 @@ async fn run_codex_app_server_turn_on_shared_client(
         let request = &prepared.request;
         let mut notification_rx = client.subscribe_notifications().await?;
         let mut state = CodexRunState::default();
+        let direct_thread_id = direct_thread_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|thread_id| !thread_id.is_empty())
+            .map(str::to_owned);
         let resuming_thread = resume_thread_id.is_some();
-        let (thread_operation, thread_params) = if let Some(thread_id) = resume_thread_id {
-            (
-                "thread/resume",
-                thread_resume_params(&thread_id, request, &launch_config),
-            )
+        let forking_thread = fork_thread_id.is_some();
+        let thread_id = if let Some(thread_id) = direct_thread_id {
+            state.set_root_thread_id(thread_id.clone());
+            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+            thread_fields.push(("operation", "thread/direct".to_owned()));
+            thread_fields.push(("thread_id", thread_id.clone()));
+            log_executor_event("codex shared thread request skipped", &thread_fields);
+            thread_id
         } else {
-            ("thread/start", thread_start_params(request, &launch_config))
+            let (thread_operation, thread_params) = if let Some(thread_id) = fork_thread_id {
+                (
+                    "thread/fork",
+                    thread_fork_params(
+                        &thread_id,
+                        fork_thread_path.as_deref(),
+                        request,
+                        &launch_config,
+                    ),
+                )
+            } else if let Some(thread_id) = resume_thread_id {
+                (
+                    "thread/resume",
+                    thread_resume_params(&thread_id, request, &launch_config),
+                )
+            } else {
+                ("thread/start", thread_start_params(request, &launch_config))
+            };
+            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+            thread_fields.push(("operation", thread_operation.to_owned()));
+            log_executor_event("codex shared thread request started", &thread_fields);
+            let thread = client.request(thread_operation, thread_params).await?;
+            let thread_id = thread
+                .get("thread")
+                .and_then(|thread| thread.get("id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    format!("codex app-server {thread_operation} did not return thread.id")
+                })?
+                .to_owned();
+            state.set_root_thread_id(thread_id.clone());
+            thread_fields.push(("thread_id", thread_id.clone()));
+            log_executor_event("codex shared thread request finished", &thread_fields);
+            thread_id
         };
-        let mut thread_fields = task_fields(request.task_id, request.subtask_id);
-        thread_fields.push(("operation", thread_operation.to_owned()));
-        log_executor_event("codex shared thread request started", &thread_fields);
-        let thread = client.request(thread_operation, thread_params).await?;
-        let thread_id = thread
-            .get("thread")
-            .and_then(|thread| thread.get("id"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("codex app-server {thread_operation} did not return thread.id"))?
-            .to_owned();
-        state.set_root_thread_id(thread_id.clone());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
-        thread_fields.push(("thread_id", thread_id.clone()));
-        log_executor_event("codex shared thread request finished", &thread_fields);
         if let Some(sender) = &notifications {
             let _ = sender.send(json!({
                 "method": "thread/started",
@@ -693,42 +770,52 @@ async fn run_codex_app_server_turn_on_shared_client(
                 }
             }));
         }
-
-        let mut goal_run_active = false;
-        if let Some(goal) = initial_thread_goal.as_ref() {
-            let goal_params = thread_goal_set_params(&thread_id, goal)?;
-            let goal_response = client.request("thread/goal/set", goal_params).await?;
-            if goal_response_goal_is_active(&goal_response) {
-                goal_run_active = true;
-                state.set_goal_status("active");
-            }
-        } else if resuming_thread {
-            if let Ok(goal_response) = client
-                .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
-                .await
-            {
-                if goal_response_goal_is_active(&goal_response) {
-                    goal_run_active = true;
-                    state.set_goal_status("active");
-                }
-            }
-        }
-
-        if let Some(name) = initial_thread_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-        {
+        if forking_thread && request.ephemeral {
             client
                 .request(
-                    "thread/name/set",
-                    json!({"threadId": thread_id.clone(), "name": name}),
+                    "thread/inject_items",
+                    side_boundary_inject_params(&thread_id),
                 )
                 .await?;
         }
 
+        let mut goal_run_active = false;
+        if !request.ephemeral {
+            if let Some(goal) = initial_thread_goal.as_ref() {
+                let goal_params = thread_goal_set_params(&thread_id, goal)?;
+                let goal_response = client.request("thread/goal/set", goal_params).await?;
+                if goal_response_goal_is_active(&goal_response) {
+                    goal_run_active = true;
+                    state.set_goal_status("active");
+                }
+            } else if resuming_thread {
+                if let Ok(goal_response) = client
+                    .request("thread/goal/get", json!({"threadId": thread_id.clone()}))
+                    .await
+                {
+                    if goal_response_goal_is_active(&goal_response) {
+                        goal_run_active = true;
+                        state.set_goal_status("active");
+                    }
+                }
+            }
+
+            if let Some(name) = initial_thread_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                client
+                    .request(
+                        "thread/name/set",
+                        json!({"threadId": thread_id.clone(), "name": name}),
+                    )
+                    .await?;
+            }
+        }
+
         let turn_input = turn_input(&request.prompt);
-        let mut turn_fields = task_fields(request.task_id, request.subtask_id);
+        let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
         turn_fields.push(("thread_id", thread_id.clone()));
         turn_fields.push(("input_items", turn_input.len().to_string()));
         turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
@@ -754,6 +841,11 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         };
         let active_turn_id = turn_start_response_turn_id(&turn);
+        if let (Some(turn_id), Some(callback)) =
+            (active_turn_id.as_deref(), active_turn_started.as_ref())
+        {
+            callback(thread_id.clone(), turn_id.to_owned());
+        }
         let outcome_result = read_shared_turn_notifications(
             client,
             &mut notification_rx,
@@ -765,6 +857,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 cancellation,
                 request_user_input_answers,
                 goal_run_active,
+                active_turn_started,
             },
         )
         .await;
@@ -797,6 +890,9 @@ pub async fn run_codex_app_server_turn_with_cancel(
 ) -> Result<CodexAppServerTurn, String> {
     let prepared = prepare_codex_execution_request(request);
     let CodexAppServerTurnOptions {
+        direct_thread_id,
+        fork_thread_id,
+        fork_thread_path,
         resume_thread_id,
         initial_thread_name,
         initial_thread_goal,
@@ -806,7 +902,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
         ..
     } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
-    let mut fields = task_fields(prepared.request.task_id, prepared.request.subtask_id);
+    let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
     fields.push(("binary", resolve_codex_binary(binary)));
     if let Some(cwd) = prepared.request.cwd() {
         fields.push(("cwd", cwd.to_owned()));
@@ -853,32 +949,60 @@ pub async fn run_codex_app_server_turn_with_cancel(
         .await?;
 
         let request = &prepared.request;
-        let (thread_operation, thread_params) = if let Some(thread_id) = resume_thread_id {
-            (
-                "thread/resume",
-                thread_resume_params(&thread_id, request, &launch_config),
-            )
+        let direct_thread_id = direct_thread_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|thread_id| !thread_id.is_empty())
+            .map(str::to_owned);
+        let forking_thread = fork_thread_id.is_some();
+        let thread_id = if let Some(thread_id) = direct_thread_id {
+            state.set_root_thread_id(thread_id.clone());
+            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+            thread_fields.push(("operation", "thread/direct".to_owned()));
+            thread_fields.push(("thread_id", thread_id.clone()));
+            log_executor_event("codex thread request skipped", &thread_fields);
+            thread_id
         } else {
-            ("thread/start", thread_start_params(request, &launch_config))
+            let (thread_operation, thread_params) = if let Some(thread_id) = fork_thread_id {
+                (
+                    "thread/fork",
+                    thread_fork_params(
+                        &thread_id,
+                        fork_thread_path.as_deref(),
+                        request,
+                        &launch_config,
+                    ),
+                )
+            } else if let Some(thread_id) = resume_thread_id {
+                (
+                    "thread/resume",
+                    thread_resume_params(&thread_id, request, &launch_config),
+                )
+            } else {
+                ("thread/start", thread_start_params(request, &launch_config))
+            };
+            let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
+            thread_fields.push(("operation", thread_operation.to_owned()));
+            log_executor_event("codex thread request started", &thread_fields);
+            let thread = with_rpc_timeout(
+                thread_operation,
+                timeout_seconds,
+                rpc.request(thread_operation, thread_params, &mut state),
+            )
+            .await?;
+            let thread_id = thread
+                .get("thread")
+                .and_then(|thread| thread.get("id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    format!("codex app-server {thread_operation} did not return thread.id")
+                })?
+                .to_owned();
+            state.set_root_thread_id(thread_id.clone());
+            thread_fields.push(("thread_id", thread_id.clone()));
+            log_executor_event("codex thread request finished", &thread_fields);
+            thread_id
         };
-        let mut thread_fields = task_fields(request.task_id, request.subtask_id);
-        thread_fields.push(("operation", thread_operation.to_owned()));
-        log_executor_event("codex thread request started", &thread_fields);
-        let thread = with_rpc_timeout(
-            thread_operation,
-            timeout_seconds,
-            rpc.request(thread_operation, thread_params, &mut state),
-        )
-        .await?;
-        let thread_id = thread
-            .get("thread")
-            .and_then(|thread| thread.get("id"))
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("codex app-server {thread_operation} did not return thread.id"))?
-            .to_owned();
-        state.set_root_thread_id(thread_id.clone());
-        thread_fields.push(("thread_id", thread_id.clone()));
-        log_executor_event("codex thread request finished", &thread_fields);
         if let Some(sender) = &notifications {
             let _ = sender.send(json!({
                 "method": "thread/started",
@@ -889,34 +1013,48 @@ pub async fn run_codex_app_server_turn_with_cancel(
                 }
             }));
         }
-        if let Some(goal) = initial_thread_goal.as_ref() {
-            let goal_params = thread_goal_set_params(&thread_id, goal)?;
+        if forking_thread && request.ephemeral {
             with_rpc_timeout(
-                "thread/goal/set",
-                timeout_seconds,
-                rpc.request("thread/goal/set", goal_params, &mut state),
-            )
-            .await?;
-        }
-        if let Some(name) = initial_thread_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-        {
-            with_rpc_timeout(
-                "thread/name/set",
+                "thread/inject_items",
                 timeout_seconds,
                 rpc.request(
-                    "thread/name/set",
-                    json!({"threadId": thread_id.clone(), "name": name}),
+                    "thread/inject_items",
+                    side_boundary_inject_params(&thread_id),
                     &mut state,
                 ),
             )
             .await?;
         }
+        if !request.ephemeral {
+            if let Some(goal) = initial_thread_goal.as_ref() {
+                let goal_params = thread_goal_set_params(&thread_id, goal)?;
+                with_rpc_timeout(
+                    "thread/goal/set",
+                    timeout_seconds,
+                    rpc.request("thread/goal/set", goal_params, &mut state),
+                )
+                .await?;
+            }
+            if let Some(name) = initial_thread_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            {
+                with_rpc_timeout(
+                    "thread/name/set",
+                    timeout_seconds,
+                    rpc.request(
+                        "thread/name/set",
+                        json!({"threadId": thread_id.clone(), "name": name}),
+                        &mut state,
+                    ),
+                )
+                .await?;
+            }
+        }
 
         let turn_input = turn_input(&request.prompt);
-        let mut turn_fields = task_fields(request.task_id, request.subtask_id);
+        let mut turn_fields = task_fields(&request.task_id, &request.subtask_id);
         turn_fields.push(("thread_id", thread_id.clone()));
         turn_fields.push(("input_items", turn_input.len().to_string()));
         turn_fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
@@ -993,6 +1131,7 @@ struct SharedTurnNotificationOptions {
     cancellation: Option<oneshot::Receiver<()>>,
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     goal_run_active: bool,
+    active_turn_started: Option<CodexActiveTurnCallback>,
 }
 
 async fn read_shared_turn_notifications(
@@ -1042,6 +1181,11 @@ async fn read_shared_turn_notifications(
         log_codex_raw_turn_message(&message);
 
         if let Some(turn_id) = turn_started_notification_turn_id(&message) {
+            if options.active_turn_id.as_deref() != Some(turn_id.as_str()) {
+                if let Some(callback) = options.active_turn_started.as_ref() {
+                    callback(thread_id.to_owned(), turn_id.clone());
+                }
+            }
             options.active_turn_id = Some(turn_id);
             if cancel_requested {
                 if let Some(turn_id) = options.active_turn_id.as_deref() {
@@ -1720,6 +1864,10 @@ fn log_codex_run_state_text(
     item: &Value,
     text: &str,
 ) {
+    if source == "delta" && !codex_stream_debug_enabled() {
+        return;
+    }
+
     log_executor_event(
         "codex run state text classification",
         &[
@@ -1771,6 +1919,14 @@ fn log_codex_run_state_error(params: &Value) {
 
 fn log_codex_raw_turn_message(message: &Value) {
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+    if matches!(
+        method,
+        "item/agentMessage/delta" | "item/reasoning/delta" | "item/reasoningSummary/delta"
+    ) && !codex_stream_debug_enabled()
+    {
+        return;
+    }
+
     if !matches!(
         method,
         "item/agentMessage/delta"
@@ -1924,6 +2080,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     launch_config
         .config_overrides
         .push(shell_path_config_override());
+    launch_config
+        .config_overrides
+        .extend(codex_streaming_patch_config_overrides());
 
     if let Some(model) = &model {
         launch_config
@@ -1986,6 +2145,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         .extend(global_mcp_config_overrides());
     launch_config
         .config_overrides
+        .extend(cdp_browser_mcp_config_overrides(request));
+    launch_config
+        .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
     launch_config
 }
@@ -1995,6 +2157,13 @@ fn shell_path_config_override() -> String {
         env::var("PATH").ok().as_deref().unwrap_or_default(),
     );
     format!("shell_environment_policy.set.PATH={}", toml_value(&path))
+}
+
+fn codex_streaming_patch_config_overrides() -> Vec<String> {
+    vec![
+        CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned(),
+        CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned(),
+    ]
 }
 
 fn thread_config(
@@ -2329,6 +2498,110 @@ fn global_mcp_config_overrides() -> Vec<String> {
     overrides
 }
 
+fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
+    let command = executor_home().join("bin/browser-mcp-server");
+    let mut overrides = vec![
+        format!(
+            "developer_instructions={}",
+            toml_value(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
+        ),
+        format!(
+            "skills.config={}",
+            serde_json::to_string(&json!([
+                {
+                    "name": "browser:control-in-app-browser",
+                    "enabled": false,
+                },
+                {
+                    "name": "chrome:control-chrome",
+                    "enabled": false,
+                },
+            ]))
+            .unwrap_or_else(|_| "[]".to_owned())
+        ),
+        "features.non_prefixed_mcp_tool_names=true".to_owned(),
+        format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "command"]),
+            toml_value(&command.display().to_string())
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "startup_timeout_sec"
+            ]),
+            15
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "tool_timeout_sec"
+            ]),
+            60
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "env",
+                "WEWORK_BROWSER_MCP_TARGET"
+            ]),
+            toml_value("embedded")
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "env",
+                "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
+            ]),
+            toml_value("http://127.0.0.1:9231")
+        ),
+    ];
+
+    if let Some(label) = embedded_browser_label(request) {
+        overrides.push(format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
+                "env",
+                "WEWORK_EMBEDDED_BROWSER_LABEL"
+            ]),
+            toml_value(&label)
+        ));
+    }
+
+    overrides
+}
+
+fn embedded_browser_label(request: &ExecutionRequest) -> Option<String> {
+    let task_id = request.task_id.trim();
+    if task_id.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "workspace-browser-{}",
+        task_id
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                    character
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+    ))
+}
+
 fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> {
     let key = toml_key_path(&["mcp_servers", name]);
     let server_type = server
@@ -2435,7 +2708,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
     );
 
     let mut generated_files = Vec::new();
-    let subtask_id = attachment_subtask_id(&attachments, request.subtask_id);
+    let subtask_id = attachment_subtask_id(&attachments, &request.subtask_id);
     let mut success = Vec::new();
     let mut failed = Vec::new();
     let mut local_images = Vec::new();
@@ -2480,7 +2753,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
             &request.prompt,
             &success,
             &failed,
-            Some(request.task_id),
+            Some(request.task_id.clone()),
             Some(subtask_id),
         );
     }
@@ -2542,16 +2815,16 @@ fn attachment_record(value: &Value) -> Option<AttachmentRecord> {
         subtask_id: value
             .get("subtask_id")
             .or_else(|| value.get("subtaskId"))
-            .and_then(value_i64),
+            .and_then(value_string),
         error: value.get("error").and_then(value_string),
     })
 }
 
-fn attachment_subtask_id(attachments: &[AttachmentRecord], fallback: i64) -> i64 {
+fn attachment_subtask_id(attachments: &[AttachmentRecord], fallback: &str) -> String {
     attachments
         .iter()
-        .find_map(|attachment| attachment.subtask_id)
-        .unwrap_or(fallback)
+        .find_map(|attachment| attachment.subtask_id.clone())
+        .unwrap_or_else(|| fallback.to_owned())
 }
 
 fn is_image_attachment(attachment: &AttachmentRecord) -> bool {
@@ -2943,7 +3216,53 @@ fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchCo
         "approvalPolicy".to_owned(),
         Value::String("never".to_owned()),
     );
+    if request.ephemeral {
+        params.insert("ephemeral".to_owned(), Value::Bool(true));
+    }
     Value::Object(params)
+}
+
+fn thread_fork_params(
+    thread_id: &str,
+    thread_path: Option<&str>,
+    request: &ExecutionRequest,
+    launch_config: &CodexLaunchConfig,
+) -> Value {
+    let mut params = serde_json::Map::new();
+    params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+    if let Some(path) = thread_path.map(str::trim).filter(|path| !path.is_empty()) {
+        params.insert("path".to_owned(), Value::String(path.to_owned()));
+    }
+    params.insert("excludeTurns".to_owned(), Value::Bool(true));
+    if let Some(model) = model_id(request) {
+        params.insert("model".to_owned(), Value::String(model));
+    }
+    append_thread_launch_params(&mut params, launch_config);
+    if let Some(cwd) = request.cwd() {
+        params.insert("cwd".to_owned(), Value::String(cwd.to_owned()));
+    }
+    params.insert(
+        "approvalPolicy".to_owned(),
+        Value::String("never".to_owned()),
+    );
+    if request.ephemeral {
+        params.insert("ephemeral".to_owned(), Value::Bool(true));
+    }
+    Value::Object(params)
+}
+
+fn side_boundary_inject_params(thread_id: &str) -> Value {
+    json!({
+        "threadId": thread_id,
+        "items": [{
+            "type": "message",
+            "role": "user",
+            "content": [{
+                "type": "input_text",
+                "text": SIDE_BOUNDARY_PROMPT,
+            }],
+        }],
+    })
 }
 
 fn thread_goal_set_params(thread_id: &str, goal: &Value) -> Result<Value, String> {
@@ -3226,6 +3545,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn codex_launch_config_enables_streaming_patch_updates() {
+        let request = ExecutionRequest {
+            prompt: Value::String("create a file".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5-codex",
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+
+        assert!(launch_config
+            .config_overrides
+            .contains(&CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned()));
+        assert!(launch_config
+            .config_overrides
+            .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
+    }
+
+    #[test]
     fn codex_run_state_keeps_commentary_agent_delta_out_of_final_content() {
         let mut state = CodexRunState::default();
 
@@ -3459,6 +3798,73 @@ mod tests {
             "high"
         );
         assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    }
+
+    #[test]
+    fn codex_launch_config_includes_cdp_browser_mcp_server() {
+        let _lock = crate::test_env::lock();
+        let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
+        let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
+        env::set_var("WEGENT_EXECUTOR_HOME", &home);
+        let request = ExecutionRequest {
+            task_id: "task:123".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+        let params = thread_start_params(&request, &launch_config);
+        let config = params
+            .get("config")
+            .and_then(Value::as_object)
+            .expect("thread config should be present");
+        let developer_instructions = config["developer_instructions"]
+            .as_str()
+            .expect("browser routing developer instructions should be present");
+
+        assert!(developer_instructions.contains("browser_navigate"));
+        assert!(developer_instructions.contains("browser_take_screenshot"));
+        assert!(developer_instructions.contains("Wework 内置浏览器"));
+        assert!(!developer_instructions.contains("playwright"));
+        assert!(developer_instructions.contains("agent.browsers.get(\"iab\")"));
+        assert!(developer_instructions.contains("external Chrome"));
+        assert_eq!(
+            config["skills.config"],
+            json!([
+                {
+                    "name": "browser:control-in-app-browser",
+                    "enabled": false,
+                },
+                {
+                    "name": "chrome:control-chrome",
+                    "enabled": false,
+                },
+            ])
+        );
+        assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
+        assert_eq!(
+            config["mcp_servers.wework_browser.command"],
+            home.join("bin/browser-mcp-server").display().to_string()
+        );
+        assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
+        assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
+        assert_eq!(
+            config["mcp_servers.wework_browser.env.WEWORK_BROWSER_MCP_TARGET"],
+            "embedded"
+        );
+        assert_eq!(
+            config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
+            "http://127.0.0.1:9231"
+        );
+        assert_eq!(
+            config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
+            "workspace-browser-task-123"
+        );
+
+        if let Some(old_home) = old_home {
+            env::set_var("WEGENT_EXECUTOR_HOME", old_home);
+        } else {
+            env::remove_var("WEGENT_EXECUTOR_HOME");
+        }
     }
 
     #[test]

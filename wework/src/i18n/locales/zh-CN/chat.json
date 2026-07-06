@@ -16,6 +16,7 @@
     "running": "正在处理"
   },
   "assistant_status": {
+    "stopped": "已停止",
     "stopped_after": "你在 {{duration}} 后停止了"
   },
   "request_user_input": {
@@ -52,6 +53,10 @@
     "open_label": "打开 {{path}}"
   },
   "file_changes": {
+    "editing_files": "正在编辑 {{count}} 个文件",
+    "creating_files": "正在创建 {{count}} 个文件",
+    "deleting_files": "正在删除 {{count}} 个文件",
+    "renaming_files": "正在重命名 {{count}} 个文件",
     "edited_files": "已编辑 {{count}} 个文件",
     "created_files": "已创建 {{count}} 个文件",
     "deleted_files": "已删除 {{count}} 个文件",
@@ -66,6 +71,7 @@
     "review": "审核",
     "review_title": "本轮文件变更",
     "preview_file_label": "预览 {{path}} 的文件变更",
+    "copy_code": "复制代码",
     "revert": "撤销",
     "confirm_revert_title": "撤销本轮文件变更？",
     "confirm_revert_description": "仅当反向补丁可安全应用时才会修改工作区，不会覆盖后续变更。",

@@ -35,15 +35,15 @@ use claude_code::{
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub use codex::{
-    run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexAppServerClient,
-    CodexAppServerEngine, CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState,
-    CodexNotificationSender, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-    CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
+    run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
+    CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurn, CodexAppServerTurnOptions,
+    CodexCancellationState, CodexNotificationSender, CodexRequestUserInputReceiver,
+    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
 
-const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
+const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCommandPlanner {
@@ -128,7 +128,7 @@ impl AgentEngine for AgentProcessEngine {
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
-            let mut fields = task_fields(request.task_id, request.subtask_id);
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
             fields.push(("agent", format!("{agent_kind:?}")));
             log_executor_event("agent dispatch", &fields);
 
@@ -175,7 +175,7 @@ impl AgentEngine for AgentProcessEngine {
                                     .await
                                     .unwrap_or_else(|error| {
                                         let mut failed_fields =
-                                            task_fields(request.task_id, request.subtask_id);
+                                            task_fields(&request.task_id, &request.subtask_id);
                                         failed_fields.push(("error_len", error.len().to_string()));
                                         log_executor_event(
                                             "claude runtime capability preparation failed",
@@ -218,7 +218,7 @@ impl AgentEngine for AgentProcessEngine {
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
-            let mut fields = task_fields(request.task_id, request.subtask_id);
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
             fields.push(("agent", format!("{agent_kind:?}")));
             log_executor_event("agent dispatch", &fields);
 
@@ -264,7 +264,7 @@ impl AgentEngine for AgentProcessEngine {
                                     .await
                                     .unwrap_or_else(|error| {
                                         let mut failed_fields =
-                                            task_fields(request.task_id, request.subtask_id);
+                                            task_fields(&request.task_id, &request.subtask_id);
                                         failed_fields.push(("error_len", error.len().to_string()));
                                         log_executor_event(
                                             "claude runtime capability preparation failed",
@@ -353,6 +353,6 @@ mod tests {
         let _old_timeout = EnvGuard::set("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS", "1");
         let _timeout = EnvGuard::remove("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS");
 
-        assert_eq!(claude_code_process_timeout_seconds(), 3600);
+        assert_eq!(claude_code_process_timeout_seconds(), 86_400);
     }
 }
