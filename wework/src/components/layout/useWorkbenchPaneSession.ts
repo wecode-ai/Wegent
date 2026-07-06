@@ -1017,7 +1017,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         }
 
         if (hasCodeComments) {
-          void sendCurrentInput(submittedInput, { codeCommentContexts })
+          const sent = await sendCurrentInput(submittedInput, { codeCommentContexts })
+          if (sent) {
+            appendLocalUserMessage(
+              submittedInput || i18n.t('workbench.code_comment_fallback'),
+              currentAttachments
+            )
+            setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
+            setCodeCommentContexts([])
+          }
           return
         }
 
@@ -1048,6 +1056,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       appendLocalUserMessage,
       codeCommentContexts,
       currentRuntimeTask,
+      dispatchMessages,
       goalDraftActive,
       getRuntimeModelFields,
       input,
@@ -1085,7 +1094,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       })
       setQueuedMessages(messages => messages.filter(message => message.id !== id))
     },
-    [projectChat, queuedMessages]
+    [projectChat, queuedMessages, setInput]
   )
 
   const sendQueuedAsGuidance = useCallback(
@@ -1182,7 +1191,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     if (!goal) return
     setInput(goal.objective)
     setGoalDraftActive(true)
-  }, [goal])
+  }, [goal, setInput])
 
   const updateCurrentGoalStatus = useCallback(
     async (status: RuntimeGoal['status']) => {

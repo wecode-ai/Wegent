@@ -33,6 +33,7 @@ import type {
   UnifiedModel,
   User,
 } from '@/types/api'
+import type { CodeCommentContext } from '@/types/workspace-files'
 
 const localExecutorMocks = vi.hoisted(() => ({
   ensureLocalExecutorStarted: vi.fn(),
@@ -210,6 +211,20 @@ function createLocalImageAttachment(overrides: Partial<Attachment> = {}): Attach
     local_preview_url: LOCAL_IMAGE_ATTACHMENT_PATH,
     ...overrides,
   })
+}
+
+function createCodeCommentContext(overrides: Partial<CodeCommentContext> = {}): CodeCommentContext {
+  return {
+    id: 'code-comment-1',
+    filePath: '/workspace/project-alpha/src/main.ts',
+    fileName: 'main.ts',
+    startLine: 3,
+    endLine: 5,
+    selectedText: 'const value = 1',
+    comment: 'Explain this value',
+    createdAt: '2026-07-06T00:00:00.000Z',
+    ...overrides,
+  }
 }
 
 function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
@@ -1025,6 +1040,7 @@ function FollowUpProbe() {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
   const imageAttachment = createImageAttachment()
   const localImageAttachment = createLocalImageAttachment()
+  const codeComment = createCodeCommentContext()
   const firstQueuedMessage = paneSession.queuedMessages[0]
   const gptModel =
     workbench.projectChat.models.find(model => model.name === 'gpt-5-2025-08-07') ?? null
@@ -1044,6 +1060,7 @@ function FollowUpProbe() {
         {paneSession.queuedMessages.map(message => message.notice ?? '').join('|')}
       </span>
       <span data-testid="runtime-attachment-count">{workbench.projectChat.attachments.length}</span>
+      <span data-testid="runtime-code-comment-count">{paneSession.codeCommentContexts.length}</span>
       <span data-testid="follow-up-current-runtime-task">
         {currentRuntimeTask
           ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
@@ -1108,6 +1125,9 @@ function FollowUpProbe() {
         onClick={() => workbench.projectChat.addExistingAttachment(localImageAttachment)}
       >
         add local image attachment
+      </button>
+      <button type="button" onClick={() => paneSession.addCodeComment(codeComment)}>
+        add code comment
       </button>
       <button
         type="button"
@@ -3919,6 +3939,57 @@ describe('WorkbenchProvider runtime tasks', () => {
       modelOptions: { collaborationMode: 'default' },
     })
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+  })
+
+  test('sends code comment context with current runtime task follow-up messages', async () => {
+    const sendRuntimeMessage = vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'first message' }],
+      }),
+      sendRuntimeMessage,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(
+      <>
+        <RuntimeOpenProbe />
+        <FollowUpProbe />
+      </>,
+      services
+    )
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
+    )
+    await userEvent.click(screen.getByText('add code comment'))
+    expect(screen.getByTestId('runtime-code-comment-count')).toHaveTextContent('1')
+    await userEvent.click(screen.getByText('send follow-up'))
+
+    await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
+    expect(sendRuntimeMessage).toHaveBeenCalledWith({
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      },
+      message: expect.stringContaining('<code_comment_context>'),
+      modelOptions: { collaborationMode: 'default' },
+    })
+    expect(sendRuntimeMessage.mock.calls[0][0].message).toMatch(/code_comment/)
+    expect(sendRuntimeMessage.mock.calls[0][0].message).toContain('src/main.ts')
+    expect(sendRuntimeMessage.mock.calls[0][0].message).toContain('Explain this value')
+    expect(screen.getByTestId('runtime-code-comment-count')).toHaveTextContent('0')
+    expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent(/代码评论|code comments/)
   })
 
   test('keeps project chat composer state scoped to each runtime pane', async () => {
