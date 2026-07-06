@@ -66,6 +66,8 @@ const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
+const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
+const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
@@ -3220,13 +3222,14 @@ fn first_message_search_result(
         let Some((match_start, match_end)) = text_match(&content, query) else {
             continue;
         };
+        let snippet = bounded_search_snippet(&content, match_start, match_end);
         return Some(search_result_item(
             link,
             device_id,
             SearchResultMatch {
-                snippet: content,
-                match_start,
-                match_end,
+                snippet: snippet.text,
+                match_start: snippet.match_start,
+                match_end: snippet.match_end,
                 message_id: string_field(&message, "id").unwrap_or_default(),
                 message_role: string_field(&message, "role")
                     .unwrap_or_else(|| "message".to_owned()),
@@ -3235,6 +3238,56 @@ fn first_message_search_result(
         ));
     }
     None
+}
+
+struct SearchSnippet {
+    text: String,
+    match_start: usize,
+    match_end: usize,
+}
+
+fn bounded_search_snippet(text: &str, match_start: usize, match_end: usize) -> SearchSnippet {
+    let total_chars = text.chars().count();
+    if total_chars <= SEARCH_SNIPPET_MAX_CHARS {
+        return SearchSnippet {
+            text: text.to_owned(),
+            match_start,
+            match_end,
+        };
+    }
+
+    let match_start_char = text[..match_start].chars().count();
+    let match_end_char = text[..match_end].chars().count();
+    let match_chars = match_end_char.saturating_sub(match_start_char);
+    let context_budget = SEARCH_SNIPPET_MAX_CHARS.saturating_sub(match_chars);
+    let before_budget = context_budget.min(SEARCH_SNIPPET_CONTEXT_CHARS);
+    let after_budget = context_budget.saturating_sub(before_budget);
+    let before_chars = before_budget.min(match_start_char);
+    let mut after_chars = after_budget.min(total_chars.saturating_sub(match_end_char));
+
+    let unused_before_budget = before_budget.saturating_sub(before_chars);
+    if unused_before_budget > 0 {
+        after_chars =
+            (after_chars + unused_before_budget).min(total_chars.saturating_sub(match_end_char));
+    }
+
+    let snippet_start_char = match_start_char.saturating_sub(before_chars);
+    let snippet_end_char = (match_end_char + after_chars).min(total_chars);
+    let snippet_start_byte = byte_index_for_char(text, snippet_start_char);
+    let snippet_end_byte = byte_index_for_char(text, snippet_end_char);
+
+    SearchSnippet {
+        text: text[snippet_start_byte..snippet_end_byte].to_owned(),
+        match_start: match_start.saturating_sub(snippet_start_byte),
+        match_end: match_end.saturating_sub(snippet_start_byte),
+    }
+}
+
+fn byte_index_for_char(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(byte_index, _)| byte_index)
+        .unwrap_or(text.len())
 }
 
 fn cached_transcript_response(
@@ -3966,6 +4019,36 @@ mod tests {
         assert_eq!(result["taskId"], "optimistic-local-task");
         assert_eq!(result["workspacePath"], "/tmp/project");
         assert_eq!(result["messages"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn first_message_search_result_returns_bounded_snippet() {
+        let link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Long message task".to_owned(),
+        );
+        let content = format!("{}needle{}", "a".repeat(300), "b".repeat(300));
+
+        let result = first_message_search_result(
+            &link,
+            "device-1",
+            vec![json!({
+                "id": "message-1",
+                "role": "user",
+                "content": content,
+                "createdAt": 1780000000,
+            })],
+            "needle",
+        )
+        .expect("long matching message should produce a result");
+        let snippet = result["snippet"].as_str().unwrap();
+        let match_start = result["matchStart"].as_u64().unwrap() as usize;
+        let match_end = result["matchEnd"].as_u64().unwrap() as usize;
+
+        assert!(snippet.len() < 300);
+        assert!(snippet.contains("needle"));
+        assert_eq!(&snippet[match_start..match_end], "needle");
     }
 
     #[test]
