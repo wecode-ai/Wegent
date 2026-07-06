@@ -16,6 +16,7 @@
     "running": "正在处理"
   },
   "assistant_status": {
+    "stopped": "已停止",
     "stopped_after": "你在 {{duration}} 后停止了"
   },
   "request_user_input": {

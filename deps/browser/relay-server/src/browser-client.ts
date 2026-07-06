@@ -10,6 +10,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 const DEFAULT_RELAY_PORT = 9224;
+const DEFAULT_DIRECT_CDP_PORT = 9225;
 const DEFAULT_BROWSER_PREFIX = path.join(os.homedir(), ".wegent-executor", "browser");
 
 function getBrowserPrefix(): string {
@@ -18,6 +19,10 @@ function getBrowserPrefix(): string {
 
 function getTokenFilePath(): string {
   return path.join(getBrowserPrefix(), ".token");
+}
+
+function getActiveTargetFilePath(): string {
+  return path.join(getBrowserPrefix(), ".active-target");
 }
 
 type CdpResponse = {
@@ -56,6 +61,19 @@ function getRelayPort(): number {
   return DEFAULT_RELAY_PORT;
 }
 
+function getDirectCdpPort(): number {
+  const envPort = process.env.BROWSER_DIRECT_CDP_PORT;
+  if (envPort) {
+    const port = parseInt(envPort, 10);
+    if (!isNaN(port) && port > 0 && port < 65536) return port;
+  }
+  return DEFAULT_DIRECT_CDP_PORT;
+}
+
+function getDirectCdpBaseUrl(): string {
+  return `http://127.0.0.1:${getDirectCdpPort()}`;
+}
+
 function getAuthToken(): string | null {
   const tokenFile = getTokenFilePath();
   try {
@@ -66,9 +84,30 @@ function getAuthToken(): string | null {
   return null;
 }
 
+function getActiveTargetId(): string | null {
+  try {
+    const value = fs.readFileSync(getActiveTargetFilePath(), "utf-8").trim();
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+function setActiveTargetId(targetId: string | null): void {
+  try {
+    fs.mkdirSync(getBrowserPrefix(), { recursive: true });
+    if (targetId) {
+      fs.writeFileSync(getActiveTargetFilePath(), targetId, "utf-8");
+    } else {
+      fs.rmSync(getActiveTargetFilePath(), { force: true });
+    }
+  } catch {}
+}
+
 export type RelayStatus = {
   relayRunning: boolean;
   extensionConnected: boolean;
+  directConnected: boolean;
   targets: Array<{ targetId: string; title: string; url: string }>;
 };
 
@@ -84,7 +123,13 @@ export async function getStatus(): Promise<RelayStatus> {
     // Check if server is running
     const rootRes = await fetch(baseUrl, { method: "HEAD" });
     if (!rootRes.ok) {
-      return { relayRunning: false, extensionConnected: false, targets: [] };
+      const directTargets = await getDirectCdpTargets();
+      return {
+        relayRunning: false,
+        extensionConnected: false,
+        directConnected: directTargets.length > 0,
+        targets: directTargets,
+      };
     }
 
     // Check extension status
@@ -108,9 +153,21 @@ export async function getStatus(): Promise<RelayStatus> {
       }
     }
 
-    return { relayRunning: true, extensionConnected, targets };
+    let directConnected = false;
+    if (!extensionConnected) {
+      targets = await getDirectCdpTargets();
+      directConnected = targets.length > 0;
+    }
+
+    return { relayRunning: true, extensionConnected, directConnected, targets };
   } catch {
-    return { relayRunning: false, extensionConnected: false, targets: [] };
+    const targets = await getDirectCdpTargets().catch(() => []);
+    return {
+      relayRunning: false,
+      extensionConnected: false,
+      directConnected: targets.length > 0,
+      targets,
+    };
   }
 }
 
@@ -118,6 +175,25 @@ export type BrowserClient = {
   send: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
   close: () => void;
 };
+
+async function getDirectCdpTargets(): Promise<
+  Array<{ targetId: string; title: string; url: string }>
+> {
+  try {
+    const res = await fetch(`${getDirectCdpBaseUrl()}/json/list`);
+    if (!res.ok) return [];
+    const targets = (await res.json()) as TargetInfo[];
+    return targets
+      .filter((target) => target.type === "page")
+      .map((target) => ({
+        targetId: target.id,
+        title: target.title,
+        url: target.url,
+      }));
+  } catch {
+    return [];
+  }
+}
 
 function normalizeConnectError(err: unknown): Error {
   const message = err instanceof Error ? err.message : String(err);
@@ -140,17 +216,23 @@ export async function createBrowserClient(opts?: {
   const token = getAuthToken();
 
   if (!token) {
-    throw new Error("No auth token found. Is relay server running?");
+    return createDirectBrowserClient();
+  }
+
+  const status = await getStatus();
+  if (status.directConnected && !status.extensionConnected) {
+    return createDirectBrowserClient();
   }
 
   if (!opts?.skipStatusCheck) {
-    // Check status first
-    const status = await getStatus();
     if (!status.relayRunning) {
+      if (status.directConnected) {
+        return createDirectBrowserClient();
+      }
       throw new Error("Relay server not running. Start it with: cd ~/dev/git/browser/relay-server && npm start");
     }
     if (!status.extensionConnected) {
-      throw new Error("Browser extension not connected. Click extension icon on a tab to attach.");
+      return createDirectBrowserClient();
     }
   }
 
@@ -214,6 +296,107 @@ export async function createBrowserClient(opts?: {
   };
 }
 
+async function createDirectBrowserClient(): Promise<BrowserClient> {
+  const versionRes = await fetch(`${getDirectCdpBaseUrl()}/json/version`);
+  if (!versionRes.ok) {
+    throw new Error("Direct Chrome CDP endpoint is not running");
+  }
+  const version = (await versionRes.json()) as { webSocketDebuggerUrl?: string };
+  if (!version.webSocketDebuggerUrl) {
+    throw new Error("Direct Chrome CDP endpoint did not expose a browser websocket");
+  }
+
+  const ws = new WebSocket(version.webSocketDebuggerUrl, { handshakeTimeout: 5000 });
+  let nextId = 1;
+  const pending = new Map<number, Pending>();
+  let attachedSessionId: string | null = null;
+  let attachedTargetId: string | null = null;
+
+  await new Promise<void>((resolve, reject) => {
+    ws.once("open", () => resolve());
+    ws.once("error", (err) => reject(err));
+  });
+
+  ws.on("message", (data) => {
+    try {
+      const parsed = JSON.parse(rawDataToString(data)) as CdpResponse;
+      if (typeof parsed.id !== "number") return;
+      const p = pending.get(parsed.id);
+      if (!p) return;
+      pending.delete(parsed.id);
+      if (parsed.error?.message) {
+        p.reject(new Error(parsed.error.message));
+      } else {
+        p.resolve(parsed.result);
+      }
+    } catch {}
+  });
+
+  ws.on("close", () => {
+    for (const [, p] of pending) {
+      p.reject(new Error("Connection closed"));
+    }
+    pending.clear();
+  });
+
+  const rawSend = (
+    method: string,
+    params?: Record<string, unknown>,
+    sessionId?: string
+  ): Promise<unknown> => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("Connection not open"));
+    }
+    const id = nextId++;
+    ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+    });
+  };
+
+  const ensureAttachedSession = async (): Promise<string> => {
+    const targetInfos = ((await rawSend("Target.getTargets")) as {
+      targetInfos?: Array<{ targetId: string; type: string; title?: string; url?: string }>;
+    }).targetInfos ?? [];
+    const activeTargetId = getActiveTargetId();
+    const pageTargets = targetInfos.filter((target) => target.type === "page");
+    const target =
+      pageTargets.find((item) => item.targetId === activeTargetId) ??
+      pageTargets.find((item) => item.url && !item.url.startsWith("chrome://")) ??
+      pageTargets[0];
+    if (!target) {
+      throw new Error("No page target available in direct Chrome CDP");
+    }
+    if (attachedSessionId && attachedTargetId === target.targetId) {
+      return attachedSessionId;
+    }
+    const attached = (await rawSend("Target.attachToTarget", {
+      targetId: target.targetId,
+      flatten: true,
+    })) as { sessionId?: string };
+    if (!attached.sessionId) {
+      throw new Error("Failed to attach to direct Chrome target");
+    }
+    attachedSessionId = attached.sessionId;
+    attachedTargetId = target.targetId;
+    setActiveTargetId(target.targetId);
+    return attached.sessionId;
+  };
+
+  const send = async (method: string, params?: Record<string, unknown>): Promise<unknown> => {
+    if (method.startsWith("Target.")) {
+      return rawSend(method, params);
+    }
+    const sessionId = await ensureAttachedSession();
+    return rawSend(method, params, sessionId);
+  };
+
+  return {
+    send,
+    close: () => ws.close(),
+  };
+}
+
 // High-level browser operations
 
 export async function listTabs(): Promise<
@@ -231,6 +414,7 @@ export async function openTab(
   const ownsClient = !opts?.client;
   try {
     const result = (await client.send("Target.createTarget", { url })) as { targetId: string };
+    setActiveTargetId(result.targetId);
     return { targetId: result.targetId };
   } finally {
     if (ownsClient) {
@@ -247,6 +431,9 @@ export async function closeTab(
   const ownsClient = !opts?.client;
   try {
     const result = (await client.send("Target.closeTarget", { targetId })) as { success: boolean };
+    if (result.success && getActiveTargetId() === targetId) {
+      setActiveTargetId(null);
+    }
     return { success: result.success };
   } finally {
     if (ownsClient) {
@@ -260,6 +447,7 @@ export async function focusTab(targetId: string, opts?: { client?: BrowserClient
   const ownsClient = !opts?.client;
   try {
     await client.send("Target.activateTarget", { targetId });
+    setActiveTargetId(targetId);
   } finally {
     if (ownsClient) {
       client.close();

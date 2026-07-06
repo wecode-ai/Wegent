@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, State};
+use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -27,6 +27,9 @@ const LOCAL_EXECUTOR_SOCKET_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_SOCKET";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
+const CODEX_BINARY_PATH_ENV: &str = "CODEX_BINARY_PATH";
+const CODEX_BIN_ENV: &str = "CODEX_BIN";
+const CODEX_MANAGED_PACKAGE_ROOT_ENV: &str = "CODEX_MANAGED_PACKAGE_ROOT";
 const LOCAL_EXECUTOR_DEVICE_ID: &str = "local-device";
 const LOCAL_EXECUTOR_SOCKET_NAME: &str = "app-ipc.sock";
 const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
@@ -699,6 +702,106 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
     envs
 }
 
+fn local_executor_sidecar_env(
+    inner: &LocalExecutorInner,
+    app: &tauri::AppHandle,
+) -> Vec<(String, String)> {
+    let mut envs = local_executor_backend_env(inner);
+    if std::env::var_os(CODEX_BINARY_PATH_ENV).is_none()
+        && std::env::var_os(CODEX_BIN_ENV).is_none()
+    {
+        if let Some((package_root, binary_path)) = bundled_codex_paths(app) {
+            envs.push((
+                CODEX_BINARY_PATH_ENV.to_string(),
+                binary_path.display().to_string(),
+            ));
+            envs.push((
+                CODEX_MANAGED_PACKAGE_ROOT_ENV.to_string(),
+                package_root.display().to_string(),
+            ));
+        }
+    }
+    envs
+}
+
+fn append_bundled_codex_envs_for_root(envs: &mut Vec<(String, String)>, root: &Path) {
+    if std::env::var_os(CODEX_BINARY_PATH_ENV).is_some()
+        || std::env::var_os(CODEX_BIN_ENV).is_some()
+    {
+        return;
+    }
+    let Some((target, binary)) = bundled_codex_target_layout() else {
+        return;
+    };
+    let package_root = root.join("binaries").join("codex").join(target);
+    let binary_path = package_root.join(binary);
+    if binary_path.is_file() {
+        envs.push((
+            CODEX_BINARY_PATH_ENV.to_string(),
+            binary_path.display().to_string(),
+        ));
+        envs.push((
+            CODEX_MANAGED_PACKAGE_ROOT_ENV.to_string(),
+            package_root.display().to_string(),
+        ));
+    }
+}
+
+fn bundled_codex_paths(app: &tauri::AppHandle) -> Option<(PathBuf, PathBuf)> {
+    let resource_dir = app.path().resource_dir().ok()?;
+    let mut envs = Vec::new();
+    append_bundled_codex_envs_for_root(&mut envs, &resource_dir);
+    let package_root = envs
+        .iter()
+        .find(|(key, _)| key == CODEX_MANAGED_PACKAGE_ROOT_ENV)
+        .map(|(_, value)| PathBuf::from(value))?;
+    let binary_path = envs
+        .iter()
+        .find(|(key, _)| key == CODEX_BINARY_PATH_ENV)
+        .map(|(_, value)| PathBuf::from(value))?;
+    Some((package_root, binary_path))
+}
+
+fn bundled_codex_target_layout() -> Option<(&'static str, &'static str)> {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        return Some((
+            "aarch64-apple-darwin",
+            "vendor/aarch64-apple-darwin/bin/codex",
+        ));
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        return Some((
+            "x86_64-apple-darwin",
+            "vendor/x86_64-apple-darwin/bin/codex",
+        ));
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        return Some((
+            "x86_64-unknown-linux-gnu",
+            "vendor/x86_64-unknown-linux-musl/bin/codex",
+        ));
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        return Some((
+            "aarch64-unknown-linux-gnu",
+            "vendor/aarch64-unknown-linux-musl/bin/codex",
+        ));
+    }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        return Some((
+            "x86_64-pc-windows-msvc",
+            "vendor/x86_64-pc-windows-msvc/bin/codex.exe",
+        ));
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
 fn response_error(response: ExecutorResponse) -> String {
     response
         .error
@@ -1103,7 +1206,7 @@ async fn spawn_sidecar_if_needed(
             }
             inner.child = None;
         }
-        local_executor_backend_env(&inner)
+        local_executor_sidecar_env(&inner, &app)
     };
 
     if let Some(path) = configured_sidecar_path() {
@@ -1536,7 +1639,6 @@ pub async fn local_executor_request(
 mod tests {
     use super::*;
     use std::ffi::OsString;
-    #[cfg(unix)]
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -1878,6 +1980,96 @@ mod tests {
         assert_eq!(path.matches("/opt/homebrew/bin").count(), 1);
         assert!(path.contains("/opt/homebrew/sbin"));
         assert!(path.contains("/usr/local/bin"));
+    }
+
+    #[test]
+    fn bundled_codex_env_is_added_when_binary_exists() {
+        let _guard = env_lock();
+        let Some((target, binary)) = bundled_codex_target_layout() else {
+            return;
+        };
+        let previous_binary = std::env::var_os(CODEX_BINARY_PATH_ENV);
+        let previous_bin = std::env::var_os(CODEX_BIN_ENV);
+        std::env::remove_var(CODEX_BINARY_PATH_ENV);
+        std::env::remove_var(CODEX_BIN_ENV);
+        let root =
+            std::env::temp_dir().join(format!("wework-bundled-codex-env-{}", std::process::id()));
+        let binary_path = root
+            .join("binaries")
+            .join("codex")
+            .join(target)
+            .join(binary);
+        fs::create_dir_all(
+            binary_path
+                .parent()
+                .expect("binary path should have parent"),
+        )
+        .expect("test binary dir should be created");
+        fs::write(&binary_path, b"codex").expect("test binary should be written");
+
+        let mut envs = Vec::new();
+        append_bundled_codex_envs_for_root(&mut envs, &root);
+
+        restore_env(CODEX_BINARY_PATH_ENV, previous_binary);
+        restore_env(CODEX_BIN_ENV, previous_bin);
+        let _ = fs::remove_dir_all(&root);
+
+        let expected_binary = binary_path.display().to_string();
+        let expected_package_root = root
+            .join("binaries")
+            .join("codex")
+            .join(target)
+            .display()
+            .to_string();
+        assert_eq!(
+            envs.iter()
+                .find(|(key, _)| key == CODEX_BINARY_PATH_ENV)
+                .map(|(_, value)| value.as_str()),
+            Some(expected_binary.as_str())
+        );
+        assert_eq!(
+            envs.iter()
+                .find(|(key, _)| key == CODEX_MANAGED_PACKAGE_ROOT_ENV)
+                .map(|(_, value)| value.as_str()),
+            Some(expected_package_root.as_str())
+        );
+    }
+
+    #[test]
+    fn bundled_codex_env_does_not_override_explicit_binary() {
+        let _guard = env_lock();
+        let Some((target, binary)) = bundled_codex_target_layout() else {
+            return;
+        };
+        let previous_binary = std::env::var_os(CODEX_BINARY_PATH_ENV);
+        let previous_bin = std::env::var_os(CODEX_BIN_ENV);
+        std::env::set_var(CODEX_BINARY_PATH_ENV, "/custom/codex");
+        std::env::remove_var(CODEX_BIN_ENV);
+        let root = std::env::temp_dir().join(format!(
+            "wework-bundled-codex-override-{}",
+            std::process::id()
+        ));
+        let binary_path = root
+            .join("binaries")
+            .join("codex")
+            .join(target)
+            .join(binary);
+        fs::create_dir_all(
+            binary_path
+                .parent()
+                .expect("binary path should have parent"),
+        )
+        .expect("test binary dir should be created");
+        fs::write(&binary_path, b"codex").expect("test binary should be written");
+
+        let mut envs = Vec::new();
+        append_bundled_codex_envs_for_root(&mut envs, &root);
+
+        restore_env(CODEX_BINARY_PATH_ENV, previous_binary);
+        restore_env(CODEX_BIN_ENV, previous_bin);
+        let _ = fs::remove_dir_all(&root);
+
+        assert!(envs.is_empty());
     }
 
     #[cfg(unix)]

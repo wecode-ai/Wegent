@@ -1,0 +1,41 @@
+{
+  "codexVersion": "0.137.0",
+  "registry": "https://registry.npmjs.org",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "package": "@openai/codex",
+      "version": "0.137.0-darwin-arm64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.137.0-darwin-arm64.tgz",
+      "sha256": "af1b4b0d57bce14da2b7f247ad49e484155a040d41f9fdf120e78795d8607195",
+      "binaryPath": "vendor/aarch64-apple-darwin/bin/codex"
+    },
+    "x86_64-apple-darwin": {
+      "package": "@openai/codex",
+      "version": "0.137.0-darwin-x64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.137.0-darwin-x64.tgz",
+      "sha256": "ee3fa1dce9654c3040250db3ef00af0f2b63b98c44ff3bba901d7952625e1344",
+      "binaryPath": "vendor/x86_64-apple-darwin/bin/codex"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "package": "@openai/codex",
+      "version": "0.137.0-linux-x64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.137.0-linux-x64.tgz",
+      "sha256": "66914cb3f3e497be6386f4a01555fe59cd0809626bb976cc6a0644054264a3fc",
+      "binaryPath": "vendor/x86_64-unknown-linux-musl/bin/codex"
+    },
+    "aarch64-unknown-linux-gnu": {
+      "package": "@openai/codex",
+      "version": "0.137.0-linux-arm64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.137.0-linux-arm64.tgz",
+      "sha256": "7bce0577cd7e8c2e73e0500cb093ba0add90268c0030874eba816b14656e9c16",
+      "binaryPath": "vendor/aarch64-unknown-linux-musl/bin/codex"
+    },
+    "x86_64-pc-windows-msvc": {
+      "package": "@openai/codex",
+      "version": "0.137.0-win32-x64",
+      "tarball": "https://registry.npmjs.org/@openai/codex/-/codex-0.137.0-win32-x64.tgz",
+      "sha256": "7dba8f47cde8ee5fce93792fbccc3a37febcbc9223f9f7826de5ac96f8a199fe",
+      "binaryPath": "vendor/x86_64-pc-windows-msvc/bin/codex.exe"
+    }
+  }
+}

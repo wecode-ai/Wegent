@@ -97,9 +97,9 @@ cargo test --test manual_runtime_perf -- --ignored --nocapture
 
 当前本机实测结果：
 
-| 样本 | 文件大小 | 列表 | 首次打开 | 已加载切换 | append 刷新 |
-| --- | --- | ---: | ---: | ---: | ---: |
-| “修复进行中任务未显示 tool 调用” | 约 61 MB | 13 ms | 2.09 s | 33 ms | 53 ms |
+| 样本                             | 文件大小 |  列表 | 首次打开 | 已加载切换 | append 刷新 |
+| -------------------------------- | -------- | ----: | -------: | ---------: | ----------: |
+| “修复进行中任务未显示 tool 调用” | 约 61 MB | 13 ms |   2.09 s |      33 ms |       53 ms |
 
 因此当前目标达到列表 1 秒以内、首次打开 3 秒以内、已加载切换和获取最新数据 500 ms 以内。更大的极端历史首次冷解析仍受 JSONL 文件大小限制，但加载后切换和 append 刷新不再随历史总长度增长。
 
@@ -120,6 +120,16 @@ POST /api/runtime-work/cancel
 ```
 
 Backend 将 `deviceId + localTaskId` 转发为 `runtime.tasks.cancel`。Rust executor 的 Codex app-server 路径当前不会跨进程中断正在运行的 turn，因此 app 模式会返回 `accepted: false`，前端应保留队列状态或等待当前 turn 结束。后续如果实现 `turn/interrupt`，仍必须只使用 `deviceId + localTaskId` 定位任务，`workspacePath` 只是设备目录上下文。
+
+如果当前 Codex LocalTask 正在回复，Wework 还可以把队列中的用户输入作为原生引导发送：
+
+```text
+POST /api/runtime-work/guidance
+```
+
+Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + localTaskId`、用户文本和前端生成的 `clientGuidanceId` 转发为设备 RPC `runtime.tasks.guidance`。executor 必须定位正在运行的 Codex turn，并通过 Codex app-server 原生引导能力把用户文本追加到当前 turn；如果没有可引导的活跃 turn，应返回 `no_active_turn`，前端再把这条消息按普通 follow-up 发送。`runtime.tasks.guidance` 不创建新的中心库任务或子任务，也不把 `workspacePath` 当成任务身份。
+
+前端发送引导时必须立即把本地用户消息插入到当前 streaming assistant 的位置，而不是等待 `runtime.tasks.guidance` 返回。插入时把当前 assistant 拆成“引导前”和“引导后”两个消息：引导前消息冻结为 done，引导后消息继续保留原 `subtaskId` 接收后续 stream。后续 `chat:chunk`/`chat:done` 仍可能带完整文本，因此前端要按拆分时记录的文本前缀裁剪后续内容，确保流式显示和刷新后的 transcript 顺序一致。
 
 继续 LocalTask 时可以携带已经上传并处于 ready 状态的 attachment id。Backend 会校验这些附件属于当前用户并转换成 executor 需要的附件元数据，executor 再在目标设备上下载、转换并交给 runtime。前端不会把本机附件路径直接发送给 Backend 或 executor。
 

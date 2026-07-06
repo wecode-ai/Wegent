@@ -134,19 +134,19 @@ function CodeCommentBadge({ count, onRemove }: { count: number; onRemove?: () =>
   return (
     <div
       data-testid="code-comment-context-badge"
-      className="relative inline-flex h-14 items-center gap-2 rounded-xl border border-border bg-background px-3 pr-8 text-sm font-medium text-text-primary shadow-sm"
+      className="relative inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 pr-7 text-xs font-medium text-text-primary shadow-sm"
     >
-      <MessageSquare className="h-4 w-4 text-text-secondary" />
+      <MessageSquare className="h-3.5 w-3.5 text-text-secondary" />
       <span>{t('workbench.code_comment_count', { count })}</span>
       {onRemove && (
         <button
           type="button"
           data-testid="remove-code-comment-context-button"
           onClick={onRemove}
-          className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-text-primary text-white shadow-sm transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+          className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-text-primary text-white shadow-sm transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
           aria-label={t('workbench.remove_code_comments')}
         >
-          <X className="h-3 w-3" />
+          <X className="h-2.5 w-2.5" />
         </button>
       )}
     </div>

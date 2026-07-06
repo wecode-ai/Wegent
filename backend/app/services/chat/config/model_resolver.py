@@ -8,6 +8,7 @@ Model resolver for Chat Shell.
 Resolves model configuration from Bot's bound model or task-level override.
 """
 
+import base64
 import json
 import logging
 import os
@@ -224,20 +225,21 @@ def build_default_headers_with_placeholders(
     return result_headers
 
 
-# Prefix identifying the agent/team identity header group forwarded to the model
-# backend (e.g. wegent-agent-namespace, wegent-agent-name). New identity fields
-# should reuse this prefix so they share the empty-strip behavior.
-WEGENT_IDENTITY_HEADER_PREFIX = "wegent-agent-"
+# Substring marker identifying the agent/team identity header group forwarded to the
+# model backend (e.g. wegent-agent-namespace, wegent-agent-name). Any header whose
+# name *contains* this substring shares the empty-strip and encoding behaviors.
+WEGENT_IDENTITY_HEADER_MARKER = "wegent-agent-"
 
 
 def strip_empty_wegent_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
-    """Drop wegent-agent-* headers whose value is empty.
+    """Drop headers whose name contains 'wegent-agent-' and whose value is empty.
 
     Placeholder resolution yields "" when a data source is missing (e.g.
     non-Team execution paths such as wizard/correction that carry no team
-    context). Emitting blank identity headers is undesirable, so only the
-    wegent-agent-* group is removed when empty; all other headers (including
-    the legacy ``user`` header) keep their existing behavior.
+    context). Emitting blank identity headers is undesirable, so any header
+    whose name contains WEGENT_IDENTITY_HEADER_MARKER is removed when its
+    value is empty; all other headers (including the legacy ``user`` header)
+    keep their existing behavior.
 
     Args:
         headers: Default headers after placeholder replacement.
@@ -249,9 +251,53 @@ def strip_empty_wegent_headers(headers: Dict[str, Any]) -> Dict[str, Any]:
         key: value
         for key, value in headers.items()
         if not (
-            key.lower().startswith(WEGENT_IDENTITY_HEADER_PREFIX)
+            WEGENT_IDENTITY_HEADER_MARKER in key.lower()
             and (value is None or (isinstance(value, str) and not value.strip()))
         )
+    }
+
+
+def _encode_wegent_header_value(value: str) -> str:
+    """Encode a header value that may contain non-ASCII characters.
+
+    HTTP headers must be ASCII (RFC 7230). Team names may contain non-ASCII
+    characters (e.g. Chinese). If the value is already ASCII-safe it is
+    returned unchanged; otherwise it is base64-encoded and prefixed with
+    'b64:' so the receiver can detect and decode it.
+
+    Args:
+        value: The resolved header value string.
+
+    Returns:
+        The original string if ASCII-safe, otherwise 'b64:<base64>'.
+    """
+    try:
+        value.encode("ascii")
+        return value
+    except UnicodeEncodeError:
+        return "b64:" + base64.b64encode(value.encode("utf-8")).decode("ascii")
+
+
+def encode_wegent_header_values(headers: Dict[str, Any]) -> Dict[str, Any]:
+    """Base64-encode non-ASCII values in wegent-agent-* headers.
+
+    Applies _encode_wegent_header_value to every header whose name contains
+    WEGENT_IDENTITY_HEADER_MARKER so non-ASCII team names (e.g. Chinese)
+    are transmitted as ASCII-safe 'b64:<base64>' strings.
+
+    Args:
+        headers: Resolved headers after placeholder replacement and empty-strip.
+
+    Returns:
+        Headers with non-ASCII wegent-agent-* values base64-encoded.
+    """
+    return {
+        key: (
+            _encode_wegent_header_value(value)
+            if WEGENT_IDENTITY_HEADER_MARKER in key.lower() and isinstance(value, str)
+            else value
+        )
+        for key, value in headers.items()
     }
 
 
@@ -341,6 +387,8 @@ def _process_model_config_placeholders(
         # Drop wegent-agent-* identity headers that resolved to empty (e.g. paths
         # without Team context), so we never emit blank identity headers.
         processed_headers = strip_empty_wegent_headers(processed_headers)
+        # Encode non-ASCII values (e.g. Chinese team names) to ASCII-safe base64.
+        processed_headers = encode_wegent_header_values(processed_headers)
         model_config["default_headers"] = processed_headers
         logger.info(f"[model_resolver] Processed default_headers with placeholders")
 

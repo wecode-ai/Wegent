@@ -37,7 +37,10 @@ export function useWorkbenchSkills({
   const [isLoading, setIsLoading] = useState(false)
   const [isTeamSkillsLoading, setIsTeamSkillsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
-  const selectedSkills = selectedSkillsByScope[scopeKey] ?? []
+  const selectedSkills = useMemo(
+    () => selectedSkillsByScope[scopeKey] ?? [],
+    [scopeKey, selectedSkillsByScope]
+  )
 
   useEffect(() => {
     let cancelled = false

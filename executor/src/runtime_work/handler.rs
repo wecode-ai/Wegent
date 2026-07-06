@@ -18,8 +18,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::{
     agents::{
-        CodexAppServerClient, CodexAppServerTurnOptions, CodexRequestUserInputReceiver,
-        CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexActiveTurnCallback, CodexAppServerClient, CodexAppServerTurnOptions,
+        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::log_executor_event,
@@ -63,6 +63,8 @@ const CODEX_THREAD_LIST_MAX_ITEMS: usize = 500;
 const CODEX_THREAD_LIST_CACHE_TTL_MS: i64 = 1_500;
 const CODEX_THREAD_SOURCE_KINDS: &[&str] = &["cli", "vscode", "exec", "appServer"];
 const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
+const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
+const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
@@ -229,6 +231,7 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     active_local_tasks: Arc<Mutex<HashSet<String>>>,
     active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
+    active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, mpsc::Sender<Value>>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
@@ -240,6 +243,12 @@ pub struct RuntimeWorkRpcHandler {
 struct ActiveTurnCancellation {
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
+}
+
+#[derive(Clone)]
+struct ActiveCodexTurn {
+    thread_id: String,
+    turn_id: String,
 }
 
 struct RuntimeThreadEventRoute {
@@ -276,6 +285,7 @@ impl RuntimeWorkRpcHandler {
             event_tx: None,
             active_local_tasks: Arc::new(Mutex::new(HashSet::new())),
             active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
+            active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
@@ -304,6 +314,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
+            "runtime.tasks.guidance" => self.send_guidance(payload).await,
             "runtime.tasks.prepare_fork_transfer" => self.prepare_fork_transfer(payload).await,
             "runtime.tasks.import_fork" => self.import_fork(payload).await,
             "runtime.tasks.archive" => self.archive_task(payload).await,
@@ -1249,6 +1260,59 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
+    async fn send_guidance(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let message = string_field(&payload, "message")
+            .or_else(|| string_field(&payload, "guidance"))
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| AppIpcError::new("bad_request", "message is required"))?;
+        let Some(active_turn) = self.wait_for_active_codex_turn(&local_task_id).await else {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "error": "no active turn to guide",
+                "code": "no_active_turn",
+                "taskId": local_task_id,
+                "runtime": "codex",
+            }));
+        };
+
+        let guidance_id = string_field(&payload, "client_guidance_id")
+            .or_else(|| string_field(&payload, "clientGuidanceId"))
+            .unwrap_or_else(|| format!("guidance-{}", now_ms()));
+        let steer_input = json!([
+            {
+                "type": "text",
+                "text": message,
+            }
+        ]);
+        match self
+            .codex_app_server
+            .steer_turn(&active_turn.thread_id, &active_turn.turn_id, steer_input)
+            .await
+        {
+            Ok(turn_id) => Ok(json!({
+                "success": true,
+                "accepted": true,
+                "guidance_id": guidance_id,
+                "guidanceId": guidance_id,
+                "taskId": local_task_id,
+                "turnId": turn_id,
+                "runtime": "codex",
+            })),
+            Err(error) => Ok(json!({
+                "success": false,
+                "accepted": false,
+                "error": error,
+                "code": "guidance_failed",
+                "taskId": local_task_id,
+                "runtime": "codex",
+            })),
+        }
+    }
+
     async fn send_request_user_input_response(
         &self,
         local_task_id: &str,
@@ -1618,6 +1682,16 @@ impl RuntimeWorkRpcHandler {
             let thread_started: CodexThreadStartedCallback = Box::new(move |thread_id| {
                 route_handler.record_local_task_thread(&route_local_task_id, &thread_id);
             });
+            let active_turn_handler = handler.clone();
+            let active_turn_local_task_id = turn_local_task_id.clone();
+            let active_turn_started: CodexActiveTurnCallback =
+                Box::new(move |thread_id, turn_id| {
+                    active_turn_handler.record_active_codex_turn(
+                        &active_turn_local_task_id,
+                        thread_id,
+                        turn_id,
+                    );
+                });
             let result = handler
                 .codex_app_server
                 .run_turn_with_cancel(
@@ -1633,6 +1707,7 @@ impl RuntimeWorkRpcHandler {
                         cancellation: Some(cancel_rx),
                         request_user_input_answers: Some(request_user_input_rx),
                         thread_started: Some(thread_started),
+                        active_turn_started: Some(active_turn_started),
                     },
                 )
                 .await;
@@ -1640,6 +1715,7 @@ impl RuntimeWorkRpcHandler {
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
                 let _ = mapper_handle.await;
                 handler.clear_active_turn_cancellation(&turn_local_task_id);
+                handler.clear_active_codex_turn(&turn_local_task_id);
                 handler.unmark_active_local_task(&turn_local_task_id);
                 handler.mark_thread_event_routes_idle_for_local_task(&turn_local_task_id);
                 if let Ok(mut requests) = handler.active_request_user_inputs.lock() {
@@ -1651,6 +1727,7 @@ impl RuntimeWorkRpcHandler {
 
             let _ = mapper_handle.await;
             handler.handle_turn_result(&turn_local_task_id, &request, result);
+            handler.clear_active_codex_turn(&turn_local_task_id);
             if let Ok(mut requests) = handler.active_request_user_inputs.lock() {
                 requests.remove(&turn_local_task_id);
             }
@@ -2650,6 +2727,46 @@ impl RuntimeWorkRpcHandler {
             .remove(local_task_id);
     }
 
+    fn record_active_codex_turn(&self, local_task_id: &str, thread_id: String, turn_id: String) {
+        self.active_codex_turns
+            .lock()
+            .expect("active codex turn map lock should not be poisoned")
+            .insert(
+                local_task_id.to_owned(),
+                ActiveCodexTurn { thread_id, turn_id },
+            );
+    }
+
+    fn active_codex_turn(&self, local_task_id: &str) -> Option<ActiveCodexTurn> {
+        self.active_codex_turns
+            .lock()
+            .expect("active codex turn map lock should not be poisoned")
+            .get(local_task_id)
+            .cloned()
+    }
+
+    async fn wait_for_active_codex_turn(&self, local_task_id: &str) -> Option<ActiveCodexTurn> {
+        for attempt in 0..=ACTIVE_CODEX_TURN_WAIT_ATTEMPTS {
+            if let Some(turn) = self.active_codex_turn(local_task_id) {
+                return Some(turn);
+            }
+            if !self.is_active_local_task(local_task_id)
+                || attempt == ACTIVE_CODEX_TURN_WAIT_ATTEMPTS
+            {
+                return None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(ACTIVE_CODEX_TURN_WAIT_MS)).await;
+        }
+        None
+    }
+
+    fn clear_active_codex_turn(&self, local_task_id: &str) {
+        self.active_codex_turns
+            .lock()
+            .expect("active codex turn map lock should not be poisoned")
+            .remove(local_task_id);
+    }
+
     async fn abort_active_turn(&self, local_task_id: &str) -> bool {
         let control = {
             self.active_turn_cancellations
@@ -2665,6 +2782,7 @@ impl RuntimeWorkRpcHandler {
                 return false;
             }
         }
+        self.clear_active_codex_turn(local_task_id);
         self.unmark_active_local_task(local_task_id);
         true
     }

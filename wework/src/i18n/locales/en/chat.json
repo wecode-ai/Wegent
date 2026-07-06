@@ -16,6 +16,7 @@
     "running": "Working"
   },
   "assistant_status": {
+    "stopped": "Stopped",
     "stopped_after": "You stopped after {{duration}}"
   },
   "request_user_input": {

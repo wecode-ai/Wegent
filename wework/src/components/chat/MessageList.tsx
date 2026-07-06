@@ -14,6 +14,7 @@ import {
   Copy,
   File as FileIcon,
   FileText,
+  MessageSquare,
   Package,
   Pencil,
   Target,
@@ -458,13 +459,14 @@ function formatCompactDuration(durationMs: number): string {
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
 }
 
-function getStoppedElapsedDuration(message: WorkbenchMessage): string {
+function getStoppedElapsedDuration(message: WorkbenchMessage): string | null {
   const startedAt = getTurnStartMs(message.createdAt)
-  if (startedAt === undefined) return '0s'
+  if (startedAt === undefined) return null
 
   const completedAt = getMessageTimestampMs(message.completedAt)
   if (completedAt !== undefined && completedAt >= startedAt) {
-    return formatCompactDuration(completedAt - startedAt)
+    const durationMs = completedAt - startedAt
+    return durationMs >= 1000 ? formatCompactDuration(durationMs) : null
   }
 
   const blockEndTimes =
@@ -473,7 +475,8 @@ function getStoppedElapsedDuration(message: WorkbenchMessage): string {
       .filter((createdAt): createdAt is number => Number.isFinite(createdAt)) ?? []
   const endedAt = blockEndTimes.length > 0 ? Math.max(...blockEndTimes) : startedAt
 
-  return formatCompactDuration(endedAt - startedAt)
+  const durationMs = endedAt - startedAt
+  return durationMs >= 1000 ? formatCompactDuration(durationMs) : null
 }
 
 function getProcessingSummaryStartMs(
@@ -612,6 +615,7 @@ function UserMessage({
     displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
   const showSourceBadge = isIMSource(message.source)
   const showGoalRequestBadge = message.runtimeGoalRequest === true
+  const codeCommentCount = message.codeComments?.length ?? 0
 
   return (
     <div
@@ -730,6 +734,17 @@ function UserMessage({
                   >
                     <Target className="h-3.5 w-3.5" aria-hidden="true" />
                     <span>{t('workbench.goal_chip', '目标')}</span>
+                  </span>
+                </div>
+              )}
+              {codeCommentCount > 0 && (
+                <div className="mt-1.5 flex">
+                  <span
+                    data-testid="message-code-comment-context-badge"
+                    className="inline-flex h-6 w-fit items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2 text-xs font-medium leading-none text-text-secondary"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{t('workbench.code_comment_count', { count: codeCommentCount })}</span>
                   </span>
                 </div>
               )}
@@ -1397,6 +1412,8 @@ function AssistantMessage({
 }) {
   const { t } = useTranslation('chat')
   const isCancelled = isCancelledAssistantMessage(message)
+  const stoppedElapsedDuration =
+    isCancelled && message.stoppedNotice !== false ? getStoppedElapsedDuration(message) : null
   const shouldShowStoppedNotice = isCancelled && message.stoppedNotice !== false
   const shouldHideContent =
     shouldHideFailedAssistantContent(message) ||
@@ -1457,9 +1474,11 @@ function AssistantMessage({
               data-testid="assistant-stopped-notice"
               className="mb-3 w-full border-b border-border pb-2 text-xs text-text-muted"
             >
-              {t('assistant_status.stopped_after', {
-                duration: getStoppedElapsedDuration(message),
-              })}
+              {stoppedElapsedDuration
+                ? t('assistant_status.stopped_after', {
+                    duration: stoppedElapsedDuration,
+                  })
+                : t('assistant_status.stopped')}
             </div>
           ) : null}
           {shouldShowProcessingSummary && (
