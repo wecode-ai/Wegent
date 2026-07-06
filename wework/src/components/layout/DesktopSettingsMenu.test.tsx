@@ -5,6 +5,9 @@ import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 
 const mockCheckNow = vi.fn()
 const mockInstallUpdate = vi.fn()
+const runtimeModeMock = vi.hoisted(() => ({
+  isLocalFirstAppRuntime: vi.fn(() => false),
+}))
 let mockUpdateState = {
   availableUpdate: null as null | { currentVersion: string; version: string },
   status: 'idle',
@@ -16,6 +19,8 @@ let mockUpdateState = {
 vi.mock('@/features/app-update/app-update-context', () => ({
   useOptionalAppUpdate: () => mockUpdateState,
 }))
+
+vi.mock('@/lib/runtime-mode', () => runtimeModeMock)
 
 vi.mock('@/api/quota', () => ({
   createQuotaApi: () => ({
@@ -43,6 +48,7 @@ describe('DesktopSettingsMenu', () => {
       checkNow: mockCheckNow,
       installUpdate: mockInstallUpdate,
     }
+    runtimeModeMock.isLocalFirstAppRuntime.mockReturnValue(false)
   })
 
   test('checks for app updates from the settings menu', async () => {
@@ -65,6 +71,15 @@ describe('DesktopSettingsMenu', () => {
     expect(accountItem.tagName).toBe('DIV')
     expect(accountItem).toHaveClass('cursor-default', 'text-text-secondary')
     expect(accountItem).not.toHaveClass('hover:bg-white/[0.08]')
+  })
+
+  test('hides logout in local-first app runtime', () => {
+    runtimeModeMock.isLocalFirstAppRuntime.mockReturnValue(true)
+
+    renderMenu()
+
+    expect(screen.queryByTestId('logout-menu-button')).not.toBeInTheDocument()
+    expect(screen.queryByText('退出登录')).not.toBeInTheDocument()
   })
 
   test('installs a discovered app update', async () => {

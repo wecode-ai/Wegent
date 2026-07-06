@@ -8,6 +8,7 @@ import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { User as UserProfile } from '@/types/api'
 
 function getQuotaUsagePercent(quota: QuotaData): number {
@@ -37,6 +38,7 @@ function getAccountInitials(label: string): string {
 
 export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
+  const showLogout = !isLocalFirstAppRuntime()
   const quotaApi = useMemo(() => {
     const { apiBaseUrl } = getRuntimeConfig()
     return createQuotaApi(createHttpClient({ baseUrl: apiBaseUrl }))
@@ -225,12 +227,14 @@ export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopS
           ) : null}
         </div>
       ) : null}
-      <SettingsMenuItem
-        testId="logout-menu-button"
-        icon={<LogOut className="h-4 w-4 shrink-0 text-text-secondary" />}
-        label={t('workbench.logout', '退出登录')}
-        onClick={onLogout}
-      />
+      {showLogout ? (
+        <SettingsMenuItem
+          testId="logout-menu-button"
+          icon={<LogOut className="h-4 w-4 shrink-0 text-text-secondary" />}
+          label={t('workbench.logout', '退出登录')}
+          onClick={onLogout}
+        />
+      ) : null}
     </div>
   )
 }

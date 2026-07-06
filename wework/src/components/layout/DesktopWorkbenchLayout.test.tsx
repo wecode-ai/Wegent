@@ -670,7 +670,6 @@ describe('DesktopWorkbenchLayout', () => {
     onSubscribeRuntimeTaskNotifications?: (...args: unknown[]) => Promise<unknown>
     onUnsubscribeRuntimeTaskNotifications?: (...args: unknown[]) => Promise<unknown>
     onRefreshDevices?: () => Promise<void>
-    onRefreshWorkLists?: () => Promise<void>
     onUpgradeDevice?: (...args: unknown[]) => Promise<void>
     onCreateProject?: (...args: unknown[]) => Promise<unknown>
     onCreateGitWorkspaceProject?: (...args: unknown[]) => Promise<unknown>
@@ -871,7 +870,7 @@ describe('DesktopWorkbenchLayout', () => {
         props.onUnsubscribeRuntimeTaskNotifications ??
         vi.fn().mockResolvedValue({ subscribed: false }),
       rememberExecutionDevice: vi.fn(),
-      refreshWorkLists: props.onRefreshWorkLists ?? vi.fn().mockResolvedValue(undefined),
+      refreshWorkLists: vi.fn().mockResolvedValue(undefined),
       refreshDevices: props.onRefreshDevices ?? vi.fn().mockResolvedValue(undefined),
       getRemoteDeviceStartupCommand: vi.fn().mockResolvedValue({ command: '' }),
       upgradeDevice: props.onUpgradeDevice ?? vi.fn().mockResolvedValue(undefined),
