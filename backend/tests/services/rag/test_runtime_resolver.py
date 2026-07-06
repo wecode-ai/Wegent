@@ -554,6 +554,8 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
                         "model_name": "embed-a",
                         "model_namespace": "default",
                     },
+                    "retrieval_mode": "vector",
+                    "retrieval_mode_source": "system_default",
                 }
             }
         },
@@ -613,6 +615,10 @@ def test_build_query_runtime_spec_uses_resolved_owner_scope_for_rag_route() -> N
         user_name="alice",
     )
     assert spec.knowledge_base_configs[0].index_owner_user_id == 42
+    assert (
+        spec.knowledge_base_configs[0].retrieval_config.retrieval_mode_source
+        == "system_default"
+    )
 
 
 def test_build_public_list_chunks_runtime_spec_uses_resolved_owner_scope() -> None:

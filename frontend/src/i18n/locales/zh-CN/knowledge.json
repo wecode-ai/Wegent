@@ -415,7 +415,8 @@
         "chunkTokens": "{{count}} tokens",
         "viewChunks": "查看分段",
         "splitterType": "分段类型",
-        "splitterSubtype": "分段子类型"
+        "splitterSubtype": "分段子类型",
+        "qaPairsDetected": "已识别 {{count}} 个问答对"
       },
       "downloadFailed": "下载文件失败",
       "fetchFailed": "获取文档失败"

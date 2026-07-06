@@ -577,6 +577,7 @@ export interface ChunkListResponse {
   items: ChunkItem[]
   splitter_type?: string
   splitter_subtype?: string
+  qa_pair_count: number
 }
 
 // ============== Permission Types ==============

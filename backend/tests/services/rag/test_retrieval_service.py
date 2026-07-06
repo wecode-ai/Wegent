@@ -22,6 +22,50 @@ def set_auto_direct_injection_enabled_by_default(monkeypatch):
     )
 
 
+class _FakeQaCountQuery:
+    def __init__(self, qa_pair_count):
+        self.qa_pair_count = qa_pair_count
+
+    def select_from(self, *args, **kwargs):
+        return self
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def scalar(self):
+        return self.qa_pair_count
+
+
+class _FakeQaCountDb:
+    def __init__(self, qa_pair_count):
+        self.qa_pair_count = qa_pair_count
+
+    def query(self, *args, **kwargs):
+        return _FakeQaCountQuery(self.qa_pair_count)
+
+
+def test_build_qa_query_plan_detects_qa_pair_chunks():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    plan = RetrievalService._build_qa_query_plan(
+        db=_FakeQaCountDb(5),
+        knowledge_base_id=1,
+    )
+
+    assert plan == {"retrieval_profile": "qa_pair", "qa_pair_count": 5}
+
+
+def test_build_qa_query_plan_ignores_non_qa_chunks():
+    from app.services.rag.retrieval_service import RetrievalService
+
+    plan = RetrievalService._build_qa_query_plan(
+        db=_FakeQaCountDb(0),
+        knowledge_base_id=1,
+    )
+
+    assert plan is None
+
+
 @pytest.mark.asyncio
 async def test_retrieve_for_chat_shell_no_longer_persists_subtask_context():
     from app.services.context.context_service import context_service
@@ -864,6 +908,7 @@ class TestRetrieveForChatShell:
                     ]
                 },
             ) as mock_execute,
+            patch.object(RetrievalService, "_build_qa_query_plan", return_value=None),
         ):
             result = await RetrievalService().retrieve_with_routing(
                 query="release checklist",
@@ -891,6 +936,7 @@ class TestRetrieveForChatShell:
         mock_execute.assert_awaited_once_with(
             knowledge_id="123",
             query="release checklist",
+            query_plan=None,
             search_hints=None,
             retrieval_config=kb_config.retrieval_config,
             scope=RetrievalScope(document_ids=[9]),

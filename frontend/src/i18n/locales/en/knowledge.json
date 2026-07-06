@@ -415,7 +415,8 @@
         "chunkTokens": "{{count}} tokens",
         "viewChunks": "View Chunks",
         "splitterType": "Splitter Type",
-        "splitterSubtype": "Splitter Subtype"
+        "splitterSubtype": "Splitter Subtype",
+        "qaPairsDetected": "{{count}} Q/A pairs detected"
       },
       "downloadFailed": "Failed to download file",
       "fetchFailed": "Failed to fetch documents"

@@ -7,6 +7,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from llama_index.core.schema import TextNode
 
 from shared.models import RetrievalScope
 
@@ -72,6 +73,29 @@ class TestHybridAlphaResolution:
 
 
 class TestRetrieveSearchHints:
+    @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
+    def test_process_query_results_returns_display_text(self, mock_client_class):
+        from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend
+
+        mock_client_class.return_value = MagicMock()
+        backend = ElasticsearchBackend(
+            {
+                "url": "http://localhost:9200",
+                "indexStrategy": {"mode": "per_dataset", "prefix": "test"},
+            }
+        )
+        node = TextNode(
+            text="Question-only retrieval text",
+            metadata={"display_text": "Q: question\n\nA: full answer"},
+        )
+
+        result = backend._process_query_results(
+            MagicMock(nodes=[node], similarities=[0.9]),
+            score_threshold=0.1,
+        )
+
+        assert result["records"][0]["content"] == "Q: question\n\nA: full answer"
+
     @patch("knowledge_engine.storage.elasticsearch_backend.Elasticsearch")
     def test_retrieve_rejects_doc_ref_in_metadata_condition(self, mock_client_class):
         from knowledge_engine.storage.elasticsearch_backend import ElasticsearchBackend

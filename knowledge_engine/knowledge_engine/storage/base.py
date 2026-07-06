@@ -22,6 +22,9 @@ from shared.models import RetrievalScope
 if TYPE_CHECKING:
     from knowledge_engine.storage.chunk_metadata import ChunkMetadata
 
+RETRIEVAL_TEXT_METADATA_KEY = "retrieval_text"
+DISPLAY_TEXT_METADATA_KEY = "display_text"
+
 
 class BaseStorageBackend(ABC):
     """Abstract base class for storage backends."""
@@ -92,6 +95,44 @@ class BaseStorageBackend(ABC):
 
         # Fallback: return original content
         return raw_content
+
+    def get_node_embedding_text(self, node: BaseNode) -> str:
+        """Return the text that should be embedded for a node."""
+        retrieval_text = node.metadata.get(RETRIEVAL_TEXT_METADATA_KEY)
+        if isinstance(retrieval_text, str) and retrieval_text.strip():
+            return retrieval_text
+        return node.text or ""
+
+    def get_node_display_text(self, node: BaseNode) -> str:
+        """Return the text that should be shown to users and query callers."""
+        return self.get_display_text_from_metadata(
+            node.metadata,
+            fallback=node.text or "",
+        )
+
+    def get_display_text_from_metadata(
+        self,
+        metadata: Dict[str, Any] | None,
+        *,
+        fallback: str,
+    ) -> str:
+        """Resolve display text from metadata, falling back to stored text."""
+        if metadata:
+            display_text = metadata.get(DISPLAY_TEXT_METADATA_KEY)
+            if isinstance(display_text, str) and display_text.strip():
+                return display_text
+        return fallback
+
+    def prepare_nodes_for_embedding(self, nodes: List[BaseNode]) -> List[BaseNode]:
+        """Clone nodes with retrieval text while preserving display metadata."""
+        prepared_nodes: List[BaseNode] = []
+        for node in nodes:
+            retrieval_text = node.metadata.get(RETRIEVAL_TEXT_METADATA_KEY)
+            if not isinstance(retrieval_text, str) or not retrieval_text.strip():
+                prepared_nodes.append(node)
+                continue
+            prepared_nodes.append(node.model_copy(update={"text": retrieval_text}))
+        return prepared_nodes
 
     def _validate_prefix(self, mode: str) -> str:
         """

@@ -94,6 +94,12 @@ def _serialize_standalone_document_detail(
     return response
 
 
+def _dump_retrieval_config_for_api(retrieval_config) -> dict | None:
+    if retrieval_config is None:
+        return None
+    return retrieval_config.model_dump(exclude_unset=True)
+
+
 def _raise_document_detail_http_error(error: ValueError) -> None:
     """Map orchestrator/service errors to stable HTTP responses.
 
@@ -395,9 +401,7 @@ def create_knowledge_base(
             kb_type=data.kb_type or "notebook",
             summary_enabled=data.summary_enabled,
             rag_config_mode=data.rag_config_mode,
-            retrieval_config=(
-                data.retrieval_config.model_dump() if data.retrieval_config else None
-            ),
+            retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_model_ref=data.summary_model_ref,
         )
 
@@ -479,9 +483,7 @@ def update_knowledge_base(
             knowledge_base_id=knowledge_base_id,
             name=data.name,
             description=data.description,
-            retrieval_config=(
-                data.retrieval_config.model_dump() if data.retrieval_config else None
-            ),
+            retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
             guided_questions=data.guided_questions,
@@ -1729,6 +1731,7 @@ def list_document_chunks(
         items=[ChunkItem(**item) for item in paginated_items],
         splitter_type=chunks_data.get("splitter_type"),
         splitter_subtype=chunks_data.get("splitter_subtype"),
+        qa_pair_count=chunks_data.get("qa_pair_count", 0),
     )
 
 

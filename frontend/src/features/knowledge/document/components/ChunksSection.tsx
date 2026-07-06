@@ -30,6 +30,7 @@ export function ChunksSection({ documentId, enabled = true }: ChunksSectionProps
     total,
     splitterType,
     splitterSubtype,
+    qaPairCount,
     loading,
     error,
     hasMore,
@@ -103,11 +104,16 @@ export function ChunksSection({ documentId, enabled = true }: ChunksSectionProps
       <CollapsibleContent className="space-y-3">
         {/* Splitter info */}
         {splitterType && (
-          <div className="flex items-center gap-2 text-xs text-text-muted">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
             <span>{t('document.document.detail.splitterType')}:</span>
             <Badge variant="secondary" size="sm">
               {formatSplitterType(splitterType, splitterSubtype)}
             </Badge>
+            {qaPairCount > 0 && (
+              <Badge variant="secondary" size="sm">
+                {t('document.document.detail.qaPairsDetected', { count: qaPairCount })}
+              </Badge>
+            )}
           </div>
         )}
 
