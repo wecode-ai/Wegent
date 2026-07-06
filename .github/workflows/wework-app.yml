@@ -91,11 +91,38 @@ jobs:
           set -euo pipefail
           release_title="Wework $RELEASE_VERSION"
           release_notes="$(mktemp)"
-          cat > "$release_notes" <<EOF
-          Wework macOS DMG build.
+          generated_notes="$(mktemp)"
+          previous_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')"
 
-          This build is ad-hoc signed and not Apple notarized. On first launch, click Done if macOS shows a Move to Trash warning, then force-open it from System Settings > Privacy & Security > Open Anyway.
-          EOF
+          if [ -n "$previous_tag" ]; then
+            log_range="${previous_tag}..${GITHUB_SHA}"
+          else
+            log_range="$GITHUB_SHA"
+          fi
+
+          git log --no-merges --pretty=format:'- %s (%h)' "$log_range" -- wework/ executor/ > "$generated_notes"
+
+          if [ ! -s "$generated_notes" ]; then
+            echo "- No Wework app bundle changes detected under \`wework/\` or \`executor/\` since the previous Wework release." > "$generated_notes"
+          fi
+
+          {
+            echo "## Changes"
+            echo ""
+            if [ -n "$previous_tag" ]; then
+              echo "Changes under \`wework/\` or \`executor/\` since \`$previous_tag\`."
+            else
+              echo "Initial Wework release changes under \`wework/\` or \`executor/\`."
+            fi
+            echo ""
+            cat "$generated_notes"
+            echo ""
+            echo "## macOS Distribution Notes"
+            echo ""
+            echo "Wework macOS DMG build."
+            echo ""
+            echo "This build is ad-hoc signed and not Apple notarized. On first launch, click Done if macOS shows a Move to Trash warning, then force-open it from System Settings > Privacy & Security > Open Anyway."
+          } > "$release_notes"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
