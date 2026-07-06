@@ -2067,6 +2067,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent(
       'wework的聊天链路现在代码逻辑比较混乱'
     )
+    expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveAttribute('title')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -3677,6 +3678,12 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-option')).toHaveClass(
+      'h-11',
+      'rounded-xl',
+      'font-light'
+    )
+    expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('⌥⌘F')
     await userEvent.click(screen.getByTestId('right-workspace-file-option'))
 
     const tabbar = screen.getByTestId('right-workspace-tabbar')
@@ -3706,6 +3713,39 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test('right workspace launcher keyboard shortcut opens the file tab', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, altKey: true })
+
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test('right workspace can open multiple temporary chat tabs', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    const tabbar = screen.getByTestId('right-workspace-tabbar')
+    expect(screen.getByTestId('right-workspace-chat-panel')).toBeInTheDocument()
+    expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(1)
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-chat-option'
+      )
+    )
+
+    expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(2)
+    expect(screen.getByTestId('right-workspace-chat-panel')).toBeInTheDocument()
   })
 
   test('moves right workspace tabs into the titlebar in Tauri', async () => {
@@ -3738,6 +3778,17 @@ describe('DesktopWorkbenchLayout', () => {
       expect(titlebarRightPanel).toContainElement(screen.getByTestId('right-workspace-file-tab'))
       expect(titlebarRightPanel).toContainElement(
         screen.getByTestId('right-workspace-new-tab-button')
+      )
+      const rightTitlebarDragRegion = screen.getByTestId('right-workspace-titlebar-drag-region')
+      expect(titlebarRightPanel).toContainElement(rightTitlebarDragRegion)
+      expect(
+        within(rightTitlebarDragRegion).getByTestId('macos-titlebar-drag-region')
+      ).toHaveAttribute('data-tauri-drag-region')
+      expect(screen.getByTestId('right-workspace-file-tab')).not.toContainElement(
+        rightTitlebarDragRegion
+      )
+      expect(screen.getByTestId('right-workspace-new-tab-button')).not.toContainElement(
+        rightTitlebarDragRegion
       )
       expect(screen.getByTestId('right-workspace-titlebar-spacer')).toHaveClass(
         'h-[38px]',

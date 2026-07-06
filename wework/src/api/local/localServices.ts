@@ -847,6 +847,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   workspaceSource: LocalRuntimeWorkspaceSource
   branch?: string | null
   newSession: boolean
+  ephemeral?: boolean
 }
 
 function buildLocalRuntimeExecutionRequest(
@@ -908,6 +909,7 @@ function buildLocalRuntimeExecutionRequest(
     execution_target_type: 'local',
     device_id: input.localDeviceId,
     new_session: input.newSession,
+    ephemeral: Boolean(input.ephemeral),
     is_group_chat: false,
     collaboration_model: 'single',
     ...(collaborationMode ? { collaborationMode } : {}),
@@ -1058,6 +1060,7 @@ async function createLocalRuntimeTaskPayload(
       workspaceSource: runtimeWorkspace.workspaceSource,
       branch: runtimeWorkspace.branch,
       newSession: true,
+      ephemeral: normalizedData.ephemeral,
     }),
   } as unknown as Record<string, unknown>
 }
@@ -1113,6 +1116,7 @@ function createLocalRuntimeSendPayload(
         workspacePath,
         workspaceSource: 'local_path',
         newSession: false,
+        ephemeral: data.ephemeral,
       }),
     } as unknown as Record<string, unknown>
   }
@@ -1139,6 +1143,7 @@ function createLocalRuntimeSendPayload(
       workspacePath,
       workspaceSource: 'local_path',
       newSession: false,
+      ephemeral: data.ephemeral,
     }),
   } as unknown as Record<string, unknown>
 }

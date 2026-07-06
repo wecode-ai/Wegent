@@ -71,6 +71,10 @@ impl OpenAIResponsesRequest {
                 .get("new_session")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            ephemeral: metadata
+                .get("ephemeral")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             fork_runtime: metadata.get("fork_runtime").cloned(),
             inherited_sessions: metadata
                 .get("inherited_sessions")
@@ -245,6 +249,7 @@ const KNOWN_METADATA_KEYS: &[&str] = &[
     "kb_tool_access_mode",
     "skip_git_clone",
     "new_session",
+    "ephemeral",
     "fork_runtime",
     "inherited_sessions",
     "type",

@@ -267,6 +267,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
+  const temporaryChatTabSequence = useRef(0)
   const [rightPanelPlanContent, setRightPanelPlanContent] = useState<string | null>(null)
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
@@ -511,6 +512,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
     setRightPanelView(tab)
   }, [])
+  const selectRightPanelTab = useCallback((tab: RightWorkspacePanelTab) => {
+    setRightPanelOpen(true)
+    setRightPanelView(tab)
+  }, [])
+  const openTemporaryChatTab = useCallback(() => {
+    temporaryChatTabSequence.current += 1
+    openRightPanelTab(`chat:${Date.now()}-${temporaryChatTabSequence.current}`)
+  }, [openRightPanelTab])
   const openAssistantPlan = useCallback(
     (content: string) => {
       setRightPanelPlanContent(content)
@@ -637,6 +646,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const selectTerminalView = useCallback(() => {
     openRightPanelTab('terminal')
   }, [openRightPanelTab])
+  const selectChatView = useCallback(() => {
+    openTemporaryChatTab()
+  }, [openTemporaryChatTab])
   const selectPlanView = useCallback(() => {
     openRightPanelTab('plan')
   }, [openRightPanelTab])
@@ -800,7 +812,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
       )}
       style={{ width: chatColumnWidth }}
-      title={runtimeTaskTitle}
     >
       <span className="block w-full min-w-0 truncate">{runtimeTaskTitle}</span>
     </div>
@@ -1235,6 +1246,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               activeView={rightPanelView}
               openTabs={rightPanelTabs}
               currentProject={workspaceProject}
+              currentRuntimeTask={currentRuntimeTask}
               devices={devices}
               workspaceTarget={effectiveWorkspaceTarget}
               preferLocalTerminal={preferLocalWorkspaceTerminal}
@@ -1250,7 +1262,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectTerminal={selectTerminalView}
               onSelectBrowser={selectBrowserView}
               onSelectFiles={selectFilesView}
+              onSelectChat={selectChatView}
               onSelectPlan={selectPlanView}
+              onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
             />
