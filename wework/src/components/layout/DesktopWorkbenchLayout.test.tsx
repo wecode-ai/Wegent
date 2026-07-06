@@ -2067,6 +2067,9 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent(
       'wework的聊天链路现在代码逻辑比较混乱'
     )
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveStyle({
+      width: 'calc(100% - 17rem)',
+    })
     expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveAttribute('title')
   })
 

@@ -92,6 +92,7 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
 const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
+const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '17rem'
 
 function getRuntimeWorkbenchPaneKeys(
   runtimeWork: RuntimeWorkListResponse | null | undefined
@@ -303,6 +304,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onCollapse: closeRightPanel,
   })
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
+  const paneTitleWidth = rightPanelOpen
+    ? chatColumnWidth
+    : `calc(100% - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const rightPanelTitlebarWidth =
     rightPanelOpen && workbenchMainWidth > rightSplitChatWidth
@@ -811,7 +815,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
         rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
       )}
-      style={{ width: chatColumnWidth }}
+      style={{ width: paneTitleWidth }}
     >
       <span className="block w-full min-w-0 truncate">{runtimeTaskTitle}</span>
     </div>
