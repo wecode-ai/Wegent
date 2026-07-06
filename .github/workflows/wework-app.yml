@@ -91,11 +91,24 @@ jobs:
           set -euo pipefail
           release_title="Wework $RELEASE_VERSION"
           release_notes="$(mktemp)"
-          cat > "$release_notes" <<EOF
-          Wework macOS DMG build.
+          generated_notes="$(mktemp)"
 
-          This build is ad-hoc signed and not Apple notarized. On first launch, click Done if macOS shows a Move to Trash warning, then force-open it from System Settings > Privacy & Security > Open Anyway.
-          EOF
+          gh api "repos/$GH_REPO/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="$GITHUB_SHA" \
+            --jq .body > "$generated_notes"
+
+          {
+            echo "## Changes"
+            echo ""
+            cat "$generated_notes"
+            echo ""
+            echo "## macOS Distribution Notes"
+            echo ""
+            echo "Wework macOS DMG build."
+            echo ""
+            echo "This build is ad-hoc signed and not Apple notarized. On first launch, click Done if macOS shows a Move to Trash warning, then force-open it from System Settings > Privacy & Security > Open Anyway."
+          } > "$release_notes"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
