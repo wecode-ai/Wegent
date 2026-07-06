@@ -34,7 +34,8 @@ use crate::{
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     stream::{
         collect_claude_stream_summary, extract_claude_tool_results, extract_claude_tool_uses,
-        extract_reasoning, extract_text, ClaudeToolUse,
+        extract_reasoning, extract_text, ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError,
+        ClaudeToolUse,
     },
 };
 
@@ -562,6 +563,14 @@ enum CommandOutcome {
     },
 }
 
+enum StreamingStdoutOutcome {
+    Success(String),
+    InvalidJson {
+        stdout: String,
+        error: ClaudeStdoutJsonError,
+    },
+}
+
 async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandOutcome {
     let mut command = Command::new(&spec.program);
     command.args(&spec.args).envs(&spec.env);
@@ -701,13 +710,15 @@ where
     });
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
+    let stdout_task_id = task_id.clone();
+    let stdout_subtask_id = subtask_id.clone();
     let stdout_task = stdout.map(|stdout| {
         tokio::spawn(read_streaming_stdout(
             stdout,
             sink,
             builder,
-            task_id,
-            subtask_id,
+            stdout_task_id,
+            stdout_subtask_id,
             debug_stdout_path,
         ))
     });
@@ -725,8 +736,27 @@ where
             }
         }
     }
-    let stdout = join_output(stdout_task).await;
+    let stdout = join_streaming_stdout(stdout_task).await;
     let stderr = join_output(stderr_task).await;
+
+    let stdout = match stdout {
+        StreamingStdoutOutcome::Success(stdout) => stdout,
+        StreamingStdoutOutcome::InvalidJson { stdout, error } => {
+            let fields = vec![
+                ("task_id", task_id.to_string()),
+                ("subtask_id", subtask_id.to_string()),
+                ("line_number", error.line_number.to_string()),
+                ("error", error.message.clone()),
+                ("preview", error.preview.clone()),
+            ];
+            log_executor_event("invalid claude stdout json", &fields);
+            return CommandOutcome::Failure {
+                stderr: error.failure_message(),
+                stdout,
+                exit_code: status.ok().and_then(|status| status.code()),
+            };
+        }
+    };
 
     match status {
         Ok(status) if status.success() => CommandOutcome::Success { stdout },
@@ -750,7 +780,7 @@ async fn read_streaming_stdout<R, S>(
     task_id: String,
     subtask_id: String,
     debug_stdout_path: Option<PathBuf>,
-) -> String
+) -> StreamingStdoutOutcome
 where
     R: AsyncRead + Unpin,
     S: EventSink,
@@ -761,13 +791,24 @@ where
     let mut offset = 0usize;
     let mut tool_uses: HashMap<String, ClaudeToolUse> = HashMap::new();
     let mut lines = BufReader::new(stdout).lines();
+    let mut line_number = 0usize;
+    let mut json_buffer = ClaudeStdoutJsonBuffer::default();
     while let Ok(Some(line)) = lines.next_line().await {
+        line_number += 1;
         output.push_str(&line);
         output.push('\n');
         if let Some(file) = debug_stdout_file.as_mut() {
             let _ = writeln!(file, "{}", debug_claude_stdout_line(&line));
         }
-        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+        let Some(value) = (match json_buffer.push_line(&line, line_number) {
+            Ok(value) => value,
+            Err(error) => {
+                return StreamingStdoutOutcome::InvalidJson {
+                    stdout: output,
+                    error,
+                };
+            }
+        }) else {
             continue;
         };
         if let Some(reasoning) = extract_reasoning(&value) {
@@ -814,7 +855,7 @@ where
         ];
         log_executor_event("streaming text chunks emitted", &fields);
     }
-    output.trim().to_owned()
+    StreamingStdoutOutcome::Success(output.trim().to_owned())
 }
 
 async fn emit_claude_tool_use<S>(
@@ -979,6 +1020,24 @@ async fn join_output(handle: Option<tokio::task::JoinHandle<String>>) -> String 
     match handle {
         Some(handle) => handle.await.unwrap_or_default(),
         None => String::new(),
+    }
+}
+
+async fn join_streaming_stdout(
+    handle: Option<tokio::task::JoinHandle<StreamingStdoutOutcome>>,
+) -> StreamingStdoutOutcome {
+    match handle {
+        Some(handle) => handle
+            .await
+            .unwrap_or_else(|error| StreamingStdoutOutcome::InvalidJson {
+                stdout: String::new(),
+                error: ClaudeStdoutJsonError {
+                    line_number: 0,
+                    message: format!("stdout reader task failed: {error}"),
+                    preview: String::new(),
+                },
+            }),
+        None => StreamingStdoutOutcome::Success(String::new()),
     }
 }
 
