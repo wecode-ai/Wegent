@@ -75,6 +75,10 @@ function optionalNumberField(record: Record<string, unknown>, key: string): numb
   return typeof value === 'number' ? value : undefined
 }
 
+function commandExitCode(record: Record<string, unknown>): number | undefined {
+  return optionalNumberField(record, 'exit_code') ?? optionalNumberField(record, 'exitCode')
+}
+
 function recordField(record: Record<string, unknown>, key: string): Record<string, unknown> {
   return asRecord(record[key])
 }
@@ -249,6 +253,7 @@ function toolStatusFromItem(
   item: Record<string, unknown>,
   fallback: ChatBlock['status']
 ): ChatBlock['status'] {
+  if (commandExitCode(item) !== undefined) return 'done'
   const status = stringField(item, 'status')
   return status === 'error' || status === 'failed' ? 'error' : fallback
 }

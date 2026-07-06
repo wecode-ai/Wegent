@@ -1554,11 +1554,11 @@ fn tool_status(item: &Value) -> String {
             "inProgress".to_owned()
         }
     });
-    if status.eq_ignore_ascii_case("failed")
+    if command_exit_code(item).is_some() {
+        "done".to_owned()
+    } else if status.eq_ignore_ascii_case("failed")
         || status.eq_ignore_ascii_case("failure")
         || status.eq_ignore_ascii_case("error")
-        || integer_field(item, "exit_code").is_some_and(|exit_code| exit_code != 0)
-        || integer_field(item, "exitCode").is_some_and(|exit_code| exit_code != 0)
         || bool_field(item, "success").is_some_and(|success| !success)
         || item.get("error").is_some()
     {
@@ -1573,6 +1573,10 @@ fn tool_status(item: &Value) -> String {
     } else {
         "pending".to_owned()
     }
+}
+
+fn command_exit_code(item: &Value) -> Option<i64> {
+    integer_field(item, "exit_code").or_else(|| integer_field(item, "exitCode"))
 }
 
 fn file_changes(value: &Value) -> Option<Value> {
@@ -2559,6 +2563,86 @@ mod tests {
         assert_eq!(block["tool_input"]["cwd"], "/tmp/project");
         assert_eq!(block["tool_output"], "/tmp/project\n");
         assert_eq!(block["status"], "done");
+    }
+
+    #[test]
+    fn transcript_treats_non_zero_command_exit_as_done() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "id": "call-1",
+                                "type": "function_call",
+                                "call_id": "call-1",
+                                "name": "exec_command",
+                                "arguments": "{\"cmd\":\"grep missing file.txt\",\"workdir\":\"/tmp/project\"}"
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "exec_command_end",
+                                "call_id": "call-1",
+                                "command": ["/bin/zsh", "-lc", "grep missing file.txt"],
+                                "cwd": "/tmp/project",
+                                "aggregated_output": "",
+                                "status": "failed",
+                                "exit_code": 1
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "exec_command");
+        assert_eq!(block["status"], "done");
+    }
+
+    #[test]
+    fn transcript_keeps_command_failures_without_exit_code_as_error() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "exec_command_end",
+                                "call_id": "call-1",
+                                "command": ["missing-binary"],
+                                "cwd": "/tmp/project",
+                                "status": "failed",
+                                "error": "No such file or directory"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["status"], "error");
     }
 
     #[test]
