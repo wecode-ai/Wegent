@@ -625,7 +625,6 @@ class KnowledgeService:
                     current_retrieval_config["retrieval_mode"] = (
                         data.retrieval_config.retrieval_mode
                     )
-                    current_retrieval_config["retrieval_mode_source"] = "user"
                 if data.retrieval_config.top_k is not None:
                     current_retrieval_config["top_k"] = data.retrieval_config.top_k
                 if data.retrieval_config.score_threshold is not None:
@@ -752,13 +751,13 @@ class KnowledgeService:
         new_type: str,
     ) -> Optional[Kind]:
         """
-        Update the knowledge base type (notebook <-> classic conversion).
+        Update the knowledge base default opening view.
 
         Args:
             db: Database session
             knowledge_base_id: Knowledge base ID
             user_id: Requesting user ID
-            new_type: New knowledge base type ('notebook' or 'classic')
+            new_type: New default view value ('notebook' or 'classic')
 
         Returns:
             Updated Kind if successful, None if not found
@@ -781,7 +780,7 @@ class KnowledgeService:
         if new_type not in ("notebook", "classic"):
             raise ValueError("kb_type must be 'notebook' or 'classic'")
 
-        # Get current type
+        # Get current default view
         kb_json = kb.json
         spec = kb_json.get("spec", {})
         current_type = spec.get("kbType", "notebook")
@@ -790,16 +789,7 @@ class KnowledgeService:
         if current_type == new_type:
             return kb
 
-        # If converting to notebook, check document count limit
-        if new_type == "notebook":
-            document_count = KnowledgeService.get_document_count(db, knowledge_base_id)
-            if document_count > KnowledgeService.NOTEBOOK_MAX_DOCUMENTS:
-                raise ValueError(
-                    f"Cannot convert to notebook mode: document count ({document_count}) "
-                    f"exceeds the limit of {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS}"
-                )
-
-        # Update the type
+        # Update the default opening view. This does not change KB capabilities.
         spec["kbType"] = new_type
         kb_json["spec"] = spec
         kb.json = kb_json
@@ -1050,9 +1040,6 @@ class KnowledgeService:
 
     # ============== Knowledge Document Operations ==============
 
-    # Maximum number of documents allowed in notebook mode knowledge base
-    NOTEBOOK_MAX_DOCUMENTS = 50
-
     @staticmethod
     def create_document(
         db: Session,
@@ -1095,17 +1082,6 @@ class KnowledgeService:
             raise ValueError(
                 "You do not have permission to add documents to this knowledge base"
             )
-
-        # Check document limit for notebook mode knowledge base
-        kb_spec = kb.json.get("spec", {})
-        kb_type = kb_spec.get("kbType", "notebook")
-        if kb_type == "notebook":
-            current_count = KnowledgeService.get_document_count(db, knowledge_base_id)
-            if current_count >= KnowledgeService.NOTEBOOK_MAX_DOCUMENTS:
-                raise ValueError(
-                    f"Notebook mode knowledge base can have at most {KnowledgeService.NOTEBOOK_MAX_DOCUMENTS} documents. "
-                    f"Current count: {current_count}"
-                )
 
         validated_folder_id = data.folder_id
 

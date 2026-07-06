@@ -127,11 +127,11 @@ class BaseStorageBackend(ABC):
         """Clone nodes with retrieval text while preserving display metadata."""
         prepared_nodes: List[BaseNode] = []
         for node in nodes:
-            retrieval_text = node.metadata.get(RETRIEVAL_TEXT_METADATA_KEY)
-            if not isinstance(retrieval_text, str) or not retrieval_text.strip():
+            embedding_text = self.get_node_embedding_text(node)
+            if embedding_text == (node.text or ""):
                 prepared_nodes.append(node)
                 continue
-            prepared_nodes.append(node.model_copy(update={"text": retrieval_text}))
+            prepared_nodes.append(node.model_copy(update={"text": embedding_text}))
         return prepared_nodes
 
     def _validate_prefix(self, mode: str) -> str:

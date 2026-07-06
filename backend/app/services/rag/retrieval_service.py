@@ -666,10 +666,20 @@ class RetrievalService:
             db=db,
             user_name=user_name,
         )
-        query_plan = self._build_qa_query_plan(
-            db=db,
-            knowledge_base_id=kb.id,
-            scope=scope,
+        retrieval_config = resolved_config.retrieval_config
+        retrieval_mode = (
+            retrieval_config.get("retrieval_mode")
+            if isinstance(retrieval_config, dict)
+            else getattr(retrieval_config, "retrieval_mode", None)
+        )
+        query_plan = (
+            self._build_qa_query_plan(
+                db=db,
+                knowledge_base_id=kb.id,
+                scope=scope,
+            )
+            if retrieval_mode == "vector"
+            else None
         )
         result = await self._execute_runtime_query(
             query=query,
@@ -765,15 +775,26 @@ class RetrievalService:
 
         from app.models.knowledge import KnowledgeDocument
 
-        splitter_subtype = func.json_unquote(
-            func.json_extract(KnowledgeDocument.chunks, "$.splitter_subtype")
-        )
-        qa_pair_count_expr = cast(
-            func.json_unquote(
+        bind = db.get_bind()
+        dialect_name = bind.dialect.name if bind is not None else None
+        if dialect_name == "mysql":
+            splitter_subtype = func.json_unquote(
+                func.json_extract(KnowledgeDocument.chunks, "$.splitter_subtype")
+            )
+            qa_pair_count_value = func.json_unquote(
                 func.json_extract(KnowledgeDocument.chunks, "$.qa_pair_count")
-            ),
-            Integer,
-        )
+            )
+        elif dialect_name == "sqlite":
+            splitter_subtype = func.json_extract(
+                KnowledgeDocument.chunks, "$.splitter_subtype"
+            )
+            qa_pair_count_value = func.json_extract(
+                KnowledgeDocument.chunks, "$.qa_pair_count"
+            )
+        else:
+            return None
+
+        qa_pair_count_expr = cast(qa_pair_count_value, Integer)
         query = db.query(
             func.coalesce(
                 func.sum(

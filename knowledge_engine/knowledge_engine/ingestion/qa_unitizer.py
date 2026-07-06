@@ -79,6 +79,14 @@ def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
                     source_metadata=dict(document.metadata or {}),
                 )
             )
+        else:
+            fallback_nodes.extend(
+                _build_uncovered_text_nodes(
+                    text=text,
+                    units=[],
+                    source_metadata=dict(document.metadata or {}),
+                )
+            )
 
     if not _is_confident_qa_document(documents, [unit for unit, _ in all_units]):
         return None

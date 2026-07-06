@@ -109,12 +109,12 @@ export function ChunksSection({ documentId, enabled = true }: ChunksSectionProps
             <Badge variant="secondary" size="sm">
               {formatSplitterType(splitterType, splitterSubtype)}
             </Badge>
-            {qaPairCount > 0 && (
-              <Badge variant="secondary" size="sm">
-                {t('document.document.detail.qaPairsDetected', { count: qaPairCount })}
-              </Badge>
-            )}
           </div>
+        )}
+        {qaPairCount > 0 && (
+          <Badge variant="secondary" size="sm">
+            {t('document.document.detail.qaPairsDetected', { count: qaPairCount })}
+          </Badge>
         )}
 
         {/* Loading state */}

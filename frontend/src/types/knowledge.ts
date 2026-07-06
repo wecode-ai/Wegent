@@ -298,10 +298,13 @@ export interface SummaryModelRef {
   type: 'public' | 'user' | 'group' | 'runtime'
 }
 
-// Knowledge Base Type
-// - notebook: Three-column layout with chat area and document panel (new style)
-// - classic: Document list only without chat functionality (legacy style)
+// Knowledge Base Type.
+// This field is persisted as spec.kbType and now represents the default
+// opening view, not a resource capability boundary.
+// - notebook: default to Notebook workspace view
+// - classic: default to document management view
 export type KnowledgeBaseType = 'notebook' | 'classic'
+export type KnowledgeView = 'documents' | 'notebook'
 export type RagConfigMode = 'auto' | 'disabled'
 
 // Knowledge Base types
@@ -317,7 +320,7 @@ export interface KnowledgeBase {
   summary_enabled: boolean
   summary_model_ref?: SummaryModelRef | null
   summary?: KnowledgeBaseSummary | null
-  /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
+  /** Default opening view: 'notebook' or 'classic' (documents) */
   kb_type?: KnowledgeBaseType
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]
@@ -345,7 +348,7 @@ export interface KnowledgeBaseCreate {
   rag_config_mode?: RagConfigMode
   summary_enabled?: boolean
   summary_model_ref?: SummaryModelRef | null
-  /** Knowledge base display type: 'notebook' (three-column with chat) or 'classic' (document list only) */
+  /** Default opening view: 'notebook' or 'classic' (documents) */
   kb_type?: KnowledgeBaseType
   /** Guided questions list (max 3) for notebook mode quick user interaction */
   guided_questions?: string[]

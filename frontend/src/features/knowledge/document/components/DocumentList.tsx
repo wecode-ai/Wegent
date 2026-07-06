@@ -199,7 +199,7 @@ interface DocumentListProps {
   initialDocPath?: string
   /** Whether this KB belongs to an organization-level namespace (affects URL format in DocumentDetailDialog) */
   isOrganization?: boolean
-  /** Whether server-side pagination is enabled (classic mode: true, notebook mode: false) */
+  /** Whether server-side pagination is enabled */
   paginationEnabled?: boolean
 }
 
@@ -332,8 +332,6 @@ export function DocumentList({
   const [selectedFolderIds, setSelectedFolderIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
-  // Track if initial selection has been done
-  const [initialSelectionDone, setInitialSelectionDone] = useState(false)
   // Track if initialDocPath has been handled
   const [initialDocPathHandled, setInitialDocPathHandled] = useState(false)
   // Track which document is being refreshed
@@ -439,22 +437,22 @@ export function DocumentList({
     knowledgeBase.id,
   ])
 
-  // Default select all documents when documents load (for notebook mode)
+  // Notebook view starts with no explicit document filter. Users can select
+  // documents to narrow the chat context; otherwise the whole KB is available
+  // through retrieval without injecting every document into context.
   useEffect(() => {
-    if (onSelectionChange && documents.length > 0 && !initialSelectionDone) {
-      const allIds = new Set(documents.map(doc => doc.id))
-      setSelectedIds(allIds)
-      onSelectionChange(Array.from(allIds))
-      setInitialSelectionDone(true)
+    if (onSelectionChange) {
+      setSelectedIds(new Set())
+      onSelectionChange([])
     }
-  }, [documents, onSelectionChange, initialSelectionDone])
+  }, [knowledgeBase.id, onSelectionChange])
 
-  // Notify parent when selection changes (after initial selection)
+  // Notify parent when selection changes.
   useEffect(() => {
-    if (onSelectionChange && initialSelectionDone) {
+    if (onSelectionChange) {
       onSelectionChange(Array.from(selectedIds))
     }
-  }, [selectedIds, onSelectionChange, initialSelectionDone])
+  }, [selectedIds, onSelectionChange])
 
   const filteredDocuments = useMemo(() => {
     if (!searchQuery.trim()) return documents
@@ -1201,7 +1199,11 @@ export function DocumentList({
                     ) : (
                       <Square className="w-3.5 h-3.5" />
                     )}
-                    <span>{t('document.document.batch.selectAll')}</span>
+                    <span>
+                      {paginationEnabled
+                        ? t('document.document.batch.selectCurrentPage')
+                        : t('document.document.batch.selectAll')}
+                    </span>
                   </button>
                   <span className="text-text-muted">
                     ({filteredDocuments.filter(doc => selectedIds.has(doc.id)).length}/
@@ -1236,6 +1238,17 @@ export function DocumentList({
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
               />
+              {paginationEnabled && (
+                <Pagination
+                  page={page}
+                  totalPages={totalPages}
+                  totalCount={totalCount}
+                  pageSize={pageSize}
+                  onGoToPage={goToPage}
+                  onPageSizeChange={changePageSize}
+                  disabled={loading}
+                />
+              )}
             </div>
           ) : (
             /* Normal mode: Table layout with folder tree - single bordered container */
@@ -1250,6 +1263,11 @@ export function DocumentList({
                       <Checkbox
                         checked={isPartialSelected ? 'indeterminate' : isAllSelected}
                         onCheckedChange={handleSelectAll}
+                        aria-label={
+                          paginationEnabled
+                            ? t('document.document.batch.selectCurrentPage')
+                            : t('document.document.batch.selectAll')
+                        }
                         className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                       />
                     </div>

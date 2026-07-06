@@ -556,6 +556,58 @@ def test_document_indexer_exposes_qa_pair_count_for_unitized_documents() -> None
     )
 
 
+def test_document_indexer_counts_only_qa_pair_nodes_for_mixed_qa_documents() -> None:
+    storage_backend = MagicMock()
+    storage_backend.index_with_metadata.return_value = {
+        "status": "success",
+        "indexed_count": 3,
+        "index_name": "wegent_kb_1",
+    }
+    indexer = DocumentIndexer(
+        storage_backend=storage_backend,
+        embed_model=MagicMock(),
+        splitter_config=None,
+        file_extension=".md",
+    )
+
+    result = indexer._index_documents(
+        documents=[
+            Document(
+                text=(
+                    "**Q1：What does Wegent index?**\n\n"
+                    "**A：**\n"
+                    "Wegent indexes complete question and answer pairs.\n\n"
+                    "**Q2：Does retrieval change?**\n\n"
+                    "**A：**\n"
+                    "Retrieval keeps reading the same node text."
+                )
+            ),
+            Document(
+                text=(
+                    "This appendix has no question and answer markers, but it "
+                    "must still be preserved as fallback chunk text."
+                )
+            ),
+        ],
+        chunk_metadata=ChunkMetadata(
+            knowledge_id="1",
+            doc_ref="doc_qa_mixed",
+            source_file="faq.md",
+            created_at="2026-04-12T00:00:00+00:00",
+        ),
+    )
+
+    indexed_nodes = storage_backend.index_with_metadata.call_args.kwargs["nodes"]
+    assert [node.metadata["node_role"] for node in indexed_nodes] == [
+        "qa_pair",
+        "qa_pair",
+        "chunk",
+    ]
+    assert result["chunks_data"]["splitter_subtype"] == "qa_pair"
+    assert result["chunks_data"]["qa_pair_count"] == 2
+    assert result["chunks_data"]["total_count"] == 3
+
+
 def test_document_indexer_hierarchical_routes_through_ingestion_result_contract() -> (
     None
 ):

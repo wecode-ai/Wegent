@@ -3,9 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from shared.models import RetrievalScope
 
@@ -40,6 +43,9 @@ class _FakeQaCountDb:
     def __init__(self, qa_pair_count):
         self.qa_pair_count = qa_pair_count
 
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="mysql"))
+
     def query(self, *args, **kwargs):
         return _FakeQaCountQuery(self.qa_pair_count)
 
@@ -64,6 +70,144 @@ def test_build_qa_query_plan_ignores_non_qa_chunks():
     )
 
     assert plan is None
+
+
+def test_build_qa_query_plan_uses_sqlite_json_and_scope_filter():
+    from app.models.knowledge import KnowledgeDocument
+    from app.services.rag.retrieval_service import RetrievalService
+
+    engine = create_engine("sqlite:///:memory:")
+    KnowledgeDocument.__table__.create(engine)
+    session_factory = sessionmaker(bind=engine)
+
+    with session_factory() as db:
+        included_doc = KnowledgeDocument(
+            kind_id=1,
+            attachment_id=1,
+            name="included.md",
+            file_extension=".md",
+            user_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "qa_pair", "qa_pair_count": 3},
+        )
+        excluded_doc = KnowledgeDocument(
+            kind_id=1,
+            attachment_id=2,
+            name="excluded.md",
+            file_extension=".md",
+            user_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "qa_pair", "qa_pair_count": 5},
+        )
+        non_qa_doc = KnowledgeDocument(
+            kind_id=1,
+            attachment_id=3,
+            name="non-qa.md",
+            file_extension=".md",
+            user_id=1,
+            is_active=True,
+            chunks={"splitter_subtype": "sentence", "qa_pair_count": 9},
+        )
+        db.add_all([included_doc, excluded_doc, non_qa_doc])
+        db.commit()
+
+        plan = RetrievalService._build_qa_query_plan(
+            db=db,
+            knowledge_base_id=1,
+            scope=RetrievalScope(document_ids=[included_doc.id, non_qa_doc.id]),
+        )
+
+    assert plan == {"retrieval_profile": "qa_pair", "qa_pair_count": 3}
+
+
+@pytest.mark.asyncio
+async def test_retrieve_from_kb_internal_builds_qa_plan_for_vector_mode():
+    from app.services.rag.retrieval_service import RetrievalService
+    from shared.models import (
+        RemoteKnowledgeBaseQueryConfig,
+        RuntimeEmbeddingModelConfig,
+        RuntimeRetrievalConfig,
+        RuntimeRetrieverConfig,
+    )
+
+    service = RetrievalService()
+    service._execute_runtime_query = AsyncMock(return_value={"records": []})
+    kb = SimpleNamespace(id=1, name="qa-kb")
+    kb_config = RemoteKnowledgeBaseQueryConfig(
+        knowledge_base_id=1,
+        index_owner_user_id=1,
+        retriever_config=RuntimeRetrieverConfig(
+            name="milvus",
+            namespace="default",
+            storage_config={"type": "milvus"},
+        ),
+        embedding_model_config=RuntimeEmbeddingModelConfig(
+            model_name="embed",
+            model_namespace="default",
+            resolved_config={},
+        ),
+        retrieval_config=RuntimeRetrievalConfig(retrieval_mode="vector"),
+    )
+
+    with patch.object(
+        RetrievalService,
+        "_build_qa_query_plan",
+        return_value={"retrieval_profile": "qa_pair", "qa_pair_count": 2},
+    ) as mock_build_plan:
+        await service._retrieve_from_kb_internal(
+            query="how to refund",
+            kb=kb,
+            db=MagicMock(),
+            knowledge_base_config=kb_config,
+        )
+
+    mock_build_plan.assert_called_once()
+    service._execute_runtime_query.assert_awaited_once()
+    assert service._execute_runtime_query.await_args.kwargs["query_plan"] == {
+        "retrieval_profile": "qa_pair",
+        "qa_pair_count": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_retrieve_from_kb_internal_skips_qa_plan_for_hybrid_mode():
+    from app.services.rag.retrieval_service import RetrievalService
+    from shared.models import (
+        RemoteKnowledgeBaseQueryConfig,
+        RuntimeEmbeddingModelConfig,
+        RuntimeRetrievalConfig,
+        RuntimeRetrieverConfig,
+    )
+
+    service = RetrievalService()
+    service._execute_runtime_query = AsyncMock(return_value={"records": []})
+    kb = SimpleNamespace(id=1, name="qa-kb")
+    kb_config = RemoteKnowledgeBaseQueryConfig(
+        knowledge_base_id=1,
+        index_owner_user_id=1,
+        retriever_config=RuntimeRetrieverConfig(
+            name="milvus",
+            namespace="default",
+            storage_config={"type": "milvus"},
+        ),
+        embedding_model_config=RuntimeEmbeddingModelConfig(
+            model_name="embed",
+            model_namespace="default",
+            resolved_config={},
+        ),
+        retrieval_config=RuntimeRetrievalConfig(retrieval_mode="hybrid"),
+    )
+
+    with patch.object(RetrievalService, "_build_qa_query_plan") as mock_build_plan:
+        await service._retrieve_from_kb_internal(
+            query="how to refund",
+            kb=kb,
+            db=MagicMock(),
+            knowledge_base_config=kb_config,
+        )
+
+    mock_build_plan.assert_not_called()
+    assert service._execute_runtime_query.await_args.kwargs["query_plan"] is None
 
 
 @pytest.mark.asyncio
