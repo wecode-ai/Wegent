@@ -10,6 +10,7 @@ import {
 import { outboundTokenAdminApis } from './outboundTokens'
 import { RetrieverCRD } from './retrievers'
 import type { SkillRefMeta } from '@/types/api'
+import type { TeamDisplayConfig } from '@wegent/chat-core'
 
 // Re-export RetrieverCRD for backward compatibility
 export type { RetrieverCRD } from './retrievers'
@@ -248,6 +249,7 @@ export interface AdminPublicTeam {
   namespace: string
   display_name: string | null
   description: string | null
+  display_config?: TeamDisplayConfig | null
   json: Record<string, unknown>
   is_active: boolean
   created_at: string

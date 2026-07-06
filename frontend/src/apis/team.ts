@@ -5,6 +5,7 @@
 import { apiClient } from './client'
 import type { TeamBot, Team, PaginationParams, TaskType } from '@/types/api'
 import type { CheckRunningTasksResponse } from './common'
+import type { TeamDisplayConfig } from '@wegent/chat-core'
 
 // Team Request/Response Types
 export interface CreateTeamRequest {
@@ -17,6 +18,7 @@ export interface CreateTeamRequest {
   is_active?: boolean
   namespace?: string // Group namespace, defaults to 'default' for personal teams
   icon?: string // Icon ID from preset icon library
+  display_config?: TeamDisplayConfig
   quick_phrases?: string[]
   requires_workspace?: boolean // Whether this team requires a workspace/repository (null = auto-infer from shell)
 }

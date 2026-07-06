@@ -7,7 +7,7 @@ from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from app.schemas.kind import SkillRefMeta
+from app.schemas.kind import SkillRefMeta, TeamDisplayConfig
 
 
 # User Management Schemas
@@ -359,6 +359,7 @@ class PublicTeamResponse(BaseModel):
     namespace: str
     display_name: Optional[str] = None
     description: Optional[str] = None
+    display_config: Optional[TeamDisplayConfig] = None
     team_json: dict = Field(..., alias="json", serialization_alias="json")
     is_active: bool
     created_at: datetime

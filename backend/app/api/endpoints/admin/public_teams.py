@@ -44,6 +44,21 @@ def _get_team_display_name(team: Kind) -> Optional[str]:
     return None
 
 
+def _get_team_display_config(team: Kind) -> dict:
+    """Extract displayConfig from team json spec."""
+    if team.json and isinstance(team.json, dict):
+        spec = team.json.get("spec", {})
+        if isinstance(spec, dict):
+            display_config = spec.get("displayConfig", {})
+            if isinstance(display_config, dict):
+                return {
+                    key: value
+                    for key, value in display_config.items()
+                    if value is not None
+                }
+    return {}
+
+
 def _validate_team_bot_references(
     db: Session, team_json: dict
 ) -> tuple[bool, Optional[str]]:
@@ -106,6 +121,7 @@ def _team_to_response(team: Kind) -> PublicTeamResponse:
         namespace=team.namespace,
         display_name=_get_team_display_name(team),
         description=_get_team_description(team),
+        display_config=_get_team_display_config(team),
         team_json=team.json,
         is_active=team.is_active,
         created_at=team.created_at,

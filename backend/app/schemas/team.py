@@ -8,6 +8,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel
 
 from app.schemas.bot import BotInDB
+from app.schemas.kind import TeamDisplayConfig
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.schemas.user import UserInDB
 
@@ -54,6 +55,7 @@ class TeamBase(QuickPhraseMixin):
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     is_active: bool = True
     icon: Optional[str] = None  # Icon ID from preset icon library
+    display_config: Optional[TeamDisplayConfig] = None
     requires_workspace: Optional[bool] = (
         None  # Whether this team requires a workspace/repository (None = auto-infer)
     )
@@ -79,6 +81,7 @@ class TeamUpdate(QuickPhraseMixin):
     is_active: Optional[bool] = None
     namespace: Optional[str] = None  # Group namespace
     icon: Optional[str] = None  # Icon ID from preset icon library
+    display_config: Optional[TeamDisplayConfig] = None
     requires_workspace: Optional[bool] = (
         None  # Whether this team requires a workspace/repository (None = auto-infer)
     )
@@ -97,6 +100,7 @@ class TeamInDB(TeamBase):
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
     agent_type: Optional[str] = None  # agno, claude, dify, etc.
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    display_config: Optional[TeamDisplayConfig] = None
     recommended_mode: Optional[str] = (
         None  # 'chat', 'code', or 'both' - derived from bind_mode
     )
@@ -120,6 +124,7 @@ class TeamDetail(BaseModel):
     updated_at: datetime
     user: Optional[UserInDB] = None
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
+    display_config: Optional[TeamDisplayConfig] = None
 
     class Config:
         from_attributes = True

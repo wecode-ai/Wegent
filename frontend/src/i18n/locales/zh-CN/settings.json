@@ -245,6 +245,8 @@
         "model_description": "不绑定时使用系统默认模型，可按需指定默认模型。",
         "prompt_description": "定义智能体的角色、目标和回答方式。",
         "skills_description": "添加常用技能，让智能体按需调用工具能力。",
+        "hide_tool_details_label": "隐藏工具详情",
+        "hide_tool_details_description": "开启后，对话中只显示工具调用状态，不展开工具输入和输出内容。",
         "knowledge_description": "新聊天默认会带上这些知识库，之后仍可在聊天中追加选择。",
         "mcp_description": "连接外部 MCP 服务，为智能体补充工具能力。"
       },

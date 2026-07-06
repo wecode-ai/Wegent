@@ -72,6 +72,8 @@ interface SimpleTeamEditFormProps {
   preloadSkills: string[]
   onPreloadSkillsChange: (skills: string[]) => void
   supportsPreloadSkills: boolean
+  hideToolDetails: boolean
+  setHideToolDetails: (value: boolean) => void
   availableSkills: UnifiedSkill[]
   allSkills: UnifiedSkill[]
   loadingSkills: boolean
@@ -162,6 +164,8 @@ export default function SimpleTeamEditForm({
   preloadSkills,
   onPreloadSkillsChange,
   supportsPreloadSkills,
+  hideToolDetails,
+  setHideToolDetails,
   availableSkills,
   allSkills,
   loadingSkills,
@@ -490,6 +494,17 @@ export default function SimpleTeamEditForm({
                 </p>
               )}
             </div>
+          </SimpleConfigRow>
+
+          <SimpleConfigRow
+            label={t('settings:team.simple.core.hide_tool_details_label')}
+            description={t('settings:team.simple.core.hide_tool_details_description')}
+          >
+            <Switch
+              checked={hideToolDetails}
+              onCheckedChange={setHideToolDetails}
+              data-testid="simple-hide-tool-details-switch"
+            />
           </SimpleConfigRow>
 
           <SimpleConfigRow

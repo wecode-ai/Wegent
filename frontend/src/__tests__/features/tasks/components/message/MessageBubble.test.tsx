@@ -90,7 +90,10 @@ jest.mock('@/features/tasks/components/message/thinking', () => ({
 
 jest.mock('@/features/tasks/components/message/thinking/MixedContentView', () => ({
   __esModule: true,
-  default: (props: { blocks?: Array<{ type: string; content?: string }> }) => {
+  default: (props: {
+    blocks?: Array<{ type: string; content?: string }>
+    hideToolDetails?: boolean
+  }) => {
     mockMixedContentView(props)
     return <div data-testid="mixed-content-view" />
   },
@@ -98,7 +101,7 @@ jest.mock('@/features/tasks/components/message/thinking/MixedContentView', () =>
 
 jest.mock('@/features/tasks/components/message/thinking/ThinkingDisplay', () => ({
   __esModule: true,
-  default: (props: { thinking?: unknown[] }) => {
+  default: (props: { thinking?: unknown[]; hideToolDetails?: boolean }) => {
     mockThinkingDisplay(props)
     return <div data-testid="thinking-display" />
   },
@@ -349,6 +352,91 @@ describe('MessageBubble', () => {
             type: 'text',
           }),
         ],
+      })
+    )
+  })
+
+  it('passes team-level tool detail visibility to thinking renderers', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      botName: 'Claude Bot',
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+      thinking: [
+        {
+          title: 'Using Write',
+          next_action: 'continue',
+          tool_use_id: 'tool-write-1',
+          details: {
+            type: 'tool_use',
+            tool_name: 'Write',
+            status: 'started',
+            input: { file_path: 'PROJECT_INTRO.md' },
+          },
+        },
+      ],
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam({
+          display_config: { hide_tool_details: true },
+        })}
+        theme="light"
+        t={t}
+      />
+    )
+
+    expect(mockThinkingDisplay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hideToolDetails: true,
+      })
+    )
+  })
+
+  it('uses explicit tool detail visibility override without selected team', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      botName: 'Shared Bot',
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+      thinking: [
+        {
+          title: 'Using Search',
+          next_action: 'continue',
+          tool_use_id: 'tool-search-1',
+          details: {
+            type: 'tool_use',
+            tool_name: 'Search',
+            status: 'started',
+            input: { query: 'PRIVATE_QUERY' },
+          },
+        },
+      ],
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={null}
+        theme="light"
+        t={t}
+        hideToolDetailsOverride={true}
+      />
+    )
+
+    expect(mockThinkingDisplay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hideToolDetails: true,
       })
     )
   })

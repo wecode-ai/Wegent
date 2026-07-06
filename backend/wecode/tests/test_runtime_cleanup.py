@@ -1,0 +1,803 @@
+# SPDX-FileCopyrightText: 2026 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+import wecode.service.executor_job_patch  # noqa: F401  ensure orphan pod methods are patched onto JobService
+from app.models.subtask import Subtask, SubtaskStatus
+from app.models.task import TaskResource
+from app.services.adapters.executor_job import JobService
+
+
+class RuntimeCleanupHelpers:
+    def _task(
+        self,
+        task_id: int,
+        updated_at: datetime,
+        preserve: bool = False,
+        deleted: bool = False,
+    ):
+        task = Mock(spec=TaskResource)
+        task.id = task_id
+        task.updated_at = updated_at
+        task.is_active = (
+            TaskResource.STATE_DELETED if deleted else TaskResource.STATE_ACTIVE
+        )
+        labels = {"taskType": "chat"}
+        if preserve:
+            labels["preserveExecutor"] = "true"
+        task.json = {
+            "kind": "Task",
+            "apiVersion": "agent.wecode.io/v1",
+            "metadata": {
+                "name": f"task-{task_id}",
+                "namespace": "default",
+                "labels": labels,
+            },
+            "spec": {
+                "title": "Test Task",
+                "prompt": "Test prompt",
+                "teamRef": {"name": "test-team", "namespace": "default"},
+                "workspaceRef": {"name": "test-workspace", "namespace": "default"},
+            },
+            "status": {"status": "COMPLETED", "progress": 100},
+        }
+        return task
+
+    def _subtask(
+        self,
+        subtask_id: int,
+        task_id: int,
+        updated_at: datetime,
+        executor_name: str = "executor-1",
+    ):
+        subtask = Mock(spec=Subtask)
+        subtask.id = subtask_id
+        subtask.task_id = task_id
+        subtask.executor_name = executor_name
+        subtask.executor_namespace = "default"
+        subtask.executor_deleted_at = False
+        subtask.status = SubtaskStatus.COMPLETED
+        subtask.updated_at = updated_at
+        return subtask
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executors_skips_executor_before_24_hours():
+    job_service = JobService(Mock())
+    now = datetime.now()
+    recent_subtask = RuntimeCleanupHelpers()._subtask(
+        1, 100, now - timedelta(hours=2), "executor-recent"
+    )
+    old_task = RuntimeCleanupHelpers()._task(100, now - timedelta(hours=48))
+
+    with (
+        patch.object(
+            job_service,
+            "_list_runtime_cleanup_subtasks",
+            new_callable=AsyncMock,
+            return_value=[recent_subtask],
+        ),
+        patch.object(
+            job_service,
+            "_load_tasks_for_cleanup",
+            new_callable=AsyncMock,
+            return_value={100: old_task},
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        result = await job_service.cleanup_stale_task_executors(
+            AsyncMock(spec=AsyncSession), inactive_hours=24
+        )
+
+    assert result["deleted"] == []
+    assert result["skipped"][0]["reason"] == "not_stale"
+    assert result["skipped"][0]["executor_name"] == "executor-recent"
+    assert "eligible_after" in result["skipped"][0]
+    executor_service.delete_executor_task_async.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executors_deletes_executor_after_24_hours():
+    job_service = JobService(Mock())
+    now = datetime.now()
+    stale_subtask = RuntimeCleanupHelpers()._subtask(
+        1, 100, now - timedelta(hours=25), "executor-stale"
+    )
+    stale_task = RuntimeCleanupHelpers()._task(100, now - timedelta(hours=26))
+
+    with (
+        patch.object(
+            job_service,
+            "_list_runtime_cleanup_subtasks",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(
+            job_service,
+            "_load_tasks_for_cleanup",
+            new_callable=AsyncMock,
+            return_value={100: stale_task},
+        ),
+        patch.object(
+            job_service, "_mark_executor_deleted", new_callable=AsyncMock
+        ) as mark_deleted,
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_task_async = AsyncMock(return_value=True)
+
+        result = await job_service.cleanup_stale_task_executors(
+            AsyncMock(spec=AsyncSession), inactive_hours=24
+        )
+
+    assert result["skipped"] == []
+    assert result["deleted"][0]["executor_name"] == "executor-stale"
+    executor_service.delete_executor_task_async.assert_awaited_once_with(
+        "executor-stale", "default"
+    )
+    mark_deleted.assert_awaited_once_with([1])
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_releases_read_transaction_before_external_delete():
+    job_service = JobService(Mock())
+    now = datetime.now()
+    stale_subtask = RuntimeCleanupHelpers()._subtask(
+        1, 100, now - timedelta(hours=25), "executor-stale"
+    )
+    stale_task = RuntimeCleanupHelpers()._task(100, now - timedelta(hours=26))
+    call_order = []
+    db = Mock()
+    db.rollback = AsyncMock(side_effect=lambda: call_order.append("rollback"))
+
+    async def delete_executor(*_args, **_kwargs):
+        call_order.append("delete")
+        return True
+
+    with (
+        patch.object(
+            job_service,
+            "_list_runtime_cleanup_subtasks",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(
+            job_service,
+            "_load_tasks_for_cleanup",
+            new_callable=AsyncMock,
+            return_value={100: stale_task},
+        ),
+        patch.object(job_service, "_mark_executor_deleted", new_callable=AsyncMock),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_task_async = AsyncMock(
+            side_effect=delete_executor
+        )
+
+        await job_service.cleanup_stale_task_executors(db, inactive_hours=24)
+
+    assert call_order == ["rollback", "delete"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_scheduled_cleanup_releases_read_transaction_before_external_delete():
+    job_service = JobService(Mock())
+    now = datetime.now()
+    stale_subtask = RuntimeCleanupHelpers()._subtask(
+        1, 100, now - timedelta(hours=25), "executor-stale"
+    )
+    stale_task = RuntimeCleanupHelpers()._task(100, now - timedelta(hours=26))
+    call_order = []
+    db = Mock()
+    db.rollback = AsyncMock(side_effect=lambda: call_order.append("rollback"))
+    db.commit = AsyncMock(side_effect=lambda: call_order.append("commit"))
+
+    async def delete_executor(*_args, **_kwargs):
+        call_order.append("delete")
+        return True
+
+    with (
+        patch(
+            "app.services.adapters.executor_job.CLEANUP_TARGET_DELETED_EXECUTORS_PER_RUN",
+            1,
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_cleanup_cursor_service.get_cursor",
+            new_callable=AsyncMock,
+            return_value=Mock(last_scanned_subtask_id=0),
+        ),
+        patch.object(
+            job_service,
+            "_scan_candidate_subtasks_batch",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(
+            job_service,
+            "_load_tasks_for_cleanup",
+            new_callable=AsyncMock,
+            return_value={100: stale_task},
+        ),
+        patch.object(
+            job_service,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(job_service, "_mark_executor_deleted", new_callable=AsyncMock),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_task_async = AsyncMock(
+            side_effect=delete_executor
+        )
+
+        await job_service.cleanup_stale_executors(db)
+
+    assert call_order == ["rollback", "delete", "commit"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_works_for_deleted_task():
+    """Soft-deleted tasks (is_active=STATE_DELETED) must still be cleanable."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+    deleted_task = RuntimeCleanupHelpers()._task(
+        200, now - timedelta(hours=48), deleted=True
+    )
+    stale_subtask = RuntimeCleanupHelpers()._subtask(
+        10, 200, now - timedelta(hours=25), "executor-deleted-task"
+    )
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=deleted_task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(
+            job_service_instance, "_mark_executor_deleted", new_callable=AsyncMock
+        ) as mark_deleted,
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_task_async = AsyncMock(return_value=True)
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=200, inactive_hours=24, dry_run=False
+        )
+
+    assert result["deleted"] is True
+    executor_service.delete_executor_task_async.assert_awaited_once_with(
+        "executor-deleted-task", "default"
+    )
+    mark_deleted.assert_awaited_once_with([10])
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_works_for_stuck_running_task():
+    """RUNNING tasks with stale pods must be cleanable — inactive_hours is the gate."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+
+    running_task = Mock(spec=TaskResource)
+    running_task.id = 300
+    running_task.updated_at = now - timedelta(hours=140)
+    running_task.is_active = TaskResource.STATE_ACTIVE
+    running_task.json = {
+        "kind": "Task",
+        "apiVersion": "agent.wecode.io/v1",
+        "metadata": {
+            "name": "task-300",
+            "namespace": "default",
+            "labels": {"taskType": "chat"},
+        },
+        "spec": {
+            "title": "Stuck Task",
+            "prompt": "test",
+            "teamRef": {"name": "team", "namespace": "default"},
+            "workspaceRef": {"name": "ws", "namespace": "default"},
+        },
+        "status": {"status": "RUNNING", "progress": 0},
+    }
+    stale_subtask = RuntimeCleanupHelpers()._subtask(
+        20, 300, now - timedelta(hours=140), "executor-stuck"
+    )
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=running_task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[stale_subtask],
+        ),
+        patch.object(
+            job_service_instance, "_mark_executor_deleted", new_callable=AsyncMock
+        ) as mark_deleted,
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_task_async = AsyncMock(return_value=True)
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=300, inactive_hours=24, dry_run=False
+        )
+
+    assert result["deleted"] is True
+    executor_service.delete_executor_task_async.assert_awaited_once_with(
+        "executor-stuck", "default"
+    )
+    mark_deleted.assert_awaited_once_with([20])
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_deletes_orphan_pod():
+    """When no subtask records exist, the orphan K8s pod should be deleted."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+    task = RuntimeCleanupHelpers()._task(400, now - timedelta(hours=50))
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_by_task_id_async = AsyncMock(
+            return_value={"status": "success", "deleted_pods": ["wegent-task-400-abc"]}
+        )
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=400, inactive_hours=24, dry_run=False
+        )
+
+    assert result["deleted"] is True
+    assert result["reason"] == "pod_deleted"
+    assert result["deleted_pods"] == ["wegent-task-400-abc"]
+    executor_service.delete_executor_by_task_id_async.assert_awaited_once_with(400)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_orphan_pod_not_found():
+    """When no subtask records exist and no K8s pod found, returns executor_not_found."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+    task = RuntimeCleanupHelpers()._task(401, now - timedelta(hours=50))
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_by_task_id_async = AsyncMock(
+            return_value={"status": "not_found", "error_msg": "No pod found"}
+        )
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=401, inactive_hours=24, dry_run=False
+        )
+
+    assert result["deleted"] is False
+    assert result["reason"] == "executor_not_found"
+    executor_service.delete_executor_by_task_id_async.assert_awaited_once_with(401)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_orphan_pod_dry_run():
+    """dry_run=True should skip pod deletion and return executor_not_found immediately."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+    task = RuntimeCleanupHelpers()._task(402, now - timedelta(hours=50))
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_by_task_id_async = AsyncMock()
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=402, inactive_hours=24, dry_run=True
+        )
+
+    assert result["deleted"] is False
+    assert result["reason"] == "executor_not_found"
+    assert result["dry_run"] is True
+    executor_service.delete_executor_by_task_id_async.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_task_executor_orphan_pod_error_fallback():
+    """When delete_executor_by_task_id_async raises, return executor_not_found gracefully."""
+    job_service_instance = JobService(Mock())
+    now = datetime.now()
+    task = RuntimeCleanupHelpers()._task(403, now - timedelta(hours=50))
+
+    with (
+        patch.object(
+            job_service_instance,
+            "_get_task_resource_any_state",
+            new_callable=AsyncMock,
+            return_value=task,
+        ),
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+    ):
+        executor_service.delete_executor_by_task_id_async = AsyncMock(
+            side_effect=Exception("executor_manager unreachable")
+        )
+
+        result = await job_service_instance.cleanup_stale_task_executor(
+            AsyncMock(), task_id=403, inactive_hours=24, dry_run=False
+        )
+
+    assert result["deleted"] is False
+    assert result["reason"] == "executor_not_found"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_delegates_each_pod_to_cleanup_orphan_pod():
+    """Every eligible old pod is delegated to _cleanup_orphan_pod and aggregated.
+
+    The subtask-record decision lives inside _cleanup_orphan_pod (via
+    cleanup_stale_task_executor), so cleanup_orphan_pods itself simply iterates
+    all pods above the task_id threshold and aggregates the per-pod outcome.
+    """
+    job_service_instance = JobService(Mock())
+    old_pods = [
+        {"task_id": "1001", "pod_name": "wegent-task-1001-xyz"},
+        {"task_id": "1002", "pod_name": "wegent-task-1002-abc"},
+    ]
+
+    with (
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+        patch.object(
+            job_service_instance,
+            "_cleanup_orphan_pod",
+            new_callable=AsyncMock,
+            side_effect=[
+                {
+                    "task_id": 1001,
+                    "pod_name": "wegent-task-1001-xyz",
+                    "deleted": True,
+                    "skipped": False,
+                    "reason": "pod_deleted",
+                },
+                {
+                    "task_id": 1002,
+                    "pod_name": "wegent-task-1002-abc",
+                    "deleted": False,
+                    "skipped": True,
+                    "reason": "not_stale",
+                },
+            ],
+        ) as mock_cleanup,
+    ):
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert result["total_scanned"] == 2
+    assert len(result["deleted"]) == 1
+    assert result["deleted"][0]["task_id"] == 1001
+    assert len(result["skipped"]) == 1
+    assert result["skipped"][0]["task_id"] == 1002
+    assert result["skipped"][0]["reason"] == "not_stale"
+    assert mock_cleanup.await_count == 2
+    first_call_kwargs = mock_cleanup.call_args_list[0].kwargs
+    assert first_call_kwargs["task_id"] == 1001
+    assert first_call_kwargs["pod_name"] == "wegent-task-1001-xyz"
+    assert first_call_kwargs["inactive_hours"] == 24  # stale_hours default
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_dry_run_skips_deletion():
+    """dry_run=True should skip all deletions and report them as dry_run skips."""
+    job_service_instance = JobService(Mock())
+    old_pods = [{"task_id": "1200", "pod_name": "wegent-task-1200-dry"}]
+
+    with (
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch.object(
+            job_service_instance,
+            "_cleanup_orphan_pod",
+            new_callable=AsyncMock,
+        ) as mock_cleanup,
+    ):
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48, dry_run=True
+        )
+
+    assert result["total_scanned"] == 1
+    assert result["deleted"] == []
+    assert result["skipped"][0]["task_id"] == 1200
+    assert result["skipped"][0]["reason"] == "dry_run"
+    mock_cleanup.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_pod_already_gone():
+    """When direct pod delete returns not_found, report as failed (delete_failed)."""
+    job_service_instance = JobService(Mock())
+    old_pods = [{"task_id": "1100", "pod_name": "wegent-task-1100-gone"}]
+
+    with (
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+        patch.object(
+            job_service_instance,
+            "_get_cleanup_subtasks_for_task",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch.object(
+            job_service_instance,
+            "_cleanup_orphan_pod",
+            new_callable=AsyncMock,
+            return_value={
+                "task_id": 1100,
+                "pod_name": "wegent-task-1100-gone",
+                "deleted": False,
+                "skipped": False,
+                "reason": "delete_failed",
+            },
+        ),
+    ):
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert result["deleted"] == []
+    assert result["failed"][0]["task_id"] == 1100
+    assert result["failed"][0]["reason"] == "delete_failed"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_empty_k8s_response():
+    """When K8s returns no old pods, result should be a no-op."""
+    job_service_instance = JobService(Mock())
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as executor_service:
+        executor_service.get_old_pods_async = AsyncMock(return_value=[])
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert result["total_scanned"] == 0
+    assert result["deleted"] == []
+    assert result["skipped"] == []
+    assert result["failed"] == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_no_task_id_skipped():
+    """Pods without a task_id label must be skipped, mirroring cleanup_stale_tasks.sh."""
+    job_service_instance = JobService(Mock())
+    old_pods = [{"task_id": None, "pod_name": "sandbox-unlabeled-xyz"}]
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as executor_service:
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert result["total_scanned"] == 1
+    assert result["deleted"] == []
+    assert result["failed"] == []
+    assert result["skipped"][0]["pod_name"] == "sandbox-unlabeled-xyz"
+    assert result["skipped"][0]["reason"] == "no_task_id"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_task_id_below_threshold_skipped():
+    """Pods with task_id <= 1000 must be skipped, mirroring awk '$1+0 > 1000' in delete_notfound_pods.sh."""
+    job_service_instance = JobService(Mock())
+    old_pods = [
+        {"task_id": "500", "pod_name": "wegent-task-500-lowid"},
+        {"task_id": "1000", "pod_name": "wegent-task-1000-boundary"},
+    ]
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as executor_service:
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert result["total_scanned"] == 2
+    assert result["deleted"] == []
+    assert result["failed"] == []
+    assert len(result["skipped"]) == 2
+    assert all(s["reason"] == "task_id_below_threshold" for s in result["skipped"])
+
+
+def _mock_distributed_lock(async_redis_client):
+    lock = Mock()
+    lock.async_redis_client = async_redis_client
+    return patch(
+        "app.core.distributed_lock.distributed_lock",
+        lock,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orphan_cleanup_due_when_no_timestamp():
+    """First run (no recorded timestamp) is always due."""
+    from wecode.service.jobs import _orphan_cleanup_due
+
+    redis_client = Mock()
+    redis_client.get = AsyncMock(return_value=None)
+
+    with _mock_distributed_lock(redis_client):
+        assert await _orphan_cleanup_due(10800) is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orphan_cleanup_not_due_within_interval():
+    """A run recorded less than one interval ago is not due (global rate limit)."""
+    from wecode.service.jobs import _orphan_cleanup_due
+
+    recent = datetime.now().timestamp() - 100
+    redis_client = Mock()
+    redis_client.get = AsyncMock(return_value=str(recent))
+
+    with _mock_distributed_lock(redis_client):
+        assert await _orphan_cleanup_due(10800) is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orphan_cleanup_due_after_interval():
+    """A run recorded more than one interval ago is due again."""
+    from wecode.service.jobs import _orphan_cleanup_due
+
+    stale = datetime.now().timestamp() - 20000
+    redis_client = Mock()
+    redis_client.get = AsyncMock(return_value=str(stale))
+
+    with _mock_distributed_lock(redis_client):
+        assert await _orphan_cleanup_due(10800) is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orphan_cleanup_due_when_redis_unavailable():
+    """Fail open: run when Redis is unavailable, matching lock behavior."""
+    from wecode.service.jobs import _orphan_cleanup_due
+
+    with _mock_distributed_lock(None):
+        assert await _orphan_cleanup_due(10800) is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_mark_orphan_cleanup_ran_writes_timestamp():
+    """Recording a run stores the current epoch seconds under the last-run key."""
+    from wecode.service.jobs import (
+        ORPHAN_POD_CLEANUP_LAST_RUN_KEY,
+        _mark_orphan_cleanup_ran,
+    )
+
+    redis_client = Mock()
+    redis_client.set = AsyncMock()
+
+    with _mock_distributed_lock(redis_client):
+        await _mark_orphan_cleanup_ran()
+
+    redis_client.set.assert_awaited_once()
+    key_arg = redis_client.set.call_args.args[0]
+    value_arg = redis_client.set.call_args.args[1]
+    assert key_arg == ORPHAN_POD_CLEANUP_LAST_RUN_KEY
+    assert float(value_arg) == pytest.approx(datetime.now().timestamp(), abs=5)

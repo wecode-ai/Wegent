@@ -70,6 +70,7 @@ export function buildMessagesFromSubtasks({
     const hasFrontendError =
       existingMessage && existingMessage.status === 'error' && existingMessage.error
     const subtaskResult = subtask.result as UnifiedMessage['result']
+    const subtaskBot = subtask.bots?.[0]
 
     if (!isUserMessage && subtask.status === 'RUNNING') {
       const existingAiMessage = messages.get(messageId)
@@ -99,7 +100,7 @@ export function buildMessagesFromSubtasks({
         messageId: subtask.message_id,
         attachments: subtask.attachments,
         contexts: subtask.contexts,
-        botName: subtask.bots?.[0]?.name || teamName,
+        botName: subtaskBot?.name || teamName,
         subtaskStatus: subtask.status,
         result: subtaskResult,
         error: hasFrontendError ? existingMessage?.error : undefined,
@@ -130,6 +131,7 @@ export function buildMessagesFromSubtasks({
             : existingSnapshotMessage.content,
         messageId: subtask.message_id,
         subtaskStatus: subtask.status,
+        botName: subtaskBot?.name || existingSnapshotMessage.botName,
         result: subtaskResult,
         error: hasFrontendError ? existingMessage?.error : subtask.error_message || undefined,
         errorType: hasFrontendError
@@ -183,7 +185,7 @@ export function buildMessagesFromSubtasks({
       messageId: subtask.message_id,
       attachments: subtask.attachments,
       contexts: subtask.contexts,
-      botName: !isUserMessage && subtask.bots?.[0]?.name ? subtask.bots[0].name : teamName,
+      botName: !isUserMessage && subtaskBot?.name ? subtaskBot.name : teamName,
       senderUserName:
         subtask.sender_user_name ||
         (isUserMessage && subtask.sender_user_id === currentUserId ? currentUserName : undefined),

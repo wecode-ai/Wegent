@@ -122,6 +122,8 @@ interface MixedContentViewProps {
   ) => void
   /** Optional override for the running processing indicator text */
   processingMessage?: string
+  /** Hide tool input/output details and parameter previews */
+  hideToolDetails?: boolean
 }
 
 /**
@@ -145,6 +147,7 @@ const MixedContentView = memo(function MixedContentView({
   currentMessageIndex,
   onAskUserSubmit,
   processingMessage,
+  hideToolDetails = false,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
   // Extract tools from thinking (legacy mode)
@@ -659,6 +662,7 @@ const MixedContentView = memo(function MixedContentView({
               defaultExpanded={false}
               count={count}
               mergedTools={mergedTools}
+              hideDetails={hideToolDetails}
             />
           )
         }

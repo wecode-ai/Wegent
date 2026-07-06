@@ -45,7 +45,7 @@ RUN uv pip install --system --no-cache /app/knowledge_engine
 # Copy pyproject.toml and install dependencies
 # Remove [tool.uv.sources] section after local workspace packages are installed
 COPY backend/pyproject.toml .
-ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"chat"}}'
+ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"chat","wecode-wegent-agent-namespace":"${task_data.team.namespace}","wecode-wegent-agent-name":"${task_data.team.name}"}}'
 
 # OpenTelemetry configuration
 ENV OTEL_ENABLED=true

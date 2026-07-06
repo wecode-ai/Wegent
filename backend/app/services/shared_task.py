@@ -10,9 +10,10 @@ Uses the unified ResourceMember model instead of the legacy SharedTask table.
 
 import base64
 import logging
+import re
 import urllib.parse
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -38,10 +39,38 @@ from app.schemas.shared_task import (
     TaskShareInfo,
     TaskShareResponse,
 )
+from app.services.readers.kinds import KindType, kindReader
 from app.stores.tasks import subtask_store, task_store
 from shared.prompts.constants import parse_prompt_blocks
 
 logger = logging.getLogger(__name__)
+
+PUBLIC_TOOL_CALL_REDACTION = "[tool details hidden]"
+TOOL_BLOCK_PUBLIC_KEYS = {
+    "id",
+    "type",
+    "status",
+    "timestamp",
+    "tool_use_id",
+    "tool_name",
+    "display_name",
+    "argument_status",
+}
+TOOL_DETAIL_PUBLIC_KEYS = {
+    "type",
+    "subtype",
+    "id",
+    "name",
+    "tool_name",
+    "status",
+    "tool_use_id",
+    "is_error",
+    "error",
+    "error_message",
+    "execution_type",
+    "timestamp",
+    "created_at",
+}
 
 
 class SharedTaskService:
@@ -224,6 +253,159 @@ class SharedTaskService:
                 )
         except Exception:
             return None
+
+    def _get_public_task_display_config(
+        self, db: Session, task: TaskResource
+    ) -> Dict[str, Any]:
+        """Resolve the Team display config for a public shared task."""
+        try:
+            task_json = task.json if isinstance(task.json, dict) else {}
+            spec = task_json.get("spec", {})
+            team_ref = spec.get("teamRef", {})
+            if not isinstance(team_ref, dict):
+                return {}
+
+            team_name = team_ref.get("name")
+            team_namespace = team_ref.get("namespace", "default")
+            if not team_name:
+                return {}
+
+            team_ref_user_id = team_ref.get("user_id")
+            if team_ref_user_id is not None:
+                team = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == team_ref_user_id,
+                        Kind.kind == KindType.TEAM.value,
+                        Kind.namespace == team_namespace,
+                        Kind.name == team_name,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+            else:
+                team = kindReader.get_by_name_and_namespace(
+                    db,
+                    task.user_id,
+                    KindType.TEAM,
+                    team_namespace,
+                    team_name,
+                )
+
+            if not team or not isinstance(team.json, dict):
+                return {}
+
+            team_spec = team.json.get("spec", {})
+            if not isinstance(team_spec, dict):
+                return {}
+
+            display_config = team_spec.get("displayConfig", {})
+            if not isinstance(display_config, dict):
+                return {}
+
+            return {
+                key: value for key, value in display_config.items() if value is not None
+            }
+        except Exception as exc:
+            logger.warning(
+                "Failed to resolve public shared task display config: %s", exc
+            )
+            return {}
+
+    def _redact_tool_call_text(self, text: str) -> str:
+        """Remove arguments from text-formatted tool calls."""
+        if "<tool_call>" not in text:
+            return text
+
+        def replace_tool_call(match: re.Match[str]) -> str:
+            content = match.group(1)
+            tool_name_match = re.match(r"\s*([^\s<]+)", content)
+            tool_name = tool_name_match.group(1) if tool_name_match else "unknown"
+            return (
+                f"<tool_call>{tool_name} "
+                f"<arg_key>redacted</arg_key>"
+                f"<arg_value>{PUBLIC_TOOL_CALL_REDACTION}</arg_value>"
+                f"</tool_call>"
+            )
+
+        return re.sub(
+            r"<tool_call>([\s\S]*?)</tool_call>",
+            replace_tool_call,
+            text,
+        )
+
+    def _redact_public_message_content(self, content: Any) -> Any:
+        """Redact tool entries inside assistant/user message content arrays."""
+        if not isinstance(content, list):
+            return self._redact_public_tool_details(content)
+
+        redacted_items = []
+        for item in content:
+            if not isinstance(item, dict):
+                redacted_items.append(self._redact_public_tool_details(item))
+                continue
+
+            item_type = item.get("type")
+            if item_type == "tool_use":
+                redacted_items.append(
+                    {
+                        key: self._redact_public_tool_details(value)
+                        for key, value in item.items()
+                        if key not in {"input", "content", "details"}
+                    }
+                )
+            elif item_type == "tool_result":
+                redacted_items.append(
+                    {
+                        key: self._redact_public_tool_details(value)
+                        for key, value in item.items()
+                        if key not in {"content", "output", "details"}
+                    }
+                )
+            elif item_type == "text" and isinstance(item.get("text"), str):
+                redacted = dict(item)
+                redacted["text"] = self._redact_tool_call_text(item["text"])
+                redacted_items.append(redacted)
+            else:
+                redacted_items.append(self._redact_public_tool_details(item))
+
+        return redacted_items
+
+    def _redact_public_tool_details(self, value: Any) -> Any:
+        """Return a public-safe copy of result data with tool details removed."""
+        if isinstance(value, str):
+            return self._redact_tool_call_text(value)
+
+        if isinstance(value, list):
+            return [self._redact_public_tool_details(item) for item in value]
+
+        if not isinstance(value, dict):
+            return value
+
+        value_type = value.get("type")
+        if value_type == "tool":
+            return {
+                key: self._redact_public_tool_details(item_value)
+                for key, item_value in value.items()
+                if key in TOOL_BLOCK_PUBLIC_KEYS
+            }
+
+        if value_type in {"tool_use", "tool_result"}:
+            return {
+                key: self._redact_public_tool_details(item_value)
+                for key, item_value in value.items()
+                if key in TOOL_DETAIL_PUBLIC_KEYS
+            }
+
+        redacted: Dict[str, Any] = {}
+        for key, item_value in value.items():
+            if key == "content" and isinstance(item_value, list):
+                redacted[key] = self._redact_public_message_content(item_value)
+            elif key == "details" and isinstance(item_value, dict):
+                redacted[key] = self._redact_public_tool_details(item_value)
+            else:
+                redacted[key] = self._redact_public_tool_details(item_value)
+        return redacted
 
     def generate_share_url(self, share_token: str) -> str:
         """Generate share URL with token"""
@@ -805,6 +987,8 @@ class SharedTaskService:
             task_id=task_id,
             task_title=task.name or "Untitled Task",
         )
+        display_config = self._get_public_task_display_config(db, task)
+        hide_tool_details = display_config.get("hide_tool_details") is True
 
         # Get all subtasks (only public data, no sensitive information)
         subtasks = subtask_store.list_by_task_ordered(
@@ -855,6 +1039,11 @@ class SharedTaskService:
             sender_user_name = None
             if sub.sender_user_id and sub.sender_user_id > 0:
                 sender_user_name = user_name_map.get(sub.sender_user_id)
+            public_result = (
+                self._redact_public_tool_details(sub.result)
+                if hide_tool_details and sub.role != "USER"
+                else sub.result
+            )
 
             # Strip system-injected metadata (<system-reminder>, attachment
             # blocks, etc.) from the stored prompt so the public share view
@@ -866,7 +1055,7 @@ class SharedTaskService:
                     id=sub.id,
                     role=sub.role,
                     prompt=clean_prompt,
-                    result=sub.result,
+                    result=public_result,
                     status=sub.status,
                     created_at=sub.created_at,
                     updated_at=sub.updated_at,
@@ -882,6 +1071,7 @@ class SharedTaskService:
             task_title=task.name or "Untitled Task",
             sharer_name=share_info.user_name,
             sharer_id=share_info.user_id,
+            display_config=display_config,
             subtasks=public_subtasks,
             created_at=task.created_at,
         )

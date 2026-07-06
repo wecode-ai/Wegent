@@ -15,6 +15,7 @@ interface ToolBlockGroupProps {
   group: ToolGroup
   defaultExpanded?: boolean
   taskStatus?: string
+  hideToolDetails?: boolean
 }
 
 /**
@@ -26,6 +27,7 @@ export const ToolBlockGroup = memo(function ToolBlockGroup({
   group,
   defaultExpanded = true,
   taskStatus,
+  hideToolDetails = false,
 }: ToolBlockGroupProps) {
   const { t } = useTranslation('chat')
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
@@ -68,7 +70,12 @@ export const ToolBlockGroup = memo(function ToolBlockGroup({
       {isExpanded && (
         <div className="p-3 space-y-2 bg-base">
           {group.tools.map(tool => (
-            <ToolBlock key={tool.toolUseId} tool={tool} defaultExpanded={false} />
+            <ToolBlock
+              key={tool.toolUseId}
+              tool={tool}
+              defaultExpanded={false}
+              hideDetails={hideToolDetails}
+            />
           ))}
         </div>
       )}

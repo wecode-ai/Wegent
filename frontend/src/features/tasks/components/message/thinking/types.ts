@@ -385,6 +385,7 @@ export interface ThinkingDisplayProps {
   thinking: ThinkingStep[] | null
   taskStatus?: string
   shellType?: string
+  hideToolDetails?: boolean
 }
 
 /**

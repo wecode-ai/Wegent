@@ -90,28 +90,7 @@ def build_external_web_content_images(
     """Build OpenAI image contents from aggregate contexts."""
     image_contents: List[dict] = []
     for context in external_contexts:
-        if not isinstance(context.type_data, dict):
-            continue
-        image_urls = context.type_data.get("image_urls") or []
-        if not isinstance(image_urls, list):
-            continue
-
-        for index, image in enumerate(image_urls, start=1):
-            if isinstance(image, str):
-                image_url = image.strip()
-                source_index = index - 1
-            elif isinstance(image, dict):
-                raw_url = image.get("url")
-                if not isinstance(raw_url, str):
-                    continue
-                image_url = raw_url.strip()
-                source_index = image.get("source_index", index - 1)
-            else:
-                continue
-
-            if not image_url:
-                continue
-
+        for image_url, source_index in _normalize_external_image_urls(context):
             image_contents.append(
                 {
                     "image_url": image_url,
@@ -132,7 +111,8 @@ def build_external_web_content_texts(
             continue
         title = context.type_data.get("title")
         body = context.type_data.get("body")
-        if not title and not body:
+        image_urls = _normalize_external_image_urls(context)
+        if not title and not body and not image_urls:
             continue
 
         lines = [
@@ -149,5 +129,40 @@ def build_external_web_content_texts(
             lines.append(f"Published at: {context.type_data['publish_time']}")
         if body:
             lines.extend(["", "Body:", escape(str(body))])
+        if image_urls:
+            lines.extend(["", "Image URLs:"])
+            for index, (image_url, source_index) in enumerate(image_urls, start=1):
+                lines.append(f"{index}. source_index={source_index} url={image_url}")
         text_contents.append("\n".join(lines).strip() + "\n\n")
     return text_contents
+
+
+def _normalize_external_image_urls(context: SubtaskContext) -> List[tuple[str, int]]:
+    """Return normalized external image URLs with their source indexes."""
+    if not isinstance(context.type_data, dict):
+        return []
+    image_urls = context.type_data.get("image_urls") or []
+    if not isinstance(image_urls, list):
+        return []
+
+    normalized_urls: List[tuple[str, int]] = []
+    for index, image in enumerate(image_urls, start=1):
+        if isinstance(image, str):
+            image_url = image.strip()
+            source_index = index - 1
+        elif isinstance(image, dict):
+            raw_url = image.get("url")
+            if not isinstance(raw_url, str):
+                continue
+            image_url = raw_url.strip()
+            raw_source_index = image.get("source_index", index - 1)
+            source_index = (
+                raw_source_index if isinstance(raw_source_index, int) else index - 1
+            )
+        else:
+            continue
+
+        if not image_url:
+            continue
+        normalized_urls.append((image_url, source_index))
+    return normalized_urls

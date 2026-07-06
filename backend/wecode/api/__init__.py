@@ -42,6 +42,8 @@ import wecode.mcp_server  # noqa: F401  replace external MCP auth with ERP emplo
 import wecode.service.cloud_device_monitor_patch  # noqa: F401  register cloud device monitor background worker
 import wecode.service.cloud_device_patch  # noqa: F401  register CloudDeviceProvider with factory
 import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_service.dispatch_tasks to replace API key placeholders (push mode)
+import wecode.service.executor_job_patch  # noqa: F401  patch JobService with K8s orphan pod cleanup capabilities
+import wecode.service.executor_kinds_patch  # noqa: F401  patch executor_kinds_service with K8s orphan pod cleanup methods
 import wecode.service.jobs  # noqa: F401  register notification and evaluation grading monitor background workers
 import wecode.service.local_device_patch  # noqa: F401  register LocalDeviceProvider with factory
 import wecode.service.openclaw_token_monitor_patch  # noqa: F401  register OpenClaw token monitor background worker

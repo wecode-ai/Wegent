@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { ToolBlock } from '@/features/tasks/components/message/thinking/components/ToolBlock'
 import type { ToolPair } from '@/features/tasks/components/message/thinking/types'
 
@@ -13,6 +13,7 @@ jest.mock('@/hooks/useTranslation', () => ({
       ({
         'thinking.no_output': 'No output',
         'thinking.tools.load_skill': '加载技能',
+        'thinking.tools.write': 'Write',
       })[key] ?? key,
   }),
 }))
@@ -89,5 +90,31 @@ describe('ToolBlock', () => {
     )
 
     expect(screen.getByText('加载技能 weibo-tools')).toBeInTheDocument()
+  })
+
+  it('hides input previews and output details when details are hidden', () => {
+    const tool: ToolPair = {
+      ...createTool({ file_path: 'PROJECT_INTRO.md' }),
+      toolResult: {
+        title: 'Result from Write',
+        next_action: 'continue',
+        tool_use_id: 'tool_Write',
+        details: {
+          type: 'tool_result',
+          tool_name: 'Write',
+          status: 'completed',
+          output: 'created output',
+        },
+      },
+    }
+
+    render(<ToolBlock tool={tool} hideDetails />)
+
+    expect(screen.getByText('Write')).toBeInTheDocument()
+    expect(screen.queryByText(/PROJECT_INTRO/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Write'))
+
+    expect(screen.queryByText('created output')).not.toBeInTheDocument()
   })
 })

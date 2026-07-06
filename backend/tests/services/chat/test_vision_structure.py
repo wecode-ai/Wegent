@@ -13,6 +13,7 @@ from app.services.chat.preprocessing.contexts import (
     _combine_text_contents,
     _process_attachment_context,
     _process_attachment_contexts_for_message,
+    prepare_contexts_for_chat,
 )
 from app.services.chat.preprocessing.external_web_content import (
     build_external_web_content_images,
@@ -236,6 +237,12 @@ class TestProcessAttachmentContext:
                 "author_name": "Alice",
                 "publish_time": "2026-06-17",
                 "body": "Article summary\n\nArticle body",
+                "image_urls": [
+                    {
+                        "url": "https://public.example.com/cover.jpg",
+                        "source_index": 0,
+                    }
+                ],
             },
         )
 
@@ -248,6 +255,37 @@ class TestProcessAttachmentContext:
         assert "Published at: 2026-06-17" in result[0]
         assert "Article summary" in result[0]
         assert "Article body" in result[0]
+        assert "Image URLs:" in result[0]
+        assert "source_index=0 url=https://public.example.com/cover.jpg" in result[0]
+
+    def test_external_web_content_text_includes_image_urls_without_body(self):
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+
+        aggregate_context = SubtaskContext(
+            subtask_id=100,
+            user_id=7,
+            context_type=ContextType.EXTERNAL_WEB_CONTENT.value,
+            name="Image-only post",
+            status=ContextStatus.READY.value,
+            type_data={
+                "source": "external_web_content",
+                "external_source_url": "https://example.com/post/2",
+                "image_urls": ["https://public.example.com/image-only.jpg"],
+            },
+        )
+
+        result = build_external_web_content_texts([aggregate_context])
+
+        assert len(result) == 1
+        assert "External Web Content: Image-only post" in result[0]
+        assert "Image URLs:" in result[0]
+        assert (
+            "source_index=0 url=https://public.example.com/image-only.jpg" in result[0]
+        )
 
     def test_external_web_content_images_are_built_from_aggregate_context(self):
         from app.models.subtask_context import (
@@ -531,6 +569,56 @@ class TestProcessAttachmentContext:
         assert result[1]["type"] == "input_image"
         assert result[1]["image_url"] == "https://public.example.com/cover.jpg"
         assert result[-1] == {"type": "input_text", "text": "Summarize it"}
+
+    @pytest.mark.asyncio
+    async def test_external_web_image_url_is_metadata_only_when_model_disables_image(
+        self, monkeypatch
+    ):
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+
+        aggregate_context = SubtaskContext(
+            subtask_id=100,
+            user_id=7,
+            context_type=ContextType.EXTERNAL_WEB_CONTENT.value,
+            name="External post",
+            status=ContextStatus.READY.value,
+            type_data={
+                "source": "external_web_content",
+                "external_source_url": "https://example.com/post/1",
+                "body": "Page body",
+                "image_urls": [
+                    {
+                        "url": "https://public.example.com/cover.jpg",
+                        "source_index": 0,
+                    }
+                ],
+            },
+        )
+
+        monkeypatch.setattr(
+            "app.services.chat.preprocessing.contexts.context_service.get_by_subtask",
+            lambda db, subtask_id: [aggregate_context],
+        )
+
+        result = await prepare_contexts_for_chat(
+            db=object(),
+            user_subtask_id=100,
+            user_id=7,
+            message="Analyze the image",
+            base_system_prompt="",
+            model_config={"modelCapabilities": {"supportsImage": False}},
+        )
+
+        assert [block["type"] for block in result.final_message] == [
+            "input_text",
+            "input_text",
+        ]
+        assert "Image URLs:" in result.final_message[0]["text"]
+        assert "https://public.example.com/cover.jpg" in result.final_message[0]["text"]
 
     @pytest.mark.asyncio
     async def test_local_image_attachment_is_injected(self):
