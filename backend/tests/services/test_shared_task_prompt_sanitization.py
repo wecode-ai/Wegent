@@ -208,3 +208,49 @@ class TestPublicSharedTaskToolRedaction:
         assert "web_search" in text
         assert "secret query" not in text
         assert "[tool details hidden]" in text
+
+    def test_final_answer_only_redacts_reference_metadata(self):
+        from app.services.shared_task import shared_task_service
+
+        result = {
+            "value": "Final answer remains visible.",
+            "sources": [
+                {"title": "Knowledge source", "url": "https://example.com/doc"}
+            ],
+            "retrieval_summary": {"searched_source_ids": ["1"]},
+            "annotations": [
+                {
+                    "start_index": 0,
+                    "end_index": 12,
+                    "source": "https://example.com/source",
+                }
+            ],
+            "blocks": [
+                {
+                    "id": "text-1",
+                    "type": "text",
+                    "content": "Final answer remains visible.",
+                    "sources": [{"title": "Nested source"}],
+                },
+                {
+                    "id": "tool-1",
+                    "type": "tool",
+                    "status": "done",
+                    "tool_use_id": "call-1",
+                    "tool_name": "knowledge_search",
+                    "tool_input": {"query": "secret query"},
+                    "tool_output": {"content": "secret result"},
+                },
+            ],
+        }
+
+        redacted = shared_task_service._redact_public_final_answer_only_result(result)
+
+        assert redacted["value"] == "Final answer remains visible."
+        assert redacted["blocks"][0]["content"] == "Final answer remains visible."
+        assert "sources" not in redacted
+        assert "retrieval_summary" not in redacted
+        assert "annotations" not in redacted
+        assert "sources" not in redacted["blocks"][0]
+        assert "tool_input" not in redacted["blocks"][1]
+        assert "tool_output" not in redacted["blocks"][1]

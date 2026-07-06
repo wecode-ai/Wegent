@@ -72,8 +72,8 @@ interface SimpleTeamEditFormProps {
   preloadSkills: string[]
   onPreloadSkillsChange: (skills: string[]) => void
   supportsPreloadSkills: boolean
-  hideToolDetails: boolean
-  setHideToolDetails: (value: boolean) => void
+  showFinalAnswerOnly: boolean
+  setShowFinalAnswerOnly: (value: boolean) => void
   availableSkills: UnifiedSkill[]
   allSkills: UnifiedSkill[]
   loadingSkills: boolean
@@ -164,8 +164,8 @@ export default function SimpleTeamEditForm({
   preloadSkills,
   onPreloadSkillsChange,
   supportsPreloadSkills,
-  hideToolDetails,
-  setHideToolDetails,
+  showFinalAnswerOnly,
+  setShowFinalAnswerOnly,
   availableSkills,
   allSkills,
   loadingSkills,
@@ -497,13 +497,13 @@ export default function SimpleTeamEditForm({
           </SimpleConfigRow>
 
           <SimpleConfigRow
-            label={t('settings:team.simple.core.hide_tool_details_label')}
-            description={t('settings:team.simple.core.hide_tool_details_description')}
+            label={t('settings:team.simple.core.show_final_answer_only_label')}
+            description={t('settings:team.simple.core.show_final_answer_only_description')}
           >
             <Switch
-              checked={hideToolDetails}
-              onCheckedChange={setHideToolDetails}
-              data-testid="simple-hide-tool-details-switch"
+              checked={showFinalAnswerOnly}
+              onCheckedChange={setShowFinalAnswerOnly}
+              data-testid="simple-show-final-answer-only-switch"
             />
           </SimpleConfigRow>
 

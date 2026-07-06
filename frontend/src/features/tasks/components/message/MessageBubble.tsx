@@ -218,8 +218,8 @@ export interface MessageBubbleProps {
   onReEdit?: (msg: Message) => void
   /** Share token for public access to attachments (no login required) */
   shareToken?: string
-  /** Explicit public-view override for tool detail visibility. */
-  hideToolDetailsOverride?: boolean
+  /** Explicit public-view override for final-answer-only display. */
+  showFinalAnswerOnlyOverride?: boolean
   /** Current task type to determine which model category to show in regenerate popover */
   taskType?: TaskType
   /** Callback when user clicks forward button - receives the subtaskId of the message to forward */
@@ -388,7 +388,7 @@ const MessageBubble = memo(
     onUseAsReference,
     onReEdit,
     shareToken,
-    hideToolDetailsOverride,
+    showFinalAnswerOnlyOverride,
     taskType,
     onForwardClick,
   }: MessageBubbleProps) {
@@ -469,8 +469,9 @@ const MessageBubble = memo(
       : isCorrectionResultMessage
         ? msg.botName || correctionResultTitle
         : messageHeaderLabel
-    const hideToolDetails =
-      hideToolDetailsOverride ?? selectedTeam?.display_config?.hide_tool_details === true
+    const showFinalAnswerOnly =
+      showFinalAnswerOnlyOverride ?? selectedTeam?.display_config?.show_final_answer_only === true
+    const hideToolDetails = showFinalAnswerOnly
 
     // Determine if message is currently streaming (to disable URL metadata fetching)
     // During streaming, we show simple links to avoid excessive API calls
@@ -787,11 +788,15 @@ const MessageBubble = memo(
           <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
             {markdownContent}
           </CollapsibleMessage>
-          <SourceReferences
-            sources={msg.sources || msg.result?.sources || []}
-            retrievalSummary={msg.result?.retrieval_summary}
-          />
-          <GeminiAnnotations annotations={msg.result?.annotations || []} />
+          {!showFinalAnswerOnly && (
+            <SourceReferences
+              sources={msg.sources || msg.result?.sources || []}
+              retrievalSummary={msg.result?.retrieval_summary}
+            />
+          )}
+          {!showFinalAnswerOnly && (
+            <GeminiAnnotations annotations={msg.result?.annotations || []} />
+          )}
           {/* Hide BubbleTools during streaming */}
           {!isStreaming && (
             <BubbleTools
@@ -1521,11 +1526,15 @@ const MessageBubble = memo(
                         onAskUserSubmit={onAskUserSubmit}
                         hideToolDetails={hideToolDetails}
                       />
-                      <SourceReferences
-                        sources={msg.sources || msg.result?.sources || []}
-                        retrievalSummary={msg.result?.retrieval_summary}
-                      />
-                      <GeminiAnnotations annotations={msg.result?.annotations || []} />
+                      {!showFinalAnswerOnly && (
+                        <SourceReferences
+                          sources={msg.sources || msg.result?.sources || []}
+                          retrievalSummary={msg.result?.retrieval_summary}
+                        />
+                      )}
+                      {!showFinalAnswerOnly && (
+                        <GeminiAnnotations annotations={msg.result?.annotations || []} />
+                      )}
                       {/* Hide BubbleTools during streaming */}
                       {!isStreaming && (
                         <BubbleTools
@@ -1736,12 +1745,12 @@ const MessageBubble = memo(
       prevProps.onUseAsReference === nextProps.onUseAsReference &&
       prevProps.onRetryWithModel === nextProps.onRetryWithModel &&
       prevProps.onReEdit === nextProps.onReEdit &&
-      prevProps.hideToolDetailsOverride === nextProps.hideToolDetailsOverride &&
+      prevProps.showFinalAnswerOnlyOverride === nextProps.showFinalAnswerOnlyOverride &&
       prevProps.taskType === nextProps.taskType &&
       prevProps.selectedTeam?.name === nextProps.selectedTeam?.name &&
       prevProps.selectedTeam?.displayName === nextProps.selectedTeam?.displayName &&
-      prevProps.selectedTeam?.display_config?.hide_tool_details ===
-        nextProps.selectedTeam?.display_config?.hide_tool_details &&
+      prevProps.selectedTeam?.display_config?.show_final_answer_only ===
+        nextProps.selectedTeam?.display_config?.show_final_answer_only &&
       (prevProps.selectedTeam?.bots?.length ?? 0) === (nextProps.selectedTeam?.bots?.length ?? 0)
 
     return shouldSkipRender
