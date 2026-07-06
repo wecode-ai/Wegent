@@ -434,6 +434,34 @@ class RuntimeSendResponse(BaseModel):
     error: Optional[str] = None
 
 
+class RuntimeGuidanceRequest(BaseModel):
+    """Request to steer an active native runtime turn."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    address: RuntimeTaskAddress
+    message: str = Field(..., min_length=1)
+    client_guidance_id: Optional[str] = Field(
+        default=None,
+        alias="clientGuidanceId",
+        validation_alias=AliasChoices("clientGuidanceId", "client_guidance_id"),
+    )
+
+
+class RuntimeGuidanceResponse(BaseModel):
+    """Acknowledgement from the runtime guidance RPC."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    accepted: bool
+    success: bool = True
+    local_task_id: str = Field(..., alias="taskId")
+    guidance_id: Optional[str] = Field(default=None, alias="guidanceId")
+    turn_id: Optional[str] = Field(default=None, alias="turnId")
+    error: Optional[str] = None
+    code: Optional[str] = None
+
+
 class RuntimeWorkspaceOpenRequest(BaseModel):
     """Request to register/open a device-local runtime workspace."""
 

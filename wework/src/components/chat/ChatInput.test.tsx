@@ -31,6 +31,7 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 import { ChatInput } from './ChatInput'
+import type { ChatSubmitOptions } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
 
 function ControlledChatInput({
@@ -38,7 +39,7 @@ function ControlledChatInput({
   projectChat,
   variant,
 }: {
-  onSubmit?: () => void
+  onSubmit?: (valueOverride?: string, options?: ChatSubmitOptions) => void
   projectChat?: ProjectChatControls
   variant?: 'compact' | 'desktop'
 }) {
@@ -3169,6 +3170,19 @@ describe('ChatInput', () => {
 
     expect(onSubmit).toHaveBeenCalledWith('hello')
     expect(input).not.toHaveValue('\n')
+  })
+
+  test('submits Cmd Enter as direct guidance intent', () => {
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+    render(<ChatInput value="" onChange={onChange} onSubmit={onSubmit} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+    valueSetter?.call(input, 'hello')
+    fireEvent.keyDown(input, { key: 'Enter', metaKey: true })
+
+    expect(onSubmit).toHaveBeenCalledWith('hello', { guideWhenBusy: true })
   })
 
   test('submits with Enter after IME composition key press is released', () => {

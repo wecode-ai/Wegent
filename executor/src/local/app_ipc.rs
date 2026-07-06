@@ -627,12 +627,6 @@ impl AppIpcServer {
             return self.handle_device_command(params).await;
         }
 
-        let method = if method == "runtime.tasks.guidance" {
-            "runtime.tasks.send"
-        } else {
-            method
-        };
-
         if method.starts_with("runtime.") {
             let Some(handler) = &self.runtime_work_handler else {
                 return Err(AppIpcError::new(

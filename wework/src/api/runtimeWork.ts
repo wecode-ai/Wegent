@@ -10,6 +10,8 @@ import type {
   DeviceWorkspacePrepareResponse,
   DeviceWorkspaceUpsert,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeGuidanceRequest,
+  RuntimeGuidanceResponse,
   RuntimeRollbackRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
@@ -95,6 +97,9 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/rollback', data)
+    },
+    guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
+      return client.post('/runtime-work/guidance', data)
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return client.post('/runtime-work/goal/get', data)

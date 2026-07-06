@@ -350,6 +350,49 @@ def test_runtime_cancel_endpoint_dispatches_address(
     assert service_mock.await_args.kwargs["address"].local_task_id == "codex-1"
 
 
+def test_runtime_guidance_endpoint_dispatches_request(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "accepted": True,
+            "success": True,
+            "taskId": "codex-1",
+            "guidanceId": "guide-1",
+            "turnId": "turn-1",
+            "error": None,
+            "code": None,
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service, "send_runtime_guidance", service_mock
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/guidance",
+        headers=_auth_headers(test_token),
+        json={
+            "address": {
+                "deviceId": "device-1",
+                "workspacePath": "/repo/Wegent",
+                "taskId": "codex-1",
+            },
+            "message": "use this context",
+            "clientGuidanceId": "guide-1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    request = service_mock.await_args.kwargs["request"]
+    assert request.address.local_task_id == "codex-1"
+    assert request.client_guidance_id == "guide-1"
+
+
 def test_archived_conversations_list_endpoint_dispatches_filters(
     test_client,
     test_token,

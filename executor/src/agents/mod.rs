@@ -35,10 +35,10 @@ use claude_code::{
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub use codex::{
-    run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexAppServerClient,
-    CodexAppServerEngine, CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState,
-    CodexNotificationSender, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
-    CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
+    run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
+    CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurn, CodexAppServerTurnOptions,
+    CodexCancellationState, CodexNotificationSender, CodexRequestUserInputReceiver,
+    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;

@@ -67,6 +67,7 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
+pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
 
 #[derive(Default)]
 pub struct CodexAppServerTurnOptions {
@@ -80,6 +81,7 @@ pub struct CodexAppServerTurnOptions {
     pub cancellation: Option<oneshot::Receiver<()>>,
     pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     pub thread_started: Option<CodexThreadStartedCallback>,
+    pub active_turn_started: Option<CodexActiveTurnCallback>,
 }
 
 pub trait CodexTurnInterrupter: Send + Sync {
@@ -242,6 +244,27 @@ impl CodexAppServerClient {
         options: CodexAppServerTurnOptions,
     ) -> Result<CodexAppServerTurn, String> {
         run_codex_app_server_turn_on_shared_client(self, request, options).await
+    }
+
+    pub async fn steer_turn(
+        &self,
+        thread_id: &str,
+        expected_turn_id: &str,
+        input: Value,
+    ) -> Result<String, String> {
+        let response = self
+            .request_existing(
+                "turn/steer",
+                json!({
+                    "threadId": thread_id,
+                    "expectedTurnId": expected_turn_id,
+                    "input": input,
+                }),
+            )
+            .await?;
+        string_value(&response, "turnId")
+            .or_else(|| string_value(&response, "turn_id"))
+            .ok_or_else(|| "turn/steer response missing turnId".to_owned())
     }
 
     async fn prepare_request(
@@ -664,6 +687,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         cancellation,
         request_user_input_answers,
         thread_started,
+        active_turn_started,
     } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
@@ -811,6 +835,11 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         };
         let active_turn_id = turn_start_response_turn_id(&turn);
+        if let (Some(turn_id), Some(callback)) =
+            (active_turn_id.as_deref(), active_turn_started.as_ref())
+        {
+            callback(thread_id.clone(), turn_id.to_owned());
+        }
         let outcome_result = read_shared_turn_notifications(
             client,
             &mut notification_rx,
@@ -822,6 +851,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 cancellation,
                 request_user_input_answers,
                 goal_run_active,
+                active_turn_started,
             },
         )
         .await;
@@ -1095,6 +1125,7 @@ struct SharedTurnNotificationOptions {
     cancellation: Option<oneshot::Receiver<()>>,
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     goal_run_active: bool,
+    active_turn_started: Option<CodexActiveTurnCallback>,
 }
 
 async fn read_shared_turn_notifications(
@@ -1144,6 +1175,11 @@ async fn read_shared_turn_notifications(
         log_codex_raw_turn_message(&message);
 
         if let Some(turn_id) = turn_started_notification_turn_id(&message) {
+            if options.active_turn_id.as_deref() != Some(turn_id.as_str()) {
+                if let Some(callback) = options.active_turn_started.as_ref() {
+                    callback(thread_id.to_owned(), turn_id.clone());
+                }
+            }
             options.active_turn_id = Some(turn_id);
             if cancel_requested {
                 if let Some(turn_id) = options.active_turn_id.as_deref() {

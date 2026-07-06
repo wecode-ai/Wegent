@@ -15,7 +15,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
-import { ComposerTextarea } from './ComposerTextarea'
+import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
@@ -24,7 +24,7 @@ import { debugComposerEvent, textMetrics } from './composerDebug'
 interface CompactChatComposerProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: (submittedValue?: string) => void
+  onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
   disabled: boolean
   disabledReason?: string
   placeholder: string

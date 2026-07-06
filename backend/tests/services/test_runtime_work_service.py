@@ -1675,6 +1675,114 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
 
 
 @pytest.mark.asyncio
+async def test_send_runtime_guidance_dispatches_to_owned_device_without_task_rows(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        RuntimeGuidanceRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "taskId": "codex-1",
+            "guidanceId": "guide-1",
+            "turnId": "turn-1",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.send_runtime_guidance(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeGuidanceRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                localTaskId="codex-1",
+            ),
+            message="use this context",
+            clientGuidanceId="guide-1",
+        ),
+    )
+
+    assert response.accepted is True
+    assert response.local_task_id == "codex-1"
+    assert response.guidance_id == "guide-1"
+    assert response.turn_id == "turn-1"
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.tasks.guidance",
+        payload={
+            "deviceId": "device-1",
+            "taskId": "codex-1",
+            "message": "use this context",
+            "clientGuidanceId": "guide-1",
+        },
+        timeout_seconds=600,
+    )
+    assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_send_runtime_guidance_normalizes_runtime_rpc_failure_without_task_rows(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        RuntimeGuidanceRequest,
+        RuntimeTaskAddress,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": False,
+            "accepted": False,
+            "taskId": "codex-1",
+            "error": "no active turn to guide",
+            "code": "no_active_turn",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.send_runtime_guidance(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeGuidanceRequest(
+            address=RuntimeTaskAddress(
+                deviceId="device-1",
+                localTaskId="codex-1",
+            ),
+            message="use this context",
+        ),
+    )
+
+    assert response.accepted is False
+    assert response.success is False
+    assert response.local_task_id == "codex-1"
+    assert response.error == "no active turn to guide"
+    assert response.code == "no_active_turn"
+    assert test_db.query(TaskResource).count() == 0
+
+
+@pytest.mark.asyncio
 async def test_send_runtime_message_forwards_ready_attachments_without_task_rows(
     test_db,
     test_user,

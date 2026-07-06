@@ -1401,6 +1401,76 @@ async fn runtime_tasks_send_rejects_running_local_task_until_cancelled() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_guidance_steers_running_codex_turn() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-guidance-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-guidance-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-guidance-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-guide",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-guide").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    let guided = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.guidance",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-guide",
+                "message": "use this steering input",
+                "clientGuidanceId": "guide-1"
+            }
+        }))
+        .await
+        .expect("guidance should return a contract response");
+
+    assert_eq!(
+        guided,
+        json!({
+            "success": true,
+            "accepted": true,
+            "guidance_id": "guide-1",
+            "guidanceId": "guide-1",
+            "taskId": "local-task-guide",
+            "turnId": "turn-1",
+            "runtime": "codex"
+        })
+    );
+    wait_for_method_count(&log_path, "turn/steer", 1).await;
+    assert_eq!(
+        read_json_lines(&log_path)
+            .iter()
+            .filter(|call| call["method"] == "turn/interrupt")
+            .count(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn runtime_tasks_cancel_interrupts_running_codex_turn_without_killing_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2099,6 +2169,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
+      ;;
+    *'"method":"turn/steer"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turnId":"turn-1"}}}}'
       ;;
     *'"method":"turn/interrupt"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'

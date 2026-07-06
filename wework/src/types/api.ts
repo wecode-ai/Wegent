@@ -506,6 +506,26 @@ export interface RuntimeSendResponse {
   error?: string | null
 }
 
+export interface RuntimeGuidanceRequest {
+  address: RuntimeTaskAddress
+  message: string
+  clientGuidanceId?: string
+  client_guidance_id?: string
+}
+
+export interface RuntimeGuidanceResponse {
+  accepted?: boolean
+  success?: boolean
+  taskId?: string
+  task_id?: string
+  guidanceId?: string
+  guidance_id?: string
+  turnId?: string
+  turn_id?: string
+  error?: string | null
+  code?: string | null
+}
+
 export type RuntimeGoalStatus =
   | 'active'
   | 'paused'

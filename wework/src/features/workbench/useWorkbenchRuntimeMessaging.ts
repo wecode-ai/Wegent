@@ -26,6 +26,7 @@ import type {
   ChatSendPayload,
   ModelOptions,
   ProjectWithTasks,
+  RuntimeGuidanceRequest,
   RuntimeRollbackRequest,
   RuntimeTaskSummary,
   RuntimeDeviceWorkspace,
@@ -41,6 +42,7 @@ import { normalizeTurnFileChanges } from './turnFileChanges'
 import type {
   CreateTemporaryRuntimeTaskOptions,
   RuntimePaneActionOptions,
+  RuntimePaneGuidanceResult,
   SendCurrentInputOptions,
 } from './workbenchContextTypes'
 import { DEVICE_STATUS_LABELS, normalizeGuidanceError } from './workbenchProviderHelpers'
@@ -224,15 +226,60 @@ export function useWorkbenchRuntimeMessaging({
     [dispatch, executorClient, refreshWorkLists]
   )
 
+  const sendRuntimePaneGuidance = useCallback(
+    async (request: RuntimeGuidanceRequest): Promise<RuntimePaneGuidanceResult> => {
+      try {
+        const response = await executorClient.runtime.guideRuntimeTask(request)
+        if (response.accepted === false || response.success === false) {
+          return {
+            sent: false,
+            code: response.code,
+            error: response.error || '引导发送失败',
+          }
+        }
+        try {
+          await refreshWorkLists()
+        } catch (error) {
+          console.warn('[Wework] Runtime guidance accepted but work list refresh failed', {
+            taskId: response.taskId ?? response.task_id ?? request.address.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+        return { sent: true, code: response.code, error: response.error }
+      } catch (error) {
+        console.warn('[Wework] Runtime guidance failed', {
+          taskId: request.address.taskId,
+          deviceId: request.address.deviceId,
+          workspacePath: request.address.workspacePath ?? null,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        reportError(normalizeGuidanceError(error instanceof Error ? error.message : '引导发送失败'))
+        return {
+          sent: false,
+          error: error instanceof Error ? error.message : '引导发送失败',
+        }
+      }
+    },
+    [executorClient, refreshWorkLists, reportError]
+  )
+
   const cancelRuntimePaneTask = useCallback(
     async (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): Promise<boolean> => {
-      const ack = await executorClient.runtime.cancelRuntimeTask(address)
-      if (!ack.accepted) {
-        reportError(normalizeGuidanceError(ack.error ?? '取消当前回复失败'), options)
+      try {
+        const ack = await executorClient.runtime.cancelRuntimeTask(address)
+        if (!ack.accepted) {
+          reportError(normalizeGuidanceError(ack.error ?? '取消当前回复失败'), options)
+          return false
+        }
+        await refreshWorkLists()
+        return true
+      } catch (error) {
+        reportError(
+          normalizeGuidanceError(error instanceof Error ? error.message : '取消当前回复失败'),
+          options
+        )
         return false
       }
-      await refreshWorkLists()
-      return true
     },
     [executorClient, refreshWorkLists, reportError]
   )
@@ -1003,6 +1050,7 @@ export function useWorkbenchRuntimeMessaging({
 
   return {
     sendRuntimePaneMessage,
+    sendRuntimePaneGuidance,
     editLastUserMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
