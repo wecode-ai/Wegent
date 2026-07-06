@@ -301,9 +301,7 @@ async def test_query_executor_applies_qa_pair_hybrid_policy_for_system_default_v
 
 
 @pytest.mark.asyncio
-async def test_query_executor_does_not_override_user_vector_for_qa_pair_profile() -> (
-    None
-):
+async def test_query_executor_applies_qa_pair_hybrid_policy_for_user_vector() -> None:
     from knowledge_engine.query import QueryExecutor
 
     storage_backend = MagicMock()
@@ -328,9 +326,9 @@ async def test_query_executor_does_not_override_user_vector_for_qa_pair_profile(
     )
 
     retrieval_setting = storage_backend.retrieve.call_args.kwargs["retrieval_setting"]
-    assert retrieval_setting["retrieval_mode"] == "vector"
-    assert retrieval_setting["retrieval_mode_source"] == "user"
-    assert retrieval_setting["effective_retrieval_policy"] == "configured"
+    assert retrieval_setting["retrieval_mode"] == "hybrid"
+    assert retrieval_setting["retrieval_mode_source"] == "qa_profile"
+    assert retrieval_setting["effective_retrieval_policy"] == "qa_pair_hybrid"
 
 
 @pytest.mark.asyncio

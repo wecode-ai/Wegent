@@ -135,10 +135,6 @@ class QueryExecutor:
             retrieval_setting.setdefault("effective_retrieval_policy", "configured")
             return
 
-        if retrieval_setting.get("retrieval_mode_source") != "system_default":
-            retrieval_setting.setdefault("effective_retrieval_policy", "configured")
-            return
-
         supported_modes = self._get_supported_retrieval_modes()
         if "hybrid" not in supported_modes:
             retrieval_setting.setdefault(

@@ -292,15 +292,20 @@ export function KnowledgeDocumentPageDesktop({
     (kb: KnowledgeBase | { id: number; name: string; namespace: string }) => {
       const fullKb = sidebar.allKnowledgeBases.find(k => k.id === kb.id)
       if (fullKb) {
+        const isKbSwitch = fullKb.id !== sidebar.selectedKbId
         // Always update state and URL without causing a page remount to avoid UI flickering.
         // Use history.pushState instead of router.push so Next.js doesn't unmount/remount
         // the entire page component. This works for both the main page and detail pages.
         sidebar.selectKb(fullKb)
-        setCurrentView(getDefaultKnowledgeView(fullKb.kb_type))
+        if (isKbSwitch) {
+          setCurrentView(getDefaultKnowledgeView(fullKb.kb_type))
+        }
         // Update sidebar collapse synchronously (not via useEffect) so the
         // sidebar state is correct in the same render cycle as the selectedKb update
         updateSidebarCollapsed(fullKb.kb_type !== 'classic')
-        navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
+        if (isKbSwitch) {
+          navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
+        }
       }
     },
     [sidebar, setCurrentView, navigateToKbViaHistory, updateSidebarCollapsed]
