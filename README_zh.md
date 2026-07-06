@@ -18,6 +18,8 @@
 
 </div>
 
+> **Wework 桌面端已发布。** 你可以从 [Wework Releases](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true) 下载最新桌面版本，并选择最新的 Wework 发布和与你的操作系统匹配的安装包。
+
 ---
 
 ## 为什么选择 Wegent
