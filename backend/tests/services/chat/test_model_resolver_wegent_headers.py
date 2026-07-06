@@ -5,17 +5,20 @@
 """Tests for wegent-agent-* agent identity headers in model_resolver.
 
 Covers:
-- strip_empty_wegent_headers: only wegent-agent-* empty headers are dropped.
-- _process_model_config_placeholders: nested ${task_data.team.*} resolution and
-  the empty-strip behavior for paths without Team context.
+- strip_empty_wegent_headers: headers containing 'wegent-agent-' are dropped when empty.
+- encode_wegent_header_values: non-ASCII values in wegent-agent-* headers are base64-encoded.
+- _process_model_config_placeholders: nested ${task_data.team.*} resolution,
+  empty-strip, and base64 encoding for non-ASCII team names.
 - The EXECUTOR_ENV default declares the identity header group.
 """
 
+import base64
 import json
 
 from app.core.config import Settings
 from app.services.chat.config.model_resolver import (
     _process_model_config_placeholders,
+    encode_wegent_header_values,
     strip_empty_wegent_headers,
 )
 from shared.models.execution import ExecutionRequest
@@ -56,9 +59,56 @@ class TestStripEmptyWegentHeaders:
         result = strip_empty_wegent_headers({"user": "", NAME_HEADER: ""})
         assert result == {"user": ""}
 
-    def test_prefix_match_is_case_insensitive(self):
+    def test_match_is_case_insensitive(self):
         result = strip_empty_wegent_headers({"WEGENT-Agent-Name": ""})
         assert result == {}
+
+    def test_drops_header_containing_marker_as_substring(self):
+        # A header whose name contains 'wegent-agent-' anywhere (not just prefix)
+        # is subject to the empty-strip rule.
+        result = strip_empty_wegent_headers({"x-wegent-agent-id": ""})
+        assert result == {}
+
+    def test_keeps_non_empty_header_containing_marker_as_substring(self):
+        result = strip_empty_wegent_headers({"x-wegent-agent-id": "some-value"})
+        assert result == {"x-wegent-agent-id": "some-value"}
+
+
+class TestEncodeWegentHeaderValues:
+    """Unit tests for encode_wegent_header_values."""
+
+    def test_ascii_value_unchanged(self):
+        headers = {NAME_HEADER: "my-agent", NS_HEADER: "default"}
+        assert encode_wegent_header_values(headers) == headers
+
+    def test_non_ascii_value_is_base64_encoded(self):
+        chinese_name = "我的智能体"
+        result = encode_wegent_header_values({NAME_HEADER: chinese_name})
+        expected = "b64:" + base64.b64encode(chinese_name.encode("utf-8")).decode(
+            "ascii"
+        )
+        assert result == {NAME_HEADER: expected}
+
+    def test_non_wegent_header_value_is_not_encoded(self):
+        # The legacy 'user' header is not a wegent-agent-* header and must be
+        # left unchanged even when it contains non-ASCII characters.
+        headers = {"user": "非ASCII用户"}
+        assert encode_wegent_header_values(headers) == headers
+
+    def test_non_string_value_is_not_encoded(self):
+        headers = {NAME_HEADER: 42}
+        assert encode_wegent_header_values(headers) == {NAME_HEADER: 42}
+
+    def test_empty_string_value_unchanged(self):
+        # Empty strings survive to encode; strip_empty_wegent_headers handles removal.
+        headers = {NAME_HEADER: ""}
+        assert encode_wegent_header_values(headers) == {NAME_HEADER: ""}
+
+    def test_header_containing_marker_as_substring_is_encoded(self):
+        chinese = "汉字"
+        result = encode_wegent_header_values({"x-wegent-agent-id": chinese})
+        expected = "b64:" + base64.b64encode(chinese.encode("utf-8")).decode("ascii")
+        assert result == {"x-wegent-agent-id": expected}
 
 
 class TestTeamPlaceholderResolution:
@@ -89,6 +139,24 @@ class TestTeamPlaceholderResolution:
             NS_HEADER: "default",
             NAME_HEADER: "wegent-chat",
         }
+
+    def test_chinese_team_name_is_base64_encoded(self):
+        """Non-ASCII team name -> wegent-agent-name value prefixed with 'b64:'."""
+        chinese_name = "我的智能体"
+        task_data = ExecutionRequest(
+            task_id=1,
+            team_id=2,
+            team_name=chinese_name,
+            team_namespace="default",
+            user={"id": 5, "name": "alice"},
+        )
+        headers = self._resolve(task_data)
+        expected_name = "b64:" + base64.b64encode(chinese_name.encode("utf-8")).decode(
+            "ascii"
+        )
+        assert headers[NAME_HEADER] == expected_name
+        # ASCII namespace stays untouched.
+        assert headers[NS_HEADER] == "default"
 
     def test_missing_team_context_strips_identity_headers(self):
         """No team fields -> identity headers resolve empty and are dropped."""
