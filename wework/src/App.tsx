@@ -17,6 +17,7 @@ import { useChromeTabs } from '@/components/topnav/useChromeTabs'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
+import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
@@ -320,20 +321,25 @@ function TitlebarSidebarToggle() {
     : t('workbench.collapse_sidebar', '收起侧边栏')
 
   return (
-    <button
-      type="button"
-      data-testid={sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button'}
-      onClick={() => {
-        if (!requestDesktopSidebarToggle()) {
-          setSidebarCollapsed(!sidebarCollapsed)
-        }
-      }}
-      className={DESKTOP_TOP_BAR_BUTTON_CLASS}
-      title={label}
-      aria-label={label}
-      aria-pressed={sidebarCollapsed}
+    <TitlebarTooltip
+      label={t('workbench.toggle_sidebar', '切换边栏')}
+      shortcut="Command+B"
+      align="start"
     >
-      <PanelLeft />
-    </button>
+      <button
+        type="button"
+        data-testid={sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button'}
+        onClick={() => {
+          if (!requestDesktopSidebarToggle()) {
+            setSidebarCollapsed(!sidebarCollapsed)
+          }
+        }}
+        className={DESKTOP_TOP_BAR_BUTTON_CLASS}
+        aria-label={label}
+        aria-pressed={sidebarCollapsed}
+      >
+        <PanelLeft />
+      </button>
+    </TitlebarTooltip>
   )
 }

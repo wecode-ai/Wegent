@@ -287,6 +287,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
+            "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.prepare_fork_transfer" => self.prepare_fork_transfer(payload).await,
             "runtime.tasks.import_fork" => self.import_fork(payload).await,
             "runtime.tasks.archive" => self.archive_task(payload).await,
@@ -1123,6 +1124,82 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
+    async fn rollback_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let requested_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let existing_link = self.task_link_from_payload(&payload, false).await?;
+        let local_task_id = existing_link.local_task_id.clone();
+        if existing_link.running && self.is_active_local_task(&existing_link.local_task_id) {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "taskId": local_task_id,
+                "runtime": "codex",
+                "error": "runtime task is already running",
+                "code": "bad_request",
+            }));
+        }
+
+        let mut request = execution_request(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
+        let workspace_path =
+            workspace_path(&payload).unwrap_or_else(|| existing_link.workspace_path.clone());
+        apply_runtime_payload_metadata(&mut request, &payload);
+        request.new_session = false;
+        if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
+            request.project_workspace_path = Some(workspace_path.clone());
+        }
+        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+            .or_else(|| runtime_session_id_from_link(&existing_link))
+        else {
+            return Ok(task_goal_missing_session(&existing_link));
+        };
+
+        let mut fields = task_fields(&request.task_id, &request.subtask_id);
+        fields.push(("requested_task_id", requested_task_id));
+        fields.push(("local_task_id", local_task_id.clone()));
+        fields.push(("thread_id", thread_id.clone()));
+        fields.push(("workspace_path", workspace_path.clone()));
+        fields.push(("prompt_len", prompt_text(&request.prompt).len().to_string()));
+        if let Some(cwd) = request.cwd() {
+            fields.push(("cwd", cwd.to_owned()));
+        }
+        log_executor_event("runtime work rollback prepared", &fields);
+
+        if let Err(error) = self
+            .call_codex_thread_method(
+                "thread/rollback",
+                json!({
+                    "threadId": thread_id,
+                    "numTurns": 1,
+                }),
+            )
+            .await
+        {
+            return Ok(task_action_failure(&existing_link, error));
+        }
+
+        self.trim_runtime_handle_after_rollback(&local_task_id);
+        self.transcript_cache.invalidate(&local_task_id);
+        self.transcript_cache.invalidate(&thread_id);
+        self.mark_task_running_for_send(
+            &local_task_id,
+            &thread_id,
+            &workspace_path,
+            &request,
+            &payload,
+        );
+        self.spawn_turn(local_task_id.clone(), request, Some(thread_id), None, None);
+
+        Ok(json!({
+            "success": true,
+            "accepted": true,
+            "deviceId": self.device_id,
+            "taskId": local_task_id,
+            "runtime": "codex",
+        }))
+    }
+
     async fn send_request_user_input_response(
         &self,
         local_task_id: &str,
@@ -1238,6 +1315,19 @@ impl RuntimeWorkRpcHandler {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
         self.upsert_local_task(link);
+    }
+
+    fn trim_runtime_handle_after_rollback(&self, local_task_id: &str) {
+        self.store.update_task(local_task_id, |link| {
+            let mut messages = cached_messages(link);
+            if let Some(index) = messages.iter().rposition(|message| {
+                string_field(message, "role").is_some_and(|role| role.eq_ignore_ascii_case("user"))
+            }) {
+                messages.truncate(index);
+                set_runtime_handle_messages(&mut link.runtime_handle, messages);
+                link.updated_at = now_ms();
+            }
+        });
     }
 
     async fn open_workspace(&self, payload: Value) -> Result<Value, AppIpcError> {

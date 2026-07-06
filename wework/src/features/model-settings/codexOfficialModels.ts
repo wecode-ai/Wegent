@@ -33,6 +33,12 @@ export interface CodexOfficialModelList {
 export const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
 export const CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME = 'codex-official-unavailable'
 
+const CODEX_PICKER_COMPLEMENT_MODELS = [
+  { id: 'sol', modelId: 'Sol', displayName: 'Sol' },
+  { id: 'terra', modelId: 'Terra', displayName: 'Terra' },
+  { id: 'luna', modelId: 'Luna', displayName: 'Luna' },
+]
+
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -127,6 +133,47 @@ function sortModels(models: CodexOfficialModel[]): CodexOfficialModel[] {
   })
 }
 
+function modelIdentityKeys(model: CodexOfficialModel): string[] {
+  return [model.id, model.modelId, model.displayName].map(value => value.trim().toLowerCase())
+}
+
+function complementModel(
+  model: (typeof CODEX_PICKER_COMPLEMENT_MODELS)[number],
+  provider: Pick<CodexOfficialModelProvider, 'id' | 'displayName' | 'type' | 'current'>
+): CodexOfficialModel {
+  return {
+    id: model.id,
+    modelId: model.modelId,
+    displayName: model.displayName,
+    providerId: provider.id,
+    providerName: provider.displayName,
+    providerType: provider.type,
+    providerCurrent: provider.current,
+    description: null,
+    hidden: false,
+    isDefault: false,
+    defaultReasoningEffort: null,
+    supportsFastMode: false,
+  }
+}
+
+function withCodexPickerComplementModels(
+  models: CodexOfficialModel[],
+  provider: CodexOfficialModelProvider
+): CodexOfficialModel[] {
+  if (provider.type !== 'official' || !provider.available || provider.error) return models
+  if (models.length === 0) return models
+
+  const existing = new Set(models.flatMap(modelIdentityKeys))
+  const complements = CODEX_PICKER_COMPLEMENT_MODELS.filter(
+    model =>
+      ![model.id, model.modelId, model.displayName].some(key =>
+        existing.has(key.trim().toLowerCase())
+      )
+  ).map(model => complementModel(model, provider))
+  return sortModels([...models, ...complements])
+}
+
 function normalizeProvider(value: unknown): CodexOfficialModelProvider | null {
   const record = recordValue(value)
   const id = stringValue(record.id)
@@ -142,13 +189,18 @@ function normalizeProvider(value: unknown): CodexOfficialModelProvider | null {
     available: record.available !== false,
     error: stringValue(record.error),
   }
-  return {
+  const normalizedModels = sortModels(
+    arrayValue(record.data)
+      .map(model => normalizeOfficialModel(model, provider))
+      .filter((model): model is CodexOfficialModel => model !== null)
+  )
+  const normalizedProvider = {
     ...provider,
-    models: sortModels(
-      arrayValue(record.data)
-        .map(model => normalizeOfficialModel(model, provider))
-        .filter((model): model is CodexOfficialModel => model !== null)
-    ),
+    models: normalizedModels,
+  }
+  return {
+    ...normalizedProvider,
+    models: withCodexPickerComplementModels(normalizedProvider.models, normalizedProvider),
   }
 }
 
@@ -180,9 +232,13 @@ export function normalizeCodexOfficialModelList(value: unknown): CodexOfficialMo
       .map(model => normalizeOfficialModel(model, fallbackProvider))
       .filter((model): model is CodexOfficialModel => model !== null)
   )
-  return {
-    providers: fallbackModels.length > 0 ? [{ ...fallbackProvider, models: fallbackModels }] : [],
+  const models = withCodexPickerComplementModels(fallbackModels, {
+    ...fallbackProvider,
     models: fallbackModels,
+  })
+  return {
+    providers: models.length > 0 ? [{ ...fallbackProvider, models }] : [],
+    models,
   }
 }
 

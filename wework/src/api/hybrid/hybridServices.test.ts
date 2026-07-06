@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => {
     runtimeWorkApi: {
       listRuntimeWork: localListRuntimeWork,
       createRuntimeTask: localCreateRuntimeTask,
+      rollbackRuntimeTask: vi.fn(),
       searchRuntimeWork: localSearchRuntimeWork,
       listArchivedConversations: vi.fn(async () => ({
         items: [],
@@ -88,6 +89,7 @@ const mocks = vi.hoisted(() => {
     runtimeWorkApi: {
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
+      rollbackRuntimeTask: vi.fn(),
       searchRuntimeWork: cloudSearchRuntimeWork,
       listArchivedConversations: vi.fn(async () => ({
         items: [],

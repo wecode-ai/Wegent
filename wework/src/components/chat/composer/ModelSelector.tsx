@@ -18,6 +18,7 @@ import {
   getSelectedModelDisplayLabel,
   groupModelsByFamily,
   inferModelFamily,
+  normalizeModelOptionValue,
 } from '@/lib/model-ui'
 import { cn } from '@/lib/utils'
 import type { ModelCompatibilityDisabledReason, ModelOptions, UnifiedModel } from '@/types/api'
@@ -357,6 +358,10 @@ export function ModelSelector({
     control: ModelControlConfig,
     { clearSubmenuOnHover = true }: { clearSubmenuOnHover?: boolean } = {}
   ) {
+    if (control.id === 'reasoning') {
+      return renderReasoningSlider(control, { clearSubmenuOnHover })
+    }
+
     return (
       <div
         key={control.id}
@@ -372,7 +377,8 @@ export function ModelSelector({
             .sort((a, b) => a.order - b.order)
             .map(option => {
               const selected =
-                (selectedModelOptions[control.id] ?? control.defaultValue) === option.value
+                (normalizeModelOptionValue(control.id, selectedModelOptions[control.id]) ??
+                  control.defaultValue) === option.value
               return (
                 <button
                   key={option.value}
@@ -398,6 +404,76 @@ export function ModelSelector({
                 </button>
               )
             })}
+        </div>
+      </div>
+    )
+  }
+
+  function reasoningSliderPosition(index: number, count: number): string {
+    if (count <= 1) return '50%'
+    if (index === 0) return '12px'
+    if (index === count - 1) return 'calc(100% - 12px)'
+    return `${(index / (count - 1)) * 100}%`
+  }
+
+  function renderReasoningSlider(
+    control: ModelControlConfig,
+    { clearSubmenuOnHover = true }: { clearSubmenuOnHover?: boolean } = {}
+  ) {
+    const options = control.options.slice().sort((a, b) => a.order - b.order)
+    const selectedValue =
+      normalizeModelOptionValue(control.id, selectedModelOptions[control.id]) ??
+      control.defaultValue
+    const selectedIndex = Math.max(
+      0,
+      options.findIndex(option => option.value === selectedValue)
+    )
+
+    return (
+      <div
+        key={control.id}
+        data-testid="model-control-reasoning-slider"
+        onMouseEnter={clearSubmenuOnHover ? clearDesktopSubmenu : undefined}
+        onPointerEnter={clearSubmenuOnHover ? clearDesktopSubmenu : undefined}
+        className="px-3 pb-2 pt-1"
+      >
+        <div className="mb-2 flex items-center justify-between text-[13px] font-medium leading-[18px] text-text-secondary">
+          <span>{t('workbench.reasoning_faster', 'Faster')}</span>
+          <span>{t('workbench.reasoning_smarter', 'Smarter')}</span>
+        </div>
+        <div className="relative h-8">
+          <div className="absolute inset-x-0 top-1/2 h-5 -translate-y-1/2 rounded-full bg-[#b77dff] shadow-[0_0_18px_rgba(183,125,255,0.45)]" />
+          {options.map((option, index) => {
+            const label = option.labelKey ? t(option.labelKey, option.label) : option.label
+            const left = reasoningSliderPosition(index, options.length)
+            const selected = index === selectedIndex
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                data-testid={`model-control-${control.id}-${option.value}`}
+                aria-label={label}
+                title={label}
+                onFocus={clearSubmenuOnHover ? clearDesktopSubmenu : undefined}
+                onClick={() => handleSelectModelOption(control.id, option.value)}
+                className="group absolute top-1/2 z-10 h-8 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#d2adff]"
+                style={{ left }}
+              >
+                <span
+                  className={[
+                    'absolute left-1/2 top-1/2 block -translate-x-1/2 -translate-y-1/2 rounded-full',
+                    selected
+                      ? 'h-6 w-6 border border-[#c999ff] bg-[#2d3437] shadow-[0_0_16px_rgba(183,125,255,0.78)]'
+                      : 'h-1.5 w-1.5 bg-[#dec3ff]/70',
+                  ].join(' ')}
+                />
+                <span className="pointer-events-none absolute bottom-9 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-[#252b2f] px-2 py-1 text-xs font-medium leading-none text-white shadow-[0_8px_24px_rgba(0,0,0,0.22)] group-hover:block group-focus-visible:block">
+                  {label}
+                </span>
+              </button>
+            )
+          })}
         </div>
       </div>
     )
@@ -479,7 +555,8 @@ export function ModelSelector({
             .sort((a, b) => a.order - b.order)
             .map(option => {
               const selected =
-                (selectedModelOptions[control.id] ?? control.defaultValue) === option.value
+                (normalizeModelOptionValue(control.id, selectedModelOptions[control.id]) ??
+                  control.defaultValue) === option.value
               return (
                 <button
                   key={option.value}

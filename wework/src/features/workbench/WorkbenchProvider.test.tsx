@@ -227,6 +227,10 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
       accepted: true,
       taskId: 'runtime-a',
     }),
+    editLastUserMessage: vi.fn().mockResolvedValue({
+      accepted: true,
+      taskId: 'runtime-a',
+    }),
     openRuntimeWorkspace: vi.fn().mockResolvedValue({
       accepted: true,
       deviceId: 'device-1',

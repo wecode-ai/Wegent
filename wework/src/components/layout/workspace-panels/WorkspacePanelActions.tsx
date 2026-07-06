@@ -14,6 +14,7 @@ import { configuredWorkspacePath } from '@/lib/project-workspace'
 import { getProjectDeviceId } from '@/lib/workbench-device'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
+import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
@@ -226,32 +227,38 @@ export function WorkspacePanelActions({
       {ideError && <CodeServerErrorDialog message={ideError} onClose={() => setIdeError(null)} />}
       {showPanelToggles && (
         <>
-          <button
-            type="button"
-            data-testid="toggle-bottom-workspace-panel-button"
-            onClick={onToggleBottomPanel}
-            className={cn(
-              DESKTOP_TOP_BAR_BUTTON_CLASS,
-              bottomPanelOpen && 'bg-black/[0.10] text-[#374151]'
-            )}
-            aria-label={t('workbench.toggle_bottom_workspace_panel', '打开底部栏')}
-            title={bottomPanelTitle}
+          <TitlebarTooltip
+            label={t('workbench.toggle_bottom_workspace_panel_visible', '切换底部面板显示')}
+            shortcut="Command+J"
+            align="end"
           >
-            <PanelBottom />
-          </button>
-          <button
-            type="button"
-            data-testid="toggle-right-workspace-panel-button"
-            onClick={onToggleRightPanel}
-            className={cn(
-              DESKTOP_TOP_BAR_BUTTON_CLASS,
-              rightPanelOpen && 'bg-black/[0.10] text-[#374151]'
-            )}
-            aria-label={t('workbench.toggle_right_workspace_panel', '打开右侧栏')}
-            title={rightPanelTitle}
-          >
-            <PanelRight />
-          </button>
+            <button
+              type="button"
+              data-testid="toggle-bottom-workspace-panel-button"
+              onClick={onToggleBottomPanel}
+              className={cn(
+                DESKTOP_TOP_BAR_BUTTON_CLASS,
+                bottomPanelOpen && 'bg-black/[0.10] text-[#374151]'
+              )}
+              aria-label={bottomPanelTitle}
+            >
+              <PanelBottom />
+            </button>
+          </TitlebarTooltip>
+          <TitlebarTooltip label={rightPanelTitle} shortcut="Alt+Command+B" align="end">
+            <button
+              type="button"
+              data-testid="toggle-right-workspace-panel-button"
+              onClick={onToggleRightPanel}
+              className={cn(
+                DESKTOP_TOP_BAR_BUTTON_CLASS,
+                rightPanelOpen && 'bg-black/[0.10] text-[#374151]'
+              )}
+              aria-label={rightPanelTitle}
+            >
+              <PanelRight />
+            </button>
+          </TitlebarTooltip>
         </>
       )}
     </>
