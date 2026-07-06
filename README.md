@@ -18,6 +18,16 @@ English | [简体中文](README_zh.md)
 
 </div>
 
+<div align="center">
+
+## Wework Desktop Is Now Available
+
+Download the latest desktop build and choose the installer package that matches your operating system.
+
+**[Download Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
+
+</div>
+
 ---
 
 ## Why Wegent
