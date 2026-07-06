@@ -73,6 +73,12 @@ export interface SendCurrentInputOptions {
   ) => void
 }
 
+export interface CreateTemporaryRuntimeTaskOptions {
+  project?: ProjectWithTasks | null
+  source?: RuntimeTaskAddress | null
+  onError?: (error: string) => void
+}
+
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
 }
@@ -234,6 +240,10 @@ export interface WorkbenchContextValue {
     inputOverride?: string,
     options?: SendCurrentInputOptions
   ) => Promise<boolean | RuntimeTaskAddress>
+  createTemporaryRuntimeTask: (
+    input: string,
+    options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
   retryFailedMessage: (messageId: string, messagesOverride?: WorkbenchMessage[]) => Promise<void>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
