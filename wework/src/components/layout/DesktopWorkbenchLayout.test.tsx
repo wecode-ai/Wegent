@@ -1320,9 +1320,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
+      'w-[min(46rem,calc(100%_-_6rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]',
+      'max-w-[calc(100%_-_6rem)]',
       'px-0'
     )
     expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
@@ -3674,9 +3674,9 @@ describe('DesktopWorkbenchLayout', () => {
       'max-w-[calc(100%_-_2rem)]'
     )
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
+      'w-[min(46rem,calc(100%_-_6rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]',
+      'max-w-[calc(100%_-_6rem)]',
       'px-0'
     )
   })
