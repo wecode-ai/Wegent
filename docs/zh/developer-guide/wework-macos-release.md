@@ -87,26 +87,28 @@ scripts/release-mac-app.sh --target local --version 0.1.99 --notes "Local verifi
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
 
-## 无 Apple Developer 账号的 CI 包
+## 无 Apple Developer 账号的 CI DMG
 
-仓库提供 `.github/workflows/wework-app.yml`，用于在 GitHub Actions 上生成 macOS artifact。该 workflow 不需要 Apple Developer 账号，会分别构建：
+仓库提供 `.github/workflows/wework-app.yml`，用于在 GitHub Actions 上生成无需 Apple Developer Program 的 macOS 测试 DMG。该 workflow 会对 `.app` 执行 ad-hoc codesign，但不会做 Apple notarization，因此首次打开仍会触发 Gatekeeper。这个模式适合内部测试和开发者分发，不应标记为正式已公证发布包。
 
-- `wework-macos-arm64-unsigned-adhoc`
-- `wework-macos-x64-unsigned-adhoc`
+workflow 不需要配置 Apple signing secrets，会创建或更新 `wework-v<version>` GitHub prerelease，并分别上传两个 Release assets：
 
-每个 artifact 包含 `.app.zip`、`.dmg` 和 `README-macos-unsigned.txt`。构建流程会对 `.app` 执行 ad-hoc codesign：
+- `WeWork_<version>_macos_arm64_unsigned-adhoc.dmg`
+- `WeWork_<version>_macos_x64_unsigned-adhoc.dmg`
 
-```bash
-codesign --force --deep --options runtime --sign - WeWork.app
-```
+从 GitHub Release assets 下载时，下载链接本身就是 `.dmg` 文件，不会被 Actions artifact 额外套一层 `.zip`。手动触发 workflow 且未填写版本号时，release tag 会使用 `wework-v<package-version>-<short-sha>`。
 
-这种包没有 Apple notarization，因此首次打开仍会触发 Gatekeeper。用户可以通过系统隐私设置中的 **Open Anyway** 强行打开；如果下载带有 quarantine 标记，也可以执行：
+首次打开被拦截时，可以强制打开。macOS 15 之后的提示可能仍会出现 **Move to Trash / 移到废纸篓** 按钮；只要 CI 中 `codesign --verify --deep --strict` 通过，这通常仍属于未公证 app 的 Gatekeeper 拦截，不是包损坏：
+
+1. 双击打开 DMG，把 `WeWork.app` 拖到 `/Applications`。
+2. 第一次打开如果看到“无法验证开发者”或 **Move to Trash / 移到废纸篓** 提示，点“完成”，不要点“移到废纸篓”。
+3. 打开 **System Settings > Privacy & Security**，在 Security 区域点击 **Open Anyway**。
+
+如果 macOS 仍保留 quarantine 标记，也可以在确认来源可信后执行：
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/WeWork.app
 ```
-
-该模式适合内部测试和开发者分发，不应标记为正式已公证发布包。面向普通用户的公开分发仍应使用 Developer ID Application 证书和 Apple notarization。
 
 ## 生产发布
 
