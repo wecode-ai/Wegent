@@ -46,6 +46,7 @@ interface WorkspacePanelCardsProps {
   preferLocalTerminal?: boolean
   panelActive?: boolean
   testIdsEnabled?: boolean
+  onTerminalTitleChange?: (title: string) => void
 }
 
 type WorkspaceTool = 'terminal' | 'ide' | 'desktop'
@@ -71,6 +72,7 @@ interface LocalTerminalCheckState {
 type WorkspaceTerminalSession = ProjectDeviceSessionResponse & {
   terminal_kind?: 'remote' | 'local'
   cwd?: string
+  title?: string
 }
 
 function createAvailableTools(): WorkspaceToolAvailability {
@@ -94,6 +96,26 @@ function usesLocalProjectConfig(project: ProjectWithTasks | null): boolean {
     project &&
     (project.config?.execution?.targetType === 'local' ||
       project.config?.workspace?.source === 'local_path')
+  )
+}
+
+function getPathBasename(path?: string | null): string {
+  const normalizedPath = path?.trim().replace(/\/+$/, '')
+  if (!normalizedPath || normalizedPath === '/') return ''
+  return normalizedPath.split('/').filter(Boolean).pop() ?? ''
+}
+
+function getTerminalSessionLabel(session: WorkspaceTerminalSession | null): string {
+  if (!session) return ''
+
+  const title = session.title?.trim()
+  if (title) return title
+
+  return (
+    getPathBasename(session.cwd) ||
+    getPathBasename(session.path) ||
+    session.device_id?.trim() ||
+    session.session_id
   )
 }
 
@@ -121,6 +143,7 @@ export function WorkspacePanelCards({
   preferLocalTerminal = false,
   panelActive = true,
   testIdsEnabled = true,
+  onTerminalTitleChange,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
   const testId = useCallback(
@@ -232,12 +255,17 @@ export function WorkspacePanelCards({
     terminalSessions.find(session => session.session_id === activeTerminalSessionId) ??
     terminalSessions[0] ??
     null
-  const terminalTabLabel =
-    currentProject?.name ?? activeTerminalSession?.cwd ?? activeTerminalSession?.device_id ?? ''
+  const activeTerminalTitle = getTerminalSessionLabel(activeTerminalSession)
 
   useEffect(() => {
     terminalSessionsRef.current = terminalSessions
   }, [terminalSessions])
+
+  useEffect(() => {
+    if (activeTerminalTitle) {
+      onTerminalTitleChange?.(activeTerminalTitle)
+    }
+  }, [activeTerminalTitle, onTerminalTitleChange])
 
   useEffect(() => {
     return () => {
@@ -499,6 +527,19 @@ export function WorkspacePanelCards({
     removeTerminalSession(sessionId)
   }
 
+  const handleTerminalTitleChange = (sessionId: string, title: string) => {
+    const normalizedTitle = title.trim()
+    if (!normalizedTitle) return
+
+    setTerminalSessions(sessions =>
+      sessions.map(session =>
+        session.session_id === sessionId && session.title !== normalizedTitle
+          ? { ...session, title: normalizedTitle }
+          : session
+      )
+    )
+  }
+
   const removeTerminalSession = (sessionId: string) => {
     setTerminalSessions(sessions => {
       const closeIndex = sessions.findIndex(session => session.session_id === sessionId)
@@ -651,6 +692,7 @@ export function WorkspacePanelCards({
           <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
             {terminalSessions.map(session => {
               const isActive = session.session_id === activeTerminalSession.session_id
+              const sessionLabel = getTerminalSessionLabel(session)
 
               return (
                 <div
@@ -660,7 +702,7 @@ export function WorkspacePanelCards({
                       ? 'border-border bg-background text-text-primary shadow-sm'
                       : 'text-text-secondary hover:border-border hover:bg-surface hover:text-text-primary'
                   }`}
-                  title={terminalTabLabel || session.device_id}
+                  title={sessionLabel}
                 >
                   <button
                     type="button"
@@ -671,7 +713,7 @@ export function WorkspacePanelCards({
                     className="flex min-w-0 flex-1 items-center gap-2 px-2.5 text-left text-[13px] leading-[18px]"
                   >
                     <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-                    <span className="truncate">{terminalTabLabel || session.device_id}</span>
+                    <span className="truncate">{sessionLabel}</span>
                   </button>
                   <button
                     type="button"
@@ -704,6 +746,7 @@ export function WorkspacePanelCards({
             sessionId={session.session_id}
             active={panelActive && isActive}
             onExit={() => handleTerminalSessionExit(session.session_id)}
+            onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
           />
         ) : (
@@ -712,6 +755,7 @@ export function WorkspacePanelCards({
             sessionId={session.session_id}
             active={panelActive && isActive}
             onExit={() => handleTerminalSessionExit(session.session_id)}
+            onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
           />
         )

@@ -20,6 +20,7 @@ interface EmbeddedLocalTerminalProps {
   sessionId: string
   active: boolean
   onExit?: () => void
+  onTitleChange?: (title: string) => void
   testIdsEnabled?: boolean
 }
 
@@ -27,6 +28,7 @@ export function EmbeddedLocalTerminal({
   sessionId,
   active,
   onExit,
+  onTitleChange,
   testIdsEnabled = true,
 }: EmbeddedLocalTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -34,6 +36,7 @@ export function EmbeddedLocalTerminal({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const activeRef = useRef(active)
   const onExitRef = useRef(onExit)
+  const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
 
   useEffect(() => {
@@ -43,6 +46,10 @@ export function EmbeddedLocalTerminal({
   useEffect(() => {
     onExitRef.current = onExit
   }, [onExit])
+
+  useEffect(() => {
+    onTitleChangeRef.current = onTitleChange
+  }, [onTitleChange])
 
   useEffect(() => {
     const container = containerRef.current
@@ -65,6 +72,9 @@ export function EmbeddedLocalTerminal({
     const dataDisposable = terminal.onData(data => {
       inputFallback.noteData(data)
       void writeLocalTerminal(sessionId, data)
+    })
+    const titleDisposable = terminal.onTitleChange(title => {
+      onTitleChangeRef.current?.(title)
     })
     let disposed = false
     const unlisteners: Array<() => void> = []
@@ -140,6 +150,7 @@ export function EmbeddedLocalTerminal({
       unobserveTheme()
       resizeObserver.disconnect()
       dataDisposable.dispose()
+      titleDisposable.dispose()
       inputFallback.dispose()
       unlisteners.forEach(unlisten => unlisten())
       terminal.dispose()
