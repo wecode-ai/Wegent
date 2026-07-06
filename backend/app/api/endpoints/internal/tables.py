@@ -17,7 +17,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.internal.deps import verify_internal_service_token
+from app.api.deps import verify_internal_service_token
 from pydantic import BaseModel, Field
 
 from app.services.tables import DataTableService, TableQueryRequest
@@ -40,7 +40,7 @@ class InternalTableQueryRequest(BaseModel):
 
 
 @router.post("/query", dependencies=[Depends(verify_internal_service_token)])
-async def query_table(request: InternalTableQueryRequest):
+async def queryTable(request: InternalTableQueryRequest):
     """
     Query table data (internal API).
 
