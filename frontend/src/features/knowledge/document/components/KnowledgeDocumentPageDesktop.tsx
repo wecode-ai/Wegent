@@ -303,9 +303,7 @@ export function KnowledgeDocumentPageDesktop({
         // Update sidebar collapse synchronously (not via useEffect) so the
         // sidebar state is correct in the same render cycle as the selectedKb update
         updateSidebarCollapsed(fullKb.kb_type !== 'classic')
-        if (isKbSwitch) {
-          navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
-        }
+        navigateToKbViaHistory(fullKb, sidebar.allKnowledgeBasesWithGroupInfo)
       }
     },
     [sidebar, setCurrentView, navigateToKbViaHistory, updateSidebarCollapsed]
