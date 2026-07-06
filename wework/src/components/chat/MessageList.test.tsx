@@ -1008,7 +1008,7 @@ describe('MessageList', () => {
     expect(screen.getByText('我会继续看 lockfile。')).toBeInTheDocument()
   })
 
-  test('keeps cancelled assistant turns even when no processing blocks were persisted', () => {
+  test('shows stopped notice without duration when a cancelled assistant turn has no elapsed time', () => {
     render(
       <MessageList
         messages={[
@@ -1024,7 +1024,8 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 0s 后停止了')
+    expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('已停止')
+    expect(screen.getByTestId('assistant-stopped-notice')).not.toHaveTextContent('0s')
   })
 
   test('uses compact spacing between messages and hover actions', () => {
