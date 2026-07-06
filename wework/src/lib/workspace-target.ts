@@ -1,5 +1,5 @@
 import type {
-  LocalTaskSummary,
+  RuntimeTaskSummary,
   ProjectWithTasks,
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
@@ -103,7 +103,7 @@ export function resolveProjectRuntimeWorkspaceTarget({
 
 function workspaceTargetFromRuntimeTask(
   workspace: RuntimeDeviceWorkspace,
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
 ): WorkspaceTarget {
   const workspacePath =
     workspace.workspaceKind === 'worktree' || workspace.worktreeId
@@ -123,9 +123,9 @@ function workspaceTargetFromRuntimeTask(
 function runtimeTaskMatches(
   address: RuntimeTaskAddress,
   workspace: RuntimeDeviceWorkspace,
-  task: LocalTaskSummary
+  task: RuntimeTaskSummary
 ) {
-  if (workspace.deviceId !== address.deviceId || task.localTaskId !== address.localTaskId) {
+  if (workspace.deviceId !== address.deviceId || task.taskId !== address.taskId) {
     return false
   }
 
@@ -145,7 +145,7 @@ export function resolveRuntimeWorkspaceContext({
 
   for (const projectWork of runtimeWork?.projects ?? []) {
     for (const workspace of projectWork.deviceWorkspaces) {
-      const task = workspace.localTasks.find(item =>
+      const task = workspace.tasks.find(item =>
         runtimeTaskMatches(currentRuntimeTask, workspace, item)
       )
       if (!task) continue
@@ -160,7 +160,7 @@ export function resolveRuntimeWorkspaceContext({
   }
 
   for (const workspace of runtimeWork?.chats ?? []) {
-    const task = workspace.localTasks.find(item =>
+    const task = workspace.tasks.find(item =>
       runtimeTaskMatches(currentRuntimeTask, workspace, item)
     )
     if (!task) continue

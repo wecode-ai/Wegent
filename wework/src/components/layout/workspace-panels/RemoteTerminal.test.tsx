@@ -9,6 +9,7 @@ const testState = vi.hoisted(() => ({
     cols: number
     emitData: (data: string) => void
     onData: ReturnType<typeof vi.fn>
+    onTitleChange: ReturnType<typeof vi.fn>
     write: ReturnType<typeof vi.fn>
     writeln: ReturnType<typeof vi.fn>
     loadAddon: ReturnType<typeof vi.fn>
@@ -43,6 +44,7 @@ vi.mock('@xterm/xterm', () => ({
         dataHandlers.push(handler)
         return { dispose: vi.fn() }
       }),
+      onTitleChange: vi.fn(() => ({ dispose: vi.fn() })),
       write: vi.fn(),
       writeln: vi.fn(),
       loadAddon: vi.fn(),

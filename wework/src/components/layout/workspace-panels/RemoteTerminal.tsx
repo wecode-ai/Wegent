@@ -15,6 +15,7 @@ interface RemoteTerminalProps {
   sessionId: string
   active: boolean
   onExit?: () => void
+  onTitleChange?: (title: string) => void
   testIdsEnabled?: boolean
 }
 
@@ -22,6 +23,7 @@ export function RemoteTerminal({
   sessionId,
   active,
   onExit,
+  onTitleChange,
   testIdsEnabled = true,
 }: RemoteTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -30,6 +32,7 @@ export function RemoteTerminal({
   const clientRef = useRef<RemoteTerminalClient | null>(null)
   const activeRef = useRef(active)
   const onExitRef = useRef(onExit)
+  const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
 
   useEffect(() => {
@@ -39,6 +42,10 @@ export function RemoteTerminal({
   useEffect(() => {
     onExitRef.current = onExit
   }, [onExit])
+
+  useEffect(() => {
+    onTitleChangeRef.current = onTitleChange
+  }, [onTitleChange])
 
   useEffect(() => {
     const container = containerRef.current
@@ -75,6 +82,9 @@ export function RemoteTerminal({
         terminal.write(payload.data)
         scheduleThemeSync()
       }
+    })
+    const titleDisposable = terminal.onTitleChange(title => {
+      onTitleChangeRef.current?.(title)
     })
     const unsubscribeExit = client.onExit(payload => {
       if (!disposed && payload.session_id === sessionId) {
@@ -149,6 +159,7 @@ export function RemoteTerminal({
       unobserveTheme()
       resizeObserver.disconnect()
       dataDisposable.dispose()
+      titleDisposable.dispose()
       inputFallback.dispose()
       unsubscribeOutput()
       unsubscribeExit()
@@ -201,10 +212,11 @@ export function RemoteTerminal({
 
   return (
     <div
-      ref={containerRef}
       data-testid={testIdsEnabled ? 'remote-terminal' : undefined}
-      className="h-full min-h-0 w-full flex-1 overflow-hidden bg-background px-2 py-2"
+      className="h-full min-h-0 w-full flex-1 overflow-hidden bg-background px-2 pb-4 pt-2"
       hidden={!active}
-    />
+    >
+      <div ref={containerRef} className="h-full min-h-0 w-full overflow-hidden" />
+    </div>
   )
 }

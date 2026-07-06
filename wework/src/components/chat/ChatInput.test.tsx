@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { StrictMode, useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -130,12 +130,12 @@ function runtimeWork(
           available: item.available ?? true,
           workspacePath: item.workspacePath ?? `/workspace/${item.name}`,
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
       ],
     })),
     chats: [],
-    totalLocalTasks: 0,
+    totalTasks: 0,
   }
 }
 
@@ -2367,6 +2367,50 @@ describe('ChatInput', () => {
     expect(screen.getAllByText('PDF')).toHaveLength(2)
   })
 
+  test('renders pasted text attachments as codex-style preview cards', async () => {
+    const removeAttachment = vi.fn().mockResolvedValue(undefined)
+    const attachment: Attachment = {
+      id: 45,
+      filename: 'clipboard-text-1783070360990.txt',
+      file_size: 1200,
+      mime_type: 'text/plain',
+      status: 'ready',
+      file_extension: '.txt',
+      created_at: '2026-05-27T00:00:00.000Z',
+      text_preview: '{ "event_type": "http_exchange", "id": "e9972aac" }',
+      text_content: '{\n  "event_type": "http_exchange",\n  "id": "e9972aac"\n}',
+    }
+
+    render(
+      <ControlledChatInput
+        variant="desktop"
+        projectChat={projectChatControls({
+          attachments: [attachment],
+          removeAttachment,
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('attachment-badge')).toHaveClass(
+      'h-[72px]',
+      'rounded-[20px]',
+      'bg-muted'
+    )
+    expect(screen.getByTestId('attachment-text-preview')).toHaveTextContent(
+      '{ "event_type": "http_exchange", "id": "e9972aac" }'
+    )
+    expect(screen.getByTestId('show-text-attachment-button')).toHaveTextContent(
+      'workbench.show_text_attachment_in_composer'
+    )
+
+    await userEvent.click(screen.getByTestId('show-text-attachment-button'))
+
+    expect(screen.getByTestId('chat-message-input')).toHaveValue(
+      '{\n  "event_type": "http_exchange",\n  "id": "e9972aac"\n}'
+    )
+    expect(removeAttachment).toHaveBeenCalledWith(45)
+  })
+
   test('renders an image preview for image attachments', async () => {
     vi.stubGlobal(
       'fetch',
@@ -3113,23 +3157,47 @@ describe('ChatInput', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
-  test('does not submit when Enter confirms IME composition', () => {
-    vi.useFakeTimers()
+  test('submits latest textarea value when Enter is pressed before controlled value updates', () => {
+    const onChange = vi.fn()
+    const onSubmit = vi.fn()
+    render(<ChatInput value="" onChange={onChange} onSubmit={onSubmit} disabled={false} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+    valueSetter?.call(input, 'hello')
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSubmit).toHaveBeenCalledWith('hello')
+    expect(input).not.toHaveValue('\n')
+  })
+
+  test('submits with Enter after IME composition key press is released', () => {
     const onSubmit = vi.fn()
     render(<ControlledChatInput onSubmit={onSubmit} />)
 
     const input = screen.getByTestId('chat-message-input')
     fireEvent.change(input, { target: { value: 'hello' } })
     fireEvent.compositionStart(input)
+    fireEvent.compositionEnd(input)
+    fireEvent.keyUp(input, { key: 'Enter' })
     fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  test('suppresses Enter keydown that arrives after IME composition ends but before keyup', () => {
+    const onSubmit = vi.fn()
+    render(<ControlledChatInput onSubmit={onSubmit} />)
+
+    const input = screen.getByTestId('chat-message-input')
+    fireEvent.change(input, { target: { value: 'hello' } })
+    fireEvent.compositionStart(input)
     fireEvent.compositionEnd(input)
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(onSubmit).not.toHaveBeenCalled()
 
-    act(() => {
-      vi.advanceTimersByTime(101)
-    })
+    fireEvent.keyUp(input, { key: 'Enter' })
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(onSubmit).toHaveBeenCalledTimes(1)

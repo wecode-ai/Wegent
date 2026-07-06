@@ -34,8 +34,8 @@ async fn codex_app_server_replaces_downloaded_image_blocks_with_local_images() {
     let fake_codex = write_fake_codex(&log_path);
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
     let mut request = ExecutionRequest {
-        task_id: 29,
-        subtask_id: 44,
+        task_id: "29".to_owned(),
+        subtask_id: "44".to_owned(),
         auth_token: Some("token".to_owned()),
         prompt: json!([
             {
@@ -106,8 +106,8 @@ async fn codex_app_server_keeps_failed_download_placeholder_order() {
     let fake_codex = write_fake_codex(&log_path);
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
     let mut request = ExecutionRequest {
-        task_id: 29,
-        subtask_id: 44,
+        task_id: "29".to_owned(),
+        subtask_id: "44".to_owned(),
         auth_token: Some("token".to_owned()),
         prompt: json!([
             {"type": "input_text", "text": "Compare these images"},
@@ -181,8 +181,8 @@ async fn codex_app_server_cleans_generated_model_input_images() {
     let fake_codex = write_fake_codex(&log_path);
     let engine = CodexAppServerEngine::new(fake_codex.display().to_string());
     let mut request = ExecutionRequest {
-        task_id: 29,
-        subtask_id: 44,
+        task_id: "29".to_owned(),
+        subtask_id: "44".to_owned(),
         auth_token: Some("token".to_owned()),
         prompt: json!([
             {"type": "input_text", "text": "Analyze this image"},

@@ -9,3 +9,9 @@ export { useKnowledgeBaseDetail } from './useKnowledgeBaseDetail'
 export { useDocumentChunks } from './useDocumentChunks'
 export { useColumnResize } from './useColumnResize'
 export { useKnowledgeTree } from './useKnowledgeTree'
+export {
+  DEFAULT_KNOWLEDGE_VIEW,
+  getDefaultKnowledgeView,
+  isKnowledgeView,
+  useKnowledgeViewMode,
+} from './useKnowledgeViewMode'

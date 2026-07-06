@@ -16,14 +16,14 @@ interface WorkbenchSearchDialogProps {
   open: boolean
   onClose: () => void
   onSearchRuntimeWork: (request: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
-  onOpenRuntimeLocalTask: (address: RuntimeTaskAddress) => Promise<void> | void
+  onOpenRuntimeTask: (address: RuntimeTaskAddress) => Promise<void> | void
 }
 
 export function WorkbenchSearchDialog({
   open,
   onClose,
   onSearchRuntimeWork,
-  onOpenRuntimeLocalTask,
+  onOpenRuntimeTask,
 }: WorkbenchSearchDialogProps) {
   if (!open) return null
 
@@ -31,7 +31,7 @@ export function WorkbenchSearchDialog({
     <WorkbenchSearchDialogPanel
       onClose={onClose}
       onSearchRuntimeWork={onSearchRuntimeWork}
-      onOpenRuntimeLocalTask={onOpenRuntimeLocalTask}
+      onOpenRuntimeTask={onOpenRuntimeTask}
     />
   )
 }
@@ -39,7 +39,7 @@ export function WorkbenchSearchDialog({
 function WorkbenchSearchDialogPanel({
   onClose,
   onSearchRuntimeWork,
-  onOpenRuntimeLocalTask,
+  onOpenRuntimeTask,
 }: Omit<WorkbenchSearchDialogProps, 'open'>) {
   const { t } = useTranslation('common')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -93,7 +93,7 @@ function WorkbenchSearchDialogPanel({
 
   const openItem = (item: RuntimeWorkSearchItem | null) => {
     if (!item) return
-    void Promise.resolve(onOpenRuntimeLocalTask(item.address)).finally(onClose)
+    void Promise.resolve(onOpenRuntimeTask(item.address)).finally(onClose)
   }
 
   return (
@@ -165,7 +165,7 @@ function WorkbenchSearchDialogPanel({
           )}
           {items.map((item, index) => (
             <button
-              key={`${item.address.deviceId}:${item.address.localTaskId}:${item.messageId ?? index}`}
+              key={`${item.address.deviceId}:${item.address.taskId}:${item.messageId ?? index}`}
               type="button"
               data-testid={`workbench-search-result-${index}`}
               onMouseEnter={() => setSelectedIndex(index)}

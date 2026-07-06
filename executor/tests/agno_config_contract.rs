@@ -8,8 +8,8 @@ use wegent_executor::{agents::build_agno_options, protocol::ExecutionRequest};
 #[test]
 fn agno_options_inject_task_identity_env_without_mutating_request() {
     let request = ExecutionRequest {
-        task_id: 525,
-        subtask_id: 626,
+        task_id: "525".to_owned(),
+        subtask_id: "626".to_owned(),
         bot: json!([{
             "name": "member-1",
             "agent_config": {"env": {"EXISTING_VAR": "value"}}

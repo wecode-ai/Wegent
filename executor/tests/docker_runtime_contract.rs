@@ -161,25 +161,22 @@ impl HeartbeatCapture {
         let notify = Arc::new(tokio::sync::Notify::new());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base_url = format!("http://{}", listener.local_addr().unwrap());
-        let app = Router::new().route(
-            "/sandboxes/{sandbox_id}/heartbeat",
-            post({
-                let calls = calls.clone();
-                let paths = paths.clone();
-                let notify = notify.clone();
-                move |request: Request<Body>| async move {
-                    let path = request.uri().path().to_owned();
-                    let bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
-                        .await
-                        .unwrap();
-                    let payload: Value = serde_json::from_slice(&bytes).unwrap();
-                    paths.lock().unwrap().push(path);
-                    calls.lock().unwrap().push(payload);
-                    notify.notify_waiters();
-                    Json(json!({"status": "ok"}))
-                }
-            }),
-        );
+        let app = Router::new().fallback({
+            let calls = calls.clone();
+            let paths = paths.clone();
+            let notify = notify.clone();
+            move |request: Request<Body>| async move {
+                let path = request.uri().path().to_owned();
+                let bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                let payload: Value = serde_json::from_slice(&bytes).unwrap();
+                paths.lock().unwrap().push(path);
+                calls.lock().unwrap().push(payload);
+                notify.notify_waiters();
+                Json(json!({"status": "ok"}))
+            }
+        });
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });

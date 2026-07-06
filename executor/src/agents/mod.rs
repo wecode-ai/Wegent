@@ -128,7 +128,7 @@ impl AgentEngine for AgentProcessEngine {
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
-            let mut fields = task_fields(request.task_id, request.subtask_id);
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
             fields.push(("agent", format!("{agent_kind:?}")));
             log_executor_event("agent dispatch", &fields);
 
@@ -175,7 +175,7 @@ impl AgentEngine for AgentProcessEngine {
                                     .await
                                     .unwrap_or_else(|error| {
                                         let mut failed_fields =
-                                            task_fields(request.task_id, request.subtask_id);
+                                            task_fields(&request.task_id, &request.subtask_id);
                                         failed_fields.push(("error_len", error.len().to_string()));
                                         log_executor_event(
                                             "claude runtime capability preparation failed",
@@ -218,7 +218,7 @@ impl AgentEngine for AgentProcessEngine {
         let planner = self.planner.clone();
         Box::pin(async move {
             let agent_kind = request.resolved_agent_kind();
-            let mut fields = task_fields(request.task_id, request.subtask_id);
+            let mut fields = task_fields(&request.task_id, &request.subtask_id);
             fields.push(("agent", format!("{agent_kind:?}")));
             log_executor_event("agent dispatch", &fields);
 
@@ -264,7 +264,7 @@ impl AgentEngine for AgentProcessEngine {
                                     .await
                                     .unwrap_or_else(|error| {
                                         let mut failed_fields =
-                                            task_fields(request.task_id, request.subtask_id);
+                                            task_fields(&request.task_id, &request.subtask_id);
                                         failed_fields.push(("error_len", error.len().to_string()));
                                         log_executor_event(
                                             "claude runtime capability preparation failed",

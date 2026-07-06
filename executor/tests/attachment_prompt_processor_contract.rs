@@ -55,9 +55,15 @@ fn rewrites_source_subtask_sandbox_path_to_local_execution_path() {
         "xxx.html",
         "/Users/test/.wecode/wegent-executor/workspace/1251/1251:executor:attachments/1677/xxx.html",
     );
-    downloaded.subtask_id = Some(1676);
+    downloaded.subtask_id = Some("1676".to_owned());
 
-    let processed = process_prompt(&prompt, &[downloaded], &[], Some(1251), Some(1677));
+    let processed = process_prompt(
+        &prompt,
+        &[downloaded],
+        &[],
+        Some("1251".to_owned()),
+        Some("1677".to_owned()),
+    );
 
     assert!(processed[0]["text"]
         .as_str()
@@ -84,7 +90,13 @@ fn rewrites_backend_sandbox_path_to_local_path_in_text_blocks() {
         "/Users/test/.wegent-executor/workspace/1233/1233:executor:attachments/1642/xxx.md",
     );
 
-    let processed = process_prompt(&prompt, &[downloaded], &[], Some(1233), Some(1642));
+    let processed = process_prompt(
+        &prompt,
+        &[downloaded],
+        &[],
+        Some("1233".to_owned()),
+        Some("1642".to_owned()),
+    );
 
     assert!(processed[0]["text"]
         .as_str()

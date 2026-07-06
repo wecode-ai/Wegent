@@ -20,9 +20,11 @@ import {
   formatSize,
   getMimeTypeFromPreviewKind,
   resolvePreviewKind,
+  shouldUseFormattedTextPreview,
   type PreviewKind,
   type SortOption,
 } from './remote-workspace-utils'
+import { RemoteWorkspaceFormattedPreview } from './RemoteWorkspaceFormattedPreview'
 
 type RemoteWorkspaceDialogMobileProps = {
   t: TFunction<'translation', undefined>
@@ -343,7 +345,13 @@ export function RemoteWorkspaceDialogMobile({
                     {previewKind !== 'unsupported' &&
                       !previewError &&
                       !isPreviewLoading &&
-                      previewBlob && (
+                      previewBlob &&
+                      (shouldUseFormattedTextPreview(detailEntry.name) ? (
+                        <RemoteWorkspaceFormattedPreview
+                          blob={previewBlob}
+                          filename={detailEntry.name}
+                        />
+                      ) : (
                         <FilePreview
                           fileBlob={previewBlob}
                           filename={detailEntry.name}
@@ -352,7 +360,7 @@ export function RemoteWorkspaceDialogMobile({
                           showToolbar={false}
                           onDownload={() => onDownload(detailEntry)}
                         />
-                      )}
+                      ))}
                   </div>
                 </div>
               )}

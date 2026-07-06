@@ -80,6 +80,8 @@ The browser tab preserves its current page, address, title, and favicon. Switchi
 
 When the current task uses “New worktree”, the right file tree, bottom Terminal, macOS App embedded local terminal, and cloud-device IDE/code-server all use the worktree path stored on that task. Project tools use the project workspace directory only when there is no current task or the task does not have a recorded worktree path.
 
+Bottom terminals opened by the user inside a task stay available after switching to other tasks, and reopening that task restores the same terminal session. After the task is archived or deleted, Wework closes and unloads the terminal sessions for that task so local or remote execution resources are not kept alive.
+
 Code comment context is not uploaded as a normal file and does not use `attachment_ids`. If you add only code comments without typed text, Wework sends a short default prompt. If you upload only normal file attachments without typed text, the message body remains empty and Wework uses the default conversation title.
 
 ## Using an Existing Folder

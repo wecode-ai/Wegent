@@ -79,7 +79,7 @@ async fn runtime_prepare_fork_transfer_returns_git_workspace_package_metadata() 
             "method": "runtime.tasks.prepare_fork_transfer",
             "payload": {
                 "workspacePath": "/tmp/project",
-                "localTaskId": "thread-1",
+                "taskId": "thread-1",
                 "transferId": "transfer-1",
                 "workspaceTransfer": "git_workspace",
                 "directHosts": ["127.0.0.1"]
@@ -121,7 +121,7 @@ async fn runtime_import_fork_rejects_codex_packages_for_runtime_index() {
                 "source": {
                     "deviceId": "source-device",
                     "workspacePath": "/source/project",
-                    "localTaskId": "codex-1"
+                    "taskId": "codex-1"
                 },
                 "workspacePath": "/target/project",
                 "forkPackage": {
@@ -165,7 +165,7 @@ async fn runtime_import_fork_persists_parent_runtime_handle_and_recent_messages(
                 "source": {
                     "deviceId": "source-device",
                     "workspacePath": "/source/project",
-                    "localTaskId": "claude-1"
+                    "taskId": "claude-1"
                 },
                 "workspacePath": "/target/project",
                 "forkPackage": {
@@ -195,15 +195,15 @@ async fn runtime_import_fork_persists_parent_runtime_handle_and_recent_messages(
         }))
         .await
         .expect("list should succeed");
-    let task = &listed["workspaces"][0]["localTasks"][0];
-    assert_eq!(task["localTaskId"], result["localTaskId"]);
+    let task = &listed["workspaces"][0]["tasks"][0];
+    assert_eq!(task["taskId"], result["taskId"]);
     assert_eq!(task["runtime"], "claude_code");
     assert_eq!(
         task["parent"],
         json!({
             "deviceId": "source-device",
             "workspacePath": "/source/project",
-            "localTaskId": "claude-1"
+            "taskId": "claude-1"
         })
     );
     assert_eq!(
@@ -216,7 +216,7 @@ async fn runtime_import_fork_persists_parent_runtime_handle_and_recent_messages(
             "method": "runtime.tasks.transcript",
             "payload": {
                 "workspacePath": "/target/project",
-                "localTaskId": result["localTaskId"]
+                "taskId": result["taskId"]
             }
         }))
         .await

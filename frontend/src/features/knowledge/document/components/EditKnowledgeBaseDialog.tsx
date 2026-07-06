@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { ArrowRightLeft, BookOpen, Database } from 'lucide-react'
+import { BookOpen, Database } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -26,9 +26,6 @@ import type {
   SummaryModelRef,
 } from '@/types/knowledge'
 
-// Maximum documents allowed for notebook type
-const NOTEBOOK_MAX_DOCUMENTS = 50
-
 interface EditKnowledgeBaseDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -39,7 +36,7 @@ interface EditKnowledgeBaseDialogProps {
   knowledgeDefaultTeamId?: number | null
   /** Optional bind model name from team's bot config as fallback */
   bindModel?: string | null
-  /** Callback when knowledge base type is converted */
+  /** Callback when default opening view is updated */
   onTypeConverted?: (updatedKb: KnowledgeBase) => void
 }
 
@@ -69,7 +66,7 @@ export function EditKnowledgeBaseDialog({
   const [maxCalls, setMaxCalls] = useState(10)
   const [exemptCalls, setExemptCalls] = useState(5)
 
-  // Convert type dialog state
+  // Default view dialog state
   const [showConvertDialog, setShowConvertDialog] = useState(false)
 
   // Full knowledge base data (fetched from API)
@@ -150,13 +147,12 @@ export function EditKnowledgeBaseDialog({
       const validGuidedQuestions = guidedQuestions.filter(q => q.trim().length > 0)
       // Use fullKnowledgeBase for accurate data, fallback to initial prop
       const kb = fullKnowledgeBase || knowledgeBase
-      const isNotebook = kb?.kb_type === 'notebook'
       const updateData: KnowledgeBaseUpdate = {
         name: name.trim(),
         description: description.trim(), // Allow empty string to clear description
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
-        guided_questions: isNotebook ? validGuidedQuestions : undefined,
+        guided_questions: validGuidedQuestions,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
       }
@@ -203,12 +199,8 @@ export function EditKnowledgeBaseDialog({
   const kb = fullKnowledgeBase || knowledgeBase
   const kbType = kb?.kb_type || 'notebook'
   const isNotebook = kbType === 'notebook'
-  // Check if can convert to notebook (document count must be <= 50)
-  const canConvertToNotebook =
-    (fullKnowledgeBase?.document_count || knowledgeBase?.document_count || 0) <=
-    NOTEBOOK_MAX_DOCUMENTS
 
-  // Handle type conversion success
+  // Handle default opening view update success
   const handleTypeConverted = (updatedKb: KnowledgeBase) => {
     setShowConvertDialog(false)
     onOpenChange(false)
@@ -256,12 +248,12 @@ export function EditKnowledgeBaseDialog({
               onRetrievalConfigChange={handleRetrievalConfigChange}
               retrievalReadOnly={false}
               retrievalPartialReadOnly={true}
-              showGuidedQuestions={kb?.kb_type === 'notebook'}
+              showGuidedQuestions={true}
               guidedQuestions={guidedQuestions}
               onGuidedQuestionsChange={setGuidedQuestions}
             />
 
-            {/* Convert type section */}
+            {/* Default opening view section */}
             <div className="border-t border-border pt-4 mt-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -271,7 +263,7 @@ export function EditKnowledgeBaseDialog({
                     <Database className="w-4 h-4 text-text-secondary" />
                   )}
                   <span className="text-sm font-medium">
-                    {tKnowledge('document.knowledgeBase.currentType')}:{' '}
+                    {tKnowledge('document.knowledgeBase.currentDefaultView')}:{' '}
                     {isNotebook
                       ? tKnowledge('document.knowledgeBase.typeNotebook')
                       : tKnowledge('document.knowledgeBase.typeClassic')}
@@ -281,21 +273,11 @@ export function EditKnowledgeBaseDialog({
                   variant="outline"
                   size="sm"
                   onClick={() => setShowConvertDialog(true)}
-                  disabled={!isNotebook && !canConvertToNotebook}
                   className="flex items-center gap-1.5"
                 >
-                  <ArrowRightLeft className="w-4 h-4" />
-                  {isNotebook
-                    ? tKnowledge('document.knowledgeBase.convertToClassic')
-                    : tKnowledge('document.knowledgeBase.convertToNotebook')}
+                  {tKnowledge('document.knowledgeBase.changeDefaultView')}
                 </Button>
               </div>
-              {/* Show hint when convert to notebook is disabled */}
-              {!isNotebook && !canConvertToNotebook && (
-                <p className="text-xs text-text-muted mt-2">
-                  {tKnowledge('document.knowledgeBase.convertToNotebookDisabled')}
-                </p>
-              )}
             </div>
 
             {error && <p className="text-sm text-error">{error}</p>}

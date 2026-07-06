@@ -15,6 +15,13 @@
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { KnowledgeDocumentPageDesktop } from './KnowledgeDocumentPageDesktop'
 import { KnowledgeDocumentPageMobile } from './KnowledgeDocumentPageMobile'
+import type { KnowledgeView } from '@/types/knowledge'
+
+export interface KnowledgeViewState {
+  visible: boolean
+  currentView: KnowledgeView
+  onViewChange?: (view: KnowledgeView) => void
+}
 
 interface KnowledgeDocumentPageProps {
   /** Initial KB namespace to auto-select (from virtual URL path) */
@@ -23,12 +30,15 @@ interface KnowledgeDocumentPageProps {
   initialKbName?: string
   /** Initial document path to auto-open (from virtual URL path segments) */
   initialDocPath?: string
+  /** Notifies the parent shell so it can render page-level view controls */
+  onKnowledgeViewStateChange?: (state: KnowledgeViewState) => void
 }
 
 export function KnowledgeDocumentPage({
   initialKbNamespace,
   initialKbName,
   initialDocPath,
+  onKnowledgeViewStateChange,
 }: KnowledgeDocumentPageProps = {}) {
   const isMobile = useIsMobile()
 
@@ -38,6 +48,7 @@ export function KnowledgeDocumentPage({
         initialKbNamespace={initialKbNamespace}
         initialKbName={initialKbName}
         initialDocPath={initialDocPath}
+        onKnowledgeViewStateChange={onKnowledgeViewStateChange}
       />
     )
   }
@@ -47,6 +58,7 @@ export function KnowledgeDocumentPage({
       initialKbNamespace={initialKbNamespace}
       initialKbName={initialKbName}
       initialDocPath={initialDocPath}
+      onKnowledgeViewStateChange={onKnowledgeViewStateChange}
     />
   )
 }

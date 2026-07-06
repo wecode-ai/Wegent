@@ -149,6 +149,21 @@ export function WorkbenchProvider({
 
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
+  const projectChatScopeKey = getProjectChatScopeKey({
+    currentRuntimeTask: state.currentRuntimeTask,
+    standaloneChatKey: state.standaloneChatKey,
+  })
+  const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>({})
+  const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
+  const setDraftInput = useCallback(
+    (value: string) => {
+      setDraftInputByScope(current => {
+        if ((current[projectChatScopeKey] ?? '') === value) return current
+        return { ...current, [projectChatScopeKey]: value }
+      })
+    },
+    [projectChatScopeKey]
+  )
   const activeDeviceId =
     state.currentRuntimeTask?.deviceId ??
     getActiveWorkbenchDeviceId({
@@ -308,6 +323,8 @@ export function WorkbenchProvider({
   const modelSelection = useWorkbenchModels({
     api: resolvedServices.modelApi,
     locked: false,
+    scopeKey: projectChatScopeKey,
+    persistSelection: false,
     selectionConfig: modelSelectionConfig,
     compatibilityConfig: modelCompatibilityConfig,
     compatibilityFamily: modelCompatibilityFamily,
@@ -320,6 +337,7 @@ export function WorkbenchProvider({
     api: resolvedServices.skillApi,
     teamId: state.defaultTeam?.id,
     locked: isOptionsLocked,
+    scopeKey: projectChatScopeKey,
   })
   const isWorkbenchShellReady = !state.isBootstrapping
   const isStartupReady =
@@ -339,6 +357,7 @@ export function WorkbenchProvider({
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: uploadWorkbenchAttachment,
     deleteAttachment: resolvedServices.attachmentApi?.deleteAttachment,
+    scopeKey: projectChatScopeKey,
   })
   const { cloudWorkStatus, refreshWorkLists, refreshDevices, getRemoteDeviceStartupCommand } =
     useWorkbenchDataRefresh({
@@ -354,8 +373,25 @@ export function WorkbenchProvider({
       state,
       currentRuntimeTaskRunning,
       cloudWorkStatus,
+      composer: {
+        scopeKey: projectChatScopeKey,
+        standaloneChatKey: state.standaloneChatKey,
+        currentInputLength: draftInput.length,
+        scopedInputLengths: Object.fromEntries(
+          Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
+        ),
+        attachmentCount: attachmentSelection.attachments.length,
+      },
     })
-  }, [cloudWorkStatus, currentRuntimeTaskRunning, state])
+  }, [
+    attachmentSelection.attachments.length,
+    cloudWorkStatus,
+    currentRuntimeTaskRunning,
+    draftInput.length,
+    draftInputByScope,
+    projectChatScopeKey,
+    state,
+  ])
 
   const { upgradingDevices, upgradeDevice } = useWorkbenchDeviceUpgrades({
     state,
@@ -438,6 +474,7 @@ export function WorkbenchProvider({
         type: 'project_cleared',
         standaloneDeviceId,
         standaloneWorkspacePath: null,
+        startFreshChat: true,
       })
       navigateTo('/')
     },
@@ -472,6 +509,7 @@ export function WorkbenchProvider({
         type: 'project_cleared',
         standaloneDeviceId: normalizedDeviceId,
         standaloneWorkspacePath: openedWorkspacePath,
+        startFreshChat: true,
       })
       dispatch({
         type: 'runtime_workspace_opened',
@@ -623,14 +661,26 @@ export function WorkbenchProvider({
   const stableStartNewChat = useStableEvent(startNewChat)
   const stableStartStandaloneChat = useStableEvent(startStandaloneChat)
   const stableStartNewProjectChat = useStableEvent(startNewProjectChat)
-  const stableOpenRuntimeLocalTask = useStableEvent(runtimeTasks.openRuntimeLocalTask)
+  const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
   const stableSearchRuntimeWork = useStableEvent(runtimeTasks.searchRuntimeWork)
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
     runtimeTasks.loadRuntimeTranscriptForPane
   )
-  const stableSubscribeRuntimeTaskStream = useStableEvent(runtimeTasks.subscribeRuntimeTaskStream)
-  const stableRenameRuntimeLocalTask = useStableEvent(runtimeTasks.renameRuntimeLocalTask)
-  const stableArchiveRuntimeLocalTask = useStableEvent(runtimeTasks.archiveRuntimeLocalTask)
+  const stableSubscribeRuntimeTaskStream = useStableEvent(
+    (
+      address: RuntimeTaskAddress,
+      handlers: Parameters<typeof runtimeTasks.subscribeRuntimeTaskStream>[1]
+    ) =>
+      runtimeTasks.subscribeRuntimeTaskStream(address, {
+        ...handlers,
+        onAssistantSettled: () => {
+          dispatch({ type: 'runtime_task_settled', address })
+          handlers.onAssistantSettled?.()
+        },
+      })
+  )
+  const stableRenameRuntimeTask = useStableEvent(runtimeTasks.renameRuntimeTask)
+  const stableArchiveRuntimeTask = useStableEvent(runtimeTasks.archiveRuntimeTask)
   const stableArchiveProjectConversations = useStableEvent(runtimeTasks.archiveProjectConversations)
   const stableArchiveProjectsConversations = useStableEvent(
     runtimeTasks.archiveProjectsConversations
@@ -672,8 +722,12 @@ export function WorkbenchProvider({
   const stableCheckoutEnvironmentBranch = useStableEvent(projectActions.checkoutEnvironmentBranch)
   const stableCreateEnvironmentBranch = useStableEvent(projectActions.createEnvironmentBranch)
   const stableSendRuntimePaneMessage = useStableEvent(runtimeMessaging.sendRuntimePaneMessage)
+  const stableEditLastUserMessage = useStableEvent(runtimeMessaging.editLastUserMessage)
   const stableCancelRuntimePaneTask = useStableEvent(runtimeMessaging.cancelRuntimePaneTask)
   const stableSendCurrentInput = useStableEvent(runtimeMessaging.sendCurrentInput)
+  const stableCreateTemporaryRuntimeTask = useStableEvent(
+    runtimeMessaging.createTemporaryRuntimeTask
+  )
   const stableRetryFailedMessage = useStableEvent(runtimeMessaging.retryFailedMessage)
   const stablePauseCurrentResponse = useStableEvent(runtimeMessaging.pauseCurrentResponse)
   const stableLoadTurnFileChangesDiff = useStableEvent(runtimeMessaging.loadTurnFileChangesDiff)
@@ -734,6 +788,7 @@ export function WorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
+      input: draftInput,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -745,6 +800,7 @@ export function WorkbenchProvider({
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
+      setInput: setDraftInput,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -762,6 +818,7 @@ export function WorkbenchProvider({
       attachmentSelection.removeAttachment,
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
+      draftInput,
       handleBlockedModelSelect,
       isOptionsLocked,
       listLocalSkills,
@@ -773,6 +830,7 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      setDraftInput,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,
@@ -786,6 +844,7 @@ export function WorkbenchProvider({
       selectedModel: modelSelection.selectedModel,
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
+      input: draftInput,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -797,6 +856,7 @@ export function WorkbenchProvider({
       getSelectedModel: modelSelection.getSelectedModel,
       getSelectedModelOptions: modelSelection.getSelectedModelOptions,
       onBlockedModelSelect: handleBlockedModelSelect,
+      setInput: setDraftInput,
       setSelectedSkills: skillSelection.setSelectedSkills,
       toggleSkill: skillSelection.toggleSkill,
       handleFileSelect: attachmentSelection.handleFileSelect,
@@ -814,6 +874,7 @@ export function WorkbenchProvider({
       attachmentSelection.removeAttachment,
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
+      draftInput,
       handleBlockedModelSelect,
       listLocalSkills,
       modelSelection.isSelectionReady,
@@ -824,6 +885,7 @@ export function WorkbenchProvider({
       modelSelection.setSelectedModelOption,
       modelSelection.getSelectedModel,
       modelSelection.getSelectedModelOptions,
+      setDraftInput,
       skillSelection.selectedSkills,
       skillSelection.setSelectedSkills,
       skillSelection.skills,
@@ -851,12 +913,12 @@ export function WorkbenchProvider({
     startNewChat,
     startStandaloneChat,
     startNewProjectChat,
-    openRuntimeLocalTask: runtimeTasks.openRuntimeLocalTask,
+    openRuntimeTask: runtimeTasks.openRuntimeTask,
     searchRuntimeWork: runtimeTasks.searchRuntimeWork,
     loadRuntimeTranscriptForPane: runtimeTasks.loadRuntimeTranscriptForPane,
     subscribeRuntimeTaskStream: runtimeTasks.subscribeRuntimeTaskStream,
-    renameRuntimeLocalTask: runtimeTasks.renameRuntimeLocalTask,
-    archiveRuntimeLocalTask: runtimeTasks.archiveRuntimeLocalTask,
+    renameRuntimeTask: runtimeTasks.renameRuntimeTask,
+    archiveRuntimeTask: runtimeTasks.archiveRuntimeTask,
     archiveProjectConversations: runtimeTasks.archiveProjectConversations,
     archiveProjectsConversations: runtimeTasks.archiveProjectsConversations,
     archiveChatConversations: runtimeTasks.archiveChatConversations,
@@ -894,8 +956,10 @@ export function WorkbenchProvider({
     checkoutEnvironmentBranch: projectActions.checkoutEnvironmentBranch,
     createEnvironmentBranch: projectActions.createEnvironmentBranch,
     sendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
+    editLastUserMessage: runtimeMessaging.editLastUserMessage,
     cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
     sendCurrentInput: runtimeMessaging.sendCurrentInput,
+    createTemporaryRuntimeTask: runtimeMessaging.createTemporaryRuntimeTask,
     retryFailedMessage: runtimeMessaging.retryFailedMessage,
     pauseCurrentResponse: runtimeMessaging.pauseCurrentResponse,
     loadTurnFileChangesDiff: runtimeMessaging.loadTurnFileChangesDiff,
@@ -920,12 +984,12 @@ export function WorkbenchProvider({
       startNewChat: stableStartNewChat,
       startStandaloneChat: stableStartStandaloneChat,
       startNewProjectChat: stableStartNewProjectChat,
-      openRuntimeLocalTask: stableOpenRuntimeLocalTask,
+      openRuntimeTask: stableOpenRuntimeTask,
       searchRuntimeWork: stableSearchRuntimeWork,
       loadRuntimeTranscriptForPane: stableLoadRuntimeTranscriptForPane,
       subscribeRuntimeTaskStream: stableSubscribeRuntimeTaskStream,
-      renameRuntimeLocalTask: stableRenameRuntimeLocalTask,
-      archiveRuntimeLocalTask: stableArchiveRuntimeLocalTask,
+      renameRuntimeTask: stableRenameRuntimeTask,
+      archiveRuntimeTask: stableArchiveRuntimeTask,
       archiveProjectConversations: stableArchiveProjectConversations,
       archiveProjectsConversations: stableArchiveProjectsConversations,
       archiveChatConversations: stableArchiveChatConversations,
@@ -963,8 +1027,10 @@ export function WorkbenchProvider({
       checkoutEnvironmentBranch: stableCheckoutEnvironmentBranch,
       createEnvironmentBranch: stableCreateEnvironmentBranch,
       sendRuntimePaneMessage: stableSendRuntimePaneMessage,
+      editLastUserMessage: stableEditLastUserMessage,
       cancelRuntimePaneTask: stableCancelRuntimePaneTask,
       sendCurrentInput: stableSendCurrentInput,
+      createTemporaryRuntimeTask: stableCreateTemporaryRuntimeTask,
       retryFailedMessage: stableRetryFailedMessage,
       pauseCurrentResponse: stablePauseCurrentResponse,
       loadTurnFileChangesDiff: stableLoadTurnFileChangesDiff,
@@ -979,7 +1045,7 @@ export function WorkbenchProvider({
       stableArchiveChatConversations,
       stableArchiveProjectConversations,
       stableArchiveProjectsConversations,
-      stableArchiveRuntimeLocalTask,
+      stableArchiveRuntimeTask,
       stableBindRuntimeTaskToImSessions,
       stableCancelRuntimePaneTask,
       stableClearRuntimeGoal,
@@ -987,8 +1053,10 @@ export function WorkbenchProvider({
       stableCommitEnvironmentChanges,
       stableCreateDeviceDirectory,
       stableCreateEnvironmentBranch,
+      stableEditLastUserMessage,
       stableCreateGitWorkspaceProject,
       stableCreateProject,
+      stableCreateTemporaryRuntimeTask,
       stableDeleteDeviceWorkspace,
       stableForkCurrentRuntimeTask,
       stableGetDeviceHomeDirectory,
@@ -1005,7 +1073,7 @@ export function WorkbenchProvider({
       stableLoadEnvironmentInfo,
       stableLoadRuntimeTranscriptForPane,
       stableLoadTurnFileChangesDiff,
-      stableOpenRuntimeLocalTask,
+      stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,
       stablePauseCurrentResponse,
       stablePrepareDeviceWorkspace,
@@ -1013,7 +1081,7 @@ export function WorkbenchProvider({
       stableRefreshWorkLists,
       stableRememberExecutionDevice,
       stableRemoveProject,
-      stableRenameRuntimeLocalTask,
+      stableRenameRuntimeTask,
       stableRetryFailedMessage,
       stableRevertTurnFileChanges,
       stableSearchRuntimeWork,
@@ -1060,4 +1128,17 @@ function useStableEvent<TArgs extends unknown[], TResult>(
   }, [handler])
 
   return useCallback((...args: TArgs) => handlerRef.current(...args), [])
+}
+
+function getProjectChatScopeKey({
+  currentRuntimeTask,
+  standaloneChatKey,
+}: {
+  currentRuntimeTask: RuntimeTaskAddress | null
+  standaloneChatKey: number
+}): string {
+  if (currentRuntimeTask) {
+    return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.taskId].join(':')
+  }
+  return `blank:${standaloneChatKey}`
 }

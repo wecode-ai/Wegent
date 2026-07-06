@@ -48,6 +48,8 @@ from shared.utils.ip_util import get_host_ip
 # Setup logger
 logger = setup_logger(__name__)
 
+WORKSPACE_FILE_TIMEOUT_SECONDS = 130.0
+
 # In-memory registry: validation task_id -> {validation_id, shell_type, image, created_at}
 # Used by callback_handler to update Redis validation status when validation completes.
 # Entries are cleaned up on terminal callback events or after TTL (5 min).
@@ -656,7 +658,7 @@ async def get_executor_workspace_file(
     legacy_url = f"{base_url}/filesystem/file"
     rest_file_url = f"{base_url}/files"
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
         legacy_response = await client.get(legacy_url, params={"path": path})
         if legacy_response.status_code < 400:
             return StreamingResponse(
@@ -664,6 +666,11 @@ async def get_executor_workspace_file(
                 media_type=legacy_response.headers.get(
                     "content-type", "application/octet-stream"
                 ),
+            )
+        if legacy_response.status_code in {408, 413, 429}:
+            raise HTTPException(
+                status_code=legacy_response.status_code,
+                detail=_to_log_preview(legacy_response.text),
             )
 
         logger.info(
@@ -680,6 +687,11 @@ async def get_executor_workspace_file(
                 media_type=fallback_response.headers.get(
                     "content-type", "application/octet-stream"
                 ),
+            )
+        if fallback_response.status_code in {408, 413, 429}:
+            raise HTTPException(
+                status_code=fallback_response.status_code,
+                detail=_to_log_preview(fallback_response.text),
             )
 
         logger.warning(

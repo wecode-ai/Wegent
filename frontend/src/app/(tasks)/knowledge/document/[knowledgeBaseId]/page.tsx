@@ -8,6 +8,8 @@ import { useEffect } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Spinner } from '@/components/ui/spinner'
 import { useKnowledgeBaseDetail } from '@/features/knowledge/document/hooks'
+import { getOrganizationNamespace } from '@/apis/knowledge'
+import { buildKbUrl } from '@/utils/knowledgeUrl'
 
 // Loading fallback component
 function PageLoadingFallback() {
@@ -42,11 +44,31 @@ function KnowledgeBaseCompatContent() {
 
   useEffect(() => {
     if (!knowledgeBase) return
-    // Build new virtual URL
-    const newPath = `/knowledge/${encodeURIComponent(knowledgeBase.namespace)}/${encodeURIComponent(knowledgeBase.name)}`
-    // Preserve query params (taskId, doc, etc.)
-    const query = searchParams.toString()
-    router.replace(query ? `${newPath}?${query}` : newPath)
+    const kb = knowledgeBase
+    let isCurrent = true
+
+    async function redirectToVirtualUrl() {
+      let isOrganization = false
+
+      try {
+        const orgNamespace = await getOrganizationNamespace()
+        isOrganization = orgNamespace.namespace === kb.namespace
+      } catch (error) {
+        console.error('Failed to resolve organization namespace for legacy KB redirect:', error)
+      }
+
+      if (!isCurrent) return
+
+      const newPath = buildKbUrl(kb.namespace, kb.name, isOrganization)
+      const query = searchParams.toString()
+      router.replace(query ? `${newPath}?${query}` : newPath)
+    }
+
+    redirectToVirtualUrl()
+
+    return () => {
+      isCurrent = false
+    }
   }, [knowledgeBase, router, searchParams])
 
   // Show loading while redirecting

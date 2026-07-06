@@ -360,8 +360,11 @@ async fn close_session_and_cancel_events_call_task_controller_and_refresh_heartb
     transport.handler("task:cancel").unwrap()(json!({"task_id": 10, "subtask_id": 20})).await;
     transport.handler("task:close-session").unwrap()(json!({"task_id": 10})).await;
 
-    assert_eq!(controller.cancelled(), vec![(10, Some(20))]);
-    assert_eq!(controller.closed(), vec![10]);
+    assert_eq!(
+        controller.cancelled(),
+        vec![("10".to_owned(), Some("20".to_owned()))]
+    );
+    assert_eq!(controller.closed(), vec!["10".to_owned()]);
     let calls = transport.calls();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].event, "device:heartbeat");
@@ -419,9 +422,12 @@ async fn default_upgrade_event_reports_busy_when_tasks_are_running_without_force
 
     assert_eq!(ack["success"], false, "{ack}");
     assert_eq!(ack["status"], "busy");
-    assert_eq!(ack["running_task_ids"], json!([10, 11]));
+    assert_eq!(ack["running_task_ids"], json!(["10", "11"]));
     assert!(upgrade.calls().is_empty());
-    assert_eq!(controller.cancelled(), Vec::<(i64, Option<i64>)>::new());
+    assert_eq!(
+        controller.cancelled(),
+        Vec::<(String, Option<String>)>::new()
+    );
     let emits = transport.emits();
     assert_eq!(emits.len(), 1);
     assert_eq!(emits[0].event, "device:upgrade_status");
@@ -461,7 +467,10 @@ async fn default_upgrade_event_force_stops_tasks_and_runs_updater() {
     assert_eq!(ack["success"], true, "{ack}");
     assert_eq!(ack["old_version"], "1.0.0");
     assert_eq!(ack["new_version"], "1.6.6");
-    assert_eq!(controller.cancelled(), vec![(10, None), (11, None)]);
+    assert_eq!(
+        controller.cancelled(),
+        vec![("10".to_owned(), None), ("11".to_owned(), None)]
+    );
     assert_eq!(
         upgrade.calls(),
         vec![UpgradeCall {
@@ -509,7 +518,7 @@ async fn upgrade_service_uses_task_controller_even_when_builder_order_is_reverse
     .unwrap();
 
     assert_eq!(ack["success"], true, "{ack}");
-    assert_eq!(controller.cancelled(), vec![(21, None)]);
+    assert_eq!(controller.cancelled(), vec![("21".to_owned(), None)]);
     assert_eq!(upgrade.calls().len(), 1);
 }
 
@@ -536,7 +545,7 @@ async fn upgrade_force_stop_aborts_when_task_cancellation_fails() {
 
     assert_eq!(ack["success"], false, "{ack}");
     assert_eq!(ack["status"], "error");
-    assert_eq!(controller.cancelled(), vec![(31, None)]);
+    assert_eq!(controller.cancelled(), vec![("31".to_owned(), None)]);
     assert!(upgrade.calls().is_empty());
     let statuses: Vec<_> = transport
         .emits()
@@ -688,8 +697,8 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
         tracker.clone(),
     );
     let request = ExecutionRequest {
-        task_id: 501,
-        subtask_id: 502,
+        task_id: "501".to_owned(),
+        subtask_id: "502".to_owned(),
         ..ExecutionRequest::default()
     };
 
@@ -697,17 +706,21 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
 
     assert_eq!(result.status, TaskStatus::Running);
     wait_until(|| pid_file.exists()).await;
-    assert_eq!(tracker.running_task_ids(), vec![501]);
+    assert_eq!(tracker.running_task_ids(), vec!["501".to_owned()]);
     assert!(heartbeat_client
         .send_heartbeat(Duration::from_secs(1))
         .await
         .unwrap());
     assert_eq!(
         heartbeat_transport.calls()[0].payload["running_task_ids"],
-        json!([501])
+        json!(["501"])
     );
 
-    assert!(runner.cancel_task(501, Some(502)).await);
+    assert!(
+        runner
+            .cancel_task("501".to_owned(), Some("502".to_owned()))
+            .await
+    );
     let pid = std::fs::read_to_string(&pid_file)
         .unwrap()
         .parse::<u32>()
@@ -724,7 +737,7 @@ async fn managed_local_task_runner_tracks_running_tasks_and_cancel_aborts_child_
     );
     assert!(sink.events().iter().any(|event| event.event_type == "error"
         && event.data["code"] == "cancelled"
-        && event.task_id == 501));
+        && event.task_id == "501"));
 }
 
 #[derive(Clone, Debug)]
@@ -855,8 +868,8 @@ impl TaskRunner for RecordingTaskRunner {
     }
 }
 
-type CancelRecords = Arc<Mutex<Vec<(i64, Option<i64>)>>>;
-type TaskIds = Arc<Mutex<Vec<i64>>>;
+type CancelRecords = Arc<Mutex<Vec<(String, Option<String>)>>>;
+type TaskIds = Arc<Mutex<Vec<String>>>;
 
 #[derive(Clone, Default)]
 struct RecordingTaskController {
@@ -871,16 +884,21 @@ impl RecordingTaskController {
         I: IntoIterator<Item = i64>,
     {
         Self {
-            running: Arc::new(Mutex::new(task_ids.into_iter().collect())),
+            running: Arc::new(Mutex::new(
+                task_ids
+                    .into_iter()
+                    .map(|task_id| task_id.to_string())
+                    .collect(),
+            )),
             ..Self::default()
         }
     }
 
-    fn cancelled(&self) -> Vec<(i64, Option<i64>)> {
+    fn cancelled(&self) -> Vec<(String, Option<String>)> {
         self.cancelled.lock().unwrap().clone()
     }
 
-    fn closed(&self) -> Vec<i64> {
+    fn closed(&self) -> Vec<String> {
         self.closed.lock().unwrap().clone()
     }
 }
@@ -888,22 +906,25 @@ impl RecordingTaskController {
 impl LocalTaskController for RecordingTaskController {
     fn cancel_task<'a>(
         &'a self,
-        task_id: i64,
-        subtask_id: Option<i64>,
+        task_id: String,
+        subtask_id: Option<String>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
-            self.cancelled.lock().unwrap().push((task_id, subtask_id));
+            self.cancelled
+                .lock()
+                .unwrap()
+                .push((task_id.clone(), subtask_id));
             self.running
                 .lock()
                 .unwrap()
-                .retain(|running_task_id| *running_task_id != task_id);
+                .retain(|running_task_id| running_task_id != &task_id);
             true
         })
     }
 
     fn close_task_session<'a>(
         &'a self,
-        task_id: i64,
+        task_id: String,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
             self.closed.lock().unwrap().push(task_id);
@@ -911,7 +932,7 @@ impl LocalTaskController for RecordingTaskController {
         })
     }
 
-    fn running_task_ids(&self) -> Vec<i64> {
+    fn running_task_ids(&self) -> Vec<String> {
         self.running.lock().unwrap().clone()
     }
 }
@@ -929,11 +950,16 @@ impl FailingCancelTaskController {
     {
         Self {
             cancelled: Arc::new(Mutex::new(Vec::new())),
-            running: Arc::new(Mutex::new(task_ids.into_iter().collect())),
+            running: Arc::new(Mutex::new(
+                task_ids
+                    .into_iter()
+                    .map(|task_id| task_id.to_string())
+                    .collect(),
+            )),
         }
     }
 
-    fn cancelled(&self) -> Vec<(i64, Option<i64>)> {
+    fn cancelled(&self) -> Vec<(String, Option<String>)> {
         self.cancelled.lock().unwrap().clone()
     }
 }
@@ -941,8 +967,8 @@ impl FailingCancelTaskController {
 impl LocalTaskController for FailingCancelTaskController {
     fn cancel_task<'a>(
         &'a self,
-        task_id: i64,
-        subtask_id: Option<i64>,
+        task_id: String,
+        subtask_id: Option<String>,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async move {
             self.cancelled.lock().unwrap().push((task_id, subtask_id));
@@ -952,12 +978,12 @@ impl LocalTaskController for FailingCancelTaskController {
 
     fn close_task_session<'a>(
         &'a self,
-        _task_id: i64,
+        _task_id: String,
     ) -> Pin<Box<dyn Future<Output = bool> + Send + 'a>> {
         Box::pin(async { true })
     }
 
-    fn running_task_ids(&self) -> Vec<i64> {
+    fn running_task_ids(&self) -> Vec<String> {
         self.running.lock().unwrap().clone()
     }
 }

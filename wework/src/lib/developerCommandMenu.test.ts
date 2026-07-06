@@ -72,7 +72,7 @@ describe('developerCommandMenu', () => {
     expect(document.getElementById('wework-debug-panel')).toBeInTheDocument()
     expect(document.body).toHaveTextContent('Active Task State (taskKnown=true')
     expect(document.body).toHaveTextContent('Transcript vs Streaming Style')
-    expect(document.body).toHaveTextContent('"localTaskId": "task-1"')
+    expect(document.body).toHaveTextContent('"taskId": "task-1"')
     expect(document.body).toHaveTextContent('Transcript Loaded')
     expect(document.body).toHaveTextContent('Current Streaming')
     expect(document.body).toHaveTextContent('loaded transcript response')
@@ -146,7 +146,7 @@ function createDebugSnapshot() {
       currentRuntimeTask: {
         deviceId: 'device-1',
         workspacePath: '/tmp/workspace',
-        localTaskId: 'task-1',
+        taskId: 'task-1',
       },
       currentRuntimeTaskRunning: true,
       runningState: {
@@ -157,7 +157,7 @@ function createDebugSnapshot() {
         providerRunning: true,
       },
       activeTask: {
-        localTaskId: 'task-1',
+        taskId: 'task-1',
         workspacePath: '/tmp/workspace',
         title: 'Debug task',
         runtime: 'codex',
@@ -166,7 +166,7 @@ function createDebugSnapshot() {
       },
       activeWorkspace: null,
       runtimeWorkSummary: {
-        totalLocalTasks: 1,
+        totalTasks: 1,
         projectCount: 0,
         projectWorkspaceCount: 0,
         chatWorkspaceCount: 1,
@@ -192,7 +192,7 @@ function createDebugSnapshot() {
       currentRuntimeTask: {
         deviceId: 'device-1',
         workspacePath: '/tmp/workspace',
-        localTaskId: 'task-1',
+        taskId: 'task-1',
       },
       status: {
         sendPhase: 'awaiting_assistant',
@@ -230,7 +230,7 @@ function createDebugSnapshot() {
           status: 'done',
           runtimeStatus: 'done',
           runtimeMessageIndex: 1,
-          turnId: 10,
+          subtaskId: 10,
           createdAt: '2026-07-03T00:00:00.000Z',
           completedAt: '2026-07-03T00:01:00.000Z',
           contentPreview: 'loaded transcript response',
@@ -249,7 +249,7 @@ function createDebugSnapshot() {
           status: 'streaming',
           runtimeStatus: 'streaming',
           runtimeMessageIndex: null,
-          turnId: 11,
+          subtaskId: 11,
           createdAt: '2026-07-03T00:02:00.000Z',
           completedAt: null,
           contentPreview: 'streaming response',

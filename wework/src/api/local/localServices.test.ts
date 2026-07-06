@@ -55,7 +55,7 @@ describe('createLocalAppServices', () => {
           ],
         }
       }
-      return { projects: [], chats: [], totalLocalTasks: 0 }
+      return { projects: [], chats: [], totalTasks: 0 }
     })
     const ensure = vi.fn().mockResolvedValue({
       running: true,
@@ -75,7 +75,7 @@ describe('createLocalAppServices', () => {
       is_active: true,
     })
     await expect(services.modelApi.listModels()).resolves.toEqual({
-      data: [
+      data: expect.arrayContaining([
         expect.objectContaining({
           name: 'gpt-5.5',
           type: 'runtime',
@@ -95,7 +95,22 @@ describe('createLocalAppServices', () => {
           }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
-      ],
+        expect.objectContaining({
+          name: 'Sol',
+          type: 'runtime',
+          modelId: 'Sol',
+        }),
+        expect.objectContaining({
+          name: 'Terra',
+          type: 'runtime',
+          modelId: 'Terra',
+        }),
+        expect.objectContaining({
+          name: 'Luna',
+          type: 'runtime',
+          modelId: 'Luna',
+        }),
+      ]),
     })
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
@@ -128,7 +143,7 @@ describe('createLocalAppServices', () => {
     await expect(services.runtimeWorkApi?.listRuntimeWork()).resolves.toEqual({
       projects: [],
       chats: [],
-      totalLocalTasks: 0,
+      totalTasks: 0,
     })
     expect(request).toHaveBeenCalledWith('runtime.tasks.list', {})
   })
@@ -214,13 +229,13 @@ describe('createLocalAppServices', () => {
       workspaces: [
         {
           workspace_path: '/Users/me/project',
-          local_tasks: [
+          tasks: [
             {
-              local_task_id: 'local-visible-task',
-              workspace_path: '/Users/me/project',
+              taskId: 'local-visible-task',
+              workspacePath: '/Users/me/project',
               title: 'Fix guidance',
               runtime: 'codex',
-              runtime_handle: {
+              runtimeHandle: {
                 threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
               },
             },
@@ -239,9 +254,9 @@ describe('createLocalAppServices', () => {
         {
           deviceWorkspaces: [
             {
-              localTasks: [
+              tasks: [
                 {
-                  localTaskId: 'local-visible-task',
+                  taskId: 'local-visible-task',
                   runtimeHandle: {
                     threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
                   },
@@ -259,18 +274,18 @@ describe('createLocalAppServices', () => {
       workspaces: [
         {
           workspace_path: '/Users/me/project',
-          local_tasks: [
+          tasks: [
             {
-              local_task_id: 'newer-task',
-              workspace_path: '/Users/me/project',
+              taskId: 'newer-task',
+              workspacePath: '/Users/me/project',
               title: 'Newer task',
               runtime: 'codex',
               createdAt: 1780000100000,
               updatedAt: 1780000120000,
             },
             {
-              local_task_id: 'older-task',
-              workspace_path: '/Users/me/project',
+              taskId: 'older-task',
+              workspacePath: '/Users/me/project',
               title: 'Older task',
               runtime: 'codex',
               created_at: 1780000000000,
@@ -287,9 +302,9 @@ describe('createLocalAppServices', () => {
     })
 
     const response = await services.runtimeWorkApi?.listRuntimeWork()
-    const tasks = response?.projects[0].deviceWorkspaces[0].localTasks
+    const tasks = response?.projects[0].deviceWorkspaces[0].tasks
 
-    expect(tasks?.map(task => task.localTaskId)).toEqual(['newer-task', 'older-task'])
+    expect(tasks?.map(task => task.taskId)).toEqual(['newer-task', 'older-task'])
     expect(tasks?.[0]).toMatchObject({
       createdAt: 1780000100000,
       updatedAt: 1780000120000,
@@ -326,7 +341,7 @@ describe('createLocalAppServices', () => {
         return {
           accepted: true,
           deviceId: 'local-device',
-          localTaskId: 'task-1',
+          taskId: 'task-1',
           workspacePath: '/Users/me/project',
           runtime: 'codex',
         }
@@ -346,7 +361,7 @@ describe('createLocalAppServices', () => {
       teamId: 0,
       deviceId: 'local-device',
       workspacePath: '/Users/me/project',
-      localTaskId: 'task-1',
+      taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
@@ -380,7 +395,7 @@ describe('createLocalAppServices', () => {
       teamId: 0,
       deviceId: 'device-uuid',
       workspacePath: '/Users/me/project',
-      localTaskId: 'task-1',
+      taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
@@ -405,8 +420,8 @@ describe('createLocalAppServices', () => {
         },
       ],
       executionRequest: expect.objectContaining({
-        task_id: expect.any(Number),
-        subtask_id: expect.any(Number),
+        task_id: 'task-1',
+        subtask_id: expect.any(String),
         team_id: 0,
         team_name: 'local-wework',
         task_title: 'Hello',
@@ -449,7 +464,7 @@ describe('createLocalAppServices', () => {
             original_filename: 'clipboard.png',
             file_size: 1200,
             mime_type: 'image/png',
-            subtask_id: expect.any(Number),
+            subtask_id: expect.any(String),
             file_extension: '.png',
             local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
             local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
@@ -506,7 +521,7 @@ describe('createLocalAppServices', () => {
         if (method === 'runtime.tasks.create') {
           return {
             accepted: true,
-            localTaskId: 'task-1',
+            taskId: 'task-1',
             runtime: 'codex',
           }
         }
@@ -522,7 +537,7 @@ describe('createLocalAppServices', () => {
       teamId: 0,
       deviceId: 'local-device',
       workspacePath: '/Users/me/project',
-      localTaskId: 'task-1',
+      taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
@@ -538,7 +553,7 @@ describe('createLocalAppServices', () => {
     )?.[1]
     const worktreePath = String(createPayload.workspacePath)
     expect(worktreePath).toMatch(
-      /^\/Users\/me\/\.wegent-executor\/workspace\/worktrees\/\d+\/project$/
+      /^\/Users\/me\/\.wegent-executor\/workspace\/worktrees\/runtime-\d+\/project$/
     )
     expect(response?.workspacePath).toBe(worktreePath)
     expect(request).toHaveBeenCalledWith('device.execute_command', {
@@ -601,7 +616,7 @@ describe('createLocalAppServices', () => {
         if (method === 'runtime.tasks.create') {
           return {
             accepted: true,
-            localTaskId: 'task-1',
+            taskId: 'task-1',
             runtime: 'codex',
           }
         }
@@ -617,7 +632,7 @@ describe('createLocalAppServices', () => {
       teamId: 0,
       deviceId: 'local-device',
       workspacePath: '/Users/me/project',
-      localTaskId: 'task-1',
+      taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
@@ -674,7 +689,7 @@ describe('createLocalAppServices', () => {
       address: {
         deviceId: 'local-device',
         workspacePath: '/Users/me/project',
-        localTaskId: 'task-1',
+        taskId: 'task-1',
       },
       message: 'continue',
       modelId: 'gpt-5.5',
@@ -702,16 +717,17 @@ describe('createLocalAppServices', () => {
     const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
     expect(sendPayload).toEqual(
       expect.objectContaining({
+        taskId: 'task-1',
         address: {
           deviceId: 'device-uuid',
           workspacePath: '/Users/me/project',
-          localTaskId: 'task-1',
+          taskId: 'task-1',
         },
         message: 'continue',
         collaborationMode: 'default',
         modelOptions: {
           collaborationMode: 'default',
-          reasoning: 'extra_high',
+          reasoning: 'xhigh',
           summary: 'concise',
           speed: 'fast',
         },
@@ -729,8 +745,8 @@ describe('createLocalAppServices', () => {
           },
         ],
         executionRequest: expect.objectContaining({
-          task_id: expect.any(Number),
-          subtask_id: expect.any(Number),
+          task_id: 'task-1',
+          subtask_id: expect.any(String),
           prompt: 'continue',
           model_config: expect.objectContaining({
             model: 'openai',
@@ -744,7 +760,7 @@ describe('createLocalAppServices', () => {
               },
             },
             reasoning: {
-              effort: 'extra_high',
+              effort: 'xhigh',
               summary: 'concise',
             },
             service_tier: 'fast',
@@ -768,7 +784,7 @@ describe('createLocalAppServices', () => {
               original_filename: 'follow-up.png',
               file_size: 640,
               mime_type: 'image/png',
-              subtask_id: expect.any(Number),
+              subtask_id: expect.any(String),
               file_extension: '.png',
               local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
               local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
@@ -779,6 +795,63 @@ describe('createLocalAppServices', () => {
     )
     expect(sendPayload).not.toHaveProperty('message_id')
     expect(sendPayload).not.toHaveProperty('modelId')
+  })
+
+  test('routes last user message edits through the local runtime rollback method', async () => {
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.rollbackRuntimeTask({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'edited question',
+      messageId: 'user-last',
+      modelId: 'gpt-5.5',
+      modelOptions: {
+        collaborationMode: 'default',
+        reasoning: 'high',
+      },
+    })
+
+    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.rollback')?.[1]
+    expect(payload).toEqual(
+      expect.objectContaining({
+        taskId: 'task-1',
+        address: {
+          deviceId: 'device-uuid',
+          workspacePath: '/Users/me/project',
+          taskId: 'task-1',
+        },
+        message: 'edited question',
+        messageId: 'user-last',
+        collaborationMode: 'default',
+        modelOptions: {
+          collaborationMode: 'default',
+          reasoning: 'high',
+        },
+        executionRequest: expect.objectContaining({
+          task_id: 'task-1',
+          subtask_id: expect.any(String),
+          prompt: 'edited question',
+          new_session: false,
+          model_config: expect.objectContaining({
+            model: 'openai',
+            model_id: 'gpt-5.5',
+            api_format: 'responses',
+            protocol: 'openai-responses',
+          }),
+          project_workspace_path: '/Users/me/project',
+        }),
+      })
+    )
+    expect(payload).not.toHaveProperty('modelId')
   })
 
   test('uses local model settings for create and continue execution requests', async () => {
@@ -806,7 +879,7 @@ describe('createLocalAppServices', () => {
       teamId: 0,
       deviceId: 'local-device',
       workspacePath: '/Users/me/project',
-      localTaskId: 'task-1',
+      taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
@@ -816,7 +889,7 @@ describe('createLocalAppServices', () => {
       address: {
         deviceId: 'local-device',
         workspacePath: '/Users/me/project',
-        localTaskId: 'task-1',
+        taskId: 'task-1',
       },
       message: 'continue',
       modelId: 'local-model:ollama',
@@ -825,7 +898,7 @@ describe('createLocalAppServices', () => {
       address: {
         deviceId: 'local-device',
         workspacePath: '/Users/me/project',
-        localTaskId: 'task-1',
+        taskId: 'task-1',
       },
       message: 'secure continue',
       modelId: 'local-model:lmstudio',
@@ -878,7 +951,7 @@ describe('createLocalAppServices', () => {
       teamId: 0,
       deviceId: 'local-device',
       workspacePath: '/Users/me/project',
-      localTaskId: 'task-1',
+      taskId: 'task-1',
       runtime: 'codex',
       message: 'hello',
       title: 'Hello',
@@ -892,7 +965,7 @@ describe('createLocalAppServices', () => {
       address: {
         deviceId: 'local-device',
         workspacePath: '/Users/me/project',
-        localTaskId: 'task-1',
+        taskId: 'task-1',
       },
       message: 'continue',
       modelId: 'Doubao-Seed-2.0-pro-260215',
@@ -942,7 +1015,7 @@ describe('createLocalAppServices', () => {
         teamId: 0,
         deviceId: 'local-device',
         workspacePath: '/Users/me/project',
-        localTaskId: 'task-1',
+        taskId: 'task-1',
         runtime: 'codex',
         message: 'hello',
         title: 'Hello',
@@ -961,7 +1034,7 @@ describe('createLocalAppServices', () => {
     })
 
     await services.runtimeWorkApi?.sendRuntimeMessage({
-      address: { deviceId: 'local-device', localTaskId: 'task-1' },
+      address: { deviceId: 'local-device', taskId: 'task-1' },
       message: '工作目标',
       requestUserInputResponse: {
         requestId: 42,
@@ -975,7 +1048,8 @@ describe('createLocalAppServices', () => {
     const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
     expect(payload).toEqual(
       expect.objectContaining({
-        address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
+        taskId: 'task-1',
+        address: { deviceId: 'device-uuid', taskId: 'task-1' },
         message: '工作目标',
         requestUserInputResponse: {
           requestId: 42,
@@ -985,8 +1059,8 @@ describe('createLocalAppServices', () => {
           },
         },
         executionRequest: expect.objectContaining({
-          task_id: expect.any(Number),
-          subtask_id: expect.any(Number),
+          task_id: 'task-1',
+          subtask_id: expect.any(String),
           prompt: '工作目标',
           new_session: false,
           model_config: expect.objectContaining({
@@ -1024,7 +1098,7 @@ describe('createLocalAppServices', () => {
 
     await expect(
       services.runtimeWorkApi?.setRuntimeGoal({
-        address: { deviceId: 'local-device', localTaskId: 'task-1' },
+        address: { deviceId: 'local-device', taskId: 'task-1' },
         objective: '实现 plan 里的功能',
         status: 'active',
         tokenBudget: null,
@@ -1039,7 +1113,7 @@ describe('createLocalAppServices', () => {
     })
 
     expect(request).toHaveBeenCalledWith('runtime.tasks.goal.set', {
-      address: { deviceId: 'device-uuid', localTaskId: 'task-1' },
+      address: { deviceId: 'device-uuid', taskId: 'task-1' },
       objective: '实现 plan 里的功能',
       status: 'active',
       tokenBudget: null,
@@ -1054,9 +1128,9 @@ describe('createLocalAppServices', () => {
           workspacePath: '/Users/me/project',
           label: 'Project',
           workspaceSource: 'local',
-          localTasks: [
+          tasks: [
             {
-              localTaskId: 'task-1',
+              taskId: 'task-1',
               workspace_path: '/Users/me/worktrees/42/project',
               title: 'Build',
               runtime: 'codex',
@@ -1067,9 +1141,9 @@ describe('createLocalAppServices', () => {
         },
         {
           workspacePath: '/Users/me/chat',
-          localTasks: [
+          tasks: [
             {
-              localTaskId: 'chat-1',
+              taskId: 'chat-1',
               workspacePath: '/Users/me/chat',
               title: 'Chat',
               runtime: 'codex',
@@ -1100,9 +1174,9 @@ describe('createLocalAppServices', () => {
               workspaceKind: 'workspace',
               workspaceSource: 'local',
               label: 'Project',
-              localTasks: [
+              tasks: [
                 expect.objectContaining({
-                  localTaskId: 'task-1',
+                  taskId: 'task-1',
                   workspacePath: '/Users/me/worktrees/42/project',
                   workspaceKind: 'worktree',
                   worktreeId: '42',
@@ -1110,7 +1184,7 @@ describe('createLocalAppServices', () => {
               ],
             }),
           ],
-          totalLocalTasks: 1,
+          totalTasks: 1,
         },
       ],
       chats: [
@@ -1118,14 +1192,14 @@ describe('createLocalAppServices', () => {
           deviceId: 'device-uuid',
           workspacePath: '/Users/me/chat',
           workspaceKind: 'chat',
-          localTasks: [
+          tasks: [
             expect.objectContaining({
-              localTaskId: 'chat-1',
+              taskId: 'chat-1',
             }),
           ],
         }),
       ],
-      totalLocalTasks: 2,
+      totalTasks: 2,
     })
   })
 
@@ -1186,9 +1260,9 @@ describe('createLocalAppServices', () => {
               deviceStatus: 'online',
               available: true,
               workspacePath: '/Users/me/project',
-              localTasks: [
+              tasks: [
                 {
-                  local_task_id: 'task-1',
+                  task_id: 'task-1',
                   workspace_path: '/Users/me/worktrees/42/project',
                   title: 'Build',
                   runtime: 'codex',
@@ -1198,11 +1272,11 @@ describe('createLocalAppServices', () => {
               ],
             },
           ],
-          totalLocalTasks: 1,
+          totalTasks: 1,
         },
       ],
       chats: [],
-      totalLocalTasks: 1,
+      totalTasks: 1,
     })
     const services = createLocalAppServices({
       ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
@@ -1211,11 +1285,11 @@ describe('createLocalAppServices', () => {
     })
 
     const response = await services.runtimeWorkApi?.listRuntimeWork()
-    const task = response?.projects[0].deviceWorkspaces[0].localTasks[0]
+    const task = response?.projects[0].deviceWorkspaces[0].tasks[0]
 
     expect(task).toEqual(
       expect.objectContaining({
-        localTaskId: 'task-1',
+        taskId: 'task-1',
         workspacePath: '/Users/me/worktrees/42/project',
         workspaceKind: 'worktree',
         worktreeId: '42',
@@ -1229,14 +1303,14 @@ describe('createLocalAppServices', () => {
       workspaces: {
         '/Users/me/project': {
           label: 'Project',
-          local_tasks: [
+          tasks: [
             {
-              local_task_id: 'task-1',
-              project_workspace_path: '/Users/me/worktrees/99/project',
+              taskId: 'task-1',
+              projectWorkspacePath: '/Users/me/worktrees/99/project',
               title: 'Build',
               runtime: 'codex',
-              workspace_kind: 'worktree',
-              worktree_id: '99',
+              workspaceKind: 'worktree',
+              worktreeId: '99',
             },
           ],
         },
@@ -1255,9 +1329,9 @@ describe('createLocalAppServices', () => {
         deviceId: 'device-uuid',
         workspacePath: '/Users/me/project',
         workspaceKind: 'workspace',
-        localTasks: [
+        tasks: [
           expect.objectContaining({
-            localTaskId: 'task-1',
+            taskId: 'task-1',
             workspacePath: '/Users/me/worktrees/99/project',
             workspaceKind: 'worktree',
             worktreeId: '99',

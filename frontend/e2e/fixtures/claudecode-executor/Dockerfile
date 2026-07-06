@@ -14,7 +14,7 @@ ENV PATH=/root/.cargo/bin:${PATH}
 
 RUN cd /workspace/src/executor \
     && cargo build --release --locked \
-    && npm install -g @anthropic-ai/claude-code@2.1.142 \
+    && npm install -g @anthropic-ai/claude-code@2.1.199 \
     && npm cache clean --force \
     && mkdir -p /app \
     && cp target/release/wegent-executor /app/executor \

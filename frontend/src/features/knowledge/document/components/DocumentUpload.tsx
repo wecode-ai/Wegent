@@ -86,9 +86,6 @@ export interface TableDocument {
   source_config: { url: string }
 }
 
-// Maximum documents allowed in notebook mode
-export const NOTEBOOK_MAX_DOCUMENTS = 50
-
 interface DocumentUploadProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -99,9 +96,9 @@ interface DocumentUploadProps {
   onTableAdd?: (data: TableDocument) => Promise<void>
   /** Callback to add a web page document. Backend handles scraping and document creation. */
   onWebAdd?: (url: string, name?: string) => Promise<void>
-  /** Knowledge base type: 'notebook' or 'classic' */
+  /** Deprecated compatibility prop. kb_type no longer limits uploads. */
   kbType?: string
-  /** Current document count in the knowledge base */
+  /** Deprecated compatibility prop. kb_type no longer limits uploads. */
   currentDocumentCount?: number
   /** Currently selected folder ID for upload destination (0 = root) */
   folderId?: number
@@ -117,8 +114,6 @@ export function DocumentUpload({
   onUploadComplete,
   onTableAdd,
   onWebAdd,
-  kbType = 'classic',
-  currentDocumentCount = 0,
   folderId = 0,
   folderOptions = [],
   onFolderChange,
@@ -701,11 +696,6 @@ export function DocumentUpload({
     </>
   )
 
-  // Check if notebook mode has reached document limit
-  const isNotebookMode = kbType === 'notebook'
-  const totalDocumentCount = currentDocumentCount + successCount
-  const isAtLimit = isNotebookMode && totalDocumentCount >= NOTEBOOK_MAX_DOCUMENTS
-
   // Render file upload mode
   const renderFileMode = () => (
     <>
@@ -1039,25 +1029,6 @@ export function DocumentUpload({
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
-            )}
-          </div>
-        )}
-
-        {/* Notebook mode document limit progress bar - at the bottom */}
-        {isNotebookMode && (
-          <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-text-secondary">{t('document.upload.documentCount')}</span>
-              <span className={cn('font-medium', isAtLimit ? 'text-error' : 'text-text-primary')}>
-                {totalDocumentCount}/{NOTEBOOK_MAX_DOCUMENTS}
-              </span>
-            </div>
-            <Progress
-              value={(totalDocumentCount / NOTEBOOK_MAX_DOCUMENTS) * 100}
-              className={cn('h-2', isAtLimit && '[&>div]:bg-error')}
-            />
-            {isAtLimit && (
-              <p className="text-xs text-error">{t('document.upload.notebookLimitReached')}</p>
             )}
           </div>
         )}

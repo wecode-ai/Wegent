@@ -24,6 +24,7 @@ import {
   requestUserInputResponseKey,
 } from '@/components/chat/requestUserInputMessages'
 import type { RequestUserInputPayload } from '@/components/chat/RequestUserInputCard'
+import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
   Attachment,
@@ -31,6 +32,7 @@ import type {
   RequestUserInputResponse,
   RuntimeGoal,
   RuntimeGoalCreateInput,
+  RuntimeRollbackRequest,
   RuntimeSubagentActivityPayload,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -46,6 +48,7 @@ import type {
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
+import { useWorkbenchPaneActive } from './workbenchPaneStack'
 
 interface WorkbenchPaneSessionOptions {
   currentRuntimeTask: RuntimeTaskAddress | null
@@ -79,6 +82,9 @@ const runtimePaneMessageSeeds = new Map<string, WorkbenchMessage[]>()
 const runtimePaneMessageSnapshots = new Map<string, WorkbenchMessage[]>()
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
+const MAX_CACHED_RUNTIME_PANE_MESSAGES = 3
+const MAX_CACHED_RUNTIME_PANE_GOALS = 3
+const noopSetInput = () => undefined
 
 export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSessionOptions) {
   const {
@@ -89,16 +95,26 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     getRuntimeGoal,
     setRuntimeGoal,
     clearRuntimeGoal,
-    setWorkbenchError,
     sendRuntimePaneMessage,
+    editLastUserMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
     refreshWorkLists,
   } = useWorkbenchPaneContext()
+  const paneActive = useWorkbenchPaneActive()
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
-  const [input, setInput] = useState('')
+  const input = projectChat.input ?? ''
+  const scopedSetInput = projectChat.setInput ?? noopSetInput
+  const [error, setError] = useState<string | null>(null)
+  const setInput = useCallback(
+    (value: string) => {
+      scopedSetInput(value)
+      setError(null)
+    },
+    [scopedSetInput]
+  )
   const [sendPhase, setSendPhase] = useState<RuntimePaneSendPhase>('idle')
   const [answeredRequestUserInputIds, setAnsweredRequestUserInputIds] = useState<
     ReadonlySet<string>
@@ -649,6 +665,72 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     ]
   )
 
+  const editLastUserMessageInPane = useCallback(
+    async (message: WorkbenchMessage, content: string): Promise<boolean> => {
+      const submittedContent = content.trim()
+      if (!submittedContent) return false
+      if (!currentRuntimeTask) return false
+      if (paneStatus.isBusy) {
+        setError('当前回复仍在进行中，完成后再编辑')
+        return false
+      }
+
+      const currentMessages = messagesRef.current
+      const messageIndex = currentMessages.findIndex(item => item.id === message.id)
+      if (!isEditableLastUserMessage(currentMessages, messageIndex)) {
+        setError('只能编辑最后一轮已完成的问题')
+        return false
+      }
+
+      const previousMessages = currentMessages
+      const messageAttachments = message.attachments ?? []
+      const attachmentIds = remoteAttachmentIds(messageAttachments)
+      const attachments = localRuntimeAttachments(messageAttachments)
+      const editedMessage = createLocalUserMessage(submittedContent, messageAttachments, {
+        runtimeGoalRequest: message.runtimeGoalRequest === true,
+      })
+      const nextMessages = [...currentMessages.slice(0, messageIndex), editedMessage]
+      const request: RuntimeRollbackRequest = {
+        address: currentRuntimeTask,
+        message: submittedContent,
+        messageId: message.id,
+        ...getRuntimeModelFields(),
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      }
+
+      setSendPhase('submitting')
+      dispatchMessages({ type: 'reset', messages: nextMessages })
+      try {
+        const sent = await editLastUserMessage(request)
+        if (sent) {
+          setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
+          return true
+        }
+        dispatchMessages({ type: 'reset', messages: previousMessages })
+        setSendPhase('idle')
+        return false
+      } catch (error) {
+        dispatchMessages({ type: 'reset', messages: previousMessages })
+        setSendPhase('idle')
+        console.error('[Wework] Runtime last user message edit failed', {
+          address: runtimeAddressDebug(currentRuntimeTask),
+          messageId: message.id,
+          error,
+        })
+        setError('编辑失败')
+        return false
+      }
+    },
+    [
+      currentRuntimeTask,
+      dispatchMessages,
+      editLastUserMessage,
+      getRuntimeModelFields,
+      paneStatus.isBusy,
+    ]
+  )
+
   const ignoreRequestUserInput = useCallback(
     async (payload: RequestUserInputPayload) => {
       const requestUserInputKey = requestUserInputPayloadKey(payload)
@@ -716,153 +798,83 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [paneStatus.canSendQueuedMessage, queuedMessages, sendRuntimeMessage])
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  const send = useCallback(async () => {
-    const submittedInput = input.trim()
-    const currentAttachments = projectChat.attachments
-    const hasCodeComments = codeCommentContexts.length > 0
+  const send: (inputOverride?: string) => Promise<void> = useCallback(
+    async inputOverride => {
+      const submittedInput = (inputOverride ?? input).trim()
+      const currentAttachments = projectChat.attachments
+      const hasCodeComments = codeCommentContexts.length > 0
+      debugComposerEvent('pane-send-called', {
+        hasSubmittedValue: inputOverride !== undefined,
+        submittedValue: textMetrics(inputOverride),
+        stateInput: textMetrics(input),
+        submittedInput: textMetrics(submittedInput),
+        attachmentsCount: currentAttachments.length,
+        codeCommentsCount: codeCommentContexts.length,
+        hasCodeComments,
+        goalDraftActive,
+        hasCurrentRuntimeTask: Boolean(currentRuntimeTask),
+        paneBusy: paneStatus.isBusy,
+      })
 
-    if (goalDraftActive) {
-      if (!submittedInput) {
-        setWorkbenchError(i18n.t('workbench.goal_objective_required'))
-        return
-      }
-      if (hasCodeComments) {
-        setWorkbenchError(i18n.t('workbench.runtime_task_code_comments_not_supported'))
-        return
-      }
-
-      setInput('')
-      setSendPhase('submitting')
-      try {
-        if (currentRuntimeTask) {
-          const response = await setRuntimeGoal({
-            address: currentRuntimeTask,
-            objective: submittedInput,
-            status: 'active',
-          })
-          if (!response.accepted) {
-            setWorkbenchError(response.error || i18n.t('workbench.goal_set_failed'))
-            return
-          }
-          setThreadGoal(response.goal)
-          setGoalDraftActive(false)
-          const queuedMessage: RuntimePaneQueuedMessage = {
-            id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
-            content: submittedInput,
-            status: 'queued',
-            createdAt: new Date().toISOString(),
-            attachments: currentAttachments,
-            runtimeGoalRequest: true,
-            ...getRuntimeModelFields(),
-          }
-
-          projectChat.resetAttachments()
-          if (paneStatus.isBusy) {
-            setQueuedMessages(messages => [...messages, queuedMessage])
-            return
-          }
-
-          const sent = await sendRuntimeMessage(queuedMessage)
-          if (sent) {
-            setCodeCommentContexts([])
-          }
+      if (goalDraftActive) {
+        if (!submittedInput) {
+          setError(i18n.t('workbench.goal_objective_required'))
+          return
+        }
+        if (hasCodeComments) {
+          setError(i18n.t('workbench.runtime_task_code_comments_not_supported'))
           return
         }
 
-        const draftGoal = createPendingRuntimeGoal(submittedInput)
-        const initialGoal = runtimeGoalCreateInput(draftGoal)
-        setPendingGoalState({ goal: draftGoal, targetKey: null, targetIdentityKey: null })
-        setGoalDraftActive(false)
-        const optimisticMessage = createLocalUserMessage(submittedInput, currentAttachments, {
-          runtimeGoalRequest: true,
-        })
-        let seededGoalAddress: RuntimeTaskAddress | null = null
-        const sent = await sendCurrentInput(submittedInput, {
-          initialGoal,
-          onRuntimeTaskOptimisticOpen: (address, context) => {
-            setPendingGoalState(current =>
-              current
-                ? {
-                    ...current,
-                    targetKey: runtimeTranscriptPaneKey(address),
-                    targetIdentityKey: runtimeTranscriptPaneIdentityKey(address),
-                  }
-                : current
-            )
-            const previousMessages = context?.previousAddress
-              ? getRuntimePaneMessageSnapshot(context.previousAddress)
-              : []
-            seedRuntimePaneGoal(address, draftGoal)
-            seededGoalAddress = address
-            const seededMessages =
-              previousMessages.length > 0 ? previousMessages : [optimisticMessage]
-            debugRuntimePaneMessageFlow('seed-goal-first-open', {
-              address: runtimeAddressDebug(address),
-              previousAddress: context?.previousAddress
-                ? runtimeAddressDebug(context.previousAddress)
-                : null,
-              previousCount: previousMessages.length,
-              seededCount: seededMessages.length,
-              seededMessages: summarizeWorkbenchMessages(seededMessages),
+        setInput('')
+        setSendPhase('submitting')
+        try {
+          if (currentRuntimeTask) {
+            const response = await setRuntimeGoal({
+              address: currentRuntimeTask,
+              objective: submittedInput,
+              status: 'active',
             })
-            seedRuntimePaneMessages(address, seededMessages)
-          },
-        })
-        if (sent) {
-          setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
-          if (!isRuntimeTaskAddress(sent)) {
-            appendLocalUserMessage(submittedInput, currentAttachments, {
+            if (!response.accepted) {
+              setError(response.error || i18n.t('workbench.goal_set_failed'))
+              return
+            }
+            setThreadGoal(response.goal)
+            setGoalDraftActive(false)
+            const queuedMessage: RuntimePaneQueuedMessage = {
+              id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+              content: submittedInput,
+              status: 'queued',
+              createdAt: new Date().toISOString(),
+              attachments: currentAttachments,
               runtimeGoalRequest: true,
-            })
-          } else {
-            setPendingGoalState(current =>
-              current
-                ? {
-                    ...current,
-                    targetKey: runtimeTranscriptPaneKey(sent),
-                    targetIdentityKey: runtimeTranscriptPaneIdentityKey(sent),
-                  }
-                : current
-            )
-          }
-        } else {
-          if (seededGoalAddress) {
-            clearRuntimePaneGoalSeed(seededGoalAddress)
-          }
-          setGoalDraftActive(true)
-          setPendingGoalState(null)
-          setSendPhase('idle')
-        }
-        return
-      } finally {
-        setSendPhase(current => (current === 'submitting' ? 'idle' : current))
-      }
-    }
+              ...getRuntimeModelFields(),
+            }
 
-    const pendingInitialGoal =
-      !currentRuntimeTask && pendingGoalState && isUnboundPendingGoalState(pendingGoalState)
-        ? runtimeGoalCreateInput(pendingGoalState.goal)
-        : null
-    const effectiveSubmittedInput = submittedInput || pendingInitialGoal?.objective.trim() || ''
-    if (!effectiveSubmittedInput && currentAttachments.length === 0 && !hasCodeComments) {
-      void sendCurrentInput('', { codeCommentContexts })
-      return
-    }
+            projectChat.resetAttachments()
+            if (paneStatus.isBusy) {
+              setQueuedMessages(messages => [...messages, queuedMessage])
+              return
+            }
 
-    setInput('')
-    setSendPhase('submitting')
-    try {
-      if (!currentRuntimeTask) {
-        const optimisticMessage = createLocalUserMessage(
-          effectiveSubmittedInput,
-          currentAttachments,
-          { runtimeGoalRequest: Boolean(pendingInitialGoal) }
-        )
-        const sent = await sendCurrentInput(effectiveSubmittedInput, {
-          codeCommentContexts,
-          initialGoal: pendingInitialGoal,
-          onRuntimeTaskOptimisticOpen: (address, context) => {
-            if (pendingInitialGoal) {
+            const sent = await sendRuntimeMessage(queuedMessage)
+            if (sent) {
+              setCodeCommentContexts([])
+            }
+            return
+          }
+
+          const draftGoal = createPendingRuntimeGoal(submittedInput)
+          const initialGoal = runtimeGoalCreateInput(draftGoal)
+          setPendingGoalState({ goal: draftGoal, targetKey: null, targetIdentityKey: null })
+          setGoalDraftActive(false)
+          const optimisticMessage = createLocalUserMessage(submittedInput, currentAttachments, {
+            runtimeGoalRequest: true,
+          })
+          let seededGoalAddress: RuntimeTaskAddress | null = null
+          const sent = await sendCurrentInput(submittedInput, {
+            initialGoal,
+            onRuntimeTaskOptimisticOpen: (address, context) => {
               setPendingGoalState(current =>
                 current
                   ? {
@@ -872,94 +884,183 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                     }
                   : current
               )
+              const previousMessages = context?.previousAddress
+                ? getRuntimePaneMessageSnapshot(context.previousAddress)
+                : []
+              seedRuntimePaneGoal(address, draftGoal)
+              seededGoalAddress = address
+              const seededMessages =
+                previousMessages.length > 0 ? previousMessages : [optimisticMessage]
+              debugRuntimePaneMessageFlow('seed-goal-first-open', {
+                address: runtimeAddressDebug(address),
+                previousAddress: context?.previousAddress
+                  ? runtimeAddressDebug(context.previousAddress)
+                  : null,
+                previousCount: previousMessages.length,
+                seededCount: seededMessages.length,
+                seededMessages: summarizeWorkbenchMessages(seededMessages),
+              })
+              seedRuntimePaneMessages(address, seededMessages)
+            },
+          })
+          if (sent) {
+            setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
+            if (!isRuntimeTaskAddress(sent)) {
+              appendLocalUserMessage(submittedInput, currentAttachments, {
+                runtimeGoalRequest: true,
+              })
+            } else {
+              setPendingGoalState(current =>
+                current
+                  ? {
+                      ...current,
+                      targetKey: runtimeTranscriptPaneKey(sent),
+                      targetIdentityKey: runtimeTranscriptPaneIdentityKey(sent),
+                    }
+                  : current
+              )
             }
-            const previousMessages = context?.previousAddress
-              ? getRuntimePaneMessageSnapshot(context.previousAddress)
-              : []
-            if (pendingInitialGoal && pendingGoalState) {
-              seedRuntimePaneGoal(address, pendingGoalState.goal)
+          } else {
+            if (seededGoalAddress) {
+              clearRuntimePaneGoalSeed(seededGoalAddress)
             }
-            const seededMessages =
-              previousMessages.length > 0 ? previousMessages : [optimisticMessage]
-            debugRuntimePaneMessageFlow('seed-optimistic-open', {
-              address: runtimeAddressDebug(address),
-              previousAddress: context?.previousAddress
-                ? runtimeAddressDebug(context.previousAddress)
-                : null,
-              previousCount: previousMessages.length,
-              seededCount: seededMessages.length,
-              seededMessages: summarizeWorkbenchMessages(seededMessages),
-            })
-            seedRuntimePaneMessages(address, seededMessages)
-          },
-        })
-        if (sent) {
-          setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
-          if (!isRuntimeTaskAddress(sent)) {
-            appendLocalUserMessage(effectiveSubmittedInput, currentAttachments, {
-              runtimeGoalRequest: Boolean(pendingInitialGoal),
-            })
-          } else if (pendingInitialGoal) {
-            setPendingGoalState(current =>
-              current
-                ? {
-                    ...current,
-                    targetKey: runtimeTranscriptPaneKey(sent),
-                    targetIdentityKey: runtimeTranscriptPaneIdentityKey(sent),
-                  }
-                : current
-            )
+            setGoalDraftActive(true)
+            setPendingGoalState(null)
+            setSendPhase('idle')
           }
-          setCodeCommentContexts([])
-        } else {
-          setSendPhase('idle')
+          return
+        } finally {
+          setSendPhase(current => (current === 'submitting' ? 'idle' : current))
         }
+      }
+
+      const pendingInitialGoal =
+        !currentRuntimeTask && pendingGoalState && isUnboundPendingGoalState(pendingGoalState)
+          ? runtimeGoalCreateInput(pendingGoalState.goal)
+          : null
+      const effectiveSubmittedInput = submittedInput || pendingInitialGoal?.objective.trim() || ''
+      if (!effectiveSubmittedInput && currentAttachments.length === 0 && !hasCodeComments) {
+        void sendCurrentInput('', { codeCommentContexts })
         return
       }
 
-      if (hasCodeComments) {
-        void sendCurrentInput(submittedInput, { codeCommentContexts })
-        return
-      }
+      setInput('')
+      setSendPhase('submitting')
+      try {
+        if (!currentRuntimeTask) {
+          const optimisticMessage = createLocalUserMessage(
+            effectiveSubmittedInput,
+            currentAttachments,
+            { runtimeGoalRequest: Boolean(pendingInitialGoal) }
+          )
+          const sent = await sendCurrentInput(effectiveSubmittedInput, {
+            codeCommentContexts,
+            initialGoal: pendingInitialGoal,
+            onRuntimeTaskOptimisticOpen: (address, context) => {
+              if (pendingInitialGoal) {
+                setPendingGoalState(current =>
+                  current
+                    ? {
+                        ...current,
+                        targetKey: runtimeTranscriptPaneKey(address),
+                        targetIdentityKey: runtimeTranscriptPaneIdentityKey(address),
+                      }
+                    : current
+                )
+              }
+              const previousMessages = context?.previousAddress
+                ? getRuntimePaneMessageSnapshot(context.previousAddress)
+                : []
+              if (pendingInitialGoal && pendingGoalState) {
+                seedRuntimePaneGoal(address, pendingGoalState.goal)
+              }
+              const seededMessages =
+                previousMessages.length > 0 ? previousMessages : [optimisticMessage]
+              debugRuntimePaneMessageFlow('seed-optimistic-open', {
+                address: runtimeAddressDebug(address),
+                previousAddress: context?.previousAddress
+                  ? runtimeAddressDebug(context.previousAddress)
+                  : null,
+                previousCount: previousMessages.length,
+                seededCount: seededMessages.length,
+                seededMessages: summarizeWorkbenchMessages(seededMessages),
+              })
+              seedRuntimePaneMessages(address, seededMessages)
+            },
+          })
+          if (sent) {
+            setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
+            if (!isRuntimeTaskAddress(sent)) {
+              appendLocalUserMessage(effectiveSubmittedInput, currentAttachments, {
+                runtimeGoalRequest: Boolean(pendingInitialGoal),
+              })
+            } else if (pendingInitialGoal) {
+              setPendingGoalState(current =>
+                current
+                  ? {
+                      ...current,
+                      targetKey: runtimeTranscriptPaneKey(sent),
+                      targetIdentityKey: runtimeTranscriptPaneIdentityKey(sent),
+                    }
+                  : current
+              )
+            }
+            if (isRuntimeTaskAddress(sent)) {
+              dispatchMessages({ type: 'reset', messages: [] })
+              projectChat.resetAttachments()
+            }
+            setCodeCommentContexts([])
+          } else {
+            setSendPhase('idle')
+          }
+          return
+        }
 
-      const queuedMessage: RuntimePaneQueuedMessage = {
-        id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
-        content: submittedInput,
-        status: 'queued',
-        createdAt: new Date().toISOString(),
-        attachments: currentAttachments,
-        ...getRuntimeModelFields(),
-      }
+        if (hasCodeComments) {
+          void sendCurrentInput(submittedInput, { codeCommentContexts })
+          return
+        }
 
-      projectChat.resetAttachments()
-      if (paneStatus.isBusy) {
-        setQueuedMessages(messages => [...messages, queuedMessage])
-        return
-      }
+        const queuedMessage: RuntimePaneQueuedMessage = {
+          id: `queued-runtime-pane-${Date.now()}-${queuedMessages.length}`,
+          content: submittedInput,
+          status: 'queued',
+          createdAt: new Date().toISOString(),
+          attachments: currentAttachments,
+          ...getRuntimeModelFields(),
+        }
 
-      const sent = await sendRuntimeMessage(queuedMessage)
-      if (sent) {
-        setCodeCommentContexts([])
+        projectChat.resetAttachments()
+        if (paneStatus.isBusy) {
+          setQueuedMessages(messages => [...messages, queuedMessage])
+          return
+        }
+
+        const sent = await sendRuntimeMessage(queuedMessage)
+        if (sent) {
+          setCodeCommentContexts([])
+        }
+      } finally {
+        setSendPhase(current => (current === 'submitting' ? 'idle' : current))
       }
-    } finally {
-      setSendPhase(current => (current === 'submitting' ? 'idle' : current))
-    }
-  }, [
-    appendLocalUserMessage,
-    codeCommentContexts,
-    currentRuntimeTask,
-    goalDraftActive,
-    getRuntimeModelFields,
-    input,
-    pendingGoalState,
-    paneStatus.isBusy,
-    projectChat,
-    queuedMessages.length,
-    sendCurrentInput,
-    sendRuntimeMessage,
-    setRuntimeGoal,
-    setWorkbenchError,
-  ])
+    },
+    [
+      appendLocalUserMessage,
+      codeCommentContexts,
+      currentRuntimeTask,
+      goalDraftActive,
+      getRuntimeModelFields,
+      input,
+      pendingGoalState,
+      paneStatus.isBusy,
+      projectChat,
+      queuedMessages.length,
+      sendCurrentInput,
+      sendRuntimeMessage,
+      setInput,
+      setRuntimeGoal,
+    ]
+  )
 
   const addCodeComment = useCallback((context: CodeCommentContext) => {
     setCodeCommentContexts(current => [...current.filter(item => item.id !== context.id), context])
@@ -1158,6 +1259,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const cancelGuidanceMessage = useCallback(() => undefined, [])
 
   useEffect(() => {
+    if (!paneActive) return
+
     updateRuntimePaneDebugSnapshot({
       currentRuntimeTask,
       status: paneStatus,
@@ -1185,6 +1288,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     guidanceMessages,
     input.length,
     messages,
+    paneActive,
     paneStatus,
     queuedMessages,
     subagentStatuses,
@@ -1201,6 +1305,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     codeCommentContexts,
     input,
     setInput,
+    error,
     status: paneStatus,
     sending: paneStatus.isSubmitting,
     waitingForAssistant: paneStatus.isWaitingForAssistantIndicator,
@@ -1216,6 +1321,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
     send,
+    editLastUserMessage: editLastUserMessageInPane,
     sendRequestUserInputResponse,
     ignoreRequestUserInput,
     addCodeComment,
@@ -1237,11 +1343,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
 
 function runtimeTranscriptPaneKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}:${address.localTaskId}:${address.workspacePath ?? ''}`
+  return `${address.deviceId}:${address.taskId}:${address.workspacePath ?? ''}`
 }
 
 function runtimeTranscriptPaneIdentityKey(address: RuntimeTaskAddress): string {
-  return `${address.deviceId}:${address.localTaskId}`
+  return `${address.deviceId}:${address.taskId}`
 }
 
 function isPendingGoalVisibleForRuntimeTarget(
@@ -1271,14 +1377,16 @@ function pendingRuntimeGoalState(
 }
 
 function seedRuntimePaneGoal(address: RuntimeTaskAddress, goal: RuntimeGoal) {
-  runtimePaneGoalSeeds.set(
+  setLruMapValue(
+    runtimePaneGoalSeeds,
     runtimeTranscriptPaneIdentityKey(address),
-    pendingRuntimeGoalState(goal, address)
+    pendingRuntimeGoalState(goal, address),
+    MAX_CACHED_RUNTIME_PANE_GOALS
   )
 }
 
 function getRuntimePaneGoalSeed(address: RuntimeTaskAddress): PendingRuntimeGoalState | null {
-  return runtimePaneGoalSeeds.get(runtimeTranscriptPaneIdentityKey(address)) ?? null
+  return getLruMapValue(runtimePaneGoalSeeds, runtimeTranscriptPaneIdentityKey(address)) ?? null
 }
 
 function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
@@ -1288,7 +1396,7 @@ function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
   return {
     deviceId: address.deviceId,
-    localTaskId: address.localTaskId,
+    taskId: address.taskId,
     workspacePath: address.workspacePath ?? null,
     hasRuntimeHandle: Boolean(address.runtimeHandle),
     runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
@@ -1301,7 +1409,7 @@ function summarizeWorkbenchMessages(messages: WorkbenchMessage[]): Record<string
     role: message.role,
     status: message.status,
     contentLength: message.content.length,
-    turnId: message.turnId ?? null,
+    subtaskId: message.subtaskId ?? null,
   }))
 }
 
@@ -1337,9 +1445,23 @@ function createLocalUserMessage(
   }
 }
 
+function isEditableLastUserMessage(messages: WorkbenchMessage[], targetIndex: number): boolean {
+  if (targetIndex < 0 || targetIndex >= messages.length) return false
+
+  const target = messages[targetIndex]
+  if (target.role !== 'user') return false
+
+  const followingMessages = messages.slice(targetIndex + 1)
+  if (followingMessages.length === 0) return false
+  if (followingMessages.some(message => message.role === 'user')) return false
+  if (followingMessages.some(message => message.status === 'streaming')) return false
+
+  return followingMessages.some(message => message.role === 'assistant')
+}
+
 function seedRuntimePaneMessages(address: RuntimeTaskAddress, messages: WorkbenchMessage[]) {
   const key = runtimeTranscriptPaneKey(address)
-  runtimePaneMessageSeeds.set(key, [...messages])
+  setLruMapValue(runtimePaneMessageSeeds, key, [...messages], MAX_CACHED_RUNTIME_PANE_MESSAGES)
 }
 
 function snapshotRuntimePaneMessages(address: RuntimeTaskAddress, messages: WorkbenchMessage[]) {
@@ -1348,21 +1470,42 @@ function snapshotRuntimePaneMessages(address: RuntimeTaskAddress, messages: Work
     runtimePaneMessageSnapshots.delete(key)
     return
   }
-  runtimePaneMessageSnapshots.set(key, [...messages])
+  setLruMapValue(runtimePaneMessageSnapshots, key, [...messages], MAX_CACHED_RUNTIME_PANE_MESSAGES)
 }
 
 function getRuntimePaneMessageSnapshot(address: RuntimeTaskAddress): WorkbenchMessage[] {
   const key = runtimeTranscriptPaneKey(address)
-  return [...(runtimePaneMessageSnapshots.get(key) ?? [])]
+  const snapshot = getLruMapValue(runtimePaneMessageSnapshots, key)
+  return [...(snapshot ?? [])]
 }
 
 function getRuntimePaneMessageSeed(address: RuntimeTaskAddress): WorkbenchMessage[] {
   const key = runtimeTranscriptPaneKey(address)
-  return [...(runtimePaneMessageSeeds.get(key) ?? [])]
+  const seed = getLruMapValue(runtimePaneMessageSeeds, key)
+  return [...(seed ?? [])]
 }
 
 function clearRuntimePaneMessageSeed(address: RuntimeTaskAddress) {
   runtimePaneMessageSeeds.delete(runtimeTranscriptPaneKey(address))
+}
+
+function getLruMapValue<K, V>(map: Map<K, V>, key: K): V | undefined {
+  const value = map.get(key)
+  if (value === undefined) return undefined
+  map.delete(key)
+  map.set(key, value)
+  return value
+}
+
+function setLruMapValue<K, V>(map: Map<K, V>, key: K, value: V, maxSize: number) {
+  map.delete(key)
+  map.set(key, value)
+
+  while (map.size > maxSize) {
+    const oldestKey = map.keys().next().value
+    if (oldestKey === undefined) return
+    map.delete(oldestKey)
+  }
 }
 
 function mergeRuntimeTranscriptMessages(
@@ -1489,7 +1632,7 @@ function updateRuntimeSubagentStatuses(
   current: RuntimeSubagentStatus[],
   activity: RuntimeSubagentActivityPayload
 ): RuntimeSubagentStatus[] {
-  const agentPath = activity.agent_path.trim()
+  const agentPath = activity.agentPath.trim()
   if (!agentPath) return current
 
   const agentId = runtimeSubagentId(activity)
@@ -1500,10 +1643,10 @@ function updateRuntimeSubagentStatuses(
     agentId,
     agentPath,
     agentName:
-      activity.agent_name?.trim() || previousStatus?.agentName || runtimeSubagentName(agentId),
+      activity.agentName?.trim() || previousStatus?.agentName || runtimeSubagentName(agentId),
     status,
     kind: activity.kind,
-    updatedAtMs: activity.occurred_at_ms ?? Date.now(),
+    updatedAtMs: activity.occurredAtMs ?? Date.now(),
   }
 
   const withoutCurrent = current.filter(item => item.id !== agentId)
@@ -1542,13 +1685,13 @@ function normalizeRuntimeSubagentStatus(
 }
 
 function runtimeSubagentId(activity: RuntimeSubagentActivityPayload): string {
-  const agentId = activity.agent_id?.trim()
+  const agentId = activity.agentId?.trim()
   if (agentId) return agentId
 
-  const threadId = activity.agent_thread_id?.trim()
+  const threadId = activity.agentThreadId?.trim()
   if (threadId) return threadId
 
-  const agentPath = activity.agent_path.trim()
+  const agentPath = activity.agentPath.trim()
   if (agentPath.startsWith('thread:')) {
     return agentPath.slice('thread:'.length).trim() || agentPath
   }
@@ -1572,7 +1715,7 @@ function shortRuntimeAgentId(agentId: string): string {
 function isRuntimeTaskAddress(value: unknown): value is RuntimeTaskAddress {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<RuntimeTaskAddress>
-  return typeof candidate.deviceId === 'string' && typeof candidate.localTaskId === 'string'
+  return typeof candidate.deviceId === 'string' && typeof candidate.taskId === 'number'
 }
 
 function createPendingRuntimeGoal(objective: string): RuntimeGoal {

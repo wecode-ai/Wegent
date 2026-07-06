@@ -258,7 +258,11 @@ export function DocumentPanel({
                 <FileText className="w-4 h-4" />
                 {t('chatPage.documents')}
               </TabsTrigger>
-              <TabsTrigger value="permissions" className="gap-1.5" data-testid="permission-management-tab">
+              <TabsTrigger
+                value="permissions"
+                className="gap-1.5"
+                data-testid="permission-management-tab"
+              >
                 <Shield className="w-4 h-4" />
                 {t('document.permission.management')}
               </TabsTrigger>
@@ -303,7 +307,7 @@ export function DocumentPanel({
               canUpload={canUpload}
               canManageAllDocuments={canManageAllDocuments}
               compact={true}
-              paginationEnabled={false}
+              paginationEnabled={true}
               onRefreshKnowledgeBase={onRefreshKnowledgeBase}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}
@@ -364,7 +368,7 @@ export function DocumentPanel({
               canUpload={canUpload}
               canManageAllDocuments={canManageAllDocuments}
               compact={true}
-              paginationEnabled={false}
+              paginationEnabled={true}
               onRefreshKnowledgeBase={onRefreshKnowledgeBase}
               onSelectionChange={onDocumentSelectionChange}
               groupInfo={groupInfo}

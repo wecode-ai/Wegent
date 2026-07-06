@@ -10,7 +10,7 @@ use wegent_executor::{agents::extract_claude_options, protocol::ExecutionRequest
 #[test]
 fn bot_mcp_servers_are_passed_through_as_named_dict() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([{
             "mcp_servers": [
                 {"name": "ghost-server", "type": "http", "url": "http://ghost.example.com/mcp"},
@@ -29,7 +29,7 @@ fn bot_mcp_servers_are_passed_through_as_named_dict() {
 #[test]
 fn no_mcp_servers_when_absent_or_bot_list_empty() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([{"system_prompt": "You are helpful."}]),
         ..ExecutionRequest::default()
     };
@@ -38,7 +38,7 @@ fn no_mcp_servers_when_absent_or_bot_list_empty() {
         .is_empty());
 
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([]),
         ..ExecutionRequest::default()
     };
@@ -50,7 +50,7 @@ fn no_mcp_servers_when_absent_or_bot_list_empty() {
 #[test]
 fn top_level_system_prompt_overrides_bot_prompt_and_pipeline_stage_prompt() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         system_prompt:
             "Current stage prompt.\n\n<wegent_runtime_guidance>Use files.</wegent_runtime_guidance>"
                 .to_owned(),
@@ -73,7 +73,7 @@ fn top_level_system_prompt_overrides_bot_prompt_and_pipeline_stage_prompt() {
 #[test]
 fn bot_system_prompt_is_fallback_when_request_prompt_absent() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([{"system_prompt": "You are helpful."}]),
         ..ExecutionRequest::default()
     };
@@ -86,7 +86,7 @@ fn bot_system_prompt_is_fallback_when_request_prompt_absent() {
 #[test]
 fn task_model_id_is_explicit_and_missing_model_keeps_default() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([{"agent_config": {"env": {"model": "claude", "model_id": "deepseek-v4-pro"}}}]),
         ..ExecutionRequest::default()
     };
@@ -98,7 +98,7 @@ fn task_model_id_is_explicit_and_missing_model_keeps_default() {
     );
 
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([{"agent_config": {"env": {"model": "claude"}}}]),
         ..ExecutionRequest::default()
     };
@@ -110,7 +110,7 @@ fn task_model_id_is_explicit_and_missing_model_keeps_default() {
 #[test]
 fn coordinate_mode_includes_member_bot_mcp_servers() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([
             {
                 "name": "leader",
@@ -137,7 +137,7 @@ fn coordinate_mode_includes_member_bot_mcp_servers() {
 #[test]
 fn global_streamable_http_mcp_is_normalized_for_claude() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([{"system_prompt": "You are helpful."}]),
         ..ExecutionRequest::default()
     };
@@ -168,7 +168,7 @@ fn global_streamable_http_mcp_is_normalized_for_claude() {
 #[test]
 fn mcp_variables_are_replaced_using_execution_context() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         auth_token: Some("task-token".to_owned()),
         bot: json!([{
             "mcp_servers": [
@@ -194,7 +194,7 @@ fn mcp_variables_are_replaced_using_execution_context() {
 #[test]
 fn http_mcp_timeout_is_preserved_for_claude_and_deferred_proxy() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([{
             "mcp_servers": [
                 {
@@ -220,7 +220,7 @@ fn http_mcp_timeout_is_preserved_for_claude_and_deferred_proxy() {
 #[test]
 fn http_mcp_timeout_accepts_seconds_or_milliseconds() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([{
             "mcp_servers": [
                 {
@@ -252,7 +252,7 @@ fn http_mcp_timeout_accepts_seconds_or_milliseconds() {
 #[test]
 fn duplicate_request_mcp_preserves_bot_headers_when_incoming_has_none() {
     let request = ExecutionRequest {
-        task_id: 1,
+        task_id: "1".to_owned(),
         bot: json!([{
             "mcp_servers": [
                 {

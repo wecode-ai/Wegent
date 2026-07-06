@@ -122,7 +122,7 @@ export function ChromeTitlebar({
       {isTauri && <TitlebarExtensionSlot />}
       <div
         data-testid="titlebar-right-workspace-zone"
-        className="pointer-events-none absolute right-0 top-[3px] z-chrome flex h-[calc(100%-3px)] items-center"
+        className="pointer-events-none absolute right-0 top-0 z-chrome flex h-full items-center"
         style={{
           width: 'var(--right-workspace-titlebar-width, auto)',
         }}
@@ -130,8 +130,14 @@ export function ChromeTitlebar({
         <div
           id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
           data-testid="titlebar-right-panel"
-          className="pointer-events-auto flex min-w-0 flex-1 items-center"
-        />
+          className="pointer-events-auto relative flex min-w-0 flex-1 self-stretch items-center"
+        >
+          {isTauri ? (
+            <div data-testid="titlebar-right-panel-drag-region" className="absolute inset-0 z-0">
+              <MacOSTitleBarDragRegion className="h-full w-full" />
+            </div>
+          ) : null}
+        </div>
         <div
           id={TITLEBAR_ACTIONS_PORTAL_ID}
           data-testid="titlebar-actions"

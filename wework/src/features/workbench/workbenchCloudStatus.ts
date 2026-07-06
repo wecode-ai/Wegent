@@ -9,7 +9,7 @@ const CLOUD_WORK_CHECK_KEYS: CloudWorkCheckKey[] = ['teams', 'devices', 'runtime
 export const EMPTY_RUNTIME_WORK: RuntimeWorkListResponse = {
   projects: [],
   chats: [],
-  totalLocalTasks: 0,
+  totalTasks: 0,
 }
 
 export const EMPTY_CLOUD_WORK_STATUS: CloudWorkStatus = {
@@ -149,7 +149,7 @@ export function mergeRuntimeWorkLists(
   return {
     projects: [...primaryWork.projects, ...secondaryWork.projects],
     chats: [...primaryWork.chats, ...secondaryWork.chats],
-    totalLocalTasks: primaryWork.totalLocalTasks + secondaryWork.totalLocalTasks,
+    totalTasks: primaryWork.totalTasks + secondaryWork.totalTasks,
   }
 }
 

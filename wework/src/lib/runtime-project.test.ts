@@ -22,7 +22,7 @@ describe('runtime project helpers', () => {
           workspacePath: '/Users/me/Wegent',
           workspaceKind: 'workspace',
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
       ],
     }
@@ -64,7 +64,7 @@ describe('runtime project helpers', () => {
           workspacePath: '/offline/Wegent',
           workspaceKind: 'workspace',
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
         {
           id: 2,
@@ -76,7 +76,7 @@ describe('runtime project helpers', () => {
           workspacePath: '/Users/me/Wegent',
           workspaceKind: 'workspace',
           mapped: true,
-          localTasks: [],
+          tasks: [],
         },
       ],
     })

@@ -91,7 +91,7 @@ async fn runtime_workspace_open_persists_empty_workspace_without_starting_thread
     assert_eq!(listed["workspaces"][0]["workspacePath"], "/tmp/project");
     assert_eq!(listed["workspaces"][0]["workspaceKind"], "workspace");
     assert_eq!(listed["workspaces"][0]["label"], "project");
-    assert_eq!(listed["workspaces"][0]["localTasks"], json!([]));
+    assert_eq!(listed["workspaces"][0]["tasks"], json!([]));
 
     let calls = read_json_lines(&log_path);
     assert!(calls.iter().all(|call| call["method"] != "thread/start"));
@@ -209,11 +209,11 @@ async fn runtime_task_list_groups_threads_under_open_workspace_roots() {
     assert_eq!(listed["workspaces"].as_array().unwrap().len(), 1);
     let workspace = &listed["workspaces"][0];
     assert_eq!(workspace["workspacePath"], "/tmp/project");
-    assert_eq!(workspace["localTasks"][0]["localTaskId"], "thread-1");
-    assert_eq!(workspace["localTasks"][0]["workspacePath"], "/tmp/project");
+    assert_eq!(workspace["tasks"][0]["taskId"], "thread-1");
+    assert_eq!(workspace["tasks"][0]["workspacePath"], "/tmp/project");
     assert_eq!(workspace["updatedAt"], 1780000060000_i64);
-    assert_eq!(workspace["localTasks"][0]["createdAt"], 1780000000000_i64);
-    assert_eq!(workspace["localTasks"][0]["updatedAt"], 1780000060000_i64);
+    assert_eq!(workspace["tasks"][0]["createdAt"], 1780000000000_i64);
+    assert_eq!(workspace["tasks"][0]["updatedAt"], 1780000060000_i64);
 }
 
 #[tokio::test]
@@ -260,7 +260,7 @@ async fn runtime_task_list_preserves_chat_workspace_kind_for_opened_chat_roots()
         chat_workspace.display().to_string()
     );
     assert_eq!(listed["workspaces"][0]["workspaceKind"], "chat");
-    assert_eq!(listed["workspaces"][0]["localTasks"], json!([]));
+    assert_eq!(listed["workspaces"][0]["tasks"], json!([]));
 }
 
 #[tokio::test]
@@ -353,21 +353,21 @@ async fn runtime_task_list_coalesces_codex_git_worktrees_under_common_repo_root(
     assert_eq!(workspace["workspacePath"], repo.display().to_string());
     assert_eq!(workspace["label"], "Wegent");
     assert_eq!(workspace["updatedAt"], 1780000120000_i64);
-    assert_eq!(workspace["localTasks"].as_array().unwrap().len(), 2);
-    assert_eq!(workspace["localTasks"][0]["localTaskId"], "thread-b");
+    assert_eq!(workspace["tasks"].as_array().unwrap().len(), 2);
+    assert_eq!(workspace["tasks"][0]["taskId"], "thread-b");
     assert_eq!(
-        workspace["localTasks"][0]["workspacePath"],
+        workspace["tasks"][0]["workspacePath"],
         codex_worktree_b.display().to_string()
     );
-    assert_eq!(workspace["localTasks"][0]["workspaceKind"], "worktree");
-    assert_eq!(workspace["localTasks"][0]["worktreeId"], "b");
-    assert_eq!(workspace["localTasks"][1]["localTaskId"], "thread-a");
+    assert_eq!(workspace["tasks"][0]["workspaceKind"], "worktree");
+    assert_eq!(workspace["tasks"][0]["worktreeId"], "b");
+    assert_eq!(workspace["tasks"][1]["taskId"], "thread-a");
     assert_eq!(
-        workspace["localTasks"][1]["workspacePath"],
+        workspace["tasks"][1]["workspacePath"],
         codex_worktree_a.display().to_string()
     );
-    assert_eq!(workspace["localTasks"][1]["workspaceKind"], "worktree");
-    assert_eq!(workspace["localTasks"][1]["worktreeId"], "a");
+    assert_eq!(workspace["tasks"][1]["workspaceKind"], "worktree");
+    assert_eq!(workspace["tasks"][1]["worktreeId"], "a");
 }
 
 #[tokio::test]
@@ -431,11 +431,8 @@ async fn runtime_task_list_filters_threads_to_codex_global_projects() {
     let workspace = &listed["workspaces"][0];
     assert_eq!(workspace["workspacePath"], "/repo/Wegent");
     assert_eq!(workspace["label"], "Wegent");
-    assert_eq!(workspace["localTasks"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        workspace["localTasks"][0]["localTaskId"],
-        "thread-in-project"
-    );
+    assert_eq!(workspace["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(workspace["tasks"][0]["taskId"], "thread-in-project");
 }
 
 #[tokio::test]
@@ -658,18 +655,9 @@ async fn runtime_task_list_matches_codex_saved_and_nested_project_order() {
     assert_eq!(workspaces[2]["workspacePath"], "/repo/Wegent");
     assert_eq!(workspaces[3]["workspacePath"], "/repo/Wegent/wework");
     assert_eq!(workspaces[3]["label"], "wework");
-    assert_eq!(
-        workspaces[0]["localTasks"][0]["localTaskId"],
-        "thread-hello"
-    );
-    assert_eq!(
-        workspaces[2]["localTasks"][0]["localTaskId"],
-        "thread-parent"
-    );
-    assert_eq!(
-        workspaces[3]["localTasks"][0]["localTaskId"],
-        "thread-child"
-    );
+    assert_eq!(workspaces[0]["tasks"][0]["taskId"], "thread-hello");
+    assert_eq!(workspaces[2]["tasks"][0]["taskId"], "thread-parent");
+    assert_eq!(workspaces[3]["tasks"][0]["taskId"], "thread-child");
 }
 
 #[tokio::test]
@@ -727,7 +715,7 @@ async fn runtime_task_list_preserves_remote_codex_projects() {
         workspace["remoteHostId"],
         "remote-ssh-discovered:10.201.3.200"
     );
-    assert_eq!(workspace["localTasks"][0]["localTaskId"], "thread-remote");
+    assert_eq!(workspace["tasks"][0]["taskId"], "thread-remote");
 
     let archived = handler
         .handle_runtime_rpc(json!({
@@ -811,9 +799,9 @@ async fn runtime_task_list_uses_thread_root_hints_and_skips_projectless_threads(
 
     let workspace = &listed["workspaces"][0];
     assert_eq!(workspace["workspacePath"], "/repo/Wegent");
-    let tasks = workspace["localTasks"].as_array().unwrap();
+    let tasks = workspace["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0]["localTaskId"], "thread-hinted");
+    assert_eq!(tasks[0]["taskId"], "thread-hinted");
 }
 
 #[tokio::test]
@@ -974,7 +962,7 @@ async fn runtime_workspace_rename_and_remove_update_codex_global_state() {
     assert_eq!(renamed["success"], true);
     assert_eq!(listed["workspaces"][0]["label"], "New name");
     assert_eq!(
-        listed["workspaces"][0]["localTasks"][0]["localTaskId"],
+        listed["workspaces"][0]["tasks"][0]["taskId"],
         "thread-in-project"
     );
     assert_eq!(removed["success"], true);
@@ -1202,9 +1190,9 @@ async fn runtime_task_list_drops_unmapped_pending_task_when_matching_codex_threa
         .await
         .expect("task list should succeed");
 
-    let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
+    let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0]["localTaskId"], "thread-real");
+    assert_eq!(tasks[0]["taskId"], "thread-real");
     assert_eq!(tasks[0]["running"], false);
 }
 
@@ -1256,9 +1244,9 @@ async fn runtime_task_list_normalizes_unmapped_pending_codex_tasks() {
         .await
         .expect("task list should succeed");
 
-    let tasks = listed["workspaces"][0]["localTasks"].as_array().unwrap();
+    let tasks = listed["workspaces"][0]["tasks"].as_array().unwrap();
     assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0]["localTaskId"], "unmapped-pending");
+    assert_eq!(tasks[0]["taskId"], "unmapped-pending");
     assert_eq!(tasks[0]["status"], "active");
     assert_eq!(tasks[0]["running"], false);
 }

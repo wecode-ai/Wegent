@@ -4,6 +4,7 @@
 
 use std::{future::Future, path::Path, pin::Pin, sync::Arc, time::Duration};
 
+use serde_json::Map;
 use serde_json::{json, Value};
 
 use crate::{emitter::EventEnvelope, runner::EventSink};
@@ -102,7 +103,7 @@ where
 
     pub async fn emit_event(&self, event: EventEnvelope) -> Result<(), String> {
         let event_type = event.event_type.clone();
-        let payload = serde_json::to_value(event).map_err(|error| error.to_string())?;
+        let payload = backend_event_payload(event)?;
         self.transport.emit(&event_type, payload).await
     }
 
@@ -112,7 +113,7 @@ where
 
     pub fn set_running_task_ids<I>(&self, task_ids: I)
     where
-        I: IntoIterator<Item = i64>,
+        I: IntoIterator<Item = String>,
     {
         self.running_tasks.set(task_ids);
     }
@@ -190,4 +191,39 @@ fn ack_success(response: &Value) -> bool {
         .as_array()
         .map(|values| values.iter().any(ack_success))
         .unwrap_or(false)
+}
+
+fn backend_event_payload(event: EventEnvelope) -> Result<Value, String> {
+    let mut object = Map::new();
+    object.insert("event_type".to_owned(), Value::String(event.event_type));
+    object.insert("task_id".to_owned(), numeric_backend_id(&event.task_id)?);
+    object.insert(
+        "subtask_id".to_owned(),
+        numeric_backend_id(&event.subtask_id)?,
+    );
+    object.insert("data".to_owned(), event.data);
+    if let Some(message_id) = event.message_id {
+        object.insert("message_id".to_owned(), json!(message_id));
+    }
+    if let Some(executor_name) = event.executor_name {
+        object.insert("executor_name".to_owned(), Value::String(executor_name));
+    }
+    if let Some(executor_namespace) = event.executor_namespace {
+        object.insert(
+            "executor_namespace".to_owned(),
+            Value::String(executor_namespace),
+        );
+    }
+    Ok(Value::Object(object))
+}
+
+fn numeric_backend_id(value: &str) -> Result<Value, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("backend task identity is empty".to_owned());
+    }
+    trimmed
+        .parse::<i64>()
+        .map(|number| json!(number))
+        .map_err(|_| format!("backend task identity is not numeric: {trimmed}"))
 }

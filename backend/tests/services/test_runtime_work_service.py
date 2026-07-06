@@ -574,9 +574,9 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
             "workspaces": [
                 {
                     "workspacePath": "/repo/Wegent",
-                    "localTasks": [
+                    "tasks": [
                         {
-                            "localTaskId": "codex-1",
+                            "taskId": "codex-1",
                             "workspacePath": "/repo/Wegent",
                             "title": "Fix reconnect",
                             "runtime": "codex",
@@ -589,9 +589,9 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
                 },
                 {
                     "workspacePath": "/tmp/spike",
-                    "localTasks": [
+                    "tasks": [
                         {
-                            "localTaskId": "claude-1",
+                            "taskId": "claude-1",
                             "workspacePath": "/tmp/spike",
                             "title": "Spike",
                             "runtime": "claude_code",
@@ -604,9 +604,9 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
                 },
                 {
                     "workspacePath": "/Users/alice/Documents/Codex/2026-06-23/chat-1",
-                    "localTasks": [
+                    "tasks": [
                         {
-                            "localTaskId": "chat-1",
+                            "taskId": "chat-1",
                             "workspacePath": (
                                 "/Users/alice/Documents/Codex/2026-06-23/chat-1"
                             ),
@@ -627,7 +627,7 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
         user_id=test_user.id,
     )
 
-    assert response.total_local_tasks == 3
+    assert response.total_tasks == 3
     assert [project_work.project.name for project_work in response.projects] == [
         "Wegent",
         "spike",
@@ -640,13 +640,10 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
     assert response.projects[0].device_workspaces[0].id is None
     assert response.projects[0].device_workspaces[0].project_id is None
     assert response.projects[0].device_workspaces[0].mapped is True
-    assert (
-        response.projects[0].device_workspaces[0].local_tasks[0].local_task_id
-        == "codex-1"
-    )
+    assert response.projects[0].device_workspaces[0].tasks[0].local_task_id == "codex-1"
     assert len(response.chats) == 1
     assert response.chats[0].workspace_kind == "chat"
-    assert response.chats[0].local_tasks[0].local_task_id == "chat-1"
+    assert response.chats[0].tasks[0].local_task_id == "chat-1"
     rpc.assert_awaited_once()
     assert test_db.query(TaskResource).count() == 0
 
@@ -684,7 +681,7 @@ async def test_list_runtime_work_keeps_empty_executor_workspaces(
                         "label": "Hello project",
                         "workspaceSource": "remote",
                         "remoteHostId": "remote-ssh-discovered:10.201.3.200",
-                        "localTasks": [],
+                        "tasks": [],
                     }
                 ]
             }
@@ -696,7 +693,7 @@ async def test_list_runtime_work_keeps_empty_executor_workspaces(
         user_id=test_user.id,
     )
 
-    assert response.total_local_tasks == 0
+    assert response.total_tasks == 0
     assert [project_work.project.name for project_work in response.projects] == [
         "Hello project"
     ]
@@ -705,7 +702,7 @@ async def test_list_runtime_work_keeps_empty_executor_workspaces(
     assert workspace.label == "Hello project"
     assert workspace.workspace_source == "remote"
     assert workspace.remote_host_id == "remote-ssh-discovered:10.201.3.200"
-    assert workspace.local_tasks == []
+    assert workspace.tasks == []
     assert workspace.mapped is True
 
 
@@ -745,7 +742,7 @@ async def test_list_runtime_work_orders_local_devices_first_and_keeps_executor_o
                     {
                         "workspacePath": "/cloud/remote-project",
                         "label": "remote-project",
-                        "localTasks": [],
+                        "tasks": [],
                     }
                 ]
             }
@@ -754,12 +751,12 @@ async def test_list_runtime_work_orders_local_devices_first_and_keeps_executor_o
                 {
                     "workspacePath": "/local/weekly-report-2",
                     "label": "weekly-report-2",
-                    "localTasks": [],
+                    "tasks": [],
                 },
                 {
                     "workspacePath": "/local/Wegent",
                     "label": "Wegent",
-                    "localTasks": [],
+                    "tasks": [],
                 },
             ]
         }
@@ -816,9 +813,9 @@ async def test_list_runtime_work_preserves_executor_workspace_kind(
                 "workspaces": [
                     {
                         "workspacePath": "/workspace/worktrees/42/Wegent",
-                        "localTasks": [
+                        "tasks": [
                             {
-                                "localTaskId": "codex-worktree",
+                                "taskId": "codex-worktree",
                                 "workspacePath": "/workspace/worktrees/42/Wegent",
                                 "title": "Fix worktree sidebar",
                                 "runtime": "codex",
@@ -839,7 +836,7 @@ async def test_list_runtime_work_preserves_executor_workspace_kind(
     )
 
     workspace = response.projects[0].device_workspaces[0]
-    task = workspace.local_tasks[0]
+    task = workspace.tasks[0]
     assert workspace.workspace_path == "/workspace/worktrees/42/Wegent"
     assert workspace.workspace_kind == "worktree"
     assert workspace.worktree_id == "42"
@@ -889,7 +886,7 @@ async def test_search_runtime_work_fans_out_to_online_and_busy_devices(
             return {
                 "items": [
                     {
-                        "localTaskId": "codex-1",
+                        "taskId": "codex-1",
                         "workspacePath": "/repo/Wegent",
                         "runtime": "codex",
                         "title": "执行 pwd",
@@ -1017,7 +1014,7 @@ async def test_list_runtime_work_skips_offline_devices(
 
     assert response.projects == []
     assert response.chats == []
-    assert response.total_local_tasks == 0
+    assert response.total_tasks == 0
     rpc.assert_not_awaited()
 
 
@@ -1066,7 +1063,7 @@ async def test_list_runtime_work_queries_online_devices_concurrently(
 
     assert response.projects == []
     assert response.chats == []
-    assert response.total_local_tasks == 0
+    assert response.total_tasks == 0
     assert rpc.await_count == 2
     assert elapsed < 0.35
 
@@ -1097,7 +1094,7 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
     )
     rpc = AsyncMock(
         return_value={
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
             "messages": [
@@ -1131,7 +1128,7 @@ async def test_open_runtime_transcript_dispatches_to_owned_mapped_device_without
         method="runtime.tasks.transcript",
         payload={
             "deviceId": "device-1",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
         },
         timeout_seconds=30,
     )
@@ -1164,7 +1161,7 @@ async def test_runtime_transcript_dispatches_pagination_payload(
     )
     rpc = AsyncMock(
         return_value={
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "codex",
             "messages": [
@@ -1222,7 +1219,7 @@ async def test_runtime_transcript_dispatches_pagination_payload(
         method="runtime.tasks.transcript",
         payload={
             "deviceId": "device-1",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "limit": 25,
             "beforeCursor": "offset:240",
         },
@@ -1248,7 +1245,7 @@ async def test_archive_runtime_task_dispatches_to_owned_device_without_task_rows
         return_value={
             "success": True,
             "accepted": True,
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
         }
     )
@@ -1271,7 +1268,7 @@ async def test_archive_runtime_task_dispatches_to_owned_device_without_task_rows
         method="runtime.tasks.archive",
         payload={
             "deviceId": "device-1",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
         },
         timeout_seconds=30,
     )
@@ -1296,7 +1293,7 @@ async def test_rename_runtime_task_dispatches_to_owned_device(
         return_value={
             "success": True,
             "accepted": True,
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
         }
     )
@@ -1323,7 +1320,7 @@ async def test_rename_runtime_task_dispatches_to_owned_device(
         payload={
             "deviceId": "device-1",
             "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "title": "对齐需求核心点",
         },
         timeout_seconds=30,
@@ -1373,7 +1370,7 @@ async def test_list_archived_conversations_dispatches_to_online_device(
             "items": [
                 {
                     "id": "codex-1",
-                    "localTaskId": "codex-1",
+                    "taskId": "codex-1",
                     "title": "Archived thread",
                     "workspacePath": "/repo/Wegent",
                     "runtime": "codex",
@@ -1470,7 +1467,7 @@ async def test_unarchive_conversation_dispatches_to_owned_device(
         return_value={
             "success": True,
             "accepted": True,
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
         }
     )
@@ -1494,7 +1491,7 @@ async def test_unarchive_conversation_dispatches_to_owned_device(
         payload={
             "deviceId": "device-1",
             "workspacePath": "/repo/Wegent",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
         },
         timeout_seconds=30,
     )
@@ -1518,7 +1515,7 @@ async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
         return_value={
             "success": True,
             "accepted": True,
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "workspacePath": "/repo/Wegent",
         }
     )
@@ -1541,7 +1538,7 @@ async def test_cancel_runtime_task_dispatches_to_owned_device_without_task_rows(
         method="runtime.tasks.cancel",
         payload={
             "deviceId": "device-1",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
         },
         timeout_seconds=30,
     )
@@ -1599,12 +1596,12 @@ async def test_delete_archived_conversations_bulk_groups_by_device(
                 {
                     "deviceId": "device-1",
                     "workspacePath": "/repo/Wegent",
-                    "localTaskId": "codex-1",
+                    "taskId": "codex-1",
                 },
                 {
                     "deviceId": "device-1",
                     "workspacePath": "/repo/Wegent",
-                    "localTaskId": "codex-2",
+                    "taskId": "codex-2",
                 },
             ]
         },
@@ -1669,7 +1666,7 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
         method="runtime.tasks.send",
         payload={
             "deviceId": "device-1",
-            "localTaskId": "codex-1",
+            "taskId": "codex-1",
             "message": "continue",
         },
         timeout_seconds=600,
@@ -1786,7 +1783,7 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         return_value={
             "success": True,
             "accepted": True,
-            "localTaskId": "runtime-1",
+            "taskId": "runtime-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "claude_code",
         }
@@ -1815,7 +1812,7 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         method="runtime.tasks.create",
         payload={
             "runtime": "claude_code",
-            "localTaskId": "runtime-client-1",
+            "taskId": "runtime-client-1",
             "workspacePath": "/repo/Wegent",
             "message": "create runtime task",
             "title": "Create runtime task",
@@ -1864,7 +1861,7 @@ async def test_create_runtime_task_uses_absolute_git_checkout_path_without_prefi
         return_value={
             "success": True,
             "accepted": True,
-            "localTaskId": "runtime-1",
+            "taskId": "runtime-1",
             "workspacePath": checkout_path,
             "runtime": "codex",
         }
@@ -2080,7 +2077,7 @@ async def test_create_runtime_task_uses_device_workspace_id_as_trusted_target(
         return_value={
             "success": True,
             "accepted": True,
-            "localTaskId": "runtime-1",
+            "taskId": "runtime-1",
             "workspacePath": "/repo/Wegent",
             "runtime": "claude_code",
         }
@@ -2264,7 +2261,7 @@ async def test_fork_runtime_task_uses_git_workspace_without_storage(
             return {
                 "success": True,
                 "accepted": True,
-                "localTaskId": "runtime-copy",
+                "taskId": "runtime-copy",
                 "workspacePath": kwargs["payload"]["workspacePath"],
                 "runtime": "codex",
             }
@@ -2449,7 +2446,7 @@ async def test_fork_runtime_task_uses_archive_when_git_commit_unreachable(
             return {
                 "success": True,
                 "accepted": True,
-                "localTaskId": "runtime-copy",
+                "taskId": "runtime-copy",
                 "workspacePath": "/target/Wegent",
                 "runtime": "codex",
             }
@@ -2554,9 +2551,9 @@ async def test_fork_runtime_task_without_source_workspace_path_resolves_git_work
                 "workspaces": [
                     {
                         "workspacePath": "/source/Wegent",
-                        "localTasks": [
+                        "tasks": [
                             {
-                                "localTaskId": "codex-1",
+                                "taskId": "codex-1",
                                 "workspacePath": "/source/Wegent",
                                 "title": "Continue migration",
                                 "runtime": "codex",
@@ -2591,7 +2588,7 @@ async def test_fork_runtime_task_without_source_workspace_path_resolves_git_work
             return {
                 "success": True,
                 "accepted": True,
-                "localTaskId": "runtime-copy",
+                "taskId": "runtime-copy",
                 "workspacePath": kwargs["payload"]["workspacePath"],
                 "runtime": "codex",
             }
@@ -2738,9 +2735,9 @@ async def test_fork_runtime_task_uses_target_git_project_for_non_project_worktre
                 "workspaces": [
                     {
                         "workspacePath": "/Users/alice/.codex/worktrees/0889/Wegent",
-                        "localTasks": [
+                        "tasks": [
                             {
-                                "localTaskId": "codex-1",
+                                "taskId": "codex-1",
                                 "workspacePath": (
                                     "/Users/alice/.codex/worktrees/0889/Wegent"
                                 ),
@@ -2778,7 +2775,7 @@ async def test_fork_runtime_task_uses_target_git_project_for_non_project_worktre
             return {
                 "success": True,
                 "accepted": True,
-                "localTaskId": "runtime-copy",
+                "taskId": "runtime-copy",
                 "workspacePath": kwargs["payload"]["workspacePath"],
                 "runtime": "codex",
             }
@@ -2920,9 +2917,9 @@ async def test_fork_runtime_task_uses_git_workspace_for_local_path_git_project(
                 "workspaces": [
                     {
                         "workspacePath": "/Users/alice/.codex/worktrees/0889/Wegent",
-                        "localTasks": [
+                        "tasks": [
                             {
-                                "localTaskId": "codex-1",
+                                "taskId": "codex-1",
                                 "workspacePath": (
                                     "/Users/alice/.codex/worktrees/0889/Wegent"
                                 ),
@@ -2957,7 +2954,7 @@ async def test_fork_runtime_task_uses_git_workspace_for_local_path_git_project(
             return {
                 "success": True,
                 "accepted": True,
-                "localTaskId": "runtime-copy",
+                "taskId": "runtime-copy",
                 "workspacePath": kwargs["payload"]["workspacePath"],
                 "runtime": "codex",
             }
@@ -3108,7 +3105,7 @@ async def test_fork_runtime_task_uses_archive_for_non_git_project_workspace(
             return {
                 "success": True,
                 "accepted": True,
-                "localTaskId": "runtime-copy",
+                "taskId": "runtime-copy",
                 "workspacePath": "/target/Wegent",
                 "runtime": "codex",
             }
@@ -3232,7 +3229,7 @@ async def test_fork_runtime_task_uses_bidirectional_direct_transfer(
             return {
                 "success": True,
                 "accepted": True,
-                "localTaskId": "runtime-copy",
+                "taskId": "runtime-copy",
                 "workspacePath": "/target/Wegent",
                 "runtime": "codex",
             }
