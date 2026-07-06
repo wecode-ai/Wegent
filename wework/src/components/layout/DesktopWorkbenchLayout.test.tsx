@@ -3,8 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
+import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { createProjectApi } from '@/api/projects'
-import { createQuotaApi } from '@/api/quota'
 import { AuthContext } from '@/features/auth/useAuth'
 import { WorkbenchContext, WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import type {
@@ -160,8 +160,15 @@ vi.mock('@/api/projects', () => ({
   createProjectApi: vi.fn(),
 }))
 
-vi.mock('@/api/quota', () => ({
-  createQuotaApi: vi.fn(),
+vi.mock('@/api/local/codexUsage', () => ({
+  emptyCodexUsageDisplay: () => ({
+    status: 'none',
+    fiveHour: { label: '5h', title: '5小时额度', value: '无', percent: null, resetsAt: null },
+    sevenDay: { label: '7d', title: '7天额度', value: '无', percent: null, resetsAt: null },
+    trayTitle: '5h --\n7d --',
+    tooltip: '5小时额度 无\n7天额度 无',
+  }),
+  getLocalCodexUsageDisplay: vi.fn(),
 }))
 
 vi.mock('@/features/auth/useAuth', async importOriginal => ({
@@ -347,14 +354,13 @@ vi.mock('./workspace-panels/EmbeddedLocalTerminal', () => ({
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createProjectApiMock = vi.mocked(createProjectApi)
-const createQuotaApiMock = vi.mocked(createQuotaApi)
+const getLocalCodexUsageDisplayMock = vi.mocked(getLocalCodexUsageDisplay)
 const closeLocalTerminalMock = vi.mocked(closeLocalTerminal)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const localPathExistsMock = vi.mocked(localPathExists)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
-const fetchQuotaMock = vi.fn()
 const startTerminalSessionMock = vi.fn()
 const startCodeServerSessionMock = vi.fn()
 
@@ -483,15 +489,12 @@ describe('DesktopWorkbenchLayout', () => {
     openExternalUrlMock.mockResolvedValue(true)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
-    fetchQuotaMock.mockResolvedValue({
-      quota: 748,
-      usage: 747.74,
-      remaining: 0.26,
-      usage_rate: 0.9997,
-      user: 'yunpeng7',
-    })
-    createQuotaApiMock.mockReturnValue({
-      fetchQuota: fetchQuotaMock,
+    getLocalCodexUsageDisplayMock.mockResolvedValue({
+      status: 'available',
+      fiveHour: { label: '5h', title: '5小时额度', value: '87%', percent: 87, resetsAt: null },
+      sevenDay: { label: '7d', title: '7天额度', value: '42%', percent: 42, resetsAt: null },
+      trayTitle: '5h 87%\n7d 42%',
+      tooltip: '5小时额度 87%\n7天额度 42%',
     })
     createDeviceApiMock.mockReturnValue(createMockDeviceApi() as never)
     startCodeServerSessionMock.mockResolvedValue({
@@ -2296,7 +2299,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-button'))
 
     expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
-    expect(screen.getByText('个人账户')).toBeInTheDocument()
+    expect(screen.queryByText('Codex 额度')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('设置')
     expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('⌘,')
     expect(screen.getByText('剩余用量')).toBeInTheDocument()
@@ -2329,17 +2332,19 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('settings-button'))
     await userEvent.click(screen.getByTestId('usage-menu-button'))
 
-    await waitFor(() => expect(fetchQuotaMock).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(getLocalCodexUsageDisplayMock).toHaveBeenCalled())
 
     const usagePanel = await screen.findByTestId('usage-detail-panel')
     expect(within(usagePanel).queryByText('模型额度')).not.toBeInTheDocument()
-    expect(usagePanel).toHaveTextContent('747.74 / 748 元')
-    expect(usagePanel).toHaveTextContent('剩余 0.26 元')
+    expect(usagePanel).toHaveTextContent('5小时额度')
+    expect(usagePanel).toHaveTextContent('87%')
+    expect(usagePanel).toHaveTextContent('7天额度')
+    expect(usagePanel).toHaveTextContent('42%')
     expect(usagePanel).not.toHaveTextContent('使用率')
     expect(usagePanel).not.toHaveTextContent('总额度')
     expect(usagePanel).not.toHaveTextContent('额度与计费说明')
     expect(usagePanel).not.toHaveClass('pl-12')
-    expect(within(usagePanel).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
+    expect(within(usagePanel).queryByRole('progressbar')).not.toBeInTheDocument()
   })
 
   test('opens the project create menu from the sidebar project create button', async () => {

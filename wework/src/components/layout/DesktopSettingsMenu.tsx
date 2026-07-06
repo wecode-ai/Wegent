@@ -1,20 +1,15 @@
-import { ChevronDown, Clock, Download, Loader2, LogOut, Settings, User } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { ChevronDown, Clock, Download, Loader2, LogOut, Settings } from 'lucide-react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { createHttpClient } from '@/api/http'
-import { createQuotaApi } from '@/api/quota'
-import type { QuotaData } from '@/api/quota'
+import {
+  emptyCodexUsageDisplay,
+  getLocalCodexUsageDisplay,
+  type CodexUsageDisplay,
+} from '@/api/local/codexUsage'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
-import { getRuntimeConfig } from '@/config/runtime'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User as UserProfile } from '@/types/api'
-
-function getQuotaUsagePercent(quota: QuotaData): number {
-  const rawPercent = quota.usage_rate * 100
-  if (!Number.isFinite(rawPercent)) return 0
-  return Math.min(100, Math.max(0, rawPercent))
-}
 
 function formatVersionTemplate(template: string, version: string): string {
   return template.replace('{{version}}', version)
@@ -26,23 +21,10 @@ interface DesktopSettingsMenuProps {
   onLogout: () => void
 }
 
-function getAccountInitials(label: string): string {
-  const normalizedLabel = label.trim()
-  if (!normalizedLabel) return 'U'
-  const [namePart] = normalizedLabel.split('@')
-  const words = namePart.split(/[._\-\s]+/).filter(Boolean)
-  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase()
-  return namePart.slice(0, 2).toUpperCase()
-}
-
-export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopSettingsMenuProps) {
+export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
-  const quotaApi = useMemo(() => {
-    const { apiBaseUrl } = getRuntimeConfig()
-    return createQuotaApi(createHttpClient({ baseUrl: apiBaseUrl }))
-  }, [])
   const [isUsageExpanded, setIsUsageExpanded] = useState(false)
-  const [quota, setQuota] = useState<QuotaData | null>(null)
+  const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
   const [isQuotaLoading, setIsQuotaLoading] = useState(false)
   const [quotaError, setQuotaError] = useState<string | null>(null)
   const appUpdate = useOptionalAppUpdate()
@@ -51,34 +33,17 @@ export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopS
   const updateError = appUpdate?.error ?? null
   const checkNow = appUpdate?.checkNow
   const installUpdate = appUpdate?.installUpdate
-  const accountLabel = user?.email || user?.user_name || t('workbench.account_fallback', '当前账号')
-  const quotaUsageText = quota
-    ? `${quota.usage.toFixed(2)} / ${quota.quota.toLocaleString()} ${t('workbench.quota_unit_yuan', '元')}`
-    : ''
-  const quotaRemainingText = quota
-    ? `${t('workbench.quota_remaining_label', '剩余')} ${quota.remaining.toFixed(2)} ${t('workbench.quota_unit_yuan', '元')}`
-    : ''
-  const quotaUsagePercent = quota ? getQuotaUsagePercent(quota) : 0
-  const quotaUsagePercentValue = Math.round(quotaUsagePercent)
 
-  const handleUsageClick = () => {
-    const shouldExpand = !isUsageExpanded
-    setIsUsageExpanded(shouldExpand)
-
-    if (!shouldExpand || quota || isQuotaLoading) {
+  const loadCodexUsage = () => {
+    if (isQuotaLoading) {
       return
     }
 
     setIsQuotaLoading(true)
     setQuotaError(null)
-    quotaApi
-      .fetchQuota()
+    getLocalCodexUsageDisplay()
       .then(data => {
-        if (data) {
-          setQuota(data)
-        } else {
-          setQuotaError(t('workbench.quota_load_failed', '额度信息获取失败'))
-        }
+        setCodexUsage(data)
       })
       .catch(() => {
         setQuotaError(t('workbench.quota_load_failed', '额度信息获取失败'))
@@ -86,6 +51,15 @@ export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopS
       .finally(() => {
         setIsQuotaLoading(false)
       })
+  }
+
+  const handleUsageClick = () => {
+    const shouldExpand = !isUsageExpanded
+    setIsUsageExpanded(shouldExpand)
+
+    if (shouldExpand) {
+      loadCodexUsage()
+    }
   }
 
   const handleUpdateClick = async () => {
@@ -126,22 +100,6 @@ export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopS
       data-testid="settings-menu"
       className="absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-[20px] border border-border/70 bg-popover/95 py-2.5 text-text-primary shadow-[0_24px_60px_rgba(0,0,0,0.36)] ring-1 ring-border/40 backdrop-blur-xl"
     >
-      <div data-testid="settings-account-group" className="px-4 pb-1">
-        <div className="flex h-9 items-center gap-3 text-[13px] font-medium leading-[18px] text-text-secondary">
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border/70 text-[10px] font-medium text-text-secondary">
-            {getAccountInitials(accountLabel)}
-          </div>
-          <span className="min-w-0 flex-1 truncate">{accountLabel}</span>
-        </div>
-        <div
-          data-testid="account-menu-button"
-          className="flex h-9 cursor-default items-center gap-3 text-[13px] font-medium leading-[18px] text-text-secondary"
-        >
-          <User className="h-4 w-4 shrink-0 text-text-secondary" />
-          <span>{t('workbench.personal_account', '个人账户')}</span>
-        </div>
-      </div>
-      <div className="mx-4 my-1.5 border-t border-border/70" />
       <SettingsMenuItem
         testId="settings-menu-button"
         icon={<Settings className="h-4 w-4 shrink-0 text-text-secondary" />}
@@ -203,23 +161,15 @@ export function DesktopSettingsMenu({ user, onOpenSettings, onLogout }: DesktopS
           {quotaError ? (
             <div className="py-1 text-[13px] leading-[18px] text-text-secondary">{quotaError}</div>
           ) : null}
-          {quota ? (
+          {!quotaError ? (
             <div className="space-y-1.5 text-xs leading-5 text-text-secondary">
-              <div className="whitespace-nowrap font-semibold text-text-primary">
-                {quotaUsageText}
+              <div className="flex items-center justify-between gap-3 whitespace-nowrap">
+                <span>{codexUsage.fiveHour.title}</span>
+                <span className="font-semibold text-text-primary">{codexUsage.fiveHour.value}</span>
               </div>
-              <div className="whitespace-nowrap">{quotaRemainingText}</div>
-              <div
-                role="progressbar"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={quotaUsagePercentValue}
-                className="h-1.5 overflow-hidden rounded-full bg-white/10"
-              >
-                <div
-                  className="h-full rounded-full bg-primary"
-                  style={{ width: `${quotaUsagePercent}%` }}
-                />
+              <div className="flex items-center justify-between gap-3 whitespace-nowrap">
+                <span>{codexUsage.sevenDay.title}</span>
+                <span className="font-semibold text-text-primary">{codexUsage.sevenDay.value}</span>
               </div>
             </div>
           ) : null}

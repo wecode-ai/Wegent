@@ -17,9 +17,20 @@ vi.mock('@/features/app-update/app-update-context', () => ({
   useOptionalAppUpdate: () => mockUpdateState,
 }))
 
-vi.mock('@/api/quota', () => ({
-  createQuotaApi: () => ({
-    fetchQuota: vi.fn(),
+vi.mock('@/api/local/codexUsage', () => ({
+  emptyCodexUsageDisplay: () => ({
+    status: 'none',
+    fiveHour: { label: '5h', title: '5小时额度', value: '无', percent: null, resetsAt: null },
+    sevenDay: { label: '7d', title: '7天额度', value: '无', percent: null, resetsAt: null },
+    trayTitle: '5h --\n7d --',
+    tooltip: '5小时额度 无\n7天额度 无',
+  }),
+  getLocalCodexUsageDisplay: vi.fn().mockResolvedValue({
+    status: 'available',
+    fiveHour: { label: '5h', title: '5小时额度', value: '90%', percent: 90, resetsAt: null },
+    sevenDay: { label: '7d', title: '7天额度', value: '80%', percent: 80, resetsAt: null },
+    trayTitle: '5h 90%\n7d 80%',
+    tooltip: '5小时额度 90%\n7天额度 80%',
   }),
 }))
 
@@ -55,16 +66,12 @@ describe('DesktopSettingsMenu', () => {
     expect(mockCheckNow).toHaveBeenCalledTimes(1)
   })
 
-  test('renders the account area as a non-clickable muted group', () => {
+  test('does not render the old account or quota summary row', () => {
     renderMenu()
 
-    const accountGroup = screen.getByTestId('settings-account-group')
-    const accountItem = screen.getByTestId('account-menu-button')
-
-    expect(accountGroup).toHaveTextContent('user@example.com')
-    expect(accountItem.tagName).toBe('DIV')
-    expect(accountItem).toHaveClass('cursor-default', 'text-text-secondary')
-    expect(accountItem).not.toHaveClass('hover:bg-white/[0.08]')
+    expect(screen.queryByTestId('settings-account-group')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('account-menu-button')).not.toBeInTheDocument()
+    expect(screen.queryByText('Codex 额度')).not.toBeInTheDocument()
   })
 
   test('installs a discovered app update', async () => {
