@@ -11,6 +11,8 @@ use crate::{
     runner::ExecutionOutcome,
 };
 
+const CLAUDE_STDOUT_MAX_BUFFER_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClaudeStreamSummary {
     pub outcome: ExecutionOutcome,
@@ -35,12 +37,71 @@ pub struct ClaudeToolResult {
     pub is_error: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaudeStdoutJsonError {
+    pub line_number: usize,
+    pub message: String,
+    pub preview: String,
+}
+
+impl ClaudeStdoutJsonError {
+    pub fn failure_message(&self) -> String {
+        format!(
+            "invalid Claude stdout JSON at line {}: {}; preview={}",
+            self.line_number, self.message, self.preview
+        )
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ClaudeStdoutJsonBuffer {
+    buffer: String,
+}
+
+impl ClaudeStdoutJsonBuffer {
+    pub fn push_line(
+        &mut self,
+        line: &str,
+        line_number: usize,
+    ) -> Result<Option<Value>, ClaudeStdoutJsonError> {
+        let line = line.trim();
+        if line.is_empty() {
+            return Ok(None);
+        }
+        if self.buffer.is_empty() && !line.starts_with('{') {
+            return Ok(None);
+        }
+
+        self.buffer.push_str(line);
+        if self.buffer.len() > CLAUDE_STDOUT_MAX_BUFFER_BYTES {
+            let error = ClaudeStdoutJsonError {
+                line_number,
+                message: format!(
+                    "JSON message exceeded maximum buffer size of {CLAUDE_STDOUT_MAX_BUFFER_BYTES} bytes"
+                ),
+                preview: preview_stdout_line(&self.buffer),
+            };
+            self.buffer.clear();
+            return Err(error);
+        }
+
+        match serde_json::from_str::<Value>(&self.buffer) {
+            Ok(value) => {
+                self.buffer.clear();
+                Ok(Some(value))
+            }
+            Err(_) => Ok(None),
+        }
+    }
+}
+
 pub fn collect_ndjson_outcome(output: &str) -> ExecutionOutcome {
     collect_claude_stream_summary(output).outcome
 }
 
 pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
-    let mut text = String::new();
+    let mut current_assistant_text = String::new();
+    let mut final_text = String::new();
     let mut terminal_outcome = None;
     // Mid-stream `type:error` events (e.g. GLM's "Tool call preview did not
     // complete before the turn ended") are recoverable: the SDK often keeps the
@@ -52,14 +113,27 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
     let mut stop_reason = None;
     let mut usage = Value::Null;
     let mut retryable_api_error = false;
-    for line in output
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
+    let mut json_buffer = ClaudeStdoutJsonBuffer::default();
+    for (index, line) in output.lines().enumerate() {
+        let line_number = index + 1;
+        let Some(value) = (match json_buffer.push_line(line, line_number) {
+            Ok(value) => value,
+            Err(error) => {
+                return ClaudeStreamSummary {
+                    outcome: ExecutionOutcome::Failed {
+                        message: error.failure_message(),
+                    },
+                    session_id,
+                    deferred_tool_use,
+                    stop_reason,
+                    usage,
+                    retryable_api_error,
+                };
+            }
+        }) else {
             continue;
         };
+        let line = line.trim();
         retryable_api_error |= contains_retryable_api_error(line);
         if let Some(value) = value.get("session_id").and_then(Value::as_str) {
             let value = value.trim();
@@ -80,6 +154,9 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
                 usage,
                 retryable_api_error,
             };
+        }
+        if value.get("type").and_then(Value::as_str) == Some("user") {
+            current_assistant_text.clear();
         }
         if value.get("type").and_then(Value::as_str) == Some("result") {
             if let Some(reason) = value
@@ -132,14 +209,22 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
             pending_error = Some(error);
             continue;
         }
-        if let Some(delta) = extract_text(&value) {
-            text.push_str(&delta);
+        if let Some(text) = extract_claude_assistant_message_text(&value) {
+            current_assistant_text.push_str(&text);
+            final_text = current_assistant_text.clone();
+        } else if let Some(delta) = extract_claude_text_delta(&value) {
+            current_assistant_text.push_str(&delta);
+            final_text = current_assistant_text.clone();
+        } else if let Some(delta) = extract_codex_agent_delta(&value) {
+            final_text.push_str(&delta);
         }
     }
 
     let outcome = terminal_outcome
         .or_else(|| pending_error.map(|message| ExecutionOutcome::Failed { message }))
-        .unwrap_or(ExecutionOutcome::Completed { content: text });
+        .unwrap_or(ExecutionOutcome::Completed {
+            content: final_text,
+        });
     ClaudeStreamSummary {
         outcome,
         session_id,
@@ -269,6 +354,10 @@ pub fn extract_text(value: &Value) -> Option<String> {
     extract_claude_assistant_text(value)
         .or_else(|| extract_claude_text_delta(value))
         .or_else(|| extract_codex_agent_delta(value))
+}
+
+pub fn extract_claude_assistant_message_text(value: &Value) -> Option<String> {
+    extract_claude_assistant_text(value)
 }
 
 pub fn extract_reasoning(value: &Value) -> Option<String> {
@@ -439,4 +528,15 @@ fn extract_codex_agent_delta(value: &Value) -> Option<String> {
         .then(|| value.get("params")?.get("delta")?.as_str())
         .flatten()
         .map(ToOwned::to_owned)
+}
+
+fn preview_stdout_line(value: &str) -> String {
+    let value = value.replace(['\r', '\n'], "\\n");
+    let mut chars = value.chars();
+    let preview: String = chars.by_ref().take(200).collect();
+    if chars.next().is_some() {
+        format!("{preview}...")
+    } else {
+        preview
+    }
 }

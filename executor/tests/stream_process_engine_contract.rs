@@ -30,6 +30,25 @@ async fn stream_process_engine_parses_ndjson_stdout() {
 }
 
 #[tokio::test]
+async fn stream_process_engine_ignores_incomplete_trailing_json_like_python_sdk() {
+    let engine = StreamProcessEngine::new(
+        CommandSpec::new("sh").arg("-c").arg(
+            r#"printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}'; printf '%s' '{"type":"user","message":{"content":[{"type":"tool_result","content":"broken"}'"#,
+        ),
+        TEST_PROCESS_TIMEOUT_SECONDS,
+    );
+
+    let outcome = engine.run(ExecutionRequest::default()).await;
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "partial".to_owned()
+        }
+    );
+}
+
+#[tokio::test]
 async fn stream_process_engine_keeps_stderr_for_process_failures() {
     let engine = StreamProcessEngine::new(
         CommandSpec::new("sh")

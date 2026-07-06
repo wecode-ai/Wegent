@@ -43,7 +43,7 @@ pub use codex::{
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
 
-const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
+const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCommandPlanner {
@@ -353,6 +353,6 @@ mod tests {
         let _old_timeout = EnvGuard::set("WEGENT_EXECUTOR_PROCESS_TIMEOUT_SECONDS", "1");
         let _timeout = EnvGuard::remove("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS");
 
-        assert_eq!(claude_code_process_timeout_seconds(), 3600);
+        assert_eq!(claude_code_process_timeout_seconds(), 86_400);
     }
 }
