@@ -42,6 +42,12 @@ Workbench services have three layers:
 
 When disconnected, Wework continues to use local services only. When connected, models, devices, and runtime work lists are merged; execution and stream subscriptions route to local IPC or Backend relay by device or source.
 
+## Local Executor Lifecycle
+
+Packaged release builds of Wework must keep one active app paired with one local executor. On release startup, only one Wework instance may stay active; repeated launches focus the existing window. Before starting the local executor for the first time, the app cleans up stale `wegent-executor` processes that use the release fixed `WEGENT_EXECUTOR_APP_IPC_SOCKET` and removes the stale socket, then starts the executor owned by the current app. This prevents a new app from attaching to an executor left by an older app instance.
+
+Debug builds do not enable this single-instance or cleanup policy. Local development may run multiple Wework debug instances at the same time, each with its own `app-runtime/wework-.../app-ipc.sock` socket. Release cleanup must also inspect each candidate executor process environment and terminate only executors using the release fixed socket, so it does not kill executors owned by debug instances.
+
 ## Model Naming
 
 The frontend merge layer must avoid name collisions between local Codex, user-configured local models, and cloud-synced Codex models. The UI uses unique names:
