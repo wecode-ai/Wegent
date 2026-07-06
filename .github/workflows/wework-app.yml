@@ -198,9 +198,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          app_path="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -maxdepth 1 -name '*.app' -type d | sort | tail -1)"
+          dmg_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | sort | tail -1)"
+          if [ -z "$dmg_source" ]; then
+            echo "No .dmg bundle found" >&2
+            exit 1
+          fi
+          hdiutil verify "$dmg_source"
+
+          mount_dir="$RUNNER_TEMP/wework-dmg-${{ matrix.arch }}"
+          rm -rf "$mount_dir"
+          mkdir -p "$mount_dir"
+          cleanup_mount() {
+            hdiutil detach "$mount_dir" -quiet || true
+          }
+          trap cleanup_mount EXIT
+
+          hdiutil attach "$dmg_source" -mountpoint "$mount_dir" -nobrowse -readonly
+          app_path="$(find "$mount_dir" -maxdepth 1 -name '*.app' -type d | sort | tail -1)"
           if [ -z "$app_path" ]; then
-            echo "No .app bundle found" >&2
+            echo "No .app bundle found inside DMG" >&2
             exit 1
           fi
           codesign --verify --deep --strict --verbose=2 "$app_path"
@@ -210,13 +226,8 @@ jobs:
           else
             echo "::warning::Gatekeeper rejected this ad-hoc signed, non-notarized build. Users must click Done if macOS shows Move to Trash, then force-open it from System Settings > Privacy & Security > Open Anyway."
           fi
-
-          dmg_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | sort | tail -1)"
-          if [ -z "$dmg_source" ]; then
-            echo "No .dmg bundle found" >&2
-            exit 1
-          fi
-          hdiutil verify "$dmg_source"
+          cleanup_mount
+          trap - EXIT
 
           artifact_dir="$RUNNER_TEMP/wework-macos-${{ matrix.arch }}"
           mkdir -p "$artifact_dir"
