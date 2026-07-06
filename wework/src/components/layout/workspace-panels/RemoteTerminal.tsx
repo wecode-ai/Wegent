@@ -15,6 +15,7 @@ interface RemoteTerminalProps {
   sessionId: string
   active: boolean
   onExit?: () => void
+  onTitleChange?: (title: string) => void
   testIdsEnabled?: boolean
 }
 
@@ -22,6 +23,7 @@ export function RemoteTerminal({
   sessionId,
   active,
   onExit,
+  onTitleChange,
   testIdsEnabled = true,
 }: RemoteTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -30,6 +32,7 @@ export function RemoteTerminal({
   const clientRef = useRef<RemoteTerminalClient | null>(null)
   const activeRef = useRef(active)
   const onExitRef = useRef(onExit)
+  const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
 
   useEffect(() => {
@@ -39,6 +42,10 @@ export function RemoteTerminal({
   useEffect(() => {
     onExitRef.current = onExit
   }, [onExit])
+
+  useEffect(() => {
+    onTitleChangeRef.current = onTitleChange
+  }, [onTitleChange])
 
   useEffect(() => {
     const container = containerRef.current
@@ -75,6 +82,9 @@ export function RemoteTerminal({
         terminal.write(payload.data)
         scheduleThemeSync()
       }
+    })
+    const titleDisposable = terminal.onTitleChange(title => {
+      onTitleChangeRef.current?.(title)
     })
     const unsubscribeExit = client.onExit(payload => {
       if (!disposed && payload.session_id === sessionId) {
@@ -149,6 +159,7 @@ export function RemoteTerminal({
       unobserveTheme()
       resizeObserver.disconnect()
       dataDisposable.dispose()
+      titleDisposable.dispose()
       inputFallback.dispose()
       unsubscribeOutput()
       unsubscribeExit()
