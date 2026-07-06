@@ -17,8 +17,13 @@ from app.mcp_server.tools import knowledge_external
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument, KnowledgeFolder
 from app.models.namespace import Namespace
 from app.models.subtask_context import ContextType, SubtaskContext
+from app.models.user import User
 from app.schemas.knowledge import ResourceScope
 from app.services.knowledge import external_nodes
+from app.services.knowledge.external_creator import (
+    default_external_knowledge_creator_resolver,
+    set_external_knowledge_creator_resolver,
+)
 from app.services.knowledge.external_document_access import DOWNLOAD_TOKEN_HEADER
 
 
@@ -34,6 +39,7 @@ def _reset_external_user(token) -> None:
 @pytest.fixture(autouse=True)
 def allow_external_search_rate_limit():
     runtime_spec = MagicMock()
+    set_external_knowledge_creator_resolver(default_external_knowledge_creator_resolver)
     with (
         patch.object(
             knowledge_external,
@@ -52,6 +58,7 @@ def allow_external_search_rate_limit():
         ),
     ):
         yield
+    set_external_knowledge_creator_resolver(default_external_knowledge_creator_resolver)
 
 
 def _make_kb(
@@ -133,6 +140,23 @@ async def test_list_knowledge_bases_rejects_invalid_input_types(test_user):
         invalid_query = await knowledge_external.wegent_kb_list_knowledge_bases(
             query=1,
         )
+        invalid_owner_user_ids_type = (
+            await knowledge_external.wegent_kb_list_knowledge_bases(
+                owner_user_ids="1",
+            )
+        )
+        invalid_owner_user_ids_item = (
+            await knowledge_external.wegent_kb_list_knowledge_bases(
+                owner_user_ids=[test_user.id, "2"],
+            )
+        )
+        invalid_owner_user_ids_count = (
+            await knowledge_external.wegent_kb_list_knowledge_bases(
+                owner_user_ids=list(
+                    range(knowledge_external.MAX_KNOWLEDGE_BASE_OWNER_USER_IDS + 1)
+                ),
+            )
+        )
         invalid_limit = await knowledge_external.wegent_kb_list_knowledge_bases(
             limit=knowledge_external.MAX_KNOWLEDGE_BASE_LIST_LIMIT + 1,
         )
@@ -152,6 +176,21 @@ async def test_list_knowledge_bases_rejects_invalid_input_types(test_user):
     }
     assert json.loads(invalid_query) == {
         "error": "query must be a string",
+        "code": "bad_request",
+    }
+    assert json.loads(invalid_owner_user_ids_type) == {
+        "error": "owner_user_ids must be a list of integers",
+        "code": "bad_request",
+    }
+    assert json.loads(invalid_owner_user_ids_item) == {
+        "error": "owner_user_ids must be a list of integers",
+        "code": "bad_request",
+    }
+    assert json.loads(invalid_owner_user_ids_count) == {
+        "error": (
+            "owner_user_ids must contain at most "
+            f"{knowledge_external.MAX_KNOWLEDGE_BASE_OWNER_USER_IDS} items"
+        ),
         "code": "bad_request",
     }
     assert json.loads(invalid_limit) == {
@@ -271,6 +310,94 @@ async def test_list_knowledge_bases_paginates_before_counting_documents(test_use
     assert [item["knowledge_base_id"] for item in payload["items"]] == [2]
     assert payload["items"][0]["document_count"] == 5
     get_counts.assert_called_once_with(mock_db, [2])
+
+
+@pytest.mark.asyncio
+async def test_list_knowledge_bases_filters_by_owner_user_ids_after_query(
+    test_db,
+    test_user,
+):
+    owner = User(user_name="owner-filter", password_hash="x", is_active=True)
+    other_owner = User(user_name="owner-other", password_hash="x", is_active=True)
+    test_db.add_all([owner, other_owner])
+    test_db.flush()
+
+    now = datetime(2026, 1, 2, 10, 0, 0)
+    matching_owner_kb = _make_kb(
+        21,
+        owner.id,
+        "Match Owner",
+        now + timedelta(minutes=2),
+    )
+    matching_other_kb = _make_kb(
+        22,
+        other_owner.id,
+        "Match Other",
+        now + timedelta(minutes=1),
+    )
+    non_matching_owner_kb = _make_kb(23, owner.id, "Different", now)
+
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "list_knowledge_bases",
+                return_value=[
+                    matching_owner_kb,
+                    matching_other_kb,
+                    non_matching_owner_kb,
+                ],
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+                query="match",
+                owner_user_ids=[owner.id],
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["total"] == 1
+    assert payload["total_returned"] == 1
+    assert payload["has_more"] is False
+    assert [item["knowledge_base_id"] for item in payload["items"]] == [21]
+    assert payload["items"][0]["creator"] == {
+        "user_id": owner.id,
+        "user_name": "owner-filter",
+        "attributes": {},
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_knowledge_bases_empty_owner_user_ids_is_unfiltered(
+    test_db,
+    test_user,
+):
+    now = datetime(2026, 1, 2, 11, 0, 0)
+    first = _make_kb(31, test_user.id, "First", now)
+    second = _make_kb(32, test_user.id + 1, "Second", now + timedelta(minutes=1))
+
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "list_knowledge_bases",
+                return_value=[first, second],
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+                owner_user_ids=[],
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["total"] == 2
+    assert [item["knowledge_base_id"] for item in payload["items"]] == [32, 31]
 
 
 @pytest.mark.asyncio
@@ -815,9 +942,15 @@ async def test_list_nodes_returns_document_capability_metadata(test_db, test_use
 
     payload = json.loads(result)
     nodes_by_name = {item["name"]: item for item in payload["items"]}
+    assert nodes_by_name["Folder"]["creator"] is None
     assert nodes_by_name["Folder"]["content_readable"] is False
     assert nodes_by_name["Folder"]["downloadable"] is False
     assert nodes_by_name["Folder"]["previewable"] is False
+    assert nodes_by_name["readable.pdf"]["creator"] == {
+        "user_id": test_user.id,
+        "user_name": test_user.user_name,
+        "attributes": {},
+    }
     assert nodes_by_name["readable.pdf"]["content_readable"] is True
     assert nodes_by_name["readable.pdf"]["downloadable"] is True
     assert nodes_by_name["readable.pdf"]["previewable"] is True
