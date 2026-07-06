@@ -14,7 +14,8 @@ use std::{
     time::Instant,
 };
 
-use serde_json::Value;
+use chrono::{Local, SecondsFormat};
+use serde_json::{Map, Value};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader},
     process::Command,
@@ -764,7 +765,7 @@ where
         output.push_str(&line);
         output.push('\n');
         if let Some(file) = debug_stdout_file.as_mut() {
-            let _ = writeln!(file, "{line}");
+            let _ = writeln!(file, "{}", debug_claude_stdout_line(&line));
         }
         let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
             continue;
@@ -1105,11 +1106,38 @@ fn open_debug_claude_stdout_file(path: &PathBuf) -> std::io::Result<fs::File> {
 
 fn append_debug_claude_stdout(path: &PathBuf, stdout: &str) -> std::io::Result<()> {
     let mut file = open_debug_claude_stdout_file(path)?;
-    file.write_all(stdout.as_bytes())?;
-    if !stdout.ends_with('\n') {
-        file.write_all(b"\n")?;
+    for line in stdout.lines() {
+        writeln!(file, "{}", debug_claude_stdout_line(line))?;
     }
     Ok(())
+}
+
+fn debug_claude_stdout_line(line: &str) -> String {
+    debug_claude_stdout_line_with_timestamp(
+        line,
+        Local::now().to_rfc3339_opts(SecondsFormat::Millis, false),
+    )
+}
+
+fn debug_claude_stdout_line_with_timestamp(line: &str, received_at: String) -> String {
+    match serde_json::from_str::<Value>(line.trim()) {
+        Ok(Value::Object(mut object)) => {
+            object.insert("received_at".to_owned(), Value::String(received_at));
+            Value::Object(object).to_string()
+        }
+        Ok(value) => {
+            let mut object = Map::new();
+            object.insert("received_at".to_owned(), Value::String(received_at));
+            object.insert("value".to_owned(), value);
+            Value::Object(object).to_string()
+        }
+        Err(_) => {
+            let mut object = Map::new();
+            object.insert("received_at".to_owned(), Value::String(received_at));
+            object.insert("raw".to_owned(), Value::String(line.to_owned()));
+            Value::Object(object).to_string()
+        }
+    }
 }
 
 fn debug_claude_stdout_path_for_spec(
@@ -1231,8 +1259,59 @@ mod tests {
             Some(&subtask_id),
         );
 
-        assert_eq!(fs::read_to_string(&path).unwrap(), "first\nsecond\n");
+        let content = fs::read_to_string(&path).unwrap();
+        let lines: Vec<Value> = content
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["raw"], "first");
+        assert!(has_timezone_offset(
+            lines[0]["received_at"].as_str().unwrap()
+        ));
+        assert_eq!(lines[1]["raw"], "second");
+        assert!(has_timezone_offset(
+            lines[1]["received_at"].as_str().unwrap()
+        ));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn debug_claude_stdout_line_adds_received_at_to_json_object() {
+        let line = debug_claude_stdout_line_with_timestamp(
+            r#"{"type":"assistant","message":{"content":[{"text":"done"}]}}"#,
+            "2026-07-06T03:33:26.000Z".to_owned(),
+        );
+
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["type"], "assistant");
+        assert_eq!(value["message"]["content"][0]["text"], "done");
+        assert_eq!(value["received_at"], "2026-07-06T03:33:26.000Z");
+    }
+
+    #[test]
+    fn debug_claude_stdout_line_wraps_non_json_line_with_received_at() {
+        let line = debug_claude_stdout_line_with_timestamp(
+            "plain output",
+            "2026-07-06T03:33:26.000Z".to_owned(),
+        );
+
+        let value: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["raw"], "plain output");
+        assert_eq!(value["received_at"], "2026-07-06T03:33:26.000Z");
+    }
+
+    fn has_timezone_offset(value: &str) -> bool {
+        let Some(offset) = value.get(value.len().saturating_sub(6)..) else {
+            return false;
+        };
+        let bytes = offset.as_bytes();
+        matches!(bytes.first(), Some(b'+' | b'-'))
+            && bytes.get(3) == Some(&b':')
+            && bytes
+                .iter()
+                .enumerate()
+                .all(|(index, byte)| index == 0 || index == 3 || byte.is_ascii_digit())
     }
 
     #[test]

@@ -722,8 +722,12 @@ export function WorkbenchProvider({
   const stableCheckoutEnvironmentBranch = useStableEvent(projectActions.checkoutEnvironmentBranch)
   const stableCreateEnvironmentBranch = useStableEvent(projectActions.createEnvironmentBranch)
   const stableSendRuntimePaneMessage = useStableEvent(runtimeMessaging.sendRuntimePaneMessage)
+  const stableEditLastUserMessage = useStableEvent(runtimeMessaging.editLastUserMessage)
   const stableCancelRuntimePaneTask = useStableEvent(runtimeMessaging.cancelRuntimePaneTask)
   const stableSendCurrentInput = useStableEvent(runtimeMessaging.sendCurrentInput)
+  const stableCreateTemporaryRuntimeTask = useStableEvent(
+    runtimeMessaging.createTemporaryRuntimeTask
+  )
   const stableRetryFailedMessage = useStableEvent(runtimeMessaging.retryFailedMessage)
   const stablePauseCurrentResponse = useStableEvent(runtimeMessaging.pauseCurrentResponse)
   const stableLoadTurnFileChangesDiff = useStableEvent(runtimeMessaging.loadTurnFileChangesDiff)
@@ -952,8 +956,10 @@ export function WorkbenchProvider({
     checkoutEnvironmentBranch: projectActions.checkoutEnvironmentBranch,
     createEnvironmentBranch: projectActions.createEnvironmentBranch,
     sendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
+    editLastUserMessage: runtimeMessaging.editLastUserMessage,
     cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
     sendCurrentInput: runtimeMessaging.sendCurrentInput,
+    createTemporaryRuntimeTask: runtimeMessaging.createTemporaryRuntimeTask,
     retryFailedMessage: runtimeMessaging.retryFailedMessage,
     pauseCurrentResponse: runtimeMessaging.pauseCurrentResponse,
     loadTurnFileChangesDiff: runtimeMessaging.loadTurnFileChangesDiff,
@@ -1021,8 +1027,10 @@ export function WorkbenchProvider({
       checkoutEnvironmentBranch: stableCheckoutEnvironmentBranch,
       createEnvironmentBranch: stableCreateEnvironmentBranch,
       sendRuntimePaneMessage: stableSendRuntimePaneMessage,
+      editLastUserMessage: stableEditLastUserMessage,
       cancelRuntimePaneTask: stableCancelRuntimePaneTask,
       sendCurrentInput: stableSendCurrentInput,
+      createTemporaryRuntimeTask: stableCreateTemporaryRuntimeTask,
       retryFailedMessage: stableRetryFailedMessage,
       pauseCurrentResponse: stablePauseCurrentResponse,
       loadTurnFileChangesDiff: stableLoadTurnFileChangesDiff,
@@ -1045,8 +1053,10 @@ export function WorkbenchProvider({
       stableCommitEnvironmentChanges,
       stableCreateDeviceDirectory,
       stableCreateEnvironmentBranch,
+      stableEditLastUserMessage,
       stableCreateGitWorkspaceProject,
       stableCreateProject,
+      stableCreateTemporaryRuntimeTask,
       stableDeleteDeviceWorkspace,
       stableForkCurrentRuntimeTask,
       stableGetDeviceHomeDirectory,

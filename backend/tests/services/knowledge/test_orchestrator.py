@@ -212,14 +212,13 @@ class TestKnowledgeOrchestrator:
                 "model_namespace": "default",
             },
             "retrieval_mode": "vector",
-            "retrieval_mode_source": "user",
             "top_k": 5,
             "score_threshold": 0.5,
         }
         mock_get_retriever.assert_called_once_with(mock_db, mock_user.id, "default")
         mock_get_embedding.assert_not_called()
 
-    def test_resolve_retrieval_config_marks_auto_mode_as_system_default(
+    def test_resolve_retrieval_config_defaults_auto_mode_to_vector(
         self, orchestrator, mock_db, mock_user
     ):
         with (
@@ -248,9 +247,8 @@ class TestKnowledgeOrchestrator:
             )
 
         assert result["retrieval_mode"] == "vector"
-        assert result["retrieval_mode_source"] == "system_default"
 
-    def test_resolve_retrieval_config_normalizes_blank_mode_as_system_default(
+    def test_resolve_retrieval_config_normalizes_blank_mode_to_vector(
         self, orchestrator, mock_db, mock_user
     ):
         with (
@@ -279,7 +277,6 @@ class TestKnowledgeOrchestrator:
             )
 
         assert result["retrieval_mode"] == "vector"
-        assert result["retrieval_mode_source"] == "system_default"
 
     def test_resolve_retrieval_config_auto_selects_when_config_absent(
         self, orchestrator, mock_db, mock_user
@@ -316,7 +313,6 @@ class TestKnowledgeOrchestrator:
                 "model_namespace": "default",
             },
             "retrieval_mode": "vector",
-            "retrieval_mode_source": "system_default",
             "top_k": 5,
             "score_threshold": 0.5,
         }
@@ -389,7 +385,6 @@ class TestKnowledgeOrchestrator:
                 "model_namespace": "default",
             },
             "retrieval_mode": "vector",
-            "retrieval_mode_source": "system_default",
             "top_k": 5,
             "score_threshold": 0.5,
         }

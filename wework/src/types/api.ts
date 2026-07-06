@@ -472,6 +472,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
+  ephemeral?: boolean
   modelId?: string
   modelType?: ModelType | null
   modelOptions?: ModelOptions
@@ -481,6 +482,10 @@ export interface RuntimeSendRequest {
   source?: RuntimeMessageSource | null
   requestUserInputResponse?: RequestUserInputResponse
   request_user_input_response?: RequestUserInputResponse
+}
+
+export interface RuntimeRollbackRequest extends RuntimeSendRequest {
+  messageId?: string | null
 }
 
 export interface RequestUserInputResponseAnswer {
@@ -741,6 +746,8 @@ export interface RuntimeTaskCreateRequest {
   attachments?: Attachment[]
   execution?: ChatSendPayload['execution']
   initialGoal?: RuntimeGoalCreateInput | null
+  ephemeral?: boolean
+  sideSource?: RuntimeTaskAddress | null
 }
 
 export interface RuntimeTaskCreateResponse {

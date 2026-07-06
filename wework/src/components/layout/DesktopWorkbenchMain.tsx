@@ -92,7 +92,6 @@ const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
 const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
-const TAURI_TITLEBAR_ACTIONS_CLEARANCE_CLASS = 'max-w-[calc(100%-22rem)]'
 
 function getRuntimeWorkbenchPaneKeys(
   runtimeWork: RuntimeWorkListResponse | null | undefined
@@ -268,6 +267,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [rightPanelView, setRightPanelView] = useState<RightWorkspacePanelView>('launcher')
   const [rightPanelTabs, setRightPanelTabs] = useState<RightWorkspacePanelTab[]>([])
+  const temporaryChatTabSequence = useRef(0)
   const [rightPanelPlanContent, setRightPanelPlanContent] = useState<string | null>(null)
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
@@ -460,6 +460,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
   )
   const currentRuntimeTaskSupportsGoal = Boolean(currentRuntimeTask && activeDeviceSupportsGoal)
+  const canEditLastUserMessage = Boolean(
+    currentRuntimeTask && activeDeviceSupportsGoal && !paneSession.status.isBusy
+  )
   const composerSupportsGoal = currentRuntimeTask
     ? currentRuntimeTaskSupportsGoal
     : activeDeviceSupportsGoal
@@ -509,6 +512,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setRightPanelTabs(current => (current.includes(tab) ? current : [...current, tab]))
     setRightPanelView(tab)
   }, [])
+  const selectRightPanelTab = useCallback((tab: RightWorkspacePanelTab) => {
+    setRightPanelOpen(true)
+    setRightPanelView(tab)
+  }, [])
+  const openTemporaryChatTab = useCallback(() => {
+    temporaryChatTabSequence.current += 1
+    openRightPanelTab(`chat:${Date.now()}-${temporaryChatTabSequence.current}`)
+  }, [openRightPanelTab])
   const openAssistantPlan = useCallback(
     (content: string) => {
       setRightPanelPlanContent(content)
@@ -635,6 +646,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const selectTerminalView = useCallback(() => {
     openRightPanelTab('terminal')
   }, [openRightPanelTab])
+  const selectChatView = useCallback(() => {
+    openTemporaryChatTab()
+  }, [openTemporaryChatTab])
   const selectPlanView = useCallback(() => {
     openRightPanelTab('plan')
   }, [openRightPanelTab])
@@ -792,10 +806,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const paneTaskTitle = runtimeTaskTitle ? (
     <div
       data-testid="workbench-pane-task-title"
-      className="min-w-0 max-w-[min(52rem,calc(100vw-28rem))] truncate text-[13px] font-medium leading-none text-text-primary"
-      title={runtimeTaskTitle}
+      className={cn(
+        'pointer-events-none absolute left-0 top-0 z-chrome flex h-11 min-w-0 truncate items-center pr-7 text-[13px] font-medium leading-none text-text-primary',
+        sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
+        rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+      )}
+      style={{ width: chatColumnWidth }}
     >
-      {runtimeTaskTitle}
+      <span className="block w-full min-w-0 truncate">{runtimeTaskTitle}</span>
     </div>
   ) : undefined
   const topBarLeftActions = !isTauri ? (
@@ -812,14 +830,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       />
     )
   ) : undefined
-  const topBarLeftContent =
-    topBarLeftActions || paneTaskTitle ? (
-      <>
-        {topBarLeftActions}
-        {paneTaskTitle}
-      </>
-    ) : undefined
-  const showPageTopBar = !isTauri || Boolean(topBarLeftContent)
+  const topBarLeftContent = topBarLeftActions ? <>{topBarLeftActions}</> : undefined
+  const showPageTopBar = !isTauri || Boolean(topBarLeftContent) || Boolean(paneTaskTitle)
   const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
   const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && forkCurrentRuntimeTask)
   const forkTaskButton = canForkCurrentRuntimeTask ? (
@@ -953,12 +965,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             )}
             style={{ width: chatColumnWidth }}
             left={topBarLeftContent}
-            leftClassName={cn(
-              'min-w-0 gap-2',
-              isTauri ? TAURI_TITLEBAR_ACTIONS_CLEARANCE_CLASS : 'max-w-[calc(100%-12rem)]'
-            )}
+            leftClassName={cn('min-w-0 gap-2', isTauri ? 'contents' : 'max-w-[calc(100%-12rem)]')}
           />
         )}
+        {paneTaskTitle}
         {showPageTopBar && hasSubagentStatuses && (
           <div
             data-testid="workbench-subagent-status-row"
@@ -1051,6 +1061,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
                 onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
                 onOpenAssistantPlan={openAssistantPlan}
+                onEditLastUserMessage={paneSession.editLastUserMessage}
+                canEditLastUserMessage={canEditLastUserMessage}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
                 autoScrollSuspended={composerPointerActive}
@@ -1234,6 +1246,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               activeView={rightPanelView}
               openTabs={rightPanelTabs}
               currentProject={workspaceProject}
+              currentRuntimeTask={currentRuntimeTask}
               devices={devices}
               workspaceTarget={effectiveWorkspaceTarget}
               preferLocalTerminal={preferLocalWorkspaceTerminal}
@@ -1249,7 +1262,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectTerminal={selectTerminalView}
               onSelectBrowser={selectBrowserView}
               onSelectFiles={selectFilesView}
+              onSelectChat={selectChatView}
               onSelectPlan={selectPlanView}
+              onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
             />

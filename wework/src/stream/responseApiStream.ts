@@ -75,6 +75,10 @@ function optionalNumberField(record: Record<string, unknown>, key: string): numb
   return typeof value === 'number' ? value : undefined
 }
 
+function commandExitCode(record: Record<string, unknown>): number | undefined {
+  return optionalNumberField(record, 'exit_code') ?? optionalNumberField(record, 'exitCode')
+}
+
 function recordField(record: Record<string, unknown>, key: string): Record<string, unknown> {
   return asRecord(record[key])
 }
@@ -245,10 +249,15 @@ function isToolItem(item: Record<string, unknown>): boolean {
   return ['function_call', 'mcp_call', 'shell_call'].includes(stringField(item, 'type') ?? '')
 }
 
+function isCommandToolItem(item: Record<string, unknown>): boolean {
+  return ['shell_call', 'local_shell_call'].includes(stringField(item, 'type') ?? '')
+}
+
 function toolStatusFromItem(
   item: Record<string, unknown>,
   fallback: ChatBlock['status']
 ): ChatBlock['status'] {
+  if (isCommandToolItem(item) && commandExitCode(item) !== undefined) return 'done'
   const status = stringField(item, 'status')
   return status === 'error' || status === 'failed' ? 'error' : fallback
 }

@@ -360,9 +360,6 @@ class KnowledgeOrchestrator:
         }
         if not resolved_config.get("retrieval_mode"):
             resolved_config["retrieval_mode"] = "vector"
-            resolved_config["retrieval_mode_source"] = "system_default"
-        else:
-            resolved_config.setdefault("retrieval_mode_source", "user")
         resolved_config.setdefault("top_k", 5)
         resolved_config.setdefault("score_threshold", 0.5)
         return resolved_config

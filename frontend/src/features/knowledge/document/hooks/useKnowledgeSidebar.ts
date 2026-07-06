@@ -489,29 +489,19 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       setViewMode('kb')
       addRecentAccess(kb)
 
-      // For notebook type, set selectedKb immediately with available data to avoid
-      // flashing the empty state, then fetch full KB data to get guided_questions
-      if (kb.kb_type === 'notebook') {
-        setSelectedKb(kb)
-        getKnowledgeBase(kb.id)
-          .then(fullKb => {
-            // Discard stale response if user has since selected a different KB
-            setSelectedKb(prev => {
-              if (latestSelectedKbIdRef.current !== kb.id) return prev
-              return fullKb
-            })
+      // Set selectedKb immediately with available data to avoid flashing the empty state,
+      // then fetch full KB data for fields omitted from grouped lists.
+      setSelectedKb(kb)
+      getKnowledgeBase(kb.id)
+        .then(fullKb => {
+          setSelectedKb(prev => {
+            if (latestSelectedKbIdRef.current !== kb.id) return prev
+            return fullKb
           })
-          .catch(error => {
-            console.error('Failed to fetch full knowledge base data:', error)
-            // Clear both selectedKb and selectedKbId to maintain consistency and allow retry
-            if (latestSelectedKbIdRef.current === kb.id) {
-              setSelectedKb(null)
-              setSelectedKbId(null)
-            }
-          })
-      } else {
-        setSelectedKb(kb)
-      }
+        })
+        .catch(error => {
+          console.error('Failed to fetch full knowledge base data:', error)
+        })
     },
     [addRecentAccess]
   )

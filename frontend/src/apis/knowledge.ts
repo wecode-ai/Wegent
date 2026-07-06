@@ -77,9 +77,9 @@ export async function deleteKnowledgeBase(id: number): Promise<void> {
 }
 
 /**
- * Update the knowledge base type (notebook <-> classic conversion)
+ * Update the knowledge base default opening view.
  * @param id Knowledge base ID
- * @param kbType New type: 'notebook' or 'classic'
+ * @param kbType New default view value: 'notebook' or 'classic'
  * @returns Updated knowledge base
  */
 export async function updateKnowledgeBaseType(

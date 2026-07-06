@@ -257,11 +257,17 @@ class DocumentIndexer:
             )
             current_position += text_length
 
+        qa_pair_count = sum(
+            1
+            for node in nodes
+            if getattr(node, "metadata", {}).get("node_role") == "qa_pair"
+        )
+
         return {
             "items": items,
             "total_count": len(items),
             "splitter_type": self.splitter_config.chunk_strategy,
             "splitter_subtype": parser_subtype,
-            "qa_pair_count": len(items) if parser_subtype == "qa_pair" else 0,
+            "qa_pair_count": qa_pair_count if parser_subtype == "qa_pair" else 0,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }

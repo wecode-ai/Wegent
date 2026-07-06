@@ -11,6 +11,7 @@ import { WorkspacePanelCards } from './WorkspacePanelCards'
 
 interface BottomWorkspacePanelTab {
   id: string
+  title: string
 }
 
 interface BottomWorkspacePanelProps {
@@ -27,7 +28,7 @@ interface BottomWorkspacePanelProps {
 }
 
 function createTerminalTab(index: number): BottomWorkspacePanelTab {
-  return { id: `terminal-${index}` }
+  return { id: `terminal-${index}`, title: `Terminal ${index}` }
 }
 
 export function BottomWorkspacePanel({
@@ -88,6 +89,18 @@ export function BottomWorkspacePanel({
     }
   }
 
+  const updateTabTitle = (tabId: string, title: string) => {
+    const normalizedTitle = title.trim()
+    if (!normalizedTitle) return
+
+    setTabs(current => {
+      const tab = current.find(item => item.id === tabId)
+      if (!tab || tab.title === normalizedTitle) return current
+
+      return current.map(item => (item.id === tabId ? { ...item, title: normalizedTitle } : item))
+    })
+  }
+
   const menuItems: WorkspaceAddMenuItem[] = [
     {
       id: 'terminal',
@@ -102,7 +115,7 @@ export function BottomWorkspacePanel({
     <section
       data-testid={testId('bottom-workspace-panel')}
       className={cn(
-        'relative flex shrink-0 flex-col overflow-hidden rounded-t-xl bg-background transition-[height,opacity,transform] duration-300 ease-out',
+        'relative flex shrink-0 flex-col overflow-hidden bg-background transition-[height,opacity,transform] duration-300 ease-out',
         open
           ? 'pointer-events-auto translate-y-0 border-t border-border opacity-100'
           : 'pointer-events-none translate-y-3 border-t border-transparent opacity-0'
@@ -130,7 +143,7 @@ export function BottomWorkspacePanel({
           <header
             data-testid={contentTestIdsEnabled ? 'bottom-workspace-tabbar' : undefined}
             role="tablist"
-            className="flex h-10 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border bg-surface px-2 pr-12"
+            className="flex h-10 shrink-0 items-center gap-1.5 overflow-hidden bg-background px-2 pr-12"
           >
             <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
               {tabs.map(tab => (
@@ -138,7 +151,7 @@ export function BottomWorkspacePanel({
                   key={tab.id}
                   testIdsEnabled={contentTestIdsEnabled}
                   active={activeTab?.id === tab.id}
-                  label={currentProject?.name || t('workbench.terminal', '终端')}
+                  label={tab.title}
                   onSelect={() => setActiveTabId(tab.id)}
                   onClose={() => closeTab(tab.id)}
                 />
@@ -169,6 +182,7 @@ export function BottomWorkspacePanel({
                   preferLocalTerminal={preferLocalTerminal}
                   panelActive={panelActive}
                   testIdsEnabled={contentTestIdsEnabled}
+                  onTerminalTitleChange={title => updateTabTitle(tab.id, title)}
                 />
               </div>
             ))}
@@ -201,20 +215,20 @@ function BottomWorkspaceTitleTab({
     event.preventDefault()
     onSelect()
   }
-
   return (
     <div
       data-testid={testId('bottom-workspace-terminal-tab')}
       role="tab"
       aria-selected={active}
       tabIndex={0}
+      title={label}
       onClick={onSelect}
       onKeyDown={handleKeyDown}
       className={cn(
-        'group relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl py-1 pl-2 pr-2 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+        'group relative flex h-8 min-w-0 max-w-[200px] cursor-pointer items-center gap-1.5 overflow-hidden rounded-xl py-1 pl-2 pr-7 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
         active
-          ? 'border border-border bg-background text-text-primary shadow-sm'
-          : 'border border-transparent text-text-secondary hover:border-border hover:bg-surface hover:text-text-primary'
+          ? 'bg-muted text-text-primary'
+          : 'bg-background text-text-secondary hover:bg-muted hover:text-text-primary'
       )}
     >
       <SquareTerminal
@@ -229,7 +243,7 @@ function BottomWorkspaceTitleTab({
           event.stopPropagation()
           onClose()
         }}
-        className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:bg-black/70 hover:text-white focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:opacity-100"
+        className="pointer-events-none absolute right-1 top-1/2 flex h-[18px] w-[18px] -translate-y-1/2 items-center justify-center rounded-full text-text-secondary opacity-0 transition-colors hover:!bg-text-secondary hover:text-background focus-visible:pointer-events-auto focus-visible:bg-border/70 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 group-hover:pointer-events-auto group-hover:bg-border/70 group-hover:opacity-100"
         aria-label={t('workbench.close_terminal', '关闭终端')}
       >
         <X className="h-3 w-3" />

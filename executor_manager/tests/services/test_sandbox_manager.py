@@ -546,19 +546,20 @@ class TestSandboxManager:
         sample_sandbox_redis_data,
         mocker,
     ):
-        """Test status set to FAILED when health check fails."""
+        """Test stale sandbox metadata is cleared when health check fails."""
         manager = sandbox_manager_with_mock_redis
         mock_redis_client.hget.return_value = sample_sandbox_redis_data
         mocker.patch.object(
             manager._health_checker, "check_health_sync", return_value=False
         )
+        delete_sandbox = mocker.patch.object(
+            manager._repository, "delete_sandbox", return_value=True
+        )
 
         sandbox = await manager.get_sandbox("12345", check_health=True)
 
-        assert sandbox is not None
-        from executor_manager.models.sandbox import SandboxStatus
-
-        assert sandbox.status == SandboxStatus.FAILED
+        assert sandbox is None
+        delete_sandbox.assert_called_once_with("12345")
 
     # ----- terminate_sandbox Tests -----
 

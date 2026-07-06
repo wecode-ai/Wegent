@@ -20,6 +20,7 @@ import type {
   RuntimeGoalSetRequest,
   RuntimeGoalSetResponse,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeRollbackRequest,
   RuntimeIMNotificationSettingsResponse,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -70,6 +71,12 @@ export interface SendCurrentInputOptions {
     address: RuntimeTaskAddress,
     context?: { previousAddress?: RuntimeTaskAddress }
   ) => void
+}
+
+export interface CreateTemporaryRuntimeTaskOptions {
+  project?: ProjectWithTasks | null
+  source?: RuntimeTaskAddress | null
+  onError?: (error: string) => void
 }
 
 export interface RuntimePaneActionOptions {
@@ -224,6 +231,7 @@ export interface WorkbenchContextValue {
     request: RuntimeSendRequest,
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
+  editLastUserMessage: (request: RuntimeRollbackRequest) => Promise<boolean>
   cancelRuntimePaneTask: (
     address: RuntimeTaskAddress,
     options?: RuntimePaneActionOptions
@@ -232,6 +240,10 @@ export interface WorkbenchContextValue {
     inputOverride?: string,
     options?: SendCurrentInputOptions
   ) => Promise<boolean | RuntimeTaskAddress>
+  createTemporaryRuntimeTask: (
+    input: string,
+    options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
   retryFailedMessage: (messageId: string, messagesOverride?: WorkbenchMessage[]) => Promise<void>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (

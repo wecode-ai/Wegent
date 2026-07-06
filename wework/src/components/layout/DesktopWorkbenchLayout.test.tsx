@@ -2055,13 +2055,19 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-[14rem]')
-    expect(screen.getByTestId('workbench-topbar-left-actions')).toHaveClass(
-      'max-w-[calc(100%-22rem)]'
+    expect(screen.queryByTestId('workbench-topbar-left-actions')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
+      'absolute',
+      'left-0',
+      'top-0',
+      'h-11',
+      'pl-[14rem]',
+      'truncate'
     )
-    expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass('truncate')
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent(
       'wework的聊天链路现在代码逻辑比较混乱'
     )
+    expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveAttribute('title')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -2114,14 +2120,11 @@ describe('DesktopWorkbenchLayout', () => {
       'title',
       '打开项目 IDE'
     )
-    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toHaveAttribute(
-      'title',
-      '打开底部栏'
-    )
-    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toHaveAttribute(
-      'title',
-      '打开右侧栏'
-    )
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).not.toHaveAttribute('title')
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).not.toHaveAttribute('title')
+    const bottomPanelTooltip = screen.getByText('切换底部面板显示').closest('[role="tooltip"]')
+    expect(bottomPanelTooltip).toHaveTextContent('⌘')
+    expect(bottomPanelTooltip).toHaveTextContent('J')
   })
 
   test('shows project code-server in the Tauri titlebar before devices hydrate', () => {
@@ -2291,7 +2294,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
     expect(screen.getByText('个人账户')).toBeInTheDocument()
-    expect(screen.getAllByText('设置')).toHaveLength(2)
+    expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('设置')
+    expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('⌘,')
     expect(screen.getByText('剩余用量')).toBeInTheDocument()
     expect(screen.getByText('退出登录')).toBeInTheDocument()
   })
@@ -3216,7 +3220,7 @@ describe('DesktopWorkbenchLayout', () => {
       'scrollbar-none',
       '[overflow-anchor:none]'
     )
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-8', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-14', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full')
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
   })
@@ -3674,6 +3678,12 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-option')).toHaveClass(
+      'h-11',
+      'rounded-xl',
+      'font-light'
+    )
+    expect(screen.getByTestId('right-workspace-file-option')).toHaveTextContent('⌥⌘F')
     await userEvent.click(screen.getByTestId('right-workspace-file-option'))
 
     const tabbar = screen.getByTestId('right-workspace-tabbar')
@@ -3703,6 +3713,39 @@ describe('DesktopWorkbenchLayout', () => {
     expect(closeButton).not.toHaveClass('border', 'bg-muted')
     expect(screen.getByTestId('right-workspace-new-tab-button')).toBeInTheDocument()
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test('right workspace launcher keyboard shortcut opens the file tab', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.getByTestId('right-workspace-launcher')).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, altKey: true })
+
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
+  })
+
+  test('right workspace can open multiple temporary chat tabs', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-chat-option'))
+
+    const tabbar = screen.getByTestId('right-workspace-tabbar')
+    expect(screen.getByTestId('right-workspace-chat-panel')).toBeInTheDocument()
+    expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(1)
+
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    await userEvent.click(
+      within(screen.getByTestId('right-workspace-new-tab-menu')).getByTestId(
+        'right-workspace-chat-option'
+      )
+    )
+
+    expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(2)
+    expect(screen.getByTestId('right-workspace-chat-panel')).toBeInTheDocument()
   })
 
   test('moves right workspace tabs into the titlebar in Tauri', async () => {
@@ -3735,6 +3778,17 @@ describe('DesktopWorkbenchLayout', () => {
       expect(titlebarRightPanel).toContainElement(screen.getByTestId('right-workspace-file-tab'))
       expect(titlebarRightPanel).toContainElement(
         screen.getByTestId('right-workspace-new-tab-button')
+      )
+      const rightTitlebarDragRegion = screen.getByTestId('right-workspace-titlebar-drag-region')
+      expect(titlebarRightPanel).toContainElement(rightTitlebarDragRegion)
+      expect(
+        within(rightTitlebarDragRegion).getByTestId('macos-titlebar-drag-region')
+      ).toHaveAttribute('data-tauri-drag-region')
+      expect(screen.getByTestId('right-workspace-file-tab')).not.toContainElement(
+        rightTitlebarDragRegion
+      )
+      expect(screen.getByTestId('right-workspace-new-tab-button')).not.toContainElement(
+        rightTitlebarDragRegion
       )
       expect(screen.getByTestId('right-workspace-titlebar-spacer')).toHaveClass(
         'h-[38px]',
@@ -5730,6 +5784,25 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
     await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12))
+
+    expect(screen.getByTestId('bottom-workspace-panel')).not.toHaveClass('rounded-t-xl')
+    expect(screen.getByTestId('bottom-workspace-tabbar')).toHaveClass('bg-background')
+    expect(screen.getByTestId('bottom-workspace-tabbar')).not.toHaveClass('border-b')
+    const initialTab = screen.getByTestId('bottom-workspace-terminal-tab')
+    expect(initialTab).toHaveClass('bg-muted', 'text-text-primary')
+    expect(initialTab).not.toHaveClass('border', 'border-border', 'shadow-sm')
+    expect(initialTab).not.toHaveTextContent('终端')
+    await waitFor(() => expect(initialTab).toHaveTextContent('project'))
+    expect(initialTab).toHaveAttribute('title', 'project')
+    expect(initialTab).toHaveClass('max-w-[200px]', 'pr-7')
+    expect(initialTab).not.toHaveClass('hover:max-w-none')
+    const initialCloseButton = within(initialTab).getByTestId('close-bottom-workspace-tab-button')
+    expect(initialCloseButton).toHaveClass(
+      'group-hover:bg-border/70',
+      'hover:!bg-text-secondary',
+      'hover:text-background'
+    )
+    expect(initialCloseButton).not.toHaveClass('hover:bg-black/70', 'hover:text-white')
 
     await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
 

@@ -900,9 +900,6 @@ class RetrievalConfig(BaseModel):
     retrieval_mode: str = Field(
         "vector", description="Retrieval mode: 'vector', 'keyword', or 'hybrid'"
     )
-    retrieval_mode_source: Optional[str] = Field(
-        None, description="Source of retrieval_mode: user, system_default, qa_profile"
-    )
     top_k: int = Field(5, ge=1, le=10, description="Number of results to return")
     score_threshold: float = Field(
         0.5, ge=0.0, le=1.0, description="Minimum score threshold"
@@ -930,7 +927,7 @@ class KnowledgeBaseSpec(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     kbType: Optional[str] = Field(
         "notebook",
-        description="Knowledge base type: 'notebook' (3-column layout with chat) or 'classic' (document list only)",
+        description="Default opening view: 'notebook' opens Notebook view by default, 'classic' opens document view by default",
     )
     document_count: Optional[int] = Field(
         default=0, description="Cached document count"

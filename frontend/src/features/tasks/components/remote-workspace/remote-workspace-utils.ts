@@ -47,6 +47,18 @@ function getFileExtension(fileName: string): string {
   return fileName.slice(lastDot + 1).toLowerCase()
 }
 
+export function isMarkdownFile(fileName: string): boolean {
+  return getFileExtension(fileName) === 'md'
+}
+
+export function isJsonFile(fileName: string): boolean {
+  return getFileExtension(fileName) === 'json'
+}
+
+export function shouldUseFormattedTextPreview(fileName: string): boolean {
+  return isMarkdownFile(fileName) || isJsonFile(fileName)
+}
+
 export function resolvePreviewKind(fileName: string): PreviewKind {
   const extension = getFileExtension(fileName)
 
@@ -240,4 +252,135 @@ export function normalizeWorkspacePathInput(
   }
 
   return null
+}
+
+const CRC32_TABLE = new Uint32Array(256)
+
+for (let index = 0; index < 256; index += 1) {
+  let value = index
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1
+  }
+  CRC32_TABLE[index] = value >>> 0
+}
+
+function calculateCrc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function writeUint16(target: Uint8Array, offset: number, value: number): void {
+  target[offset] = value & 0xff
+  target[offset + 1] = (value >>> 8) & 0xff
+}
+
+function writeUint32(target: Uint8Array, offset: number, value: number): void {
+  target[offset] = value & 0xff
+  target[offset + 1] = (value >>> 8) & 0xff
+  target[offset + 2] = (value >>> 16) & 0xff
+  target[offset + 3] = (value >>> 24) & 0xff
+}
+
+function encodeUtf8(value: string): Uint8Array {
+  if (typeof TextEncoder !== 'undefined') {
+    return new TextEncoder().encode(value)
+  }
+
+  const bytes: number[] = []
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0
+    if (codePoint <= 0x7f) {
+      bytes.push(codePoint)
+    } else if (codePoint <= 0x7ff) {
+      bytes.push(0xc0 | (codePoint >> 6), 0x80 | (codePoint & 0x3f))
+    } else if (codePoint <= 0xffff) {
+      bytes.push(
+        0xe0 | (codePoint >> 12),
+        0x80 | ((codePoint >> 6) & 0x3f),
+        0x80 | (codePoint & 0x3f)
+      )
+    } else {
+      bytes.push(
+        0xf0 | (codePoint >> 18),
+        0x80 | ((codePoint >> 12) & 0x3f),
+        0x80 | ((codePoint >> 6) & 0x3f),
+        0x80 | (codePoint & 0x3f)
+      )
+    }
+  }
+  return new Uint8Array(bytes)
+}
+
+export type ZipFileInput = {
+  name: string
+  data: Uint8Array
+}
+
+function toBlobPart(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.length)
+  copy.set(bytes)
+  return copy.buffer
+}
+
+export function createStoredZip(files: ZipFileInput[]): Blob {
+  const localParts: Uint8Array[] = []
+  const centralParts: Uint8Array[] = []
+  let localOffset = 0
+
+  for (const file of files) {
+    const nameBytes = encodeUtf8(file.name)
+    const crc32 = calculateCrc32(file.data)
+    const localHeader = new Uint8Array(30 + nameBytes.length)
+
+    writeUint32(localHeader, 0, 0x04034b50)
+    writeUint16(localHeader, 4, 20)
+    writeUint16(localHeader, 6, 0x0800)
+    writeUint16(localHeader, 8, 0)
+    writeUint16(localHeader, 10, 0)
+    writeUint16(localHeader, 12, 0)
+    writeUint32(localHeader, 14, crc32)
+    writeUint32(localHeader, 18, file.data.length)
+    writeUint32(localHeader, 22, file.data.length)
+    writeUint16(localHeader, 26, nameBytes.length)
+    writeUint16(localHeader, 28, 0)
+    localHeader.set(nameBytes, 30)
+
+    const centralHeader = new Uint8Array(46 + nameBytes.length)
+    writeUint32(centralHeader, 0, 0x02014b50)
+    writeUint16(centralHeader, 4, 20)
+    writeUint16(centralHeader, 6, 20)
+    writeUint16(centralHeader, 8, 0x0800)
+    writeUint16(centralHeader, 10, 0)
+    writeUint16(centralHeader, 12, 0)
+    writeUint16(centralHeader, 14, 0)
+    writeUint32(centralHeader, 16, crc32)
+    writeUint32(centralHeader, 20, file.data.length)
+    writeUint32(centralHeader, 24, file.data.length)
+    writeUint16(centralHeader, 28, nameBytes.length)
+    writeUint16(centralHeader, 30, 0)
+    writeUint16(centralHeader, 32, 0)
+    writeUint16(centralHeader, 34, 0)
+    writeUint16(centralHeader, 36, 0)
+    writeUint32(centralHeader, 38, 0)
+    writeUint32(centralHeader, 42, localOffset)
+    centralHeader.set(nameBytes, 46)
+
+    localParts.push(localHeader, file.data)
+    centralParts.push(centralHeader)
+    localOffset += localHeader.length + file.data.length
+  }
+
+  const centralDirectorySize = centralParts.reduce((sum, part) => sum + part.length, 0)
+  const endRecord = new Uint8Array(22)
+  writeUint32(endRecord, 0, 0x06054b50)
+  writeUint16(endRecord, 8, files.length)
+  writeUint16(endRecord, 10, files.length)
+  writeUint32(endRecord, 12, centralDirectorySize)
+  writeUint32(endRecord, 16, localOffset)
+
+  const blobParts = [...localParts, ...centralParts, endRecord].map(toBlobPart)
+  return new Blob(blobParts, { type: 'application/zip' })
 }

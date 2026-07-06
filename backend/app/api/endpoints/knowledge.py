@@ -550,10 +550,10 @@ def update_knowledge_base_type(
     db: Session = Depends(get_db),
 ):
     """
-    Update the knowledge base type (notebook <-> classic conversion).
+    Update the default opening view for the knowledge base.
 
-    - Converting to 'notebook': Requires document count <= 50
-    - Converting to 'classic': No restrictions
+    - 'notebook': Open Notebook view by default when the URL does not specify a view
+    - 'classic': Open document view by default when the URL does not specify a view
     """
     try:
         knowledge_base = KnowledgeService.update_knowledge_base_type(

@@ -4,6 +4,7 @@ import type {
   DeviceCommandResponse,
   DeviceInfo,
   LocalDeviceSkill,
+  RuntimeRollbackRequest,
   RuntimeGoalClearRequest,
   RuntimeGoalClearResponse,
   RuntimeGoalGetRequest,
@@ -86,6 +87,7 @@ export interface ExecutorRuntimeClient {
     data: RuntimeFileChangesRevertRequest
   ) => Promise<RuntimeFileChangesRevertResponse>
   sendRuntimeMessage: (data: RuntimeSendRequest) => Promise<RuntimeSendResponse>
+  rollbackRuntimeTask: (data: RuntimeRollbackRequest) => Promise<RuntimeSendResponse>
   getRuntimeGoal: (data: RuntimeGoalGetRequest) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (data: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (data: RuntimeGoalClearRequest) => Promise<RuntimeGoalClearResponse>

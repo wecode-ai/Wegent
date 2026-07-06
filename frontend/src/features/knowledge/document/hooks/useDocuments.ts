@@ -5,9 +5,9 @@
 /**
  * Custom hook for managing knowledge documents with optional server-side pagination.
  *
- * When `paginationEnabled` is true (classic KB mode), documents are fetched page-by-page
- * using server-side offset/limit pagination. When false (notebook mode), all documents
- * are loaded at once without pagination.
+ * When `paginationEnabled` is true, documents are fetched page-by-page using
+ * server-side offset/limit pagination. Notebook and documents views can both
+ * use pagination so large knowledge bases do not load all documents at once.
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -37,7 +37,7 @@ const DEFAULT_PAGE_SIZE = 50
 interface UseDocumentsOptions {
   knowledgeBaseId: number | null
   autoLoad?: boolean
-  /** Whether server-side pagination is enabled (classic mode: true, notebook mode: false) */
+  /** Whether server-side pagination is enabled */
   paginationEnabled?: boolean
 }
 
@@ -96,14 +96,14 @@ export function useDocuments(options: UseDocumentsOptions) {
         let response
 
         if (paginationEnabledRef.current) {
-          // Classic mode: server-side pagination
+          // Server-side pagination
           const offset = (effectivePage - 1) * effectivePageSize
           response = await listDocuments(currentKbId, {
             limit: effectivePageSize,
             offset,
           })
         } else {
-          // Notebook mode: load all documents at once
+          // Compatibility mode: load documents without explicit pagination
           response = await listDocuments(currentKbId)
         }
 
