@@ -219,6 +219,7 @@ async fn workspace_routes_list_and_download_task_files() {
     assert!(workspace_root.join("123/generated/nested").is_dir());
 
     let file_response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/filesystem/file?path=/workspace/123/README.md")
@@ -238,6 +239,103 @@ async fn workspace_routes_list_and_download_task_files() {
             .to_bytes(),
         "hello workspace"
     );
+
+    let directory_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/filesystem/file?path=/workspace/123/src")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(directory_response.status(), StatusCode::OK);
+    assert_eq!(
+        directory_response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap(),
+        "application/zip"
+    );
+    let archive = directory_response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    assert!(archive.starts_with(b"PK"));
+    assert!(archive
+        .windows(b"main.rs".len())
+        .any(|window| window == b"main.rs"));
+
+    let oversized_file = workspace_root.join("123/oversized.bin");
+    fs::File::create(&oversized_file)
+        .unwrap()
+        .set_len(501 * 1024 * 1024)
+        .unwrap();
+    let oversized_file_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/filesystem/file?path=/workspace/123/oversized.bin")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        oversized_file_response.status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+
+    let oversized_dir = workspace_root.join("123/oversized-dir");
+    fs::create_dir_all(&oversized_dir).unwrap();
+    fs::File::create(oversized_dir.join("data.bin"))
+        .unwrap()
+        .set_len(501 * 1024 * 1024)
+        .unwrap();
+    let oversized_dir_response = app
+        .oneshot(
+            Request::builder()
+                .uri("/filesystem/file?path=/workspace/123/oversized-dir")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        oversized_dir_response.status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn workspace_directory_download_rejects_symbolic_links() {
+    let _lock = env_lock().lock().await;
+    let workspace_root = unique_dir("executor-http-workspace-symlink");
+    let outside_dir = unique_dir("executor-http-outside-secret");
+    fs::create_dir_all(workspace_root.join("123/src")).unwrap();
+    fs::create_dir_all(&outside_dir).unwrap();
+    let outside_secret = outside_dir.join("secret.txt");
+    fs::write(&outside_secret, "outside secret").unwrap();
+    std::os::unix::fs::symlink(&outside_secret, workspace_root.join("123/src/secret-link"))
+        .unwrap();
+    let _workspace = EnvGuard::set("WORKSPACE_ROOT", &workspace_root.display().to_string());
+    let app = create_router(AppState::new(RecordingRunner::default()));
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/filesystem/file?path=/workspace/123/src")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -356,6 +454,7 @@ async fn envd_files_endpoint_accepts_multipart_uploads_under_home() {
     assert_eq!(fs::read_to_string(&target).unwrap(), "hello envd");
 
     let download = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri(format!("/files?path={}", target.display()))
@@ -369,6 +468,81 @@ async fn envd_files_endpoint_accepts_multipart_uploads_under_home() {
         download.into_body().collect().await.unwrap().to_bytes(),
         "hello envd"
     );
+
+    let directory = home.join("bundle");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("hello.txt"), "hello zip").unwrap();
+    let directory_download = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/files?path={}", directory.display()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(directory_download.status(), StatusCode::OK);
+    assert_eq!(
+        directory_download
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap(),
+        "application/zip"
+    );
+    let archive = directory_download
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes();
+    assert!(archive.starts_with(b"PK"));
+    assert!(archive
+        .windows(b"hello.txt".len())
+        .any(|window| window == b"hello.txt"));
+
+    let oversized = home.join("oversized.bin");
+    fs::File::create(&oversized)
+        .unwrap()
+        .set_len(501 * 1024 * 1024)
+        .unwrap();
+    let oversized_download = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/files?path={}", oversized.display()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(oversized_download.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn envd_files_endpoint_uses_env_download_size_limit() {
+    let _lock = env_lock().lock().await;
+    let home = unique_dir("executor-http-envd-download-limit");
+    fs::create_dir_all(&home).unwrap();
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _limit = EnvGuard::set("MAX_WORKSPACE_DOWNLOAD_MB", "1");
+    let app = create_router(AppState::new(RecordingRunner::default()));
+    let oversized = home.join("oversized.bin");
+    fs::File::create(&oversized)
+        .unwrap()
+        .set_len(2 * 1024 * 1024)
+        .unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/files?path={}", oversized.display()))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 #[tokio::test]

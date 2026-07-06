@@ -11,6 +11,7 @@ import { getToken } from '@/apis/user'
 import { type RemoteWorkspaceTreeEntry, remoteWorkspaceApis } from '@/apis/remoteWorkspace'
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -18,17 +19,20 @@ import {
 } from '@/components/ui/dialog'
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery'
 import { useTranslation } from '@/hooks/useTranslation'
+import { X } from 'lucide-react'
 
 import { RemoteWorkspaceDialogDesktop } from './RemoteWorkspaceDialogDesktop'
 import { RemoteWorkspaceDialogMobile } from './RemoteWorkspaceDialogMobile'
 import { type RemoteWorkspaceDirectoryCache } from './RemoteWorkspaceDirectoryTree'
 import {
   buildBreadcrumbSegments,
+  createStoredZip,
   getParentPath,
   normalizeWorkspacePathInput,
   resolvePreviewKind,
   sortTreeEntries,
   type SortOption,
+  type ZipFileInput,
 } from './remote-workspace-utils'
 
 type RemoteWorkspaceDialogProps = {
@@ -155,7 +159,7 @@ export function RemoteWorkspaceDialog({
         // Create temporary link and trigger download
         const link = document.createElement('a')
         link.href = blobUrl
-        link.download = entry.name
+        link.download = entry.is_directory ? `${entry.name}.zip` : entry.name
         document.body.appendChild(link)
         link.click()
         document.body.removeChild(link)
@@ -167,6 +171,64 @@ export function RemoteWorkspaceDialog({
       }
     },
     [taskId]
+  )
+
+  const handleDownloadFiles = useCallback(
+    async (entries: RemoteWorkspaceTreeEntry[]) => {
+      if (entries.length === 0) {
+        return
+      }
+      if (entries.length === 1) {
+        await handleDownloadFile(entries[0])
+        return
+      }
+
+      try {
+        const token = getToken()
+        const fileEntries = entries.filter(entry => !entry.is_directory)
+        const directoryEntries = entries.filter(entry => entry.is_directory)
+
+        for (const entry of directoryEntries) {
+          await handleDownloadFile(entry)
+        }
+
+        if (fileEntries.length === 0) {
+          return
+        }
+
+        const zipFiles: ZipFileInput[] = []
+
+        for (const entry of fileEntries) {
+          const url = remoteWorkspaceApis.getFileUrl(taskId, entry.path, 'attachment')
+          const response = await fetch(url, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          })
+
+          if (!response.ok) {
+            throw new Error('fetch failed')
+          }
+
+          zipFiles.push({
+            name: entry.path.startsWith(`${rootPath}/`)
+              ? entry.path.slice(rootPath.length + 1)
+              : entry.name,
+            data: new Uint8Array(await response.arrayBuffer()),
+          })
+        }
+
+        const blobUrl = URL.createObjectURL(createStoredZip(zipFiles))
+        const link = document.createElement('a')
+        link.href = blobUrl
+        link.download = 'task-files.zip'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(blobUrl)
+      } catch {
+        // Error handling - could add toast notification here
+      }
+    },
+    [handleDownloadFile, rootPath, taskId]
   )
 
   useEffect(() => {
@@ -309,6 +371,16 @@ export function RemoteWorkspaceDialog({
   const breadcrumbs = useMemo(
     () => buildBreadcrumbSegments(rootPath, currentPath),
     [currentPath, rootPath]
+  )
+  const currentDirectoryEntry = useMemo<RemoteWorkspaceTreeEntry>(
+    () => ({
+      name: currentPath.split('/').filter(Boolean).at(-1) || 'workspace',
+      path: currentPath,
+      is_directory: true,
+      size: 0,
+      modified_at: null,
+    }),
+    [currentPath]
   )
 
   useEffect(() => {
@@ -495,7 +567,18 @@ export function RemoteWorkspaceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!flex !h-[85vh] !w-[96vw] !max-w-[1680px] !flex-col p-0 gap-0 overflow-hidden">
+      <DialogContent
+        className="!flex !h-[85vh] !w-[96vw] !max-w-[1680px] !flex-col p-0 gap-0 overflow-hidden"
+        hideCloseButton
+        preventEscapeClose={isPreviewDialogOpen}
+        preventOutsideClick={isPreviewDialogOpen}
+      >
+        {!isPreviewDialogOpen && (
+          <DialogClose className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+            <X className="h-4 w-4" />
+            <span className="sr-only">Close</span>
+          </DialogClose>
+        )}
         <DialogHeader className="shrink-0 px-6 py-4 border-b border-border">
           <DialogTitle>{t('remote_workspace.title')}</DialogTitle>
           <DialogDescription className="sr-only">{t('remote_workspace.title')}</DialogDescription>
@@ -540,6 +623,7 @@ export function RemoteWorkspaceDialog({
             t={t}
             rootPath={rootPath}
             currentPath={currentPath}
+            currentDirectoryEntry={currentDirectoryEntry}
             breadcrumbs={breadcrumbs}
             directoryCache={directoryCache}
             expandedDirectoryPaths={expandedDirectoryPaths}
@@ -559,6 +643,7 @@ export function RemoteWorkspaceDialog({
             canGoParent={canGoParent}
             isPreviewDialogOpen={isPreviewDialogOpen}
             onDownload={handleDownloadFile}
+            onDownloadSelected={handleDownloadFiles}
             onGoRoot={() => navigateToDirectory(rootPath)}
             onGoParent={handleGoParent}
             onRefresh={() =>

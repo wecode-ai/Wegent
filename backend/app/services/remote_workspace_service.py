@@ -25,6 +25,7 @@ from app.services.adapters.task_kinds import task_kinds_service
 WORKSPACE_ROOT = "/workspace"
 SANDBOX_HOME_ROOT = "/home/user"
 SANDBOX_RUNNING_STATUS = "running"
+REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS = 130.0
 LOG_PREVIEW_LIMIT = 300
 logger = logging.getLogger(__name__)
 
@@ -204,7 +205,10 @@ class RemoteWorkspaceService:
                 path=normalized_path,
             )
 
-        filename = posixpath.basename(normalized_path) or "download"
+        filename = self._download_filename(
+            path=normalized_path,
+            content_type=content_type,
+        )
         response = StreamingResponse(
             iter([content]),
             media_type=content_type or "application/octet-stream",
@@ -223,6 +227,14 @@ class RemoteWorkspaceService:
             sandbox_payload.get("base_url") if sandbox_payload else None,
         )
         return response
+
+    def _download_filename(self, path: str, content_type: str | None) -> str:
+        filename = posixpath.basename(path) or "download"
+        media_type = (content_type or "").split(";", maxsplit=1)[0].strip().lower()
+        if media_type in {"application/zip", "application/x-zip-compressed"}:
+            if not filename.lower().endswith(".zip"):
+                return f"{filename}.zip"
+        return filename
 
     def _build_content_disposition(self, disposition: str, filename: str) -> str:
         try:
@@ -632,7 +644,7 @@ class RemoteWorkspaceService:
         )
 
         try:
-            with httpx.Client(timeout=self.request_timeout) as client:
+            with httpx.Client(timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
                 response = client.get(
                     file_url,
                     params={"path": path},
@@ -769,7 +781,7 @@ class RemoteWorkspaceService:
             params["executor_name"] = executor_name
 
         try:
-            with httpx.Client(timeout=self.request_timeout) as client:
+            with httpx.Client(timeout=REMOTE_WORKSPACE_FILE_TIMEOUT_SECONDS) as client:
                 response = client.get(
                     file_url,
                     params=params,
