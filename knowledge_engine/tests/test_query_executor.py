@@ -262,9 +262,7 @@ async def test_query_executor_uses_original_query_as_partial_plan_fallback() -> 
 
 
 @pytest.mark.asyncio
-async def test_query_executor_applies_qa_pair_hybrid_policy_for_system_default_vector() -> (
-    None
-):
+async def test_query_executor_applies_qa_pair_hybrid_policy_for_vector_mode() -> None:
     from knowledge_engine.query import QueryExecutor
 
     storage_backend = MagicMock()
@@ -284,13 +282,11 @@ async def test_query_executor_applies_qa_pair_hybrid_policy_for_system_default_v
             "top_k": 4,
             "score_threshold": 0.5,
             "retrieval_mode": "vector",
-            "retrieval_mode_source": "system_default",
         },
     )
 
     retrieval_setting = storage_backend.retrieve.call_args.kwargs["retrieval_setting"]
     assert retrieval_setting["retrieval_mode"] == "hybrid"
-    assert retrieval_setting["retrieval_mode_source"] == "qa_profile"
     assert retrieval_setting["vector_weight"] == 0.6
     assert retrieval_setting["keyword_weight"] == 0.4
     assert retrieval_setting["effective_retrieval_policy"] == "qa_pair_hybrid"
@@ -298,37 +294,6 @@ async def test_query_executor_applies_qa_pair_hybrid_policy_for_system_default_v
     assert retrieval_setting["qa_pair_count"] == 26
     assert "2025" in retrieval_setting["keywords"]
     assert "大广场模式" in retrieval_setting["phrases"]
-
-
-@pytest.mark.asyncio
-async def test_query_executor_applies_qa_pair_hybrid_policy_for_user_vector() -> None:
-    from knowledge_engine.query import QueryExecutor
-
-    storage_backend = MagicMock()
-    storage_backend.get_supported_retrieval_methods.return_value = [
-        "vector",
-        "keyword",
-        "hybrid",
-    ]
-    storage_backend.retrieve.return_value = {"records": []}
-    executor = QueryExecutor(storage_backend=storage_backend, embed_model=object())
-
-    await executor.execute(
-        knowledge_id="1",
-        query="微博 大广场模式",
-        query_plan={"retrieval_profile": "qa_pair", "qa_pair_count": 26},
-        retrieval_config={
-            "top_k": 4,
-            "score_threshold": 0.5,
-            "retrieval_mode": "vector",
-            "retrieval_mode_source": "user",
-        },
-    )
-
-    retrieval_setting = storage_backend.retrieve.call_args.kwargs["retrieval_setting"]
-    assert retrieval_setting["retrieval_mode"] == "hybrid"
-    assert retrieval_setting["retrieval_mode_source"] == "qa_profile"
-    assert retrieval_setting["effective_retrieval_policy"] == "qa_pair_hybrid"
 
 
 @pytest.mark.asyncio
@@ -350,7 +315,6 @@ async def test_query_executor_keeps_vector_when_qa_pair_hybrid_is_not_supported(
             "top_k": 4,
             "score_threshold": 0.5,
             "retrieval_mode": "vector",
-            "retrieval_mode_source": "system_default",
         },
     )
 

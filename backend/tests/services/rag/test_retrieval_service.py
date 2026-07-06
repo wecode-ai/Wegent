@@ -121,7 +121,7 @@ def test_build_qa_query_plan_uses_sqlite_json_and_scope_filter():
 
 
 @pytest.mark.asyncio
-async def test_retrieve_from_kb_internal_builds_qa_plan_for_vector_even_when_source_is_user():
+async def test_retrieve_from_kb_internal_builds_qa_plan_for_vector_mode():
     from app.services.rag.retrieval_service import RetrievalService
     from shared.models import (
         RemoteKnowledgeBaseQueryConfig,
@@ -146,10 +146,7 @@ async def test_retrieve_from_kb_internal_builds_qa_plan_for_vector_even_when_sou
             model_namespace="default",
             resolved_config={},
         ),
-        retrieval_config=RuntimeRetrievalConfig(
-            retrieval_mode="vector",
-            retrieval_mode_source="user",
-        ),
+        retrieval_config=RuntimeRetrievalConfig(retrieval_mode="vector"),
     )
 
     with patch.object(

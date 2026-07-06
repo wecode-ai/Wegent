@@ -625,7 +625,6 @@ class KnowledgeService:
                     current_retrieval_config["retrieval_mode"] = (
                         data.retrieval_config.retrieval_mode
                     )
-                    current_retrieval_config["retrieval_mode_source"] = "user"
                 if data.retrieval_config.top_k is not None:
                     current_retrieval_config["top_k"] = data.retrieval_config.top_k
                 if data.retrieval_config.score_threshold is not None:

@@ -18,7 +18,6 @@ class _RuntimeConfigModel(BaseModel):
 
 
 RetrievalMode = Literal["vector", "keyword", "hybrid"]
-RetrievalModeSource = Literal["user", "system_default", "qa_profile"]
 
 
 class RuntimeRetrieverConfig(_RuntimeConfigModel):
@@ -43,6 +42,5 @@ class RuntimeRetrievalConfig(_RuntimeConfigModel):
     top_k: int = Field(default=20, gt=0)
     score_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     retrieval_mode: RetrievalMode = "vector"
-    retrieval_mode_source: RetrievalModeSource | None = None
     vector_weight: float | None = Field(default=None, ge=0.0, le=1.0)
     keyword_weight: float | None = Field(default=None, ge=0.0, le=1.0)

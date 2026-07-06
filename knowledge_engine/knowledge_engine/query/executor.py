@@ -98,8 +98,6 @@ class QueryExecutor:
             ),
             "retrieval_mode": config.get("retrieval_mode") or "vector",
         }
-        if "retrieval_mode_source" in config:
-            retrieval_setting["retrieval_mode_source"] = config["retrieval_mode_source"]
         if "vector_weight" in config:
             retrieval_setting["vector_weight"] = config["vector_weight"]
         if "keyword_weight" in config:
@@ -145,7 +143,6 @@ class QueryExecutor:
 
         retrieval_setting["retrieval_mode_before_policy"] = "vector"
         retrieval_setting["retrieval_mode"] = "hybrid"
-        retrieval_setting["retrieval_mode_source"] = "qa_profile"
         retrieval_setting.setdefault("vector_weight", 0.6)
         retrieval_setting.setdefault("keyword_weight", 0.4)
         retrieval_setting["effective_retrieval_policy"] = "qa_pair_hybrid"
