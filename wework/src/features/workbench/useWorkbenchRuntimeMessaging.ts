@@ -26,6 +26,7 @@ import type {
   ChatSendPayload,
   RuntimeTaskSummary,
   ModelOptions,
+  ProjectWithTasks,
   RuntimeDeviceWorkspace,
   RuntimeSendRequest,
   RuntimeTaskAddress,
@@ -36,7 +37,11 @@ import type {
 } from '@/types/api'
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { normalizeTurnFileChanges } from './turnFileChanges'
-import type { RuntimePaneActionOptions, SendCurrentInputOptions } from './workbenchContextTypes'
+import type {
+  CreateTemporaryRuntimeTaskOptions,
+  RuntimePaneActionOptions,
+  SendCurrentInputOptions,
+} from './workbenchContextTypes'
 import { DEVICE_STATUS_LABELS, normalizeGuidanceError } from './workbenchProviderHelpers'
 import type { WorkbenchAction } from './workbenchReducer'
 import {
@@ -109,6 +114,13 @@ function isLocalDeviceTarget(
   if (!deviceId) return false
   const device = findWorkbenchDevice(devices, deviceId)
   return device?.device_type === 'local'
+}
+
+function runtimeThreadId(address?: RuntimeTaskAddress | null): string | null {
+  const handle = address?.runtimeHandle
+  if (!isRecord(handle)) return null
+  const threadId = handle.sessionId ?? handle.session_id ?? handle.threadId ?? handle.thread_id
+  return typeof threadId === 'string' && threadId.trim() ? threadId : null
 }
 
 export function useWorkbenchRuntimeMessaging({
@@ -193,10 +205,11 @@ export function useWorkbenchRuntimeMessaging({
   const buildSendPayload = useCallback(
     (
       message: string,
-      sourceAttachments?: Attachment[]
+      sourceAttachments?: Attachment[],
+      projectOverride?: ProjectWithTasks | null
     ): { payload: ChatSendPayload; activeDeviceId?: string } | null => {
       if (!state.defaultTeam) return null
-      const activeProject = state.currentProject
+      const activeProject = projectOverride === undefined ? state.currentProject : projectOverride
       const selectedProjectWorkspace = findProjectDeviceWorkspace(
         state.runtimeWork,
         activeProject?.id,
@@ -304,7 +317,12 @@ export function useWorkbenchRuntimeMessaging({
       options?: Pick<
         SendCurrentInputOptions,
         'initialGoal' | 'onError' | 'onRuntimeTaskOptimisticOpen'
-      >
+      > & {
+        ephemeral?: boolean
+        openInMainPane?: boolean
+        refreshWorkListsOnResolve?: boolean
+        sideSource?: RuntimeTaskAddress | null
+      }
     ): Promise<RuntimeTaskAddress | false> => {
       const projectId = payload.project_id && payload.project_id > 0 ? payload.project_id : null
       const selectedModel =
@@ -324,7 +342,13 @@ export function useWorkbenchRuntimeMessaging({
         'projectId' | 'deviceWorkspaceId' | 'deviceId' | 'workspacePath'
       >
       let optimisticDeviceId: string
-      if (projectId) {
+      if (options?.sideSource?.deviceId && options.sideSource.workspacePath) {
+        optimisticDeviceId = options.sideSource.deviceId
+        runtimeTaskTarget = {
+          deviceId: options.sideSource.deviceId,
+          workspacePath: options.sideSource.workspacePath,
+        }
+      } else if (projectId) {
         if (!selectedProjectWorkspace) {
           reportSendBlocked('请选择任务运行位置', undefined, options)
           return false
@@ -392,6 +416,8 @@ export function useWorkbenchRuntimeMessaging({
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
         execution: payload.execution,
+        ...(options?.ephemeral ? { ephemeral: true } : {}),
+        ...(options?.sideSource ? { sideSource: options.sideSource } : {}),
         ...(options?.initialGoal ? { initialGoal: options.initialGoal } : {}),
       }
       debugRuntimeCreateFlow('create-request-built', {
@@ -434,7 +460,9 @@ export function useWorkbenchRuntimeMessaging({
         optimisticWorkspacePath: optimisticWorkspacePath ?? null,
       })
       options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
-      runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
+      if (options?.openInMainPane !== false) {
+        runtimeTasks.openRuntimeTaskView(optimisticAddress, runtimeProject, { navigate: true })
+      }
       attachmentSelection.resetAttachments()
 
       try {
@@ -462,7 +490,7 @@ export function useWorkbenchRuntimeMessaging({
           responseHasTaskId: Boolean(response.taskId),
         })
         const resolvedWorkspacePath = address.workspacePath ?? optimisticWorkspacePath
-        if (resolvedWorkspacePath) {
+        if (resolvedWorkspacePath && !options?.ephemeral) {
           dispatch({
             type: 'runtime_task_optimistic_upserted',
             project: runtimeProject,
@@ -492,11 +520,17 @@ export function useWorkbenchRuntimeMessaging({
           options?.onRuntimeTaskOptimisticOpen?.(address, {
             previousAddress: optimisticAddress,
           })
-          runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
+          if (options?.openInMainPane !== false) {
+            runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
+          }
         }
-        await refreshWorkLists()
-        runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
-        dispatch({ type: 'blank_chat_committed' })
+        if (options?.refreshWorkListsOnResolve !== false) {
+          await refreshWorkLists()
+        }
+        if (options?.openInMainPane !== false) {
+          runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
+          dispatch({ type: 'blank_chat_committed' })
+        }
         return address
       } catch (error) {
         dispatch({ type: 'runtime_task_optimistic_removed', address: optimisticAddress })
@@ -748,6 +782,62 @@ export function useWorkbenchRuntimeMessaging({
     ]
   )
 
+  const createTemporaryRuntimeTask = useCallback(
+    async (
+      input: string,
+      options?: CreateTemporaryRuntimeTaskOptions
+    ): Promise<RuntimeTaskAddress | false> => {
+      const message = input.trim()
+      if (!message) {
+        reportSendBlocked('请输入内容后再发送', undefined, options)
+        return false
+      }
+      if (!options?.source || !runtimeThreadId(options.source)) {
+        reportSendBlocked('请先打开一个已有对话后再开始临时聊天', undefined, options)
+        return false
+      }
+
+      const prepared = buildSendPayload(message, undefined, options?.project)
+      if (!prepared) {
+        reportSendBlocked(
+          'Wework default team is not configured',
+          { hasDefaultTeam: Boolean(state.defaultTeam) },
+          options
+        )
+        return false
+      }
+
+      const selectedModel =
+        modelSelection.getSelectedModel?.() ??
+        modelSelection.selectedModel ??
+        resolveAutomaticModel(modelSelection.models)
+      if (
+        prepared.activeDeviceId &&
+        isConfiguredLocalModel(selectedModel) &&
+        !isLocalDeviceTarget(state.devices, prepared.activeDeviceId)
+      ) {
+        reportSendBlocked(i18n.t('workbench.local_model_cloud_device_blocked'), undefined, options)
+        return false
+      }
+
+      return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
+        onError: options?.onError,
+        ephemeral: true,
+        sideSource: options?.source,
+        openInMainPane: false,
+        refreshWorkListsOnResolve: false,
+      })
+    },
+    [
+      buildSendPayload,
+      modelSelection,
+      reportSendBlocked,
+      sendPreparedRuntimeMessage,
+      state.defaultTeam,
+      state.devices,
+    ]
+  )
+
   const loadTurnFileChangesDiff = useCallback(
     async (subtaskId: string, messagesOverride?: WorkbenchMessage[]) => {
       const messageSource = messagesOverride ?? []
@@ -880,6 +970,7 @@ export function useWorkbenchRuntimeMessaging({
     sendRuntimePaneMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
+    createTemporaryRuntimeTask,
     retryFailedMessage,
     pauseCurrentResponse,
     loadTurnFileChangesDiff,

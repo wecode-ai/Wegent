@@ -724,6 +724,9 @@ export function WorkbenchProvider({
   const stableSendRuntimePaneMessage = useStableEvent(runtimeMessaging.sendRuntimePaneMessage)
   const stableCancelRuntimePaneTask = useStableEvent(runtimeMessaging.cancelRuntimePaneTask)
   const stableSendCurrentInput = useStableEvent(runtimeMessaging.sendCurrentInput)
+  const stableCreateTemporaryRuntimeTask = useStableEvent(
+    runtimeMessaging.createTemporaryRuntimeTask
+  )
   const stableRetryFailedMessage = useStableEvent(runtimeMessaging.retryFailedMessage)
   const stablePauseCurrentResponse = useStableEvent(runtimeMessaging.pauseCurrentResponse)
   const stableLoadTurnFileChangesDiff = useStableEvent(runtimeMessaging.loadTurnFileChangesDiff)
@@ -954,6 +957,7 @@ export function WorkbenchProvider({
     sendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
     cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
     sendCurrentInput: runtimeMessaging.sendCurrentInput,
+    createTemporaryRuntimeTask: runtimeMessaging.createTemporaryRuntimeTask,
     retryFailedMessage: runtimeMessaging.retryFailedMessage,
     pauseCurrentResponse: runtimeMessaging.pauseCurrentResponse,
     loadTurnFileChangesDiff: runtimeMessaging.loadTurnFileChangesDiff,
@@ -1023,6 +1027,7 @@ export function WorkbenchProvider({
       sendRuntimePaneMessage: stableSendRuntimePaneMessage,
       cancelRuntimePaneTask: stableCancelRuntimePaneTask,
       sendCurrentInput: stableSendCurrentInput,
+      createTemporaryRuntimeTask: stableCreateTemporaryRuntimeTask,
       retryFailedMessage: stableRetryFailedMessage,
       pauseCurrentResponse: stablePauseCurrentResponse,
       loadTurnFileChangesDiff: stableLoadTurnFileChangesDiff,
@@ -1047,6 +1052,7 @@ export function WorkbenchProvider({
       stableCreateEnvironmentBranch,
       stableCreateGitWorkspaceProject,
       stableCreateProject,
+      stableCreateTemporaryRuntimeTask,
       stableDeleteDeviceWorkspace,
       stableForkCurrentRuntimeTask,
       stableGetDeviceHomeDirectory,

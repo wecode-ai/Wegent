@@ -27,6 +27,7 @@ pub(crate) struct RuntimeTaskLink {
     pub updated_at: i64,
     pub runtime_handle: Value,
     pub parent: Option<Value>,
+    pub ephemeral: bool,
     #[serde(skip)]
     pub list_order: Option<usize>,
     #[serde(skip)]
@@ -47,6 +48,7 @@ impl RuntimeTaskLink {
             updated_at: now_ms(),
             runtime_handle: json!({}),
             parent: None,
+            ephemeral: false,
             list_order: None,
             group_workspace_path: None,
         }
@@ -72,6 +74,7 @@ impl RuntimeTaskLink {
             updated_at: now_ms(),
             runtime_handle,
             parent: Some(parent),
+            ephemeral: false,
             list_order: None,
             group_workspace_path: None,
         }
@@ -124,7 +127,8 @@ impl RuntimeTaskLink {
                 .as_ref()
                 .map(|link| link.runtime_handle.clone())
                 .unwrap_or_else(|| json!({})),
-            parent: local_link.and_then(|link| link.parent),
+            parent: local_link.as_ref().and_then(|link| link.parent.clone()),
+            ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
             list_order: None,
             group_workspace_path: None,
         }
@@ -162,6 +166,7 @@ impl Default for RuntimeTaskLink {
             updated_at: now_ms(),
             runtime_handle: json!({}),
             parent: None,
+            ephemeral: false,
             list_order: None,
             group_workspace_path: None,
         }

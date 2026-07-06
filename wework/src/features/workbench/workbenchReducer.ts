@@ -17,6 +17,8 @@ import { getRuntimeTaskWorkspacePath } from './workbenchRuntimeHelpers'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
+const OPTIMISTIC_TASK_PRESERVE_MS = 2 * 60 * 1000
+
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
   defaultTeam: null,
@@ -288,7 +290,7 @@ function mergeRuntimeTasks(
       const nextTask = nextById.get(task.taskId)
       if (nextTask) return nextTask
       if (
-        isOptimisticRuntimeTask(task) &&
+        isFreshOptimisticRuntimeTask(task) &&
         !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task)) &&
         !nextTasks.some(nextTask => isResolvedOptimisticRuntimeTask(task, nextTask))
       ) {
@@ -308,6 +310,13 @@ function mergeRuntimeTasks(
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
   return task.status === 'creating'
+}
+
+function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
+  if (!isOptimisticRuntimeTask(task)) return false
+  const rawTimestamp = task.updatedAt ?? task.createdAt
+  const timestamp = typeof rawTimestamp === 'number' ? rawTimestamp : Date.parse(rawTimestamp ?? '')
+  return Number.isNaN(timestamp) || Date.now() - timestamp < OPTIMISTIC_TASK_PRESERVE_MS
 }
 
 function isResolvedOptimisticRuntimeTask(
@@ -354,7 +363,7 @@ function optimisticWorkspaceOnly(
 ): RuntimeDeviceWorkspace | null {
   const tasks = workspace.tasks.filter(
     task =>
-      isOptimisticRuntimeTask(task) &&
+      isFreshOptimisticRuntimeTask(task) &&
       !resolvedTaskKeys.has(runtimeTaskKey(workspace.deviceId, task))
   )
   return tasks.length > 0 ? { ...workspace, tasks } : null

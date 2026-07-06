@@ -67,6 +67,17 @@ const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
+struct SpawnTurnRequest {
+    local_task_id: String,
+    request: ExecutionRequest,
+    direct_thread_id: Option<String>,
+    fork_thread_id: Option<String>,
+    fork_thread_path: Option<String>,
+    resume_thread_id: Option<String>,
+    initial_thread_name: Option<String>,
+    initial_thread_goal: Option<Value>,
+}
+
 fn standalone_chat_workspace_path(
     local_task_id: &str,
     request: &ExecutionRequest,
@@ -237,6 +248,11 @@ struct RuntimeThreadEventRoute {
     event_mapper: CodexNotificationEventMapper,
     cache_mapper: CodexNotificationCacheMapper,
     active: bool,
+}
+
+struct SideSourceThread {
+    thread_id: String,
+    thread_path: Option<String>,
 }
 
 impl RuntimeThreadEventRoute {
@@ -1016,18 +1032,28 @@ impl RuntimeWorkRpcHandler {
             workspace_path.clone(),
             title.clone(),
         );
+        link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
         self.upsert_local_task(link);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
-        self.spawn_turn(
-            local_task_id.clone(),
+        let mut side_source = side_source_thread(&payload);
+        if let Some(source) = &mut side_source {
+            if source.thread_path.is_none() {
+                source.thread_path = self.thread_path_for_id(&source.thread_id).await;
+            }
+        }
+        self.spawn_turn(SpawnTurnRequest {
+            local_task_id: local_task_id.clone(),
             request,
-            None,
-            Some(title),
+            direct_thread_id: None,
+            fork_thread_id: side_source.as_ref().map(|source| source.thread_id.clone()),
+            fork_thread_path: side_source.and_then(|source| source.thread_path),
+            resume_thread_id: None,
+            initial_thread_name: Some(title),
             initial_thread_goal,
-        );
+        });
 
         Ok(json!({
             "success": true,
@@ -1112,7 +1138,21 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
-        self.spawn_turn(local_task_id.clone(), request, Some(thread_id), None, None);
+        let ephemeral =
+            request.ephemeral || existing_link.as_ref().is_some_and(|link| link.ephemeral);
+        let direct_thread_id = ephemeral.then(|| thread_id.clone());
+        let resume_thread_id = (!ephemeral).then_some(thread_id);
+
+        self.spawn_turn(SpawnTurnRequest {
+            local_task_id: local_task_id.clone(),
+            request,
+            direct_thread_id,
+            fork_thread_id: None,
+            fork_thread_path: None,
+            resume_thread_id,
+            initial_thread_name: None,
+            initial_thread_goal: None,
+        });
 
         Ok(json!({
             "success": true,
@@ -1219,6 +1259,7 @@ impl RuntimeWorkRpcHandler {
             link.workspace_path = workspace_path.to_owned();
             link.status = "running".to_owned();
             link.running = true;
+            link.ephemeral = link.ephemeral || request.ephemeral;
             link.updated_at = now_ms();
             if let Some(message) = message.clone() {
                 append_runtime_handle_message(&mut link.runtime_handle, message);
@@ -1234,6 +1275,7 @@ impl RuntimeWorkRpcHandler {
             prompt_text(&request.prompt),
         );
         link.thread_id = Some(thread_id.to_owned());
+        link.ephemeral = request.ephemeral;
         if let Some(message) = message {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
@@ -1386,17 +1428,31 @@ impl RuntimeWorkRpcHandler {
         Ok(task_action_success(&link))
     }
 
-    fn spawn_turn(
-        &self,
-        local_task_id: String,
-        request: ExecutionRequest,
-        resume_thread_id: Option<String>,
-        initial_thread_name: Option<String>,
-        initial_thread_goal: Option<Value>,
-    ) {
+    fn spawn_turn(&self, turn: SpawnTurnRequest) {
+        let SpawnTurnRequest {
+            local_task_id,
+            request,
+            direct_thread_id,
+            fork_thread_id,
+            fork_thread_path,
+            resume_thread_id,
+            initial_thread_name,
+            initial_thread_goal,
+        } = turn;
         let mut fields = task_fields(&request.task_id, &request.subtask_id);
         fields.push(("local_task_id", local_task_id.clone()));
+        fields.push(("direct", direct_thread_id.is_some().to_string()));
+        fields.push(("fork", fork_thread_id.is_some().to_string()));
         fields.push(("resume", resume_thread_id.is_some().to_string()));
+        if let Some(thread_id) = &direct_thread_id {
+            fields.push(("direct_thread_id", thread_id.clone()));
+        }
+        if let Some(thread_id) = &fork_thread_id {
+            fields.push(("fork_thread_id", thread_id.clone()));
+        }
+        if let Some(path) = &fork_thread_path {
+            fields.push(("fork_thread_path", path.clone()));
+        }
         if let Some(thread_id) = &resume_thread_id {
             fields.push(("thread_id", thread_id.clone()));
         }
@@ -1468,6 +1524,9 @@ impl RuntimeWorkRpcHandler {
                 .run_turn_with_cancel(
                     request.clone(),
                     CodexAppServerTurnOptions {
+                        direct_thread_id,
+                        fork_thread_id,
+                        fork_thread_path,
                         resume_thread_id,
                         initial_thread_name,
                         initial_thread_goal,
@@ -1915,6 +1974,9 @@ impl RuntimeWorkRpcHandler {
 
         for thread in self.codex_threads(archived).await {
             if let Some(mut link) = self.link_from_thread(&thread) {
+                if link.ephemeral {
+                    continue;
+                }
                 if archived {
                     link.status = "archived".to_owned();
                     link.running = false;
@@ -1934,6 +1996,9 @@ impl RuntimeWorkRpcHandler {
         }
 
         for mut link in self.local_task_links(true) {
+            if link.ephemeral {
+                continue;
+            }
             let link_archived = link.status == "archived";
             if link_archived != archived {
                 continue;
@@ -2044,6 +2109,15 @@ impl RuntimeWorkRpcHandler {
             ],
         );
         threads
+    }
+
+    async fn thread_path_for_id(&self, thread_id: &str) -> Option<String> {
+        for thread in self.codex_threads(false).await {
+            if string_field(&thread, "id").as_deref() == Some(thread_id) {
+                return string_field(&thread, "path").filter(|path| !path.trim().is_empty());
+            }
+        }
+        None
     }
 
     fn visible_links_for_projects(
@@ -2412,6 +2486,15 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or_else(|| "~/.codex".to_owned());
         let codex_thread = thread_with_rollout_running_status(thread);
         let mut link = RuntimeTaskLink::from_thread(&codex_thread, local_link, workspace_path);
+        if let Some(path) = string_field(&codex_thread, "path") {
+            let mut runtime_handle = link
+                .runtime_handle
+                .as_object()
+                .cloned()
+                .unwrap_or_else(Map::new);
+            runtime_handle.insert("threadPath".to_owned(), Value::String(path));
+            link.runtime_handle = Value::Object(runtime_handle);
+        }
         if local_active {
             link.status = "running".to_owned();
             link.running = true;
@@ -3294,6 +3377,34 @@ fn initial_thread_goal_from_payload(payload: &Value) -> Option<Value> {
         .or_else(|| payload.get("initial_goal"))
         .filter(|goal| goal.is_object())
         .cloned()
+}
+
+fn side_source_thread(payload: &Value) -> Option<SideSourceThread> {
+    let source = payload
+        .get("sideSource")
+        .or_else(|| payload.get("side_source"))?;
+    let handle = source
+        .get("runtimeHandle")
+        .or_else(|| source.get("runtime_handle"));
+    let thread_id = string_field(source, "threadId")
+        .or_else(|| string_field(source, "thread_id"))
+        .or_else(|| handle.and_then(runtime_session_id_from_handle))
+        .filter(|thread_id| !thread_id.trim().is_empty())?;
+    let thread_path = string_field(source, "threadPath")
+        .or_else(|| string_field(source, "thread_path"))
+        .or_else(|| string_field(source, "path"))
+        .or_else(|| {
+            handle.and_then(|handle| {
+                string_field(handle, "threadPath")
+                    .or_else(|| string_field(handle, "thread_path"))
+                    .or_else(|| string_field(handle, "path"))
+            })
+        })
+        .filter(|path| !path.trim().is_empty());
+    Some(SideSourceThread {
+        thread_id,
+        thread_path,
+    })
 }
 
 fn runtime_session_id_from_handle(handle: &Value) -> Option<String> {

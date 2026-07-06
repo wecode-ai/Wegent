@@ -42,6 +42,7 @@ pub struct ExecutionRequest {
     pub kb_tool_access_mode: String,
     pub skip_git_clone: bool,
     pub new_session: bool,
+    pub ephemeral: bool,
     pub fork_runtime: Option<Value>,
     pub inherited_sessions: Vec<Value>,
     #[serde(alias = "type")]
@@ -91,6 +92,7 @@ impl Default for ExecutionRequest {
             kb_tool_access_mode: FULL_KB_TOOL_ACCESS_MODE.to_owned(),
             skip_git_clone: false,
             new_session: false,
+            ephemeral: false,
             fork_runtime: None,
             inherited_sessions: Vec::new(),
             task_type: None,
