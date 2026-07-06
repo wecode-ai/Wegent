@@ -80,6 +80,8 @@ Local Codex `auth.json` status is read through the executor's read-only `runtime
 
 It never returns plaintext contents. Wework also does not upload the local auth file by default. Auth contents enter encrypted server storage and device sync only after the user explicitly uploads the file or imports it from an online device on the cloud-connected "Model Settings" page.
 
+Wework's remaining-usage display also follows the local Codex account. The frontend first reads the local `auth.json` status; if no Codex account exists, the menu and tray show none. When a local account exists, the frontend reads the Codex app-server `account/rateLimits/read` snapshot through the local executor command `runtime.codex.rate_limits.read` and displays the remaining percentages for the 5-hour and 7-day windows. The desktop system tray refreshes these two values every 60 seconds, shows only usage percentages, does not upload auth contents, and does not substitute Backend Claude quota.
+
 ## Disconnect
 
 Disconnecting cloud only clears cloud connection storage. It does not affect:

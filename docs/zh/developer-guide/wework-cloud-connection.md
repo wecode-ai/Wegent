@@ -80,6 +80,8 @@ API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` be
 
 它不会返回明文内容。Wework 也不会默认上传本机认证文件。只有用户在已连接云端的“模型设置”页面显式上传或从在线设备导入后，认证内容才进入服务端加密存储和设备同步流程。
 
+Wework 的剩余额度展示也以本机 Codex 账号为准。前端先读取本机 `auth.json` 状态；如果没有 Codex 账号，则菜单和托盘显示“无”。如果本机已有账号，前端通过本地 executor 的 `runtime.codex.rate_limits.read` 命令读取 Codex app-server 的 `account/rateLimits/read` 快照，并展示 5 小时和 7 天窗口的剩余百分比。桌面系统托盘每 60 秒刷新一次这两个数值，只显示额度百分比，不上传认证内容，也不使用 Backend 的 Claude 额度作为替代。
+
 ## 断开连接
 
 断开云端连接只清除云端连接存储，不影响：

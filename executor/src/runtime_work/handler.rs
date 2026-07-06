@@ -326,6 +326,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.archived_conversations.list" => {
                 self.list_archived_conversations(payload).await
             }
@@ -455,6 +456,13 @@ impl RuntimeWorkRpcHandler {
             "data": models,
             "providers": provider_results,
         }))
+    }
+
+    async fn read_codex_rate_limits(&self) -> Result<Value, AppIpcError> {
+        self.codex_app_server
+            .request("account/rateLimits/read", Value::Null)
+            .await
+            .map_err(|error| AppIpcError::new("codex_rate_limits_unavailable", error))
     }
 
     async fn list_tasks(&self) -> Result<Value, AppIpcError> {
