@@ -141,8 +141,6 @@ jobs:
 
       - name: Build local executor sidecar
         working-directory: executor
-        env:
-          APP_VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
           set -euo pipefail
           cargo build --release --locked --target "${{ matrix.rust_target }}"
@@ -150,7 +148,7 @@ jobs:
           mkdir -p dist
           cp "$binary" dist/wegent-executor
           chmod 0755 dist/wegent-executor
-          WEGENT_EXECUTOR_VERSION="$APP_VERSION" dist/wegent-executor --version
+          dist/wegent-executor --version
 
       - name: Prepare bundled Codex
         working-directory: wework
