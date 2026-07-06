@@ -16,8 +16,7 @@ import { createSkillApi } from '@/api/skills'
 import { createTaskApi } from '@/api/tasks'
 import { createTeamApi } from '@/api/teams'
 import { createUserApi } from '@/api/users'
-import { getRuntimeConfig } from '@/config/runtime'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import { createChatStream } from '@/stream/chatStream'
 import type { Attachment, DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import type { AuthenticatedSocketClient } from '@wegent/chat-core'
@@ -86,9 +85,9 @@ export function createExecutorClientForWorkbenchServices(
   services: WorkbenchServices
 ): ExecutorClient {
   if (services.executorClient) return services.executorClient
-  const { runtimeMode } = getRuntimeConfig()
-  const transportKind: ExecutorTransportKind =
-    runtimeMode === 'local-first' && isTauriRuntime() ? 'local-ipc' : 'backend-relay'
+  const transportKind: ExecutorTransportKind = isLocalFirstAppRuntime()
+    ? 'local-ipc'
+    : 'backend-relay'
   if (!services.runtimeWorkApi) {
     throw new Error('Runtime work API is unavailable')
   }
@@ -105,8 +104,7 @@ export function createExecutorClientForWorkbenchServices(
 export function createDefaultWorkbenchServices(
   cloudConnection?: CloudConnectionServicesSnapshot
 ): WorkbenchServices {
-  const { runtimeMode } = getRuntimeConfig()
-  if (runtimeMode === 'local-first' && isTauriRuntime()) {
+  if (isLocalFirstAppRuntime()) {
     if (
       cloudConnection?.isConnected &&
       cloudConnection.backendUrl &&

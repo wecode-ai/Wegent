@@ -9,6 +9,7 @@ import {
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { User as UserProfile } from '@/types/api'
 
 function formatVersionTemplate(template: string, version: string): string {
@@ -23,6 +24,7 @@ interface DesktopSettingsMenuProps {
 
 export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
+  const showLogout = !isLocalFirstAppRuntime()
   const [isUsageExpanded, setIsUsageExpanded] = useState(false)
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
   const [isQuotaLoading, setIsQuotaLoading] = useState(false)
@@ -175,12 +177,14 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
           ) : null}
         </div>
       ) : null}
-      <SettingsMenuItem
-        testId="logout-menu-button"
-        icon={<LogOut className="h-4 w-4 shrink-0 text-text-secondary" />}
-        label={t('workbench.logout', '退出登录')}
-        onClick={onLogout}
-      />
+      {showLogout ? (
+        <SettingsMenuItem
+          testId="logout-menu-button"
+          icon={<LogOut className="h-4 w-4 shrink-0 text-text-secondary" />}
+          label={t('workbench.logout', '退出登录')}
+          onClick={onLogout}
+        />
+      ) : null}
     </div>
   )
 }
