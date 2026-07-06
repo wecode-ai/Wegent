@@ -1554,7 +1554,7 @@ fn tool_status(item: &Value) -> String {
             "inProgress".to_owned()
         }
     });
-    if command_exit_code(item).is_some() {
+    if is_command_status_item_type(&item_type) && command_exit_code(item).is_some() {
         "done".to_owned()
     } else if status.eq_ignore_ascii_case("failed")
         || status.eq_ignore_ascii_case("failure")
@@ -1577,6 +1577,13 @@ fn tool_status(item: &Value) -> String {
 
 fn command_exit_code(item: &Value) -> Option<i64> {
     integer_field(item, "exit_code").or_else(|| integer_field(item, "exitCode"))
+}
+
+fn is_command_status_item_type(item_type: &str) -> bool {
+    matches!(
+        item_type,
+        "commandexecution" | "shellcall" | "localshellcall" | "execcommandend"
+    )
 }
 
 fn file_changes(value: &Value) -> Option<Value> {
@@ -2642,6 +2649,50 @@ mod tests {
         let block = &messages[0]["blocks"][0];
 
         assert_eq!(block["type"], "tool");
+        assert_eq!(block["status"], "error");
+    }
+
+    #[test]
+    fn transcript_keeps_non_command_tool_failures_with_exit_code_as_error() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "id": "call-1",
+                                "type": "function_call",
+                                "call_id": "call-1",
+                                "name": "custom_tool",
+                                "arguments": "{\"path\":\"input.json\"}"
+                            }
+                        },
+                        {
+                            "type": "response_item",
+                            "payload": {
+                                "type": "function_call_output",
+                                "call_id": "call-1",
+                                "status": "failed",
+                                "output": "{\"exit_code\":2,\"message\":\"tool failed\"}",
+                                "exit_code": 2
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "custom_tool");
         assert_eq!(block["status"], "error");
     }
 

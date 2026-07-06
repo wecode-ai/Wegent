@@ -211,4 +211,35 @@ describe('emitResponseApiEvent', () => {
       toolOutput: 'spawn ENOENT',
     })
   })
+
+  test('keeps non-command tool failures with exit code as failed', () => {
+    const onBlockUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      'response.output_item.done',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        data: {
+          item: {
+            id: 'call-1',
+            type: 'function_call',
+            status: 'failed',
+            output: { exit_code: 2, message: 'tool failed' },
+            exit_code: 2,
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      blockId: 'call-1',
+      status: 'error',
+      toolOutput: { exit_code: 2, message: 'tool failed' },
+    })
+  })
 })
