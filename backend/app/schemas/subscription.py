@@ -17,6 +17,9 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.kind import ModelRef
 
+SUBSCRIPTION_MIN_TIMEOUT_SECONDS = 60
+SUBSCRIPTION_MAX_TIMEOUT_SECONDS = 24 * 60 * 60
+
 
 class SubscriptionTaskType(str, Enum):
     """Subscription task type enumeration."""
@@ -258,9 +261,9 @@ class SubscriptionSpec(BaseModel):
     retryCount: int = Field(0, ge=0, le=3, description="Retry count on failure (0-3)")
     timeoutSeconds: int = Field(
         600,
-        ge=60,
-        le=3600,
-        description="Execution timeout in seconds (60-3600, default: 600)",
+        ge=SUBSCRIPTION_MIN_TIMEOUT_SECONDS,
+        le=SUBSCRIPTION_MAX_TIMEOUT_SECONDS,
+        description="Execution timeout in seconds (60-86400, default: 600)",
     )
     enabled: bool = Field(True, description="Whether the subscription is enabled")
     executionTarget: SubscriptionExecutionTarget = Field(
@@ -398,7 +401,10 @@ class SubscriptionBase(BaseModel):
     prompt_template: str = Field(..., description="Prompt template")
     retry_count: int = Field(0, ge=0, le=3, description="Retry count (0-3)")
     timeout_seconds: int = Field(
-        600, ge=60, le=3600, description="Execution timeout (60-3600s)"
+        600,
+        ge=SUBSCRIPTION_MIN_TIMEOUT_SECONDS,
+        le=SUBSCRIPTION_MAX_TIMEOUT_SECONDS,
+        description="Execution timeout (60-86400s)",
     )
     enabled: bool = Field(True, description="Whether enabled")
     execution_target: SubscriptionExecutionTarget = Field(
@@ -472,7 +478,11 @@ class SubscriptionUpdate(BaseModel):
     force_override_bot_model: Optional[bool] = None
     prompt_template: Optional[str] = None
     retry_count: Optional[int] = Field(None, ge=0, le=3)
-    timeout_seconds: Optional[int] = Field(None, ge=60, le=3600)
+    timeout_seconds: Optional[int] = Field(
+        None,
+        ge=SUBSCRIPTION_MIN_TIMEOUT_SECONDS,
+        le=SUBSCRIPTION_MAX_TIMEOUT_SECONDS,
+    )
     enabled: Optional[bool] = None
     execution_target: Optional[SubscriptionExecutionTarget] = None
     # History preservation settings

@@ -120,7 +120,7 @@ export interface Subscription {
   force_override_bot_model?: boolean
   prompt_template: string
   retry_count: number
-  timeout_seconds: number // Execution timeout (60-3600s, default 600)
+  timeout_seconds: number // Execution timeout (60-86400s, default 600)
   enabled: boolean
   execution_target?: SubscriptionExecutionTarget
   // History preservation settings
@@ -186,7 +186,7 @@ export interface SubscriptionCreateRequest {
   force_override_bot_model?: boolean
   prompt_template: string
   retry_count?: number
-  timeout_seconds?: number // Execution timeout (60-3600s)
+  timeout_seconds?: number // Execution timeout (60-86400s)
   enabled?: boolean
   execution_target?: SubscriptionExecutionTarget
   // History preservation settings
@@ -224,7 +224,7 @@ export interface SubscriptionUpdateRequest {
   force_override_bot_model?: boolean
   prompt_template?: string
   retry_count?: number
-  timeout_seconds?: number // Execution timeout (60-3600s)
+  timeout_seconds?: number // Execution timeout (60-86400s)
   enabled?: boolean
   execution_target?: SubscriptionExecutionTarget
   // History preservation settings

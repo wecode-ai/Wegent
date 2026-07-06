@@ -2,12 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex,
+};
+use std::time::Duration;
 
 use axum::{http::StatusCode, routing::post, Json, Router};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
-use wegent_executor::{callback::CallbackSink, emitter::EventEnvelope, runner::EventSink};
+
+use wegent_executor::{
+    callback::{CallbackRetryConfig, CallbackSink},
+    emitter::EventEnvelope,
+    runner::EventSink,
+};
 
 #[tokio::test]
 async fn callback_sink_posts_event_envelope_as_json() {
@@ -28,7 +37,7 @@ async fn callback_sink_posts_event_envelope_as_json() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let sink = CallbackSink::new(url).unwrap();
+    let sink = test_callback_sink(url);
     sink.send(sample_event()).await.unwrap();
 
     let events = received.lock().unwrap().clone();
@@ -58,9 +67,67 @@ async fn callback_sink_returns_status_and_url_for_non_success_response() {
         axum::serve(listener, app).await.unwrap();
     });
 
-    let sink = CallbackSink::new(url.clone()).unwrap();
+    let sink = test_callback_sink(url.clone());
     let error = sink.send(sample_event()).await.unwrap_err();
 
+    assert!(error.contains("status=500"));
+    assert!(error.contains(&url));
+}
+
+#[tokio::test]
+async fn callback_sink_retries_non_success_response_before_succeeding() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let received = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/callback", listener.local_addr().unwrap());
+    let app = Router::new().route(
+        "/callback",
+        post({
+            let attempts = attempts.clone();
+            let received = received.clone();
+            move |Json(payload): Json<Value>| async move {
+                received.lock().unwrap().push(payload);
+                if attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, "backend unavailable");
+                }
+                (StatusCode::OK, "ok")
+            }
+        }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let sink = test_callback_sink(url);
+    sink.send(sample_event()).await.unwrap();
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(received.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn callback_sink_retries_non_success_response_until_limit() {
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/callback", listener.local_addr().unwrap());
+    let app = Router::new().route(
+        "/callback",
+        post({
+            let attempts = attempts.clone();
+            move || async move {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                (StatusCode::INTERNAL_SERVER_ERROR, "backend unavailable")
+            }
+        }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let sink = test_callback_sink(url.clone());
+    let error = sink.send(sample_event()).await.unwrap_err();
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 3);
     assert!(error.contains("status=500"));
     assert!(error.contains(&url));
 }
@@ -89,4 +156,12 @@ fn sample_event() -> EventEnvelope {
         executor_name: None,
         executor_namespace: None,
     }
+}
+
+fn test_callback_sink(callback_url: String) -> CallbackSink {
+    CallbackSink::new_with_retry_config(
+        callback_url,
+        CallbackRetryConfig::new(3, Duration::from_millis(0), Duration::from_millis(0)),
+    )
+    .unwrap()
 }
