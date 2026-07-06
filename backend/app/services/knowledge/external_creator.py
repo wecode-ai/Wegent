@@ -75,4 +75,5 @@ def resolve_external_knowledge_creators(
         return _creator_resolver(db, normalized_user_ids)
     except Exception as exc:
         logger.exception("External knowledge creator resolver failed: %s", exc)
+        db.rollback()
         return default_external_knowledge_creator_resolver(db, normalized_user_ids)

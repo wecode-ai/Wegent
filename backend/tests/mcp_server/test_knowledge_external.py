@@ -401,6 +401,50 @@ async def test_list_knowledge_bases_empty_owner_user_ids_is_unfiltered(
 
 
 @pytest.mark.asyncio
+async def test_list_knowledge_bases_falls_back_when_creator_resolver_fails(
+    test_db,
+    test_user,
+):
+    now = datetime(2026, 1, 2, 12, 0, 0)
+    kb = _make_kb(41, test_user.id, "Fallback Owner", now)
+
+    def failing_creator_resolver(db, user_ids):
+        db.add(
+            User(
+                user_name=test_user.user_name,
+                password_hash="duplicate",
+                is_active=True,
+            )
+        )
+        db.flush()
+        return {}
+
+    set_external_knowledge_creator_resolver(failing_creator_resolver)
+
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "list_knowledge_bases",
+                return_value=[kb],
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_list_knowledge_bases()
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["total"] == 1
+    assert payload["items"][0]["creator"] == {
+        "user_id": test_user.id,
+        "user_name": test_user.user_name,
+        "attributes": {},
+    }
+
+
+@pytest.mark.asyncio
 async def test_list_knowledge_bases_returns_namespace_fields(test_db, test_user):
     now = datetime(2026, 1, 4, 8, 0, 0)
     group_namespace = Namespace(
