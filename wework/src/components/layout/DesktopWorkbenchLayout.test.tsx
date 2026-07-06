@@ -2055,10 +2055,15 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-[14rem]')
-    expect(screen.getByTestId('workbench-topbar-left-actions')).toHaveClass(
-      'max-w-[calc(100%-22rem)]'
+    expect(screen.queryByTestId('workbench-topbar-left-actions')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
+      'absolute',
+      'left-0',
+      'top-0',
+      'h-11',
+      'pl-[14rem]',
+      'truncate'
     )
-    expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass('truncate')
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent(
       'wework的聊天链路现在代码逻辑比较混乱'
     )
@@ -5728,6 +5733,25 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-bottom-workspace-panel-button'))
     await waitFor(() => expect(startTerminalSessionMock).toHaveBeenCalledWith(12))
+
+    expect(screen.getByTestId('bottom-workspace-panel')).not.toHaveClass('rounded-t-xl')
+    expect(screen.getByTestId('bottom-workspace-tabbar')).toHaveClass('bg-background')
+    expect(screen.getByTestId('bottom-workspace-tabbar')).not.toHaveClass('border-b')
+    const initialTab = screen.getByTestId('bottom-workspace-terminal-tab')
+    expect(initialTab).toHaveClass('bg-muted', 'text-text-primary')
+    expect(initialTab).not.toHaveClass('border', 'border-border', 'shadow-sm')
+    expect(initialTab).not.toHaveTextContent('终端')
+    await waitFor(() => expect(initialTab).toHaveTextContent('project'))
+    expect(initialTab).toHaveAttribute('title', 'project')
+    expect(initialTab).toHaveClass('max-w-[200px]', 'pr-7')
+    expect(initialTab).not.toHaveClass('hover:max-w-none')
+    const initialCloseButton = within(initialTab).getByTestId('close-bottom-workspace-tab-button')
+    expect(initialCloseButton).toHaveClass(
+      'group-hover:bg-border/70',
+      'hover:!bg-text-secondary',
+      'hover:text-background'
+    )
+    expect(initialCloseButton).not.toHaveClass('hover:bg-black/70', 'hover:text-white')
 
     await userEvent.click(screen.getByTestId('workspace-terminal-new-tab-button'))
 
