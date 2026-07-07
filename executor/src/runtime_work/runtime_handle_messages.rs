@@ -12,7 +12,7 @@ use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
     notification_mapping::{
         log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
-        notification_item_id, TextChunkMapping,
+        map_tool_output_delta, notification_item_id, TextChunkMapping,
     },
     response::RuntimeTaskLink,
     store::RuntimeWorkStore,
@@ -108,6 +108,29 @@ impl CodexNotificationCacheMapper {
                     params,
                     phase.as_deref(),
                 );
+            }
+            "item/tool/outputDelta"
+            | "item/commandExecution/outputDelta"
+            | "process/outputDelta"
+            | "command/exec/outputDelta" => {
+                match map_tool_output_delta(&notification.method, params) {
+                    Ok(Some(mapping)) => append_runtime_assistant_tool_output_delta(
+                        store,
+                        local_task_id,
+                        request,
+                        &mapping.tool_use_id,
+                        mapping.delta,
+                    ),
+                    Ok(None) => {}
+                    Err(reason) => log_dropped_notification(
+                        local_task_id,
+                        &request.task_id,
+                        &request.subtask_id,
+                        &notification.method,
+                        params,
+                        reason,
+                    ),
+                }
             }
             "item/plan/delta" => {
                 if let Some(delta) =
@@ -521,6 +544,18 @@ fn update_runtime_assistant_block(
     });
 }
 
+fn append_runtime_assistant_tool_output_delta(
+    store: &RuntimeWorkStore,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    tool_use_id: &str,
+    delta: String,
+) {
+    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+        append_tool_output_delta(blocks, tool_use_id, delta);
+    });
+}
+
 fn append_runtime_assistant_process_delta(
     store: &RuntimeWorkStore,
     local_task_id: &str,
@@ -881,6 +916,26 @@ fn update_cached_block(blocks: &mut [Value], block_id: &str, updates: Value) {
     }
 }
 
+fn append_tool_output_delta(blocks: &mut [Value], tool_use_id: &str, delta: String) {
+    let Some(block) = blocks.iter_mut().rev().find(|block| {
+        block_identity(block).as_deref() == Some(tool_use_id)
+            || string_field(block, "tool_use_id").as_deref() == Some(tool_use_id)
+    }) else {
+        return;
+    };
+    let Some(object) = block.as_object_mut() else {
+        return;
+    };
+    let mut output = object
+        .get("tool_output")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    output.push_str(&delta);
+    object.insert("tool_output".to_owned(), Value::String(output));
+    object.insert("status".to_owned(), Value::String("streaming".to_owned()));
+}
+
 fn block_identity(block: &Value) -> Option<String> {
     string_field(block, "id").or_else(|| string_field(block, "tool_use_id"))
 }
@@ -1230,6 +1285,78 @@ mod tests {
         assert_eq!(messages[0]["blocks"][0]["type"], "tool");
         assert_eq!(messages[0]["blocks"][0]["tool_name"], "context_compaction");
         assert_eq!(messages[0]["blocks"][0]["status"], "done");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_codex_notification_appends_exec_output_delta_to_tool_block() {
+        let index_path = temp_index_path("exec-output-delta-cache");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "type": "response_item",
+                "payload": {
+                    "id": "call-1",
+                    "type": "function_call",
+                    "call_id": "call-1",
+                    "name": "exec_command",
+                    "arguments": "{\"cmd\":\"printf hello\"}"
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "exec_command_output_delta",
+                    "call_id": "call-1",
+                    "stream": "stdout",
+                    "chunk": "hello"
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "exec_command_output_delta",
+                    "call_id": "call-1",
+                    "stream": "stdout",
+                    "chunk": "\n"
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        let block = &messages[0]["blocks"][0];
+        assert_eq!(block["tool_name"], "exec_command");
+        assert_eq!(block["tool_output"], "hello\n");
+        assert_eq!(block["status"], "streaming");
 
         let _ = fs::remove_file(index_path);
     }

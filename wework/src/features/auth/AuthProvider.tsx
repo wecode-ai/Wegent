@@ -4,7 +4,7 @@ import { createAuthApi, isAuthenticated, removeToken, type LoginRequest } from '
 import { ApiError, createHttpClient } from '@/api/http'
 import { getLocalUser } from '@/api/local/localSession'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { User } from '@/types/api'
 import {
   getAdminUsernameFromSetupError,
@@ -24,10 +24,6 @@ interface AuthProviderProps {
 function createDefaultAuthApi(): AuthApi {
   const { apiBaseUrl } = getRuntimeConfig()
   return createAuthApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
-
-function isLocalFirstRuntime(): boolean {
-  return getRuntimeConfig().runtimeMode === 'local-first' && isTauriRuntime()
 }
 
 function isAuthRoute(pathname: string) {
@@ -82,7 +78,7 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     setIsLoading(true)
 
     try {
-      if (isLocalFirstRuntime()) {
+      if (isLocalFirstAppRuntime()) {
         setUser(getLocalUser())
         clearAdminPasswordSetupState()
         return
@@ -127,7 +123,7 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
     void Promise.resolve().then(() => refresh())
 
     const interval = window.setInterval(() => {
-      if (isLocalFirstRuntime()) {
+      if (isLocalFirstAppRuntime()) {
         return
       }
       if (!isAuthenticated() && userRef.current) {
@@ -161,7 +157,7 @@ export function AuthProvider({ children, authApi }: AuthProviderProps) {
   )
 
   const logout = useCallback(() => {
-    if (isLocalFirstRuntime()) {
+    if (isLocalFirstAppRuntime()) {
       removeToken()
       setUser(getLocalUser())
       clearAdminPasswordSetupState()

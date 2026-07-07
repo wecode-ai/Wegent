@@ -15,7 +15,7 @@ import type {
 import type { WorkbenchMessage } from '@/types/workbench'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 
-const SIDE_CHAT_MESSAGE_LIST_CLASS = 'w-full max-w-none px-5 pb-4 pt-5'
+const SIDE_CHAT_MESSAGE_LIST_CLASS = 'w-full max-w-none px-5 pb-4 pt-5 lg:pl-14'
 
 function createUserMessage(content: string): WorkbenchMessage {
   const createdAt = new Date().toISOString()

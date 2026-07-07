@@ -30,6 +30,24 @@ const TRAY_MENU_TASK_PREFIX: &str = "task:";
 #[cfg(desktop)]
 const TRAY_ID: &str = "wework-main";
 #[cfg(desktop)]
+const TRAY_USAGE_ICON_HEIGHT: u32 = 22;
+#[cfg(desktop)]
+const TRAY_USAGE_ICON_LEFT_PADDING: u32 = 0;
+#[cfg(desktop)]
+const TRAY_USAGE_ICON_TEXT_GAP: u32 = 2;
+#[cfg(desktop)]
+const TRAY_USAGE_ICON_SCALE: u32 = 2;
+#[cfg(desktop)]
+const TRAY_USAGE_GLYPH_WIDTH: u32 = 3;
+#[cfg(desktop)]
+const TRAY_USAGE_GLYPH_HEIGHT: u32 = 5;
+#[cfg(desktop)]
+const TRAY_USAGE_GLYPH_GAP: u32 = 1;
+#[cfg(desktop)]
+const TRAY_USAGE_SPACE_WIDTH: u32 = 1;
+#[cfg(desktop)]
+const TRAY_USAGE_LINE_GAP: u32 = 2;
+#[cfg(desktop)]
 const LOG_DIRECTORY_APP_NAME: &str = "Wework";
 #[cfg(desktop)]
 const LOG_DIRECTORY_VENDOR_NAME: &str = "Wegent";
@@ -1024,6 +1042,8 @@ struct TrayMenuTaskItem {
 #[serde(rename_all = "camelCase")]
 struct TrayMenuStatePayload {
     language: String,
+    usage_title: Option<String>,
+    usage_tooltip: Option<String>,
     running: Vec<TrayMenuTaskItem>,
     running_more: Vec<TrayMenuTaskItem>,
     pinned: Vec<TrayMenuTaskItem>,
@@ -1037,6 +1057,8 @@ impl TrayMenuStatePayload {
     fn empty(language: &str) -> Self {
         Self {
             language: language.to_string(),
+            usage_title: None,
+            usage_tooltip: None,
             running: Vec::new(),
             running_more: Vec::new(),
             pinned: Vec::new(),
@@ -1215,6 +1237,148 @@ fn normalized_menu_task_title(item: &TrayMenuTaskItem, fallback: &str) -> String
 }
 
 #[cfg(desktop)]
+fn tray_usage_glyph(character: char) -> Option<[u8; 5]> {
+    match character {
+        '0' => Some([0b111, 0b101, 0b101, 0b101, 0b111]),
+        '1' => Some([0b010, 0b110, 0b010, 0b010, 0b111]),
+        '2' => Some([0b111, 0b001, 0b111, 0b100, 0b111]),
+        '3' => Some([0b111, 0b001, 0b111, 0b001, 0b111]),
+        '4' => Some([0b101, 0b101, 0b111, 0b001, 0b001]),
+        '5' => Some([0b111, 0b100, 0b111, 0b001, 0b111]),
+        '6' => Some([0b111, 0b100, 0b111, 0b101, 0b111]),
+        '7' => Some([0b111, 0b001, 0b010, 0b010, 0b010]),
+        '8' => Some([0b111, 0b101, 0b111, 0b101, 0b111]),
+        '9' => Some([0b111, 0b101, 0b111, 0b001, 0b111]),
+        '%' => Some([0b101, 0b001, 0b010, 0b100, 0b101]),
+        '-' => Some([0b000, 0b000, 0b111, 0b000, 0b000]),
+        'd' | 'D' => Some([0b001, 0b001, 0b111, 0b101, 0b111]),
+        'h' | 'H' => Some([0b100, 0b100, 0b111, 0b101, 0b101]),
+        _ => None,
+    }
+}
+
+#[cfg(desktop)]
+fn tray_usage_line_width(line: &str) -> u32 {
+    let glyph_count = line.chars().count() as u32;
+    if glyph_count == 0 {
+        return 1;
+    }
+    line.chars()
+        .map(|character| {
+            if character == ' ' {
+                TRAY_USAGE_SPACE_WIDTH * TRAY_USAGE_ICON_SCALE
+            } else {
+                TRAY_USAGE_GLYPH_WIDTH * TRAY_USAGE_ICON_SCALE
+            }
+        })
+        .sum::<u32>()
+        + glyph_count.saturating_sub(1) * TRAY_USAGE_GLYPH_GAP * TRAY_USAGE_ICON_SCALE
+}
+
+#[cfg(desktop)]
+fn draw_tray_usage_text(buffer: &mut [u8], width: u32, x: u32, y: u32, line: &str) {
+    let mut cursor_x = x;
+    for character in line.chars() {
+        if character == ' ' {
+            cursor_x += (TRAY_USAGE_SPACE_WIDTH + TRAY_USAGE_GLYPH_GAP) * TRAY_USAGE_ICON_SCALE;
+            continue;
+        }
+        if let Some(glyph) = tray_usage_glyph(character) {
+            for (row_index, row) in glyph.iter().enumerate() {
+                for column in 0..TRAY_USAGE_GLYPH_WIDTH {
+                    if row & (1 << (TRAY_USAGE_GLYPH_WIDTH - column - 1)) == 0 {
+                        continue;
+                    }
+                    for dy in 0..TRAY_USAGE_ICON_SCALE {
+                        for dx in 0..TRAY_USAGE_ICON_SCALE {
+                            let pixel_x = cursor_x + column * TRAY_USAGE_ICON_SCALE + dx;
+                            let pixel_y = y + row_index as u32 * TRAY_USAGE_ICON_SCALE + dy;
+                            let offset = ((pixel_y * width + pixel_x) * 4) as usize;
+                            if offset + 3 < buffer.len() {
+                                buffer[offset] = 255;
+                                buffer[offset + 1] = 255;
+                                buffer[offset + 2] = 255;
+                                buffer[offset + 3] = 255;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        cursor_x += (TRAY_USAGE_GLYPH_WIDTH + TRAY_USAGE_GLYPH_GAP) * TRAY_USAGE_ICON_SCALE;
+    }
+}
+
+#[cfg(desktop)]
+fn tray_usage_icon(
+    title: &str,
+    base_icon: Option<&tauri::image::Image<'_>>,
+) -> Option<tauri::image::Image<'static>> {
+    let lines = title
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(2)
+        .collect::<Vec<_>>();
+    if lines.len() != 2 {
+        return None;
+    }
+
+    let text_height = TRAY_USAGE_GLYPH_HEIGHT * TRAY_USAGE_ICON_SCALE * 2 + TRAY_USAGE_LINE_GAP;
+    let text_width = lines
+        .iter()
+        .map(|line| tray_usage_line_width(line))
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let base_icon_size = base_icon
+        .map(|icon| icon.width().min(icon.height()).min(TRAY_USAGE_ICON_HEIGHT))
+        .unwrap_or(0);
+    let base_icon_width = if base_icon_size > 0 {
+        base_icon_size + TRAY_USAGE_ICON_TEXT_GAP
+    } else {
+        0
+    };
+    let width = base_icon_width + text_width + TRAY_USAGE_ICON_LEFT_PADDING;
+    let height = TRAY_USAGE_ICON_HEIGHT.max(text_height);
+    let mut buffer = vec![0; (width * height * 4) as usize];
+    let first_y = (height - text_height) / 2;
+    let second_y = first_y + TRAY_USAGE_GLYPH_HEIGHT * TRAY_USAGE_ICON_SCALE + TRAY_USAGE_LINE_GAP;
+
+    if let Some(icon) = base_icon {
+        let source_width = icon.width();
+        let source_height = icon.height();
+        let source_size = source_width.min(source_height);
+        if source_size > 0 && base_icon_size > 0 {
+            let source_x = (source_width - source_size) / 2;
+            let source_y = (source_height - source_size) / 2;
+            let target_y = (height - base_icon_size) / 2;
+            let rgba = icon.rgba();
+            for y in 0..base_icon_size {
+                for x in 0..base_icon_size {
+                    let sample_x = source_x + x * source_size / base_icon_size;
+                    let sample_y = source_y + y * source_size / base_icon_size;
+                    let source_offset = ((sample_y * source_width + sample_x) * 4) as usize;
+                    let target_offset = (((target_y + y) * width + x) * 4) as usize;
+                    if source_offset + 3 < rgba.len() && target_offset + 3 < buffer.len() {
+                        buffer[target_offset..target_offset + 4]
+                            .copy_from_slice(&rgba[source_offset..source_offset + 4]);
+                    }
+                }
+            }
+        }
+    }
+
+    for (line_index, line) in lines.iter().enumerate() {
+        let x = base_icon_width + TRAY_USAGE_ICON_LEFT_PADDING;
+        let y = if line_index == 0 { first_y } else { second_y };
+        draw_tray_usage_text(&mut buffer, width, x, y, line);
+    }
+
+    Some(tauri::image::Image::new_owned(buffer, width, height))
+}
+
+#[cfg(desktop)]
 fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let menu = build_system_tray_menu(app, &TrayMenuStatePayload::empty("zh-CN"))?;
 
@@ -1253,7 +1417,31 @@ fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Re
         return Ok(());
     };
     tray.set_menu(Some(menu))
-        .map_err(|error| format!("Failed to update tray menu: {error}"))
+        .map_err(|error| format!("Failed to update tray menu: {error}"))?;
+    let icon_update = state
+        .usage_title
+        .as_deref()
+        .and_then(|title| tray_usage_icon(title, app.default_window_icon()))
+        .map(|icon| tray.set_icon(Some(icon)));
+    match icon_update {
+        Some(Ok(())) => {
+            if let Err(error) = tray.set_title(None::<&str>) {
+                log::warn!("Failed to clear tray title: {error}");
+            }
+        }
+        Some(Err(error)) => {
+            log::warn!("Failed to update tray usage icon: {error}");
+        }
+        None => {
+            if let Err(error) = tray.set_title(None::<&str>) {
+                log::warn!("Failed to clear tray title: {error}");
+            }
+        }
+    }
+    if let Err(error) = tray.set_tooltip(state.usage_tooltip.as_deref().or(Some("WeWork"))) {
+        log::warn!("Failed to update tray tooltip: {error}");
+    }
+    Ok(())
 }
 
 #[cfg(not(desktop))]
@@ -1369,11 +1557,18 @@ mod tests {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_shell::init());
+
+    #[cfg(all(desktop, not(debug_assertions)))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        show_main_window(app);
+    }));
+
+    let app = builder
         .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())

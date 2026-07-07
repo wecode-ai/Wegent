@@ -1,6 +1,5 @@
-import { getRuntimeConfig } from '@/config/runtime'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 
 export function isCloudConnectionUiAvailable(): boolean {
-  return getRuntimeConfig().runtimeMode === 'local-first' && isTauriRuntime()
+  return isLocalFirstAppRuntime()
 }

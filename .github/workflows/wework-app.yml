@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Artifact version label, for example 0.1.0 or v0.1.0"
+        description: "Optional Wework version override, for example 0.1.0 or v0.1.0. If empty, auto-increment from latest wework-vX.Y.Z tag"
         type: string
         required: false
   push:
@@ -16,13 +16,133 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  prepare-release:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      version: ${{ steps.version.outputs.value }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Wework release version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+
+          validate_version() {
+            local version="$1"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Invalid Wework version '$version'. Expected MAJOR.MINOR.PATCH, for example 1.2.3." >&2
+              exit 1
+            fi
+          }
+
+          bump_patch() {
+            local version="$1"
+            IFS='.' read -r major minor patch <<< "$version"
+            echo "${major}.${minor}.$((patch + 1))"
+          }
+
+          if [ -n "${INPUT_VERSION:-}" ]; then
+            version="${INPUT_VERSION#v}"
+            validate_version "$version"
+          elif [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
+            version="${GITHUB_REF_NAME#wework-v}"
+            validate_version "$version"
+          else
+            latest_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1 || true)"
+            if [ -z "$latest_tag" ]; then
+              version="0.0.1"
+            else
+              latest_version="${latest_tag#wework-v}"
+              validate_version "$latest_version"
+              version="$(bump_patch "$latest_version")"
+            fi
+          fi
+
+          if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="wework-v$version"
+          fi
+
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          release_title="Wework $RELEASE_VERSION"
+          release_notes="$(mktemp)"
+          generated_notes="$(mktemp)"
+          previous_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')"
+
+          if [ -n "$previous_tag" ]; then
+            log_range="${previous_tag}..${GITHUB_SHA}"
+          else
+            log_range="$GITHUB_SHA"
+          fi
+
+          git log --no-merges --pretty=format:'- %s (%h)' "$log_range" -- wework/ executor/ > "$generated_notes"
+
+          if [ ! -s "$generated_notes" ]; then
+            echo "- No Wework app bundle changes detected under \`wework/\` or \`executor/\` since the previous Wework release." > "$generated_notes"
+          fi
+
+          {
+            echo "## Changes"
+            echo ""
+            if [ -n "$previous_tag" ]; then
+              echo "Changes under \`wework/\` or \`executor/\` since \`$previous_tag\`."
+            else
+              echo "Initial Wework release changes under \`wework/\` or \`executor/\`."
+            fi
+            echo ""
+            cat "$generated_notes"
+            echo ""
+            echo "## macOS Distribution Notes"
+            echo ""
+            echo "Wework macOS DMG build."
+            echo ""
+            echo "This build is ad-hoc signed and not Apple notarized. On first launch, click Done if macOS shows a Move to Trash warning, then force-open it from System Settings > Privacy & Security > Open Anyway."
+          } > "$release_notes"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "$release_title" \
+              --notes-file "$release_notes" \
+              --prerelease
+          else
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "$release_title" \
+              --notes-file "$release_notes" \
+              --draft \
+              --prerelease
+          fi
+
   build-macos:
     name: Build macOS ${{ matrix.arch }}
     runs-on: macos-14
     timeout-minutes: 45
+    needs: prepare-release
 
     strategy:
       fail-fast: false
@@ -36,21 +156,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Resolve artifact version
-        id: version
-        shell: bash
-        run: |
-          set -euo pipefail
-          input_version="${{ github.event.inputs.version }}"
-          if [ -n "$input_version" ]; then
-            version="${input_version#v}"
-          elif [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
-            version="${GITHUB_REF_NAME#wework-v}"
-          else
-            version="$(node -p "require('./wework/package.json').version")-${GITHUB_SHA::7}"
-          fi
-          echo "value=$version" >> "$GITHUB_OUTPUT"
 
       - name: Install Rosetta 2
         if: matrix.arch == 'x64'
@@ -91,8 +196,6 @@ jobs:
 
       - name: Build local executor sidecar
         working-directory: executor
-        env:
-          APP_VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
           cargo build --release --locked --target "${{ matrix.rust_target }}"
@@ -100,7 +203,7 @@ jobs:
           mkdir -p dist
           cp "$binary" dist/wegent-executor
           chmod 0755 dist/wegent-executor
-          WEGENT_EXECUTOR_VERSION="$APP_VERSION" dist/wegent-executor --version
+          dist/wegent-executor --version
 
       - name: Prepare bundled Codex
         working-directory: wework
@@ -120,7 +223,7 @@ jobs:
             rm -f "$config_override"
           }
           trap cleanup EXIT
-          CONFIG_OVERRIDE="$config_override" VERSION="${{ steps.version.outputs.value }}" python3 - <<'PY'
+          CONFIG_OVERRIDE="$config_override" VERSION="${{ needs.prepare-release.outputs.version }}" python3 - <<'PY'
           import json
           import os
 
@@ -129,6 +232,7 @@ jobs:
               "bundle": {
                   "macOS": {
                       "signingIdentity": "-",
+                      "hardenedRuntime": True,
                   },
               },
           }
@@ -139,59 +243,93 @@ jobs:
           PY
           pnpm exec tauri build \
             --target "${{ matrix.rust_target }}" \
-            --bundles app \
+            --bundles dmg \
             --config "$config_override"
 
-      - name: Ad-hoc sign app bundle
+      - name: Verify and collect DMG
         id: package
         shell: bash
         run: |
           set -euo pipefail
-          app_path="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -maxdepth 1 -name '*.app' -type d | sort | tail -1)"
-          if [ -z "$app_path" ]; then
-            echo "No .app bundle found" >&2
+          dmg_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | sort | tail -1)"
+          if [ -z "$dmg_source" ]; then
+            echo "No .dmg bundle found" >&2
             exit 1
           fi
+          hdiutil verify "$dmg_source"
 
-          codesign --force --deep --options runtime --sign - "$app_path"
+          mount_dir="$RUNNER_TEMP/wework-dmg-${{ matrix.arch }}"
+          rm -rf "$mount_dir"
+          mkdir -p "$mount_dir"
+          cleanup_mount() {
+            hdiutil detach "$mount_dir" -quiet || true
+          }
+          trap cleanup_mount EXIT
+
+          hdiutil attach "$dmg_source" -mountpoint "$mount_dir" -nobrowse -readonly
+          app_path="$(find "$mount_dir" -maxdepth 1 -name '*.app' -type d | sort | tail -1)"
+          if [ -z "$app_path" ]; then
+            echo "No .app bundle found inside DMG" >&2
+            exit 1
+          fi
           codesign --verify --deep --strict --verbose=2 "$app_path"
-          spctl --assess --type execute --verbose "$app_path" || true
+          codesign --display --verbose=4 "$app_path"
+          if spctl --assess --type execute --verbose "$app_path"; then
+            echo "Gatekeeper accepted the app bundle."
+          else
+            echo "::warning::Gatekeeper rejected this ad-hoc signed, non-notarized build. Users must click Done if macOS shows Move to Trash, then force-open it from System Settings > Privacy & Security > Open Anyway."
+          fi
+          cleanup_mount
+          trap - EXIT
 
           artifact_dir="$RUNNER_TEMP/wework-macos-${{ matrix.arch }}"
           mkdir -p "$artifact_dir"
-          app_name="$(basename "$app_path")"
-          zip_path="$artifact_dir/WeWork_${{ steps.version.outputs.value }}_macos_${{ matrix.arch }}_unsigned-adhoc.app.zip"
-          dmg_path="$artifact_dir/WeWork_${{ steps.version.outputs.value }}_macos_${{ matrix.arch }}_unsigned-adhoc.dmg"
+          dmg_path="$artifact_dir/WeWork_${{ needs.prepare-release.outputs.version }}_macos_${{ matrix.arch }}_unsigned-adhoc.dmg"
+          cp "$dmg_source" "$dmg_path"
+          shasum -a 256 "$dmg_path"
+          {
+            echo "### Wework macOS ${{ matrix.arch }} release asset"
+            echo ""
+            echo "- DMG: $(basename "$dmg_path")"
+            echo "- This build is ad-hoc signed and not Apple notarized."
+            echo "- If the first launch dialog shows Move to Trash, click Done instead."
+            echo "- Then force-open from System Settings > Privacy & Security > Open Anyway."
+            echo "- If macOS keeps the quarantine flag: \`xattr -dr com.apple.quarantine /Applications/WeWork.app\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          ditto -c -k --keepParent "$app_path" "$zip_path"
-          hdiutil create \
-            -volname "WeWork" \
-            -srcfolder "$app_path" \
-            -ov \
-            -format UDZO \
-            "$dmg_path"
+          echo "dmg_path=$dmg_path" >> "$GITHUB_OUTPUT"
 
-          echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
-          echo "app_name=$app_name" >> "$GITHUB_OUTPUT"
-
-      - name: Write install note
+      - name: Upload DMG to GitHub Release
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |
-          cat > "${{ steps.package.outputs.artifact_dir }}/README-macos-unsigned.txt" <<'EOF'
-          This macOS build is ad-hoc signed but not Apple notarized.
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" "${{ steps.package.outputs.dmg_path }}" --clobber
+          release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
+          {
+            echo ""
+            echo "- Direct DMG download is available from: $release_url"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          First launch may require:
-          1. Open System Settings > Privacy & Security.
-          2. Click Open Anyway for WeWork.
+  publish-release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - build-macos
 
-          If macOS keeps the download quarantine flag, run:
-            xattr -dr com.apple.quarantine /Applications/WeWork.app
-          EOF
-
-      - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: wework-macos-${{ matrix.arch }}-unsigned-adhoc
-          path: ${{ steps.package.outputs.artifact_dir }}/*
-          if-no-files-found: error
-          retention-days: 14
+    steps:
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
+          echo "Published direct DMG downloads: $release_url" >> "$GITHUB_STEP_SUMMARY"

@@ -57,6 +57,7 @@ struct LocalExecutorInner {
     child: Option<LocalExecutorChild>,
     pending: HashMap<String, PendingSender>,
     backend_connection: Option<LocalExecutorBackendConnection>,
+    startup_cleanup_done: bool,
     running: bool,
     ready: bool,
     device_id: Option<String>,
@@ -206,6 +207,53 @@ fn process_group_exists(process_group_id: u32) -> bool {
 fn send_process_group_signal(process_group_id: u32, signal: libc::c_int) {
     unsafe {
         let _ = libc::kill(-(process_group_id as libc::pid_t), signal);
+    }
+}
+
+#[cfg(unix)]
+fn terminate_process(process_id: u32) -> Result<(), String> {
+    terminate_process_group(process_id);
+    if !process_exists(process_id) {
+        return Ok(());
+    }
+
+    send_process_signal(process_id, libc::SIGTERM)?;
+    wait_for_process_exit(
+        process_id,
+        Duration::from_millis(LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS),
+    );
+    if process_exists(process_id) {
+        send_process_signal(process_id, libc::SIGKILL)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn wait_for_process_exit(process_id: u32, timeout: Duration) {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if !process_exists(process_id) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS));
+    }
+}
+
+#[cfg(unix)]
+fn process_exists(process_id: u32) -> bool {
+    unsafe { libc::kill(process_id as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(unix)]
+fn send_process_signal(process_id: u32, signal: libc::c_int) -> Result<(), String> {
+    let result = unsafe { libc::kill(process_id as libc::pid_t, signal) };
+    if result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Failed to signal stale local executor process {process_id}: {}",
+            std::io::Error::last_os_error()
+        ))
     }
 }
 
@@ -538,12 +586,18 @@ fn parse_executor_processes(output: &str) -> Vec<LocalExecutorProcessInfo> {
         .collect()
 }
 
-#[cfg(test)]
-fn parse_executor_process_pids(output: &str) -> Vec<u32> {
-    parse_executor_processes(output)
-        .into_iter()
+fn executor_process_pids(processes: &[LocalExecutorProcessInfo]) -> Vec<u32> {
+    let current_process_id = std::process::id();
+    processes
+        .iter()
+        .filter(|process| process.pid != current_process_id)
         .map(|process| process.pid)
         .collect()
+}
+
+#[cfg(test)]
+fn parse_executor_process_pids(output: &str) -> Vec<u32> {
+    executor_process_pids(&parse_executor_processes(output))
 }
 
 #[cfg(unix)]
@@ -561,6 +615,124 @@ fn local_executor_processes() -> Vec<LocalExecutorProcessInfo> {
 #[cfg(not(unix))]
 fn local_executor_processes() -> Vec<LocalExecutorProcessInfo> {
     Vec::new()
+}
+
+#[cfg(unix)]
+fn remove_stale_app_ipc_socket_at(path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_socket() => {
+            std::fs::remove_file(path).map_err(|error| {
+                format!("Failed to remove stale local executor socket {path:?}: {error}")
+            })
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Failed to inspect local executor socket {path:?}: {error}"
+        )),
+    }
+}
+
+#[cfg(not(unix))]
+fn remove_stale_app_ipc_socket_at(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn socket_env_assignment(socket_path: &Path) -> String {
+    format!("{LOCAL_EXECUTOR_SOCKET_ENV}={}", socket_path.display())
+}
+
+fn process_text_uses_socket(process_text: &str, socket_path: &Path) -> bool {
+    process_text.contains(&socket_env_assignment(socket_path))
+}
+
+#[cfg(unix)]
+fn local_executor_process_uses_socket(process_id: u32, socket_path: &Path) -> bool {
+    if let Ok(environ) = std::fs::read(format!("/proc/{process_id}/environ")) {
+        let process_text = String::from_utf8_lossy(&environ).replace('\0', " ");
+        if process_text_uses_socket(&process_text, socket_path) {
+            return true;
+        }
+    }
+
+    let Ok(output) = Command::new("ps")
+        .args(["eww", "-p", &process_id.to_string(), "-o", "command="])
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    process_text_uses_socket(&String::from_utf8_lossy(&output.stdout), socket_path)
+}
+
+#[cfg(not(unix))]
+fn local_executor_process_uses_socket(_process_id: u32, _socket_path: &Path) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn terminate_stale_local_executor_processes(
+    processes: &[LocalExecutorProcessInfo],
+    socket_path: &Path,
+) -> Result<(), String> {
+    for process_id in executor_process_pids(processes) {
+        if !local_executor_process_uses_socket(process_id, socket_path) {
+            log::info!(
+                "Skipping local executor process with a different app socket: pid={process_id}"
+            );
+            continue;
+        }
+        log::info!("Terminating stale local executor process before app pairing: pid={process_id}");
+        terminate_process(process_id)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn terminate_stale_local_executor_processes(
+    _processes: &[LocalExecutorProcessInfo],
+    _socket_path: &Path,
+) -> Result<(), String> {
+    Ok(())
+}
+
+fn cleanup_stale_local_executor_processes() -> Result<(), String> {
+    if cfg!(debug_assertions) {
+        return Ok(());
+    }
+
+    let socket_path = app_ipc_socket_path()?;
+    let processes = local_executor_processes();
+    if processes.is_empty() {
+        return remove_stale_app_ipc_socket_at(&socket_path);
+    }
+
+    terminate_stale_local_executor_processes(&processes, &socket_path)?;
+    remove_stale_app_ipc_socket_at(&socket_path)
+}
+
+fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), String> {
+    let should_cleanup = {
+        let inner = state
+            .inner
+            .lock()
+            .map_err(|_| "Failed to lock local executor state".to_string())?;
+        !inner.startup_cleanup_done && inner.child.is_none()
+    };
+    if !should_cleanup {
+        return Ok(());
+    }
+
+    cleanup_stale_local_executor_processes()?;
+
+    let mut inner = state
+        .inner
+        .lock()
+        .map_err(|_| "Failed to lock local executor state".to_string())?;
+    inner.startup_cleanup_done = true;
+    Ok(())
 }
 
 fn sidecar_source_and_path() -> (String, String) {
@@ -1317,6 +1489,11 @@ async fn start_executor_if_needed_unlocked(
         }
     }
 
+    if let Err(error) = cleanup_stale_local_executor_once(state) {
+        set_executor_error(state, error.clone());
+        return Err(error);
+    }
+
     if connect_and_attach_sidecar_socket(app.clone(), state)
         .await
         .is_ok()
@@ -1643,6 +1820,8 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     #[cfg(unix)]
+    use std::os::unix::net::UnixListener;
+    #[cfg(unix)]
     use std::process::Stdio;
     use std::sync::{Mutex as TestMutex, MutexGuard, OnceLock};
     #[cfg(unix)]
@@ -1871,6 +2050,60 @@ mod tests {
 "#;
 
         assert_eq!(parse_executor_process_pids(output), vec![222, 333]);
+    }
+
+    #[test]
+    fn executor_process_pids_excludes_current_process() {
+        let current_process_id = std::process::id();
+        let processes = vec![
+            LocalExecutorProcessInfo {
+                pid: current_process_id,
+                path: "/tmp/wegent-executor".to_string(),
+            },
+            LocalExecutorProcessInfo {
+                pid: current_process_id + 1,
+                path: "/tmp/wegent-executor".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            executor_process_pids(&processes),
+            vec![current_process_id + 1]
+        );
+    }
+
+    #[test]
+    fn process_text_uses_socket_matches_only_exact_socket_env() {
+        let release_socket = PathBuf::from("/Users/me/.wegent-executor/app-ipc.sock");
+        let debug_text = "WEGENT_EXECUTOR_APP_IPC_SOCKET=/Users/me/.wegent-executor/app-runtime/wework-123/app-ipc.sock";
+        let release_text = "WEGENT_EXECUTOR_APP_IPC_SOCKET=/Users/me/.wegent-executor/app-ipc.sock";
+
+        assert!(!process_text_uses_socket(debug_text, &release_socket));
+        assert!(process_text_uses_socket(release_text, &release_socket));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_stale_app_ipc_socket_removes_socket_files_only() {
+        let dir = std::env::temp_dir().join(format!(
+            "wework-stale-executor-socket-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("test socket dir should be created");
+        let socket_path = dir.join("app-ipc.sock");
+        let regular_path = dir.join("regular-file");
+        let listener = UnixListener::bind(&socket_path).expect("test socket should bind");
+        fs::write(&regular_path, "not a socket").expect("regular file should be written");
+
+        remove_stale_app_ipc_socket_at(&socket_path).expect("socket cleanup should succeed");
+        remove_stale_app_ipc_socket_at(&regular_path).expect("regular cleanup should succeed");
+        drop(listener);
+
+        assert!(!socket_path.exists());
+        assert!(regular_path.exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
