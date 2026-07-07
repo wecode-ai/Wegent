@@ -15,6 +15,7 @@ import {
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
+import { createXtermWebLinksAddon } from './xtermLinks'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -65,6 +66,7 @@ export function EmbeddedLocalTerminal({
       theme: getTerminalTheme(),
     })
     const fitAddon = new FitAddon()
+    const webLinksAddon = createXtermWebLinksAddon()
     let inputFallback: XtermInputFallbackController = {
       noteData: () => undefined,
       dispose: () => undefined,
@@ -80,6 +82,7 @@ export function EmbeddedLocalTerminal({
     const unlisteners: Array<() => void> = []
 
     terminal.loadAddon(fitAddon)
+    terminal.loadAddon(webLinksAddon)
     terminal.open(container)
     inputFallback = installXtermInputFallback({
       terminal,

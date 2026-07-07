@@ -1,5 +1,6 @@
 import { render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { openExternalUrl } from '@/lib/external-links'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
 import { RemoteTerminal } from './RemoteTerminal'
 
@@ -18,6 +19,11 @@ const testState = vi.hoisted(() => ({
     focus: ReturnType<typeof vi.fn>
     options: { theme?: unknown }
   }>,
+  webLinksAddonInstances: [] as Array<{
+    activate: ReturnType<typeof vi.fn>
+    dispose: ReturnType<typeof vi.fn>
+    openUri: (uri: string) => void
+  }>,
   resizeObserverInstances: [] as Array<{
     trigger: () => void
     observe: ReturnType<typeof vi.fn>
@@ -30,6 +36,20 @@ vi.mock('@xterm/addon-fit', () => ({
     return {
       fit: vi.fn(),
     }
+  }),
+}))
+
+vi.mock('@xterm/addon-web-links', () => ({
+  WebLinksAddon: vi.fn().mockImplementation(function WebLinksAddonMock(
+    handler: (_event: MouseEvent, uri: string) => void
+  ) {
+    const addon = {
+      activate: vi.fn(),
+      dispose: vi.fn(),
+      openUri: (uri: string) => handler(new MouseEvent('click'), uri),
+    }
+    testState.webLinksAddonInstances.push(addon)
+    return addon
   }),
 }))
 
@@ -62,7 +82,12 @@ vi.mock('@/lib/remote-terminal-socket', () => ({
   createRemoteTerminalClient: vi.fn(),
 }))
 
+vi.mock('@/lib/external-links', () => ({
+  openExternalUrl: vi.fn().mockResolvedValue(true),
+}))
+
 const createRemoteTerminalClientMock = vi.mocked(createRemoteTerminalClient)
+const openExternalUrlMock = vi.mocked(openExternalUrl)
 
 function createClient(overrides: Partial<ReturnType<typeof createRemoteTerminalClient>> = {}) {
   return {
@@ -97,6 +122,7 @@ describe('RemoteTerminal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     testState.terminalInstances.length = 0
+    testState.webLinksAddonInstances.length = 0
     testState.resizeObserverInstances.length = 0
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     requestAnimationFrameSpy = vi
@@ -198,5 +224,20 @@ describe('RemoteTerminal', () => {
       )
     })
     expect(requestAnimationFrameSpy).toHaveBeenCalled()
+  })
+
+  test('loads web links addon and opens terminal urls through the external link handler', () => {
+    const client = createClient({
+      attach: vi.fn(() => new Promise(() => undefined)),
+    })
+    createRemoteTerminalClientMock.mockReturnValue(client)
+
+    render(<RemoteTerminal sessionId="terminal-1" active={false} />)
+    const terminal = testState.terminalInstances[0]
+    const webLinksAddon = testState.webLinksAddonInstances[0]
+
+    expect(terminal.loadAddon).toHaveBeenCalledWith(webLinksAddon)
+    webLinksAddon.openUri('https://example.com/docs')
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/docs')
   })
 })
