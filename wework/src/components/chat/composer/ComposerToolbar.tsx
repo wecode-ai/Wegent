@@ -1,8 +1,9 @@
 import { ArrowUp, Square } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ModelOptions, UnifiedModel } from '@/types/api'
+import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
+import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { ModelSelector } from './ModelSelector'
 
 interface ComposerToolbarProps {
@@ -13,6 +14,7 @@ interface ComposerToolbarProps {
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
   isModelSelectionReady: boolean
+  contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
@@ -35,6 +37,7 @@ export function ComposerToolbar({
   selectedModelOptions,
   modelSelectorOpenSignal,
   isModelSelectionReady,
+  contextUsage,
   onSelectModel,
   onSelectModelOption,
   onBlockedModelSelect,
@@ -74,6 +77,7 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        <ContextUsageIndicator usage={contextUsage} />
         {isModelSelectionReady ? (
           <ModelSelector
             models={models}

@@ -103,6 +103,48 @@ describe('createRuntimeTaskStreamHandlers', () => {
     )
   })
 
+  test('updates context usage from task-scoped chunks without subtask identity', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onContextUsageUpdated = vi.fn()
+    const contextUsage = {
+      total: {
+        totalTokens: 15_000,
+        inputTokens: 12_000,
+        cachedInputTokens: 2_000,
+        outputTokens: 3_000,
+        reasoningOutputTokens: 0,
+      },
+      last: {
+        totalTokens: 8_000,
+        inputTokens: 7_000,
+        cachedInputTokens: 1_000,
+        outputTokens: 1_000,
+        reasoningOutputTokens: 0,
+      },
+      modelContextWindow: 258_000,
+    }
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onContextUsageUpdated,
+    })
+
+    handlers.onChatChunk?.({
+      taskId: 'runtime-task-1',
+      deviceId: 'device-1',
+      content: '',
+      result: { contextUsage },
+    })
+
+    expect(actions).toHaveLength(0)
+    expect(onContextUsageUpdated).toHaveBeenCalledWith(contextUsage)
+    expect(warn).not.toHaveBeenCalled()
+  })
+
   test('warns when snake case reasoning chunks reach the pane layer', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {

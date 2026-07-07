@@ -13,6 +13,7 @@ import type {
   LocalDeviceSkill,
   ModelOptions,
   ProjectExecutionMode,
+  RuntimeContextUsage,
   ProjectWithTasks,
   RuntimeGoalClearResponse,
   RuntimeGoalCreateInput,
@@ -107,6 +108,7 @@ export interface WorkbenchContextValue {
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
     errors: Map<string, string>
+    contextUsage?: RuntimeContextUsage
     isOptionsLocked: boolean
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void

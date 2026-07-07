@@ -122,6 +122,7 @@ interface WorkbenchComposerDebugSnapshot {
   currentInputLength: number
   scopedInputLengths: Record<string, number>
   attachmentCount: number
+  contextUsagePercent?: number
 }
 
 interface MessageSummary {

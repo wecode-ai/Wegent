@@ -50,6 +50,64 @@ describe('emitResponseApiEvent', () => {
     expect(onChatChunk.mock.calls[0]?.[0]).not.toHaveProperty('offset')
   })
 
+  test('maps Codex token usage notifications to context usage chunks', () => {
+    const onChatChunk = vi.fn()
+
+    emitResponseApiEvent(
+      { onChatChunk },
+      'thread/tokenUsage/updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        data: {
+          tokenUsage: {
+            total: {
+              totalTokens: 15_000,
+              inputTokens: 12_000,
+              cachedInputTokens: 2_000,
+              outputTokens: 3_000,
+              reasoningOutputTokens: 0,
+            },
+            last: {
+              totalTokens: 8_000,
+              inputTokens: 7_000,
+              cachedInputTokens: 1_000,
+              outputTokens: 1_000,
+              reasoningOutputTokens: 0,
+            },
+            modelContextWindow: 258_000,
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onChatChunk).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      content: '',
+      result: {
+        contextUsage: {
+          total: {
+            totalTokens: 15_000,
+            inputTokens: 12_000,
+            cachedInputTokens: 2_000,
+            outputTokens: 3_000,
+            reasoningOutputTokens: 0,
+          },
+          last: {
+            totalTokens: 8_000,
+            inputTokens: 7_000,
+            cachedInputTokens: 1_000,
+            outputTokens: 1_000,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 258_000,
+        },
+      },
+    })
+  })
+
   test('does not treat full output snapshots as text deltas', () => {
     const onChatChunk = vi.fn()
 

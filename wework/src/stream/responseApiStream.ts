@@ -1,4 +1,9 @@
-import type { ChatBlock, RuntimeGoal } from '@/types/api'
+import type {
+  ChatBlock,
+  RuntimeContextUsage,
+  RuntimeGoal,
+  RuntimeTokenUsageBreakdown,
+} from '@/types/api'
 import type { ChatStreamHandlers } from './chatStream'
 
 export const RESPONSE_API_STREAM_EVENTS = [
@@ -40,6 +45,8 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.subagent.activity',
   'runtime.goal.updated',
   'runtime.goal.cleared',
+  'thread/tokenUsage/updated',
+  'thread.tokenUsage.updated',
   'response.status.updated',
   'error',
 ] as const
@@ -73,6 +80,17 @@ function idField(record: Record<string, unknown>, key: string): string | undefin
 function optionalNumberField(record: Record<string, unknown>, key: string): number | undefined {
   const value = record[key]
   return typeof value === 'number' ? value : undefined
+}
+
+function optionalFiniteNumberField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+  }
+  return undefined
 }
 
 function commandExitCode(record: Record<string, unknown>): number | undefined {
@@ -162,8 +180,86 @@ function completedResult(data: Record<string, unknown>): Record<string, unknown>
   if (Array.isArray(blocks)) {
     result.blocks = blocks
   }
+  const contextUsage = contextUsageFromResponseData(data)
+  if (contextUsage) {
+    result.contextUsage = contextUsage
+  }
 
   return result
+}
+
+function normalizeTokenUsageBreakdown(
+  value: Record<string, unknown> | undefined
+): RuntimeTokenUsageBreakdown | undefined {
+  if (!value) return undefined
+
+  const inputTokens = optionalFiniteNumberField(value, 'inputTokens', 'input_tokens') ?? 0
+  const cachedInputTokens =
+    optionalFiniteNumberField(value, 'cachedInputTokens', 'cached_input_tokens') ?? 0
+  const outputTokens = optionalFiniteNumberField(value, 'outputTokens', 'output_tokens') ?? 0
+  const reasoningOutputTokens =
+    optionalFiniteNumberField(value, 'reasoningOutputTokens', 'reasoning_output_tokens') ?? 0
+  const totalTokens =
+    optionalFiniteNumberField(value, 'totalTokens', 'total_tokens') ??
+    inputTokens + outputTokens + reasoningOutputTokens
+
+  return {
+    totalTokens,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
+  }
+}
+
+function normalizeContextUsage(
+  value: Record<string, unknown> | undefined
+): RuntimeContextUsage | undefined {
+  if (!value) return undefined
+
+  const modelContextWindow = optionalFiniteNumberField(
+    value,
+    'modelContextWindow',
+    'model_context_window',
+    'contextWindow',
+    'context_window'
+  )
+  if (!modelContextWindow || modelContextWindow <= 0) return undefined
+
+  const total =
+    normalizeTokenUsageBreakdown(recordField(value, 'total')) ??
+    normalizeTokenUsageBreakdown(recordField(value, 'total_token_usage')) ??
+    normalizeTokenUsageBreakdown(value)
+  const last =
+    normalizeTokenUsageBreakdown(recordField(value, 'last')) ??
+    normalizeTokenUsageBreakdown(recordField(value, 'last_token_usage')) ??
+    total
+  if (!total || !last) return undefined
+
+  return {
+    total,
+    last,
+    modelContextWindow,
+  }
+}
+
+function contextUsageFromResponseData(
+  data: Record<string, unknown>
+): RuntimeContextUsage | undefined {
+  const direct =
+    normalizeContextUsage(recordField(data, 'contextUsage')) ??
+    normalizeContextUsage(recordField(data, 'context_usage')) ??
+    normalizeContextUsage(recordField(data, 'tokenUsage')) ??
+    normalizeContextUsage(recordField(data, 'token_usage'))
+  if (direct) return direct
+
+  const response = recordField(data, 'response')
+  return (
+    normalizeContextUsage(recordField(response, 'contextUsage')) ??
+    normalizeContextUsage(recordField(response, 'context_usage')) ??
+    normalizeContextUsage(recordField(response, 'tokenUsage')) ??
+    normalizeContextUsage(recordField(response, 'token_usage'))
+  )
 }
 
 function reasoningContent(eventName: string, data: Record<string, unknown>): string {
@@ -558,6 +654,21 @@ export function emitResponseApiEvent(
       ...base,
       threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
       goal: null,
+    })
+    return
+  }
+
+  if (eventName === 'thread/tokenUsage/updated' || eventName === 'thread.tokenUsage.updated') {
+    const contextUsage =
+      normalizeContextUsage(recordField(data, 'tokenUsage')) ??
+      normalizeContextUsage(recordField(data, 'token_usage')) ??
+      contextUsageFromResponseData(data)
+    if (!contextUsage) return
+
+    handlers.onChatChunk?.({
+      ...base,
+      content: '',
+      result: { contextUsage },
     })
     return
   }

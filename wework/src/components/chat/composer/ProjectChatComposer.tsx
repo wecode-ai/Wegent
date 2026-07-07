@@ -1,4 +1,10 @@
-import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
+import type {
+  Attachment,
+  LocalDeviceSkill,
+  ModelOptions,
+  RuntimeContextUsage,
+  UnifiedModel,
+} from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -30,6 +36,7 @@ interface ProjectChatComposerProps {
   codeComments?: CodeCommentContext[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   attachmentErrors: Map<string, string>
+  contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
@@ -79,6 +86,7 @@ export function ProjectChatComposer({
   codeComments = [],
   uploadingFiles,
   attachmentErrors,
+  contextUsage,
   onSelectModel,
   onSelectModelOption,
   onBlockedModelSelect,
@@ -237,6 +245,7 @@ export function ProjectChatComposer({
           onSelectModel={onSelectModel}
           onSelectModelOption={onSelectModelOption}
           onBlockedModelSelect={onBlockedModelSelect}
+          contextUsage={contextUsage}
           onFileSelect={onFileSelect}
           planModeActive={planModeActive}
           onSetPlanMode={onSetPlanMode}
