@@ -1069,7 +1069,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
           data-testid="titlebar-right-panel"
-          className="pointer-events-auto flex h-full min-w-0 flex-1 items-center"
+          className="pointer-events-none flex h-full min-w-0 flex-1 items-center"
         />
         <div
           id={TITLEBAR_ACTIONS_PORTAL_ID}
