@@ -14,6 +14,7 @@ import pytest
 from app.core.rate_limit import ExternalMcpRateLimitStatus
 from app.mcp_server import server as mcp_server_module
 from app.mcp_server.tools import knowledge_external
+from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument, KnowledgeFolder
 from app.models.namespace import Namespace
 from app.models.subtask_context import ContextType, SubtaskContext
@@ -77,6 +78,38 @@ def _make_kb(
         created_at=created_at,
         updated_at=created_at,
     )
+
+
+def _create_kb(
+    db,
+    kb_id: int,
+    user_id: int,
+    name: str,
+    created_at: datetime,
+    *,
+    namespace: str = "default",
+    description: str | None = None,
+):
+    kb = Kind(
+        id=kb_id,
+        user_id=user_id,
+        kind="KnowledgeBase",
+        name=f"kb-{kb_id}",
+        namespace=namespace,
+        json={
+            "spec": {
+                "name": name,
+                "description": (
+                    description if description is not None else f"{name} description"
+                ),
+            }
+        },
+        is_active=True,
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    db.add(kb)
+    return kb
 
 
 def _make_attachment(
@@ -228,8 +261,8 @@ async def test_list_knowledge_bases_sorts_by_created_at_and_normalizes_group_nam
             patch.object(knowledge_external, "SessionLocal") as session_local,
             patch.object(
                 knowledge_external.KnowledgeService,
-                "list_knowledge_bases",
-                return_value=[older, newer],
+                "list_external_knowledge_bases",
+                return_value=([newer, older], 2),
             ) as list_kbs,
             patch.object(
                 knowledge_external,
@@ -262,12 +295,11 @@ async def test_list_knowledge_bases_sorts_by_created_at_and_normalizes_group_nam
     assert payload["items"][0]["document_count"] == 1
     assert payload["items"][0]["namespace_level"] == "group"
     assert payload["items"][0]["namespace_display_name"] == "team-a"
-    list_kbs.assert_called_once_with(
-        mock_db,
-        test_user.id,
-        scope=ResourceScope.GROUP,
-        group_name="team-a",
-    )
+    assert list_kbs.call_args.args == (mock_db,)
+    assert list_kbs.call_args.kwargs["user_id"] == test_user.id
+    filters = list_kbs.call_args.kwargs["filters"]
+    assert filters.scope == ResourceScope.GROUP
+    assert filters.group_name == "team-a"
 
 
 @pytest.mark.asyncio
@@ -282,8 +314,8 @@ async def test_list_knowledge_bases_paginates_before_counting_documents(test_use
             patch.object(knowledge_external, "SessionLocal") as session_local,
             patch.object(
                 knowledge_external.KnowledgeService,
-                "list_knowledge_bases",
-                return_value=[older, middle, newer],
+                "list_external_knowledge_bases",
+                return_value=([middle], 3),
             ),
             patch.object(
                 knowledge_external,
@@ -313,7 +345,7 @@ async def test_list_knowledge_bases_paginates_before_counting_documents(test_use
 
 
 @pytest.mark.asyncio
-async def test_list_knowledge_bases_filters_by_owner_user_ids_after_query(
+async def test_list_knowledge_bases_filters_by_owner_user_ids_in_sql_query(
     test_db,
     test_user,
 ):
@@ -322,36 +354,39 @@ async def test_list_knowledge_bases_filters_by_owner_user_ids_after_query(
     test_db.add_all([owner, other_owner])
     test_db.flush()
 
+    namespace = Namespace(
+        name="corp-owner-filter",
+        display_name="Corp Owner Filter",
+        owner_user_id=test_user.id,
+        level="organization",
+        is_active=True,
+    )
+    test_db.add(namespace)
     now = datetime(2026, 1, 2, 10, 0, 0)
-    matching_owner_kb = _make_kb(
+    _create_kb(
+        test_db,
         21,
         owner.id,
         "Match Owner",
         now + timedelta(minutes=2),
+        namespace=namespace.name,
     )
-    matching_other_kb = _make_kb(
+    _create_kb(
+        test_db,
         22,
         other_owner.id,
         "Match Other",
         now + timedelta(minutes=1),
+        namespace=namespace.name,
     )
-    non_matching_owner_kb = _make_kb(23, owner.id, "Different", now)
+    _create_kb(test_db, 23, owner.id, "Different", now, namespace=namespace.name)
+    test_db.commit()
 
     token = _set_external_user(test_user)
     try:
-        with (
-            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
-            patch.object(
-                knowledge_external.KnowledgeService,
-                "list_knowledge_bases",
-                return_value=[
-                    matching_owner_kb,
-                    matching_other_kb,
-                    non_matching_owner_kb,
-                ],
-            ),
-        ):
+        with patch.object(knowledge_external, "SessionLocal", return_value=test_db):
             result = await knowledge_external.wegent_kb_list_knowledge_bases(
+                scope=ResourceScope.ORGANIZATION.value,
                 query="match",
                 owner_user_ids=[owner.id],
             )
@@ -371,6 +406,145 @@ async def test_list_knowledge_bases_filters_by_owner_user_ids_after_query(
 
 
 @pytest.mark.asyncio
+async def test_list_knowledge_bases_sql_filters_do_not_expand_access(
+    test_db,
+    test_user,
+):
+    owner = User(user_name="private-owner-filter", password_hash="x", is_active=True)
+    test_db.add(owner)
+    test_db.flush()
+    _create_kb(
+        test_db,
+        24,
+        owner.id,
+        "Private Owner",
+        datetime(2026, 1, 2, 10, 30, 0),
+        namespace="private-team",
+    )
+    test_db.commit()
+
+    token = _set_external_user(test_user)
+    try:
+        with patch.object(knowledge_external, "SessionLocal", return_value=test_db):
+            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+                owner_user_ids=[owner.id],
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["total"] == 0
+    assert payload["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_list_knowledge_bases_sql_orders_and_pages_after_filtering(
+    test_db,
+    test_user,
+):
+    namespace = Namespace(
+        name="corp-page-filter",
+        display_name="Corp Page Filter",
+        owner_user_id=test_user.id,
+        level="organization",
+        is_active=True,
+    )
+    test_db.add(namespace)
+    now = datetime(2026, 1, 3, 9, 0, 0)
+    _create_kb(test_db, 51, test_user.id, "Page", now, namespace=namespace.name)
+    _create_kb(
+        test_db,
+        52,
+        test_user.id,
+        "Page",
+        now + timedelta(minutes=1),
+        namespace=namespace.name,
+    )
+    _create_kb(
+        test_db,
+        53,
+        test_user.id,
+        "Page",
+        now + timedelta(minutes=2),
+        namespace=namespace.name,
+    )
+    test_db.commit()
+
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external,
+                "get_document_counts",
+                return_value={52: 7},
+            ) as get_counts,
+        ):
+            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+                scope=ResourceScope.ORGANIZATION.value,
+                query="page",
+                limit=1,
+                offset=1,
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["total"] == 3
+    assert payload["total_returned"] == 1
+    assert payload["has_more"] is True
+    assert [item["knowledge_base_id"] for item in payload["items"]] == [52]
+    get_counts.assert_called_once_with(test_db, [52])
+
+
+@pytest.mark.asyncio
+async def test_list_knowledge_bases_sql_query_escapes_like_wildcards(
+    test_db,
+    test_user,
+):
+    namespace = Namespace(
+        name="corp-like-filter",
+        display_name="Corp Like Filter",
+        owner_user_id=test_user.id,
+        level="organization",
+        is_active=True,
+    )
+    test_db.add(namespace)
+    now = datetime(2026, 1, 3, 10, 0, 0)
+    _create_kb(
+        test_db,
+        61,
+        test_user.id,
+        "Report %_ Literal",
+        now + timedelta(minutes=1),
+        namespace=namespace.name,
+    )
+    _create_kb(
+        test_db,
+        62,
+        test_user.id,
+        "Report XY Literal",
+        now,
+        namespace=namespace.name,
+    )
+    test_db.commit()
+
+    token = _set_external_user(test_user)
+    try:
+        with patch.object(knowledge_external, "SessionLocal", return_value=test_db):
+            result = await knowledge_external.wegent_kb_list_knowledge_bases(
+                scope=ResourceScope.ORGANIZATION.value,
+                query="%_",
+            )
+    finally:
+        _reset_external_user(token)
+
+    payload = json.loads(result)
+    assert payload["total"] == 1
+    assert [item["knowledge_base_id"] for item in payload["items"]] == [61]
+
+
+@pytest.mark.asyncio
 async def test_list_knowledge_bases_empty_owner_user_ids_is_unfiltered(
     test_db,
     test_user,
@@ -385,8 +559,8 @@ async def test_list_knowledge_bases_empty_owner_user_ids_is_unfiltered(
             patch.object(knowledge_external, "SessionLocal", return_value=test_db),
             patch.object(
                 knowledge_external.KnowledgeService,
-                "list_knowledge_bases",
-                return_value=[first, second],
+                "list_external_knowledge_bases",
+                return_value=([second, first], 2),
             ),
         ):
             result = await knowledge_external.wegent_kb_list_knowledge_bases(
@@ -427,8 +601,8 @@ async def test_list_knowledge_bases_falls_back_when_creator_resolver_fails(
             patch.object(knowledge_external, "SessionLocal", return_value=test_db),
             patch.object(
                 knowledge_external.KnowledgeService,
-                "list_knowledge_bases",
-                return_value=[kb],
+                "list_external_knowledge_bases",
+                return_value=([kb], 1),
             ),
         ):
             result = await knowledge_external.wegent_kb_list_knowledge_bases()
@@ -490,14 +664,17 @@ async def test_list_knowledge_bases_returns_namespace_fields(test_db, test_user)
             patch.object(knowledge_external, "SessionLocal", return_value=test_db),
             patch.object(
                 knowledge_external.KnowledgeService,
-                "list_knowledge_bases",
-                return_value=[
-                    personal_kb,
-                    shared_kb,
-                    group_kb,
-                    organization_kb,
-                    missing_namespace_kb,
-                ],
+                "list_external_knowledge_bases",
+                return_value=(
+                    [
+                        personal_kb,
+                        shared_kb,
+                        group_kb,
+                        organization_kb,
+                        missing_namespace_kb,
+                    ],
+                    5,
+                ),
             ),
         ):
             result = await knowledge_external.wegent_kb_list_knowledge_bases()
@@ -558,8 +735,8 @@ async def test_list_knowledge_bases_counts_all_documents(test_db, test_user):
             patch.object(knowledge_external, "SessionLocal", return_value=test_db),
             patch.object(
                 knowledge_external.KnowledgeService,
-                "list_knowledge_bases",
-                return_value=[kb],
+                "list_external_knowledge_bases",
+                return_value=([kb], 1),
             ),
         ):
             result = await knowledge_external.wegent_kb_list_knowledge_bases()

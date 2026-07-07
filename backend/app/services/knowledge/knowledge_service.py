@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from sqlalchemy import and_, case, func
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -146,6 +146,18 @@ class ActiveDocumentTextStats:
     file_size_total: int
     text_length_total: int
     active_document_count: int
+
+
+@dataclass(frozen=True)
+class ExternalKnowledgeBaseListFilters:
+    """Normalized filters for external knowledge base listing."""
+
+    scope: ResourceScope
+    group_name: str | None = None
+    keyword: str | None = None
+    owner_user_ids: tuple[int, ...] = ()
+    offset: int = 0
+    limit: int = 50
 
 
 class KnowledgeService:
@@ -552,6 +564,47 @@ class KnowledgeService:
         )
         total = len(knowledge_bases)
         return knowledge_bases[offset : offset + limit], total
+
+    @staticmethod
+    def list_external_knowledge_bases(
+        db: Session,
+        *,
+        user_id: int,
+        filters: ExternalKnowledgeBaseListFilters,
+    ) -> tuple[list[Kind], int]:
+        """List externally visible knowledge bases with SQL filtering and paging."""
+        query = _KnowledgeBaseVisibilityQueryBuilder.build(
+            db,
+            user_id=user_id,
+            scope=filters.scope,
+            group_name=filters.group_name,
+        )
+
+        if query is None:
+            return [], 0
+
+        if filters.owner_user_ids:
+            query = query.filter(Kind.user_id.in_(filters.owner_user_ids))
+
+        if filters.keyword:
+            keyword_pattern = f"%{_escape_sql_like(filters.keyword.lower())}%"
+            name_text = _knowledge_base_json_text(db, "$.spec.name")
+            description_text = _knowledge_base_json_text(db, "$.spec.description")
+            query = query.filter(
+                or_(
+                    func.lower(name_text).like(keyword_pattern, escape="\\"),
+                    func.lower(description_text).like(keyword_pattern, escape="\\"),
+                )
+            )
+
+        total = query.order_by(None).count()
+        knowledge_bases = (
+            query.order_by(Kind.created_at.desc(), Kind.id.desc())
+            .offset(filters.offset)
+            .limit(filters.limit)
+            .all()
+        )
+        return knowledge_bases, total
 
     @staticmethod
     def update_knowledge_base(
@@ -3267,3 +3320,138 @@ class KnowledgeService:
             folder_ids=folder_ids,
             user_id=user_id,
         )
+
+
+class _KnowledgeBaseVisibilityQueryBuilder:
+    """Build SQL queries for knowledge bases visible to a user."""
+
+    @staticmethod
+    def build(
+        db: Session,
+        *,
+        user_id: int,
+        scope: ResourceScope,
+        group_name: str | None = None,
+    ):
+        base_query = db.query(Kind).filter(
+            Kind.kind == "KnowledgeBase",
+            Kind.is_active == True,
+        )
+
+        if scope == ResourceScope.PERSONAL:
+            return _KnowledgeBaseVisibilityQueryBuilder._build_personal_query(
+                db,
+                base_query=base_query,
+                user_id=user_id,
+            )
+
+        if scope == ResourceScope.GROUP:
+            if not group_name:
+                raise ValueError("group_name is required when scope is GROUP")
+            role = get_effective_role_in_group(db, user_id, group_name)
+            if role is None:
+                return None
+            return base_query.filter(Kind.namespace == group_name)
+
+        if scope == ResourceScope.ORGANIZATION:
+            return base_query.join(Namespace, Kind.namespace == Namespace.name).filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+
+        return _KnowledgeBaseVisibilityQueryBuilder._build_all_query(
+            db,
+            base_query=base_query,
+            user_id=user_id,
+        )
+
+    @staticmethod
+    def _build_personal_query(db: Session, *, base_query, user_id: int):
+        shared_kb_ids = _KnowledgeBaseVisibilityQueryBuilder._shared_kb_ids(
+            db,
+            user_id=user_id,
+            accessible_groups=get_user_groups(db, user_id),
+        )
+        bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+
+        conditions = [(Kind.user_id == user_id) & (Kind.namespace == "default")]
+        if shared_kb_ids:
+            conditions.append(Kind.id.in_(shared_kb_ids))
+        if bound_kb_ids:
+            conditions.append(Kind.id.in_(bound_kb_ids))
+
+        return base_query.filter(or_(*conditions))
+
+    @staticmethod
+    def _build_all_query(db: Session, *, base_query, user_id: int):
+        accessible_groups = get_user_groups(db, user_id)
+        shared_kb_ids = _KnowledgeBaseVisibilityQueryBuilder._shared_kb_ids(
+            db,
+            user_id=user_id,
+            accessible_groups=accessible_groups,
+        )
+        org_namespace_names = [
+            namespace_name
+            for (namespace_name,) in db.query(Namespace.name)
+            .filter(
+                Namespace.level == GroupLevel.organization.value,
+                Namespace.is_active == True,
+            )
+            .all()
+        ]
+        bound_kb_ids = KnowledgeService._get_bound_kb_ids_for_user(db, user_id)
+
+        conditions = [(Kind.user_id == user_id) & (Kind.namespace == "default")]
+        if accessible_groups:
+            conditions.append(Kind.namespace.in_(accessible_groups))
+        if org_namespace_names:
+            conditions.append(Kind.namespace.in_(org_namespace_names))
+        if shared_kb_ids:
+            conditions.append(Kind.id.in_(shared_kb_ids))
+        if bound_kb_ids:
+            conditions.append(Kind.id.in_(bound_kb_ids))
+
+        return base_query.filter(or_(*conditions))
+
+    @staticmethod
+    def _shared_kb_ids(
+        db: Session,
+        *,
+        user_id: int,
+        accessible_groups: list[str],
+    ) -> list[int]:
+        from app.models.resource_member import MemberStatus, ResourceMember
+        from app.models.share_link import ResourceType
+
+        shared_permissions = (
+            db.query(ResourceMember.resource_id)
+            .filter(
+                ResourceMember.resource_type == ResourceType.KNOWLEDGE_BASE.value,
+                ResourceMember.entity_type == "user",
+                ResourceMember.entity_id == str(user_id),
+                ResourceMember.status == MemberStatus.APPROVED.value,
+            )
+            .all()
+        )
+        shared_kb_ids = [permission.resource_id for permission in shared_permissions]
+
+        entity_result = KnowledgeService._collect_entity_authorized_kbs(
+            db,
+            user_id,
+            accessible_groups,
+        )
+        entity_kb_ids = {kb.id for kb in entity_result.entity_kbs}
+        return list(set(shared_kb_ids) | entity_kb_ids)
+
+
+def _knowledge_base_json_text(db: Session, path: str):
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "mysql":
+        value = func.json_unquote(func.json_extract(Kind.json, path))
+    else:
+        value = func.json_extract(Kind.json, path)
+    return func.coalesce(value, "")
+
+
+def _escape_sql_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

@@ -59,7 +59,10 @@ from app.services.knowledge.external_nodes import (
     list_direct_nodes,
     list_recursive_nodes,
 )
-from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_service import (
+    ExternalKnowledgeBaseListFilters,
+    KnowledgeService,
+)
 from app.services.knowledge.namespace_utils import (
     NamespaceLevel,
     classify_namespace_level,
@@ -109,12 +112,7 @@ class SearchPreparation:
 class KnowledgeBaseListPreparation:
     """Validated and normalized knowledge base list parameters."""
 
-    scope: ResourceScope
-    group_name: Optional[str]
-    query: Optional[str]
-    owner_user_ids: Optional[list[int]]
-    limit: int
-    offset: int
+    filters: ExternalKnowledgeBaseListFilters
 
 
 def _normalize_url_path(path: str) -> str:
@@ -230,15 +228,19 @@ def validate_knowledge_base_list_params(
     normalized_group_name = (group_name or "").strip() or None
     if scope_enum == ResourceScope.GROUP and not normalized_group_name:
         return None, "group_name is required when scope is group"
+    normalized_keyword = (query or "").strip() or None
+    normalized_owner_user_ids = tuple(dict.fromkeys(owner_user_ids or []))
 
     return (
         KnowledgeBaseListPreparation(
-            scope=scope_enum,
-            group_name=normalized_group_name,
-            query=query,
-            owner_user_ids=owner_user_ids or None,
-            limit=limit,
-            offset=offset,
+            filters=ExternalKnowledgeBaseListFilters(
+                scope=scope_enum,
+                group_name=normalized_group_name,
+                keyword=normalized_keyword,
+                owner_user_ids=normalized_owner_user_ids,
+                limit=limit,
+                offset=offset,
+            ),
         ),
         None,
     )
@@ -275,37 +277,15 @@ def _resolve_external_namespace_fields(
 def _list_knowledge_bases_sync(
     *,
     user_id: int,
-    scope: ResourceScope,
-    group_name: Optional[str],
-    query: Optional[str],
-    owner_user_ids: Optional[list[int]],
-    limit: int,
-    offset: int,
+    filters: ExternalKnowledgeBaseListFilters,
 ) -> str:
     db = SessionLocal()
     try:
-        kbs = KnowledgeService.list_knowledge_bases(
-            db, user_id, scope=scope, group_name=group_name
+        page_kbs, total = KnowledgeService.list_external_knowledge_bases(
+            db,
+            user_id=user_id,
+            filters=filters,
         )
-        keyword = (query or "").strip().lower()
-        if keyword:
-            kbs = [
-                kb
-                for kb in kbs
-                if keyword
-                in ((kb.json.get("spec", {}) or {}).get("name", "") or "").lower()
-                or keyword
-                in (
-                    (kb.json.get("spec", {}) or {}).get("description", "") or ""
-                ).lower()
-            ]
-        if owner_user_ids:
-            owner_user_id_set = set(owner_user_ids)
-            kbs = [kb for kb in kbs if kb.user_id in owner_user_id_set]
-        kbs = sorted(kbs, key=lambda kb: (kb.created_at, kb.id), reverse=True)
-
-        total = len(kbs)
-        page_kbs = kbs[offset : offset + limit]
         counts = get_document_counts(db, [kb.id for kb in page_kbs])
         creator_map = resolve_external_knowledge_creators(
             db,
@@ -343,9 +323,9 @@ def _list_knowledge_bases_sync(
         return ExternalKnowledgeSpaceListResponse(
             total=total,
             total_returned=len(items),
-            has_more=offset + len(items) < total,
-            limit=limit,
-            offset=offset,
+            has_more=filters.offset + len(items) < total,
+            limit=filters.limit,
+            offset=filters.offset,
             items=items,
         ).model_dump_json()
     except Exception as exc:
@@ -681,12 +661,7 @@ async def wegent_kb_list_knowledge_bases(
         partial(
             _list_knowledge_bases_sync,
             user_id=user.id,
-            scope=params.scope,
-            group_name=params.group_name,
-            query=params.query,
-            owner_user_ids=params.owner_user_ids,
-            limit=params.limit,
-            offset=params.offset,
+            filters=params.filters,
         )
     )
 
