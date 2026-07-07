@@ -1018,7 +1018,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           data-testid="workbench-main-header-left-controls"
           className={cn(
-            'relative z-10 flex h-full shrink-0 items-center pr-1',
+            'relative z-0 flex h-full shrink-0 items-center pr-1',
             MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS
           )}
         >
@@ -1034,7 +1034,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           data-testid="workbench-pane-task-title"
           className={cn(
-            'pointer-events-none relative z-10 flex h-full min-w-0 flex-1 items-center truncate pl-4 text-[13px] font-medium leading-none text-text-primary',
+            'pointer-events-none relative z-0 flex h-full min-w-0 flex-1 items-center truncate pl-4 text-[13px] font-medium leading-none text-text-primary',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
           )}
         >
@@ -1045,7 +1045,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       )}
       <div
         data-testid="titlebar-main-actions"
-        className="relative z-10 flex h-full shrink-0 items-center justify-end gap-1 pr-1"
+        className="relative z-0 flex h-full shrink-0 items-center justify-end gap-1 pr-1"
       >
         {mainHeaderActions}
       </div>
@@ -1060,7 +1060,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <div
         data-testid="titlebar-right-workspace-zone"
         className={cn(
-          'pointer-events-none absolute right-0 top-0 z-10 flex h-full min-w-0 items-center overflow-hidden bg-background/95',
+          'pointer-events-none absolute right-0 top-0 z-chrome flex h-full min-w-0 items-center overflow-hidden bg-background/95',
           rightPanelOpen ? 'border-l border-border/60' : undefined,
           rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
         )}
@@ -1158,7 +1158,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         !isTauri && 'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
-      {tauriMainHeader}
+      {paneActive ? tauriMainHeader : null}
       <WorkbenchPaneActiveOnly>
         {!isTauri && (
           <div
@@ -1435,7 +1435,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             aria-label={t('workbench.resize_right_workspace_panel')}
             aria-controls="right-workspace-panel-shell"
             className={cn(
-              'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
+              'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
             )}
             style={{ left: rightSplitChatWidth }}
