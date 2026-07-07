@@ -5,7 +5,7 @@
 """Regression tests for subscription_tasks with legacy invalid trigger config."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,12 +16,14 @@ from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.models.user import User
 from app.schemas.subscription import (
+    BackgroundExecutionStatus,
     SubscriptionCreate,
     SubscriptionVisibility,
 )
 from app.services.subscription.service import SubscriptionService
 from app.tasks.subscription_tasks import (
     SUBSCRIPTION_BATCH_SIZE,
+    _cleanup_stale_running_executions,
     _disable_expired_subscription_if_needed,
     _dispatch_due_subscription,
     check_due_subscriptions,
@@ -340,6 +342,51 @@ def test_dispatch_due_subscription_marks_execution_failed_when_dispatch_fails():
         "dispatch failed"
         in service.update_execution_status.call_args.kwargs["error_message"]
     )
+
+
+def test_cleanup_stale_running_respects_subscription_timeout(
+    test_db: Session, test_user: User, monkeypatch
+):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "FLOW_STALE_RUNNING_HOURS", 3, raising=False)
+
+    service = SubscriptionService()
+    team = _create_team(test_db, test_user.id, name=f"team-{uuid.uuid4().hex[:6]}")
+    suffix = uuid.uuid4().hex[:8]
+    created = service.create_subscription(
+        test_db,
+        subscription_in=SubscriptionCreate(
+            name=f"task-timeout-{suffix}",
+            namespace="default",
+            display_name="Task Timeout",
+            task_type="collection",
+            visibility=SubscriptionVisibility.PUBLIC,
+            trigger_type="interval",
+            trigger_config={"value": 15, "unit": "minutes"},
+            team_id=team.id,
+            prompt_template="task timeout prompt",
+            timeout_seconds=86400,
+        ),
+        user_id=test_user.id,
+    )
+    execution = BackgroundExecution(
+        user_id=test_user.id,
+        subscription_id=created.id,
+        trigger_type="manual",
+        trigger_reason="Manually triggered by user",
+        prompt="task timeout prompt",
+        status=BackgroundExecutionStatus.RUNNING.value,
+        started_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=4),
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    cleaned = _cleanup_stale_running_executions(test_db)
+
+    test_db.refresh(execution)
+    assert cleaned == 0
+    assert execution.status == BackgroundExecutionStatus.RUNNING.value
 
 
 def test_check_due_subscriptions_handles_legacy_invalid_interval(
