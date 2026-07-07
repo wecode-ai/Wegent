@@ -17,7 +17,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.internal.deps import verify_internal_service_token
+from app.api.deps import verify_internal_service_token
 from pydantic import BaseModel, Field
 
 from app.services.tables import DataTableService, TableQueryRequest
