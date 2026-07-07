@@ -60,7 +60,7 @@ async def queryTable(request: InternalTableQueryRequest):
         query_request = TableQueryRequest(
             provider=request.provider,
             base_id=request.base_id,
-            sheet_id_or_name=request.sheet_id_or_name,
+            sheet_id_or_name=request.sheetsheet_id_or_name,
             user_name=request.user_name,
             max_records=request.max_records,
             filters=request.filters,
