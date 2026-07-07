@@ -127,15 +127,13 @@ jobs:
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
               --title "$release_title" \
-              --notes-file "$release_notes" \
-              --prerelease
+              --notes-file "$release_notes"
           else
             gh release create "$RELEASE_TAG" \
               --target "$GITHUB_SHA" \
               --title "$release_title" \
               --notes-file "$release_notes" \
-              --draft \
-              --prerelease
+              --draft
           fi
 
   build-macos:
@@ -214,25 +212,50 @@ jobs:
       - name: Build Wework app bundle
         working-directory: wework
         env:
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
           VITE_API_BASE_URL: https://api.wecode.ai/api
           VITE_SOCKET_BASE_URL: https://api.wecode.ai
         run: |
           set -euo pipefail
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "Missing GitHub secret: TAURI_SIGNING_PRIVATE_KEY" >&2
+            exit 1
+          fi
+          if [ -z "${TAURI_UPDATER_PUBKEY:-}" ]; then
+            echo "Missing GitHub secret: TAURI_UPDATER_PUBKEY" >&2
+            exit 1
+          fi
+
           config_override="$(mktemp "$PWD/src-tauri/tauri.ci.XXXXXX.json")"
           cleanup() {
             rm -f "$config_override"
           }
           trap cleanup EXIT
-          CONFIG_OVERRIDE="$config_override" VERSION="${{ needs.prepare-release.outputs.version }}" python3 - <<'PY'
+          CONFIG_OVERRIDE="$config_override" \
+          VERSION="${{ needs.prepare-release.outputs.version }}" \
+          UPDATER_ENDPOINT="https://github.com/${GH_REPO}/releases/latest/download/latest.json" \
+          TAURI_UPDATER_PUBKEY="$TAURI_UPDATER_PUBKEY" \
+          python3 - <<'PY'
           import json
           import os
 
           config = {
               "version": os.environ["VERSION"],
               "bundle": {
+                  "createUpdaterArtifacts": True,
                   "macOS": {
                       "signingIdentity": "-",
                       "hardenedRuntime": True,
+                  },
+              },
+              "plugins": {
+                  "updater": {
+                      "endpoints": [os.environ["UPDATER_ENDPOINT"]],
+                      "pubkey": os.environ["TAURI_UPDATER_PUBKEY"],
                   },
               },
           }
@@ -243,14 +266,25 @@ jobs:
           PY
           pnpm exec tauri build \
             --target "${{ matrix.rust_target }}" \
-            --bundles dmg \
+            --bundles app,dmg \
             --config "$config_override"
 
-      - name: Verify and collect DMG
+      - name: Verify and collect release assets
         id: package
         shell: bash
         run: |
           set -euo pipefail
+          archive_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/macos" -maxdepth 1 -name '*.app.tar.gz' -type f | sort | tail -1)"
+          if [ -z "$archive_source" ]; then
+            echo "No updater .app.tar.gz archive found" >&2
+            exit 1
+          fi
+          signature_source="$archive_source.sig"
+          if [ ! -f "$signature_source" ]; then
+            echo "No updater signature found: $signature_source" >&2
+            exit 1
+          fi
+
           dmg_source="$(find "wework/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -maxdepth 1 -name '*.dmg' -type f | sort | tail -1)"
           if [ -z "$dmg_source" ]; then
             echo "No .dmg bundle found" >&2
@@ -285,21 +319,31 @@ jobs:
           artifact_dir="$RUNNER_TEMP/wework-macos-${{ matrix.arch }}"
           mkdir -p "$artifact_dir"
           dmg_path="$artifact_dir/WeWork_${{ needs.prepare-release.outputs.version }}_macos_${{ matrix.arch }}_unsigned-adhoc.dmg"
+          archive_path="$artifact_dir/WeWork_${{ needs.prepare-release.outputs.version }}_macos_${{ matrix.arch }}.app.tar.gz"
+          signature_path="$archive_path.sig"
           cp "$dmg_source" "$dmg_path"
+          cp "$archive_source" "$archive_path"
+          cp "$signature_source" "$signature_path"
           shasum -a 256 "$dmg_path"
+          shasum -a 256 "$archive_path"
           {
             echo "### Wework macOS ${{ matrix.arch }} release asset"
             echo ""
             echo "- DMG: $(basename "$dmg_path")"
+            echo "- Updater archive: $(basename "$archive_path")"
             echo "- This build is ad-hoc signed and not Apple notarized."
             echo "- If the first launch dialog shows Move to Trash, click Done instead."
             echo "- Then force-open from System Settings > Privacy & Security > Open Anyway."
             echo "- If macOS keeps the quarantine flag: \`xattr -dr com.apple.quarantine /Applications/WeWork.app\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          echo "dmg_path=$dmg_path" >> "$GITHUB_OUTPUT"
+          {
+            echo "dmg_path=$dmg_path"
+            echo "archive_path=$archive_path"
+            echo "signature_path=$signature_path"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Upload DMG to GitHub Release
+      - name: Upload macOS assets to GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -307,11 +351,88 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |
           set -euo pipefail
-          gh release upload "$RELEASE_TAG" "${{ steps.package.outputs.dmg_path }}" --clobber
+          gh release upload "$RELEASE_TAG" \
+            "${{ steps.package.outputs.dmg_path }}" \
+            "${{ steps.package.outputs.archive_path }}" \
+            "${{ steps.package.outputs.signature_path }}" \
+            --clobber
           release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
           {
             echo ""
-            echo "- Direct DMG download is available from: $release_url"
+            echo "- Direct DMG and updater downloads are available from: $release_url"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-updater-manifest:
+    name: Publish updater manifest
+    runs-on: ubuntu-latest
+    needs:
+      - prepare-release
+      - build-macos
+
+    steps:
+      - name: Generate latest.json
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d)"
+          gh release download "$RELEASE_TAG" \
+            --pattern "WeWork_${RELEASE_VERSION}_macos_*.app.tar.gz.sig" \
+            --dir "$work_dir"
+
+          arm64_sig_path="$work_dir/WeWork_${RELEASE_VERSION}_macos_arm64.app.tar.gz.sig"
+          x64_sig_path="$work_dir/WeWork_${RELEASE_VERSION}_macos_x64.app.tar.gz.sig"
+          if [ ! -f "$arm64_sig_path" ] || [ ! -f "$x64_sig_path" ]; then
+            echo "Missing updater signatures for latest.json" >&2
+            ls -la "$work_dir" >&2
+            exit 1
+          fi
+
+          export LATEST_JSON="$work_dir/latest.json"
+          export RELEASE_NOTES
+          RELEASE_NOTES="$(gh release view "$RELEASE_TAG" --json body --jq .body)"
+          export ARM64_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/WeWork_${RELEASE_VERSION}_macos_arm64.app.tar.gz"
+          export X64_URL="https://github.com/${GH_REPO}/releases/download/${RELEASE_TAG}/WeWork_${RELEASE_VERSION}_macos_x64.app.tar.gz"
+          export ARM64_SIGNATURE
+          export X64_SIGNATURE
+          ARM64_SIGNATURE="$(cat "$arm64_sig_path")"
+          X64_SIGNATURE="$(cat "$x64_sig_path")"
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          data = {
+              "version": os.environ["RELEASE_VERSION"],
+              "notes": os.environ["RELEASE_NOTES"],
+              "pub_date": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "platforms": {
+                  "darwin-aarch64": {
+                      "signature": os.environ["ARM64_SIGNATURE"],
+                      "url": os.environ["ARM64_URL"],
+                  },
+                  "darwin-x86_64": {
+                      "signature": os.environ["X64_SIGNATURE"],
+                      "url": os.environ["X64_URL"],
+                  },
+              },
+          }
+
+          with open(os.environ["LATEST_JSON"], "w", encoding="utf-8") as handle:
+              json.dump(data, handle, ensure_ascii=False, indent=2)
+              handle.write("\n")
+          PY
+
+          gh release upload "$RELEASE_TAG" "$work_dir/latest.json" --clobber
+          {
+            echo "### Wework updater manifest"
+            echo ""
+            echo "- Endpoint: https://github.com/${GH_REPO}/releases/latest/download/latest.json"
+            echo "- Version: ${RELEASE_VERSION}"
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish-release:
@@ -320,6 +441,7 @@ jobs:
     needs:
       - prepare-release
       - build-macos
+      - publish-updater-manifest
 
     steps:
       - name: Publish GitHub Release
@@ -330,6 +452,12 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |
           set -euo pipefail
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease
+          release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)"
+          gh api \
+            --method PATCH \
+            "repos/${GH_REPO}/releases/${release_id}" \
+            --field draft=false \
+            --field prerelease=false \
+            --raw-field make_latest=true >/dev/null
           release_url="$(gh release view "$RELEASE_TAG" --json url --jq .url)"
-          echo "Published direct DMG downloads: $release_url" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published Wework release and updater manifest: $release_url" >> "$GITHUB_STEP_SUMMARY"
