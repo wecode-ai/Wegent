@@ -21,10 +21,51 @@ const https = require('https')
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
+const childProcess = require('child_process')
 
 /* Environment switches */
+function collectParentProcessCommands() {
+  const commands = []
+  let pid = process.ppid
+
+  for (let depth = 0; depth < 8 && pid > 1; depth += 1) {
+    try {
+      const output = childProcess
+        .execFileSync('ps', ['-o', 'ppid=', '-o', 'command=', '-p', String(pid)], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        })
+        .trim()
+      const match = output.match(/^(\d+)\s+(.+)$/s)
+      if (!match) break
+      commands.push(match[2])
+      pid = Number(match[1])
+    } catch {
+      break
+    }
+  }
+
+  return commands
+}
+
+function isWeworkScopedPnpmCommand(commands) {
+  return commands.some(command => {
+    if (!/\bpnpm\b/.test(command)) return false
+    return (
+      /(?:^|\s)--dir(?:=|\s+)wework(?:\s|$)/.test(command) ||
+      /(?:^|\s)-C(?:=|\s+)wework(?:\s|$)/.test(command) ||
+      /(?:^|\s)--filter(?:=|\s+)wework(?:\s|$)/.test(command)
+    )
+  })
+}
+
 if (process.env.SKIP_FONT_DOWNLOAD === '1') {
   console.log('🚫 Skip font download (SKIP_FONT_DOWNLOAD=1)')
+  process.exit(0)
+}
+
+if (isWeworkScopedPnpmCommand(collectParentProcessCommands())) {
+  console.log('🚫 Skip font download for WeWork pnpm command')
   process.exit(0)
 }
 
