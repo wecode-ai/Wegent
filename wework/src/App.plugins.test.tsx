@@ -9,6 +9,8 @@ vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  requestLocalExecutor: vi.fn().mockResolvedValue({}),
+  subscribeLocalExecutorEvents: vi.fn().mockResolvedValue(vi.fn()),
   connectLocalExecutorToBackend: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
@@ -612,13 +614,14 @@ describe('App plugins route', () => {
       configurable: true,
       value: {},
     })
+    localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
     window.history.pushState({}, '', '/plugins')
 
     render(<App />)
 
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
+    expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
     expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
     expect(screen.getByTestId('plugins-topbar').style.paddingLeft).toBe('')
   })

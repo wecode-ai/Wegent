@@ -26,6 +26,7 @@ import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
+  TITLEBAR_CENTER_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
@@ -458,20 +459,10 @@ describe('DesktopWorkbenchLayout', () => {
     tauriMenuMocks.menuNew.mockResolvedValue({ popup: tauriMenuMocks.menuPopup })
     tauriMenuMocks.menuPopup.mockResolvedValue(undefined)
     document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
+    document.getElementById(TITLEBAR_CENTER_PORTAL_ID)?.remove()
     document.getElementById(TITLEBAR_RIGHT_PANEL_PORTAL_ID)?.remove()
+    screen.queryByTestId('titlebar-center')?.remove()
     screen.queryByTestId('titlebar-right-workspace-zone')?.remove()
-    const titlebarRightWorkspaceZone = document.createElement('div')
-    titlebarRightWorkspaceZone.dataset.testid = 'titlebar-right-workspace-zone'
-    titlebarRightWorkspaceZone.className =
-      'pointer-events-none absolute right-0 top-[3px] z-chrome flex h-[calc(100%-3px)] items-center'
-    const titlebarActions = document.createElement('div')
-    titlebarActions.id = TITLEBAR_ACTIONS_PORTAL_ID
-    titlebarActions.dataset.testid = 'titlebar-actions'
-    const titlebarRightPanel = document.createElement('div')
-    titlebarRightPanel.id = TITLEBAR_RIGHT_PANEL_PORTAL_ID
-    titlebarRightPanel.dataset.testid = 'titlebar-right-panel'
-    titlebarRightWorkspaceZone.append(titlebarRightPanel, titlebarActions)
-    document.body.appendChild(titlebarRightWorkspaceZone)
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
     window.history.pushState({}, '', '/')
@@ -1546,8 +1537,12 @@ describe('DesktopWorkbenchLayout', () => {
         />
       )
 
+      const titlebarMainActions = screen.getByTestId('titlebar-main-actions')
       const titlebarActions = screen.getByTestId('titlebar-actions')
-      expect(titlebarActions).toContainElement(screen.getByTestId('continue-in-im-button'))
+      expect(titlebarMainActions).toContainElement(screen.getByTestId('continue-in-im-button'))
+      expect(titlebarMainActions).toContainElement(screen.getByTestId('fork-runtime-task-button'))
+      expect(titlebarActions).not.toContainElement(screen.getByTestId('continue-in-im-button'))
+      expect(titlebarActions).not.toContainElement(screen.getByTestId('fork-runtime-task-button'))
       expect(titlebarActions).toContainElement(
         screen.getByTestId('toggle-right-workspace-panel-button')
       )
@@ -2001,10 +1996,30 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('desktop-sidebar')).toContainElement(
+      screen.getByTestId('collapse-sidebar-button')
+    )
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('collapse-sidebar-button')
+    )
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toHaveClass('left-[92px]')
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('chrome-tab-wework')
+    )
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('chrome-tab-apps')
+    )
+    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('h-8', 'w-8', 'bg-black/[0.045]')
+    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('h-8', 'w-8', 'text-text-secondary')
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
-    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+    expect(screen.getByTestId('titlebar-main-actions')).toContainElement(
       screen.getByTestId('environment-info-button')
+    )
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('toggle-bottom-workspace-panel-button')
+    )
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
     )
     expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
@@ -2056,23 +2071,31 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('workbench-topbar')).toHaveClass('pl-[14rem]')
+    expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workbench-topbar-left-actions')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workbench-main-header')).toContainElement(
+      screen.getByTestId('workbench-pane-task-title')
+    )
+    expect(screen.getByTestId('workbench-main-header')).toHaveClass('h-[38px]', 'border-b')
+    expect(screen.getByTestId('workbench-main-header-left-controls')).toHaveClass('pl-[92px]')
+    expect(screen.getByTestId('workbench-main-header-left-controls')).toContainElement(
+      screen.getByTestId('expand-sidebar-button')
+    )
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
-      'absolute',
-      'left-0',
-      'top-0',
-      'h-11',
-      'pl-[14rem]',
+      'relative',
+      'h-full',
+      'flex-1',
+      'pl-4',
       'truncate'
     )
+    expect(screen.getByTestId('titlebar-main-actions')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent(
       'wework的聊天链路现在代码逻辑比较混乱'
     )
-    expect(screen.getByTestId('workbench-pane-task-title')).toHaveStyle({
-      width: 'calc(100% - 17rem)',
-    })
     expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveAttribute('title')
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('pt-11')
+    expect(getDesktopWorkbenchMainElement()).toHaveClass('top-0')
+    expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-xl')
   })
 
   test('opens project code-server from the Tauri titlebar', async () => {
@@ -2118,7 +2141,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => expect(startCodeServerSessionMock).toHaveBeenCalledWith(1))
     expect(openExternalUrlMock).toHaveBeenCalledWith('http://localhost/ide')
-    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+    expect(screen.getByTestId('titlebar-main-actions')).toContainElement(
       screen.getByTestId('open-code-server-titlebar-button')
     )
     expect(screen.getByTestId('open-code-server-titlebar-button')).toHaveAttribute(
@@ -2160,7 +2183,7 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+    expect(screen.getByTestId('titlebar-main-actions')).toContainElement(
       screen.getByTestId('open-code-server-titlebar-button')
     )
   })
@@ -2289,7 +2312,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-right-workspace-panel-button')
     )
-    expect(screen.getByTestId('titlebar-actions')).toBeEmptyDOMElement()
+    expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
   })
 
   test('opens the settings menu from the sidebar', async () => {
@@ -3344,7 +3367,7 @@ describe('DesktopWorkbenchLayout', () => {
       '-translate-x-1/2',
       'cursor-col-resize'
     )
-    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveStyle({ left: '422px' })
+    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveStyle({ left: '420px' })
 
     const content = screen.getByTestId('desktop-workbench-content')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
@@ -3775,11 +3798,20 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass(
         'absolute',
         'right-0',
-        'top-[3px]',
-        'h-[calc(100%-3px)]'
+        'top-0',
+        'h-full'
       )
-      expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('border-l')
-      expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass('after:bg-border')
+      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('border-l')
+      expect(screen.getByTestId('titlebar-actions')).toHaveClass('min-w-[5rem]')
+      expect(screen.getByTestId('titlebar-actions')).toContainElement(
+        screen.getByTestId('toggle-right-workspace-panel-button')
+      )
+      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
+        width: 'calc(100% - 420px)',
+      })
+      expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
+        'after:bg-transparent'
+      )
       const tabbar = screen.getByTestId('right-workspace-tabbar')
       expect(titlebarRightPanel).toContainElement(tabbar)
       expect(titlebarRightPanel).toContainElement(screen.getByTestId('right-workspace-file-tab'))
@@ -3797,15 +3829,7 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.getByTestId('right-workspace-new-tab-button')).not.toContainElement(
         rightTitlebarDragRegion
       )
-      expect(screen.getByTestId('right-workspace-titlebar-spacer')).toHaveClass(
-        'h-[38px]',
-        'bg-background'
-      )
-      expect(screen.getByTestId('right-workspace-titlebar-spacer')).not.toHaveClass('border-b')
-      expect(
-        document.documentElement.style.getPropertyValue('--right-workspace-titlebar-width')
-      ).toBe('580px')
-
+      expect(screen.queryByTestId('right-workspace-titlebar-spacer')).not.toBeInTheDocument()
       await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
       expect(screen.getByTestId('right-workspace-new-tab-menu')).toBeInTheDocument()
     } finally {

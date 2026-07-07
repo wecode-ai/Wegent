@@ -430,6 +430,9 @@ export function DesktopWorkbenchLayout() {
       onResizeStateChange={setSidebarResizing}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
+      onToggleSidebar={() => updateSidebarCollapsed(!collapsed)}
+      onOpenWorkbench={() => navigateTo('/')}
+      onOpenApps={() => navigateTo('/apps')}
       onNewChat={onNewChat}
       onOpenSearch={() => setSearchOpen(true)}
       onSelectProject={onSelectProject}

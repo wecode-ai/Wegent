@@ -7,6 +7,8 @@
   },
   "workbench": {
     "brand": "Wework",
+    "app_wework": "Wework",
+    "apps": "应用",
     "new_chat": "新对话",
     "search": "搜索",
     "search_conversations": "搜索对话",

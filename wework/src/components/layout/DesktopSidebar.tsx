@@ -8,6 +8,7 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
+  Grid3X3,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -64,6 +65,8 @@ import type {
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
+import { DesktopWindowControls } from './DesktopWindowControls'
+import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import {
   getRuntimeChatSidebarTaskItems,
   getNextRuntimeSidebarTaskVisibleLimit,
@@ -101,6 +104,9 @@ interface DesktopSidebarProps {
   onResizeStateChange?: (resizing: boolean) => void
   onPointerEnter?: PointerEventHandler<HTMLElement>
   onPointerLeave?: PointerEventHandler<HTMLElement>
+  onToggleSidebar?: () => void
+  onOpenWorkbench?: () => void
+  onOpenApps?: () => void
   onNewChat: () => void
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
@@ -167,6 +173,11 @@ interface ArchiveConversationsConfirmDialogProps {
 const PROJECT_CREATE_MENU_WIDTH = 248
 const PROJECT_CREATE_MENU_MARGIN = 8
 const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 2200
+const MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS = 'left-[92px]'
+const SIDEBAR_CHROME_TAB_BUTTON_CLASS =
+  'group relative flex h-8 w-8 min-w-0 items-center justify-center rounded-lg px-0 text-center text-[13px] font-medium leading-none transition-colors'
+const SIDEBAR_CHROME_TAB_TOOLTIP_CLASS =
+  'pointer-events-none absolute left-1/2 top-[calc(100%+0.375rem)] z-popover -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-background px-2 py-1 text-xs font-medium leading-none text-text-primary opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.14)] transition-opacity group-hover:opacity-100'
 
 function getAccountInitials(label: string): string {
   const normalizedLabel = label.trim()
@@ -1793,6 +1804,9 @@ export function DesktopSidebar({
   onResizeStateChange,
   onPointerEnter,
   onPointerLeave,
+  onToggleSidebar,
+  onOpenWorkbench,
+  onOpenApps,
 }: DesktopSidebarProps) {
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
@@ -1803,6 +1817,8 @@ export function DesktopSidebar({
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
   const usesOverlayTitlebar = isTauriRuntime()
   const sidebarAccount = getSidebarAccountSummary(user, t('workbench.account_fallback', '当前账号'))
+  const workbenchAppLabel = t('workbench.app_wework')
+  const appsAppLabel = t('workbench.apps')
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -2256,6 +2272,54 @@ export function DesktopSidebar({
           )}
           style={{ width: sidebarWidth }}
         >
+          {usesOverlayTitlebar && (
+            <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
+          )}
+          {usesOverlayTitlebar && onToggleSidebar && (
+            <div
+              data-testid="desktop-sidebar-chrome-controls"
+              className={cn(
+                'absolute top-0 z-chrome flex h-[38px] items-center gap-1',
+                MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS
+              )}
+            >
+              <DesktopWindowControls
+                sidebarCollapsed={false}
+                onToggleSidebar={onToggleSidebar}
+                className="gap-1"
+              />
+              <button
+                type="button"
+                data-testid="chrome-tab-wework"
+                onClick={onOpenWorkbench}
+                title={workbenchAppLabel}
+                aria-label={workbenchAppLabel}
+                className={cn(
+                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
+                  'bg-black/[0.045] text-text-primary'
+                )}
+              >
+                <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
+                <span className="sr-only">{workbenchAppLabel}</span>
+                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{workbenchAppLabel}</span>
+              </button>
+              <button
+                type="button"
+                data-testid="chrome-tab-apps"
+                onClick={onOpenApps}
+                title={appsAppLabel}
+                aria-label={appsAppLabel}
+                className={cn(
+                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
+                  'text-text-secondary hover:bg-black/[0.04]'
+                )}
+              >
+                <Grid3X3 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
+                <span className="sr-only">{appsAppLabel}</span>
+                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{appsAppLabel}</span>
+              </button>
+            </div>
+          )}
           <nav className="space-y-0.5">
             <SidebarButton
               icon={Plus}

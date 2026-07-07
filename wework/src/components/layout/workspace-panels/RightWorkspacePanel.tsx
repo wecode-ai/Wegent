@@ -310,14 +310,7 @@ export function RightWorkspacePanel({
       className="relative flex h-full w-full min-w-0 flex-1 basis-0 flex-col bg-background opacity-100 transition-[opacity,transform] duration-300 ease-out"
     >
       {renderTabsInTitlebar ? <TitlebarRightPanelPortal>{tabBar}</TitlebarRightPanelPortal> : null}
-      {renderTabsInTitlebar ? (
-        <header
-          data-testid="right-workspace-titlebar-spacer"
-          className="h-[38px] shrink-0 bg-background"
-        />
-      ) : (
-        tabBar
-      )}
+      {renderTabsInTitlebar ? null : tabBar}
       <div className="flex min-h-0 flex-1">
         {!isRightWorkspaceChatTab(activeView) && activeView === 'launcher' ? (
           <RightWorkspaceLauncher
