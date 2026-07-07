@@ -1953,22 +1953,14 @@ fn workspace_relative_path(path: &str, workspace_path: &str) -> String {
 
 fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
     if looks_like_unified_diff(diff) {
-        let additions = diff
-            .lines()
-            .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
-            .count() as i64;
-        let deletions = diff
-            .lines()
-            .filter(|line| line.starts_with('-') && !line.starts_with("---"))
-            .count() as i64;
-        return (additions, deletions);
+        return prefixed_diff_stats(diff);
     }
 
     let line_count = diff.lines().count() as i64;
     match change_type {
         "created" => (line_count, 0),
         "deleted" => (0, line_count),
-        _ => (0, 0),
+        _ => prefixed_diff_stats(diff),
     }
 }
 
@@ -1979,6 +1971,18 @@ fn looks_like_unified_diff(diff: &str) -> bool {
             || line.starts_with("+++ ")
             || line.starts_with("--- ")
     })
+}
+
+fn prefixed_diff_stats(diff: &str) -> (i64, i64) {
+    let additions = diff
+        .lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .count() as i64;
+    let deletions = diff
+        .lines()
+        .filter(|line| line.starts_with('-') && !line.starts_with("---"))
+        .count() as i64;
+    (additions, deletions)
 }
 
 fn combined_diff_from_file_change_item(item: &Value, workspace_path: &str) -> Option<String> {
@@ -2130,6 +2134,13 @@ mod tests {
     #[test]
     fn unified_diff_counts_prefixed_lines() {
         let diff = "@@ -1,2 +1,2 @@\n-old\n+new\n context\n";
+
+        assert_eq!(diff_stats(diff, "modified"), (1, 1));
+    }
+
+    #[test]
+    fn modified_plain_patch_counts_prefixed_lines() {
+        let diff = "-old\n+new\n context\n";
 
         assert_eq!(diff_stats(diff, "modified"), (1, 1));
     }
