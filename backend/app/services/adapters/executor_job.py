@@ -839,6 +839,7 @@ class JobService(BaseService[Kind, None, None]):
         await self._release_cleanup_read_transaction(db)
 
         deleted_executors: List[Dict[str, str]] = []
+        archive_failed_executors: List[Dict[str, str]] = []
 
         for (namespace, name), subtask in executor_subtasks.items():
             if self._is_device_executor_name(name):
@@ -856,6 +857,9 @@ class JobService(BaseService[Kind, None, None]):
                 logger.warning(
                     f"[executor_job] Skipping executor deletion after archive "
                     f"failure task_id={task.id} ns={namespace} name={name}"
+                )
+                archive_failed_executors.append(
+                    {"executor_name": name, "executor_namespace": namespace}
                 )
                 continue
 
@@ -881,6 +885,14 @@ class JobService(BaseService[Kind, None, None]):
                     "executor_name": name,
                     "executor_namespace": namespace,
                 }
+            )
+
+        # When nothing was deleted because archiving failed, the pods were
+        # intentionally retained for a later retry - report the skip instead of
+        # falsely claiming a successful deletion.
+        if not deleted_executors and archive_failed_executors:
+            return self._build_cleanup_result(
+                task_id, "archive_failed", archive_failed_executors
             )
 
         return self._build_cleanup_result(
