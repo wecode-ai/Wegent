@@ -1069,6 +1069,13 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"
 
 fn write_fake_executable(name: &str, content: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+    let content = if name.starts_with("fake-claude") && !content.contains(r#""type":"result""#) {
+        format!(
+            "{content}\nprintf '%s\\n' '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"stop_reason\":\"end_turn\"}}'\n"
+        )
+    } else {
+        content.to_owned()
+    };
     fs::write(&path, content).unwrap();
     #[cfg(unix)]
     {
