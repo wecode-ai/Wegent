@@ -1055,6 +1055,7 @@ impl RuntimeWorkRpcHandler {
             title.clone(),
         );
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
+        set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
@@ -2189,7 +2190,7 @@ impl RuntimeWorkRpcHandler {
             if link_archived != archived {
                 continue;
             }
-            if is_cached_codex_link_hidden(&link) {
+            if is_cached_codex_link_hidden(&link, &discovered_thread_ids) {
                 continue;
             }
             if discovered_local_task_ids.contains(&link.local_task_id) {
@@ -3182,10 +3183,16 @@ fn payload_runtime_is_codex(payload: &Value) -> bool {
         .unwrap_or(true)
 }
 
-fn is_cached_codex_link_hidden(link: &RuntimeTaskLink) -> bool {
+fn is_cached_codex_link_hidden(
+    link: &RuntimeTaskLink,
+    discovered_thread_ids: &HashSet<String>,
+) -> bool {
     is_codex_runtime(&link.runtime)
         && !link.running
-        && link.thread_id.is_some()
+        && link
+            .thread_id
+            .as_ref()
+            .is_some_and(|thread_id| discovered_thread_ids.contains(thread_id))
         && link.status != "archived"
 }
 
@@ -3621,6 +3628,36 @@ fn runtime_handle_json(link: &RuntimeTaskLink) -> Value {
             .unwrap_or(Value::Null),
     );
     Value::Object(object)
+}
+
+fn set_runtime_handle_model_selection(runtime_handle: &mut Value, payload: &Value) {
+    let Some(model_name) =
+        string_field(payload, "modelId").or_else(|| string_field(payload, "model_id"))
+    else {
+        return;
+    };
+    let mut selection = Map::new();
+    selection.insert("modelName".to_owned(), Value::String(model_name));
+    selection.insert(
+        "modelType".to_owned(),
+        string_field(payload, "modelType")
+            .or_else(|| string_field(payload, "model_type"))
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    selection.insert(
+        "options".to_owned(),
+        payload
+            .get("modelOptions")
+            .or_else(|| payload.get("model_options"))
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({})),
+    );
+
+    let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
+    object.insert("modelSelection".to_owned(), Value::Object(selection));
+    *runtime_handle = Value::Object(object);
 }
 
 fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
@@ -4085,6 +4122,64 @@ mod tests {
             .local_task_link(&local_task_id)
             .expect("local task should be stored");
         assert_eq!(link.thread_id.as_deref(), Some("thread-1"));
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/Users/test/Documents/Codex/2026-07-07/hi".to_owned(),
+            "hi".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        link.running = false;
+        link.status = "active".to_owned();
+
+        assert!(!is_cached_codex_link_hidden(&link, &HashSet::new()));
+
+        let discovered_thread_ids = HashSet::from(["thread-1".to_owned()]);
+        assert!(is_cached_codex_link_hidden(&link, &discovered_thread_ids));
+    }
+
+    #[tokio::test]
+    async fn create_task_stores_model_selection_in_runtime_handle() {
+        let index_path = temp_runtime_work_index_path("create-task-model-selection");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+
+        handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.create",
+                "payload": {
+                    "taskId": "local-task-1",
+                    "workspacePath": "/tmp/project",
+                    "title": "Use mimo",
+                    "modelId": "local-model:mimo",
+                    "modelType": "runtime",
+                    "modelOptions": {
+                        "collaborationMode": "plan"
+                    },
+                    "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
+                }
+            }))
+            .await
+            .expect("runtime task should be created");
+
+        let link = handler
+            .local_task_link("local-task-1")
+            .expect("created task should be stored");
+        assert_eq!(
+            link.runtime_handle["modelSelection"],
+            json!({
+                "modelName": "local-model:mimo",
+                "modelType": "runtime",
+                "options": {
+                    "collaborationMode": "plan"
+                }
+            })
+        );
 
         let _ = fs::remove_file(index_path);
     }

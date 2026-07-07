@@ -258,6 +258,59 @@ describe('workbench project chat hooks', () => {
     })
   })
 
+  test('copies the selected model into a new runtime task scope', async () => {
+    const gptModel: UnifiedModel = {
+      name: 'gpt-5.5',
+      type: 'public',
+      runtime: { family: 'openai.openai-responses' },
+    }
+    const customModel: UnifiedModel = {
+      name: 'mimo-v2.5-pro',
+      type: 'runtime',
+      config: {
+        ui: {
+          family: 'gpt',
+          modelLabel: 'mimo-v2.5-pro',
+          sortOrder: 20,
+        },
+      },
+      runtime: { family: 'openai.openai-responses', provider: 'local' },
+    }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [gptModel, customModel] }),
+    }
+
+    const { result, rerender } = renderHook(
+      ({ scopeKey }: { scopeKey: string }) =>
+        useWorkbenchModels({
+          api,
+          locked: false,
+          scopeKey,
+          persistSelection: false,
+          defaultSelectionConfig: () => ({
+            modelName: 'gpt-5.5',
+            modelType: 'public',
+            options: { reasoning: 'ultra' },
+          }),
+        }),
+      { initialProps: { scopeKey: 'blank:1' } }
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(gptModel))
+
+    act(() => result.current.setSelectedModel(customModel))
+    act(() =>
+      result.current.setSelectionForScope('runtime:local-device:task-1', customModel, {
+        reasoning: 'high',
+      })
+    )
+
+    rerender({ scopeKey: 'runtime:local-device:task-1' })
+
+    expect(result.current.selectedModel).toEqual(customModel)
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
+  })
+
   test('waits for selection readiness before restoring configured model', async () => {
     const claudeModel: UnifiedModel = { name: 'wecode-claude-sonnet-4-5', type: 'public' }
     const gptModel: UnifiedModel = {

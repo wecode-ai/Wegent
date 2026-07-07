@@ -1034,6 +1034,40 @@ function RuntimeModelCompatibilityProbe() {
   )
 }
 
+function RuntimeModelSelectionProbe() {
+  const workbench = useWorkbench()
+  const mimoModel = workbench.projectChat.models.find(model => model.name === 'local-model:mimo')
+
+  return (
+    <div>
+      <span data-testid="selected-model">{workbench.projectChat.selectedModel?.name ?? ''}</span>
+      <span data-testid="selected-mode">
+        {workbench.projectChat.selectedModelOptions.collaborationMode ?? 'default'}
+      </span>
+      <button
+        type="button"
+        onClick={() => {
+          if (mimoModel) workbench.projectChat.setSelectedModel(mimoModel)
+        }}
+      >
+        select mimo
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openRuntimeTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-a',
+          })
+        }
+      >
+        open runtime a
+      </button>
+    </div>
+  )
+}
+
 function FollowUpProbe() {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
   const imageAttachment = createImageAttachment()
@@ -1726,6 +1760,139 @@ describe('WorkbenchProvider runtime tasks', () => {
         ].join('|')
       )
     )
+  })
+
+  test('persists blank new chat model selection as the next default', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-5.5',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: { family: 'codex-provider', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+      {
+        name: 'local-model:mimo',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'model-interface',
+          ui: { family: 'model-interface', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+    ]
+    const updateCurrentUser = vi.fn().mockResolvedValue({})
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<RuntimeModelSelectionProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('selected-model')).toHaveTextContent('gpt-5.5'))
+    await userEvent.click(screen.getByText('select mimo'))
+
+    await waitFor(() =>
+      expect(updateCurrentUser).toHaveBeenCalledWith({
+        preferences: expect.objectContaining({
+          wework_new_chat_model_selection: expect.objectContaining({
+            modelName: 'local-model:mimo',
+            modelType: 'runtime',
+          }),
+        }),
+      })
+    )
+  })
+
+  test('restores runtime task model selection without overwriting the new chat default', async () => {
+    const models: UnifiedModel[] = [
+      {
+        name: 'gpt-5.5',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'codex-provider',
+          ui: { family: 'codex-provider', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+      {
+        name: 'local-model:mimo',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'model-interface',
+          ui: { family: 'model-interface', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+    ]
+    const updateCurrentUser = vi.fn().mockResolvedValue({})
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      modelSelection: {
+                        modelName: 'local-model:mimo',
+                        modelType: 'runtime',
+                        options: { collaborationMode: 'plan' },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+    })
+    const services = createWorkbenchServices({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      userApi: {
+        updateCurrentUser,
+      } as Partial<WorkbenchServices['userApi']> as WorkbenchServices['userApi'],
+    } as Partial<WorkbenchServices>)
+
+    renderWorkbench(<RuntimeModelSelectionProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('selected-model')).toHaveTextContent('local-model:mimo')
+    )
+    expect(screen.getByTestId('selected-mode')).toHaveTextContent('plan')
+    await userEvent.click(screen.getByText('select mimo'))
+    expect(updateCurrentUser).not.toHaveBeenCalled()
   })
 
   test('creates a runtime task for a new project message', async () => {

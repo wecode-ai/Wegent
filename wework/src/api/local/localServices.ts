@@ -365,6 +365,23 @@ function timestampValue(value: unknown): string | number | null {
   return stringValue(value)
 }
 
+function modelSelectionValue(value: unknown) {
+  const selection = recordValue(value)
+  const modelName = stringValue(selection.modelName) ?? stringValue(selection.model_name)
+  if (!modelName) return null
+  const modelType = stringValue(selection.modelType) ?? stringValue(selection.model_type)
+  const options = recordValue(selection.options)
+  return {
+    modelName,
+    modelType: modelType || null,
+    options: Object.fromEntries(
+      Object.entries(options)
+        .map(([key, optionValue]) => [key, stringValue(optionValue)])
+        .filter((entry): entry is [string, string] => Boolean(entry[1]))
+    ),
+  }
+}
+
 function runtimeAddressDebug(value: Record<string, unknown>): Record<string, unknown> {
   const address = recordValue(value.address)
   return {
@@ -440,6 +457,9 @@ function normalizeRuntimeTaskSummary(
   const updatedAt = timestampValue(taskRecord.updatedAt) ?? timestampValue(taskRecord.updated_at)
   const gitInfo = taskRecord.gitInfo ?? taskRecord.git_info
   const runtimeHandle = recordValue(taskRecord.runtimeHandle ?? taskRecord.runtime_handle)
+  const modelSelection =
+    modelSelectionValue(taskRecord.modelSelection ?? taskRecord.model_selection) ??
+    modelSelectionValue(runtimeHandle.modelSelection ?? runtimeHandle.model_selection)
 
   const normalized = {
     ...taskRecord,
@@ -454,6 +474,7 @@ function normalizeRuntimeTaskSummary(
     ...(updatedAt ? { updatedAt } : {}),
     ...(gitInfo !== undefined ? { gitInfo } : {}),
     ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
+    ...(modelSelection ? { modelSelection } : {}),
   }
 
   return normalized as RuntimeTaskSummary
@@ -575,6 +596,9 @@ function localRuntimeModelConfig(
       model_provider: providerIdFromLocalConfig(localModel),
       provider_name: localModel.displayName,
       display_name: localModel.displayName,
+      web_search: localModel.webSearchMode ?? 'disabled',
+      image_generation: localModel.imageGenerationEnabled === true,
+      codex_responses_compat_proxy: true,
       runtime_config: {
         codex: {
           use_user_config: false,

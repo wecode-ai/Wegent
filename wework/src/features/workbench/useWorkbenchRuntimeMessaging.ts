@@ -45,7 +45,11 @@ import type {
   RuntimePaneGuidanceResult,
   SendCurrentInputOptions,
 } from './workbenchContextTypes'
-import { DEVICE_STATUS_LABELS, normalizeGuidanceError } from './workbenchProviderHelpers'
+import {
+  DEVICE_STATUS_LABELS,
+  getRuntimeTaskChatScopeKey,
+  normalizeGuidanceError,
+} from './workbenchProviderHelpers'
 import type { WorkbenchAction } from './workbenchReducer'
 import {
   EMPTY_MESSAGE_TASK_TITLE,
@@ -80,6 +84,11 @@ interface RuntimeMessagingModelSelection {
   selectedModelOptions: ModelOptions
   getSelectedModel?: () => UnifiedModel | null
   getSelectedModelOptions?: () => ModelOptions
+  setSelectionForScope?: (
+    scopeKey: string,
+    model: UnifiedModel | null,
+    options?: ModelOptions
+  ) => void
 }
 
 interface RuntimeMessagingSkillSelection {
@@ -411,6 +420,8 @@ export function useWorkbenchRuntimeMessaging({
         modelSelection.getSelectedModel?.() ??
         modelSelection.selectedModel ??
         resolveAutomaticModel(modelSelection.models)
+      const selectedModelOptions =
+        modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
       const runtime = inferRuntimeName(selectedModel)
       const taskSeed = createRuntimeTaskId(runtime)
       const taskId = createRuntimeTaskIdFromSeed(taskSeed)
@@ -515,6 +526,11 @@ export function useWorkbenchRuntimeMessaging({
         workspacePath:
           'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined,
       }
+      modelSelection.setSelectionForScope?.(
+        getRuntimeTaskChatScopeKey(optimisticAddress),
+        selectedModel,
+        selectedModelOptions
+      )
       const optimisticWorkspacePath =
         ('workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined) ??
         selectedProjectWorkspace?.workspacePath
@@ -592,6 +608,11 @@ export function useWorkbenchRuntimeMessaging({
           })
         }
         if (!isSameRuntimeTaskIdentity(optimisticAddress, address)) {
+          modelSelection.setSelectionForScope?.(
+            getRuntimeTaskChatScopeKey(address),
+            selectedModel,
+            selectedModelOptions
+          )
           if (address.deviceId) rememberExecutionDevice(address.deviceId)
           debugRuntimeCreateFlow('create-final-open', {
             taskId: address.taskId,
