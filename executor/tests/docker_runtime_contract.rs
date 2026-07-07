@@ -64,6 +64,7 @@ async fn default_docker_router_runs_claude_subprocess_and_sends_callbacks() {
         "docker-fake-claude",
         r#"#!/bin/sh
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"docker done"}]}}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}'
 "#,
     );
     let callback = CallbackCapture::start().await;
