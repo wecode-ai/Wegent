@@ -1412,7 +1412,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         is_group_chat: bool | None = None,
         client_origin: str | None = None,
         project_id: int | None = None,
-    ) -> tuple[list[TaskResource], int]:
+    ) -> tuple[list[Any], int]:
         page_limit = skip + limit
         shard_model = task_model_for_user(user_id)
         legacy_query = self._owned_active_task_query(
@@ -1453,7 +1453,10 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
 
     def _ordered_limited_rows(self, query, model: type, *, limit: int) -> list:
         return (
-            query.order_by(model.created_at.desc(), model.id.desc()).limit(limit).all()
+            query.with_entities(model.id, model.created_at)
+            .order_by(model.created_at.desc(), model.id.desc())
+            .limit(limit)
+            .all()
         )
 
     def _owned_active_task_query(

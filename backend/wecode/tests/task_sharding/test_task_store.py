@@ -1394,6 +1394,7 @@ def test_list_personal_task_ids_uses_sql_limited_pages(
     ]
     assert row_selects
     assert all(" LIMIT " in statement for statement in row_selects)
+    assert all("JSON" not in statement for statement in row_selects)
 
 
 def test_list_accessible_task_ids_reads_members_by_id_across_shards(
