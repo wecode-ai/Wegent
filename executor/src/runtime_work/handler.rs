@@ -9,12 +9,14 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use chrono::Local;
+use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::time::sleep;
 
 use crate::{
     agents::{
@@ -54,8 +56,8 @@ use super::{
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, execution_request, id_field,
-        infer_workspace_kind, integer_field, normalize_device_id, now_ms, prompt_text,
-        runtime_task_id, string_field, workspace_group_path, workspace_path,
+        infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
+        prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
     },
 };
 
@@ -69,6 +71,8 @@ const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
 const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
+const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
+const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
@@ -238,6 +242,7 @@ pub struct RuntimeWorkRpcHandler {
     active_request_user_inputs: Arc<Mutex<HashMap<String, mpsc::Sender<Value>>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     store: RuntimeWorkStore,
     transcript_cache: TranscriptCache,
     thread_list_cache: CodexThreadListCache,
@@ -282,7 +287,8 @@ impl RuntimeThreadEventRoute {
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
         let codex_binary = codex_binary.into();
-        Self {
+        let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
+        let handler = Self {
             device_id: normalize_device_id(device_id.into()),
             codex_app_server: CodexAppServerClient::new(codex_binary),
             event_tx: None,
@@ -292,10 +298,13 @@ impl RuntimeWorkRpcHandler {
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
+            archived_delete_tx,
             store: RuntimeWorkStore::from_env(),
             transcript_cache: TranscriptCache::default(),
             thread_list_cache: CodexThreadListCache::default(),
-        }
+        };
+        handler.spawn_archived_delete_worker(archived_delete_rx);
+        handler
     }
 
     pub fn with_event_sender(
@@ -339,6 +348,12 @@ impl RuntimeWorkRpcHandler {
             "runtime.archived_conversations.delete" => self.delete_archived_task(payload).await,
             "runtime.archived_conversations.delete_bulk" => {
                 self.delete_archived_tasks_bulk(payload).await
+            }
+            "runtime.archived_conversations.cleanup_preview" => {
+                self.preview_archived_conversation_cleanup(payload).await
+            }
+            "runtime.archived_conversations.cleanup" => {
+                self.cleanup_archived_conversations(payload).await
             }
             "runtime.archived_conversations.archive_project" => {
                 self.archive_project_conversations(payload).await
@@ -1007,36 +1022,130 @@ impl RuntimeWorkRpcHandler {
 
     async fn delete_archived_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, true).await?;
+        Ok(self.delete_archived_link(link).await)
+    }
+
+    async fn delete_archived_link(&self, link: RuntimeTaskLink) -> Value {
+        self.mark_archived_link_deleted(&link);
+        if let Err(error) = self.archived_delete_tx.send(link.clone()) {
+            log_executor_event(
+                "runtime archived conversation background enqueue failed",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("error", error.to_string()),
+                ],
+            );
+        }
+
+        let mut response = task_action_success(&link);
+        response["deleted"] = json!(true);
+        response["cleanup"] = json!({
+            "background": true,
+            "taskId": link.local_task_id,
+            "workspacePath": link.workspace_path,
+        });
+        response
+    }
+
+    fn spawn_archived_delete_worker(&self, mut rx: mpsc::UnboundedReceiver<RuntimeTaskLink>) {
+        let handler = self.clone();
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        handle.spawn(async move {
+            while let Some(link) = rx.recv().await {
+                handler.delete_archived_link_background(link).await;
+                sleep(ARCHIVED_BACKGROUND_DELETE_INTERVAL).await;
+            }
+        });
+    }
+
+    async fn delete_archived_link_background(&self, link: RuntimeTaskLink) {
         if let Some(thread_id) = link.thread_id.as_deref() {
-            if let Err(error) = self
-                .call_codex_thread_method("thread/delete", json!({"threadId": thread_id}))
+            let started_at = Instant::now();
+            match self
+                .call_codex_thread_method_without_list_invalidation(
+                    "thread/delete",
+                    json!({"threadId": thread_id}),
+                )
                 .await
             {
-                return Ok(task_action_failure(&link, error));
+                Ok(_) => {
+                    let elapsed = started_at.elapsed();
+                    if elapsed >= ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD {
+                        log_executor_event(
+                            "runtime archived conversation background thread delete slow",
+                            &[
+                                ("local_task_id", link.local_task_id.clone()),
+                                ("thread_id", thread_id.to_owned()),
+                                ("elapsed_ms", elapsed.as_millis().to_string()),
+                            ],
+                        );
+                    }
+                }
+                Err(error) => {
+                    log_executor_event(
+                        "runtime archived conversation background thread delete failed",
+                        &[
+                            ("local_task_id", link.local_task_id.clone()),
+                            ("thread_id", thread_id.to_owned()),
+                            ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                            ("error", error),
+                        ],
+                    );
+                }
             }
         }
 
         self.store.delete_task(&link.local_task_id);
-        let mut response = task_action_success(&link);
-        response["deleted"] = json!(true);
-        Ok(response)
+        let cleanup_link = link.clone();
+        let cleanup = tokio::task::spawn_blocking(move || {
+            cleanup_task_files_response(&cleanup_link, true, false)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            json!({
+                "taskId": link.local_task_id,
+                "workspacePath": link.workspace_path,
+                "targetCount": 0,
+                "cleanableCount": 0,
+                "skippedCount": 0,
+                "errorCount": 1,
+                "bytes": 0,
+                "items": [],
+                "error": error.to_string(),
+            })
+        });
+        log_executor_event(
+            "runtime archived conversation background cleanup finished",
+            &[
+                ("local_task_id", link.local_task_id.clone()),
+                (
+                    "error_count",
+                    cleanup
+                        .get("errorCount")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        .to_string(),
+                ),
+            ],
+        );
     }
 
     async fn delete_archived_tasks_bulk(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let items = payload
-            .get("items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut results = Vec::new();
-        let mut deleted_count = 0;
-        for item in items {
-            let result = self.delete_archived_task(item).await?;
-            if result["deleted"] == true {
-                deleted_count += 1;
-            }
-            results.push(result);
-        }
+        let links = self.archived_cleanup_links(&payload).await?;
+        let results = stream::iter(links)
+            .map(|link| {
+                let handler = self.clone();
+                async move { handler.delete_archived_link(link).await }
+            })
+            .buffer_unordered(8)
+            .collect::<Vec<_>>()
+            .await;
+        let deleted_count = results
+            .iter()
+            .filter(|result| result["deleted"] == true)
+            .count();
 
         Ok(json!({
             "success": true,
@@ -1046,6 +1155,27 @@ impl RuntimeWorkRpcHandler {
             "deletedCount": deleted_count,
             "results": results,
         }))
+    }
+
+    async fn preview_archived_conversation_cleanup(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let links = self.archived_cleanup_links(&payload).await?;
+        let previews = links
+            .iter()
+            .map(cleanup_task_files_preview)
+            .collect::<Vec<_>>();
+        Ok(cleanup_summary_response(previews, false))
+    }
+
+    async fn cleanup_archived_conversations(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let links = self.archived_cleanup_links(&payload).await?;
+        let results = links
+            .iter()
+            .map(|link| cleanup_task_files_response(link, true, false))
+            .collect::<Vec<_>>();
+        Ok(cleanup_summary_response(results, true))
     }
 
     async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -2179,6 +2309,9 @@ impl RuntimeWorkRpcHandler {
 
         for thread in self.codex_threads(archived).await {
             if let Some(mut link) = self.link_from_thread(&thread) {
+                if archived && self.archived_link_is_deleted(&link) {
+                    continue;
+                }
                 if link.ephemeral {
                     continue;
                 }
@@ -2201,6 +2334,9 @@ impl RuntimeWorkRpcHandler {
         }
 
         for mut link in self.local_task_links(true) {
+            if archived && self.archived_link_is_deleted(&link) {
+                continue;
+            }
             if link.ephemeral {
                 continue;
             }
@@ -2666,15 +2802,25 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn call_codex_thread_method(&self, method: &str, params: Value) -> Result<Value, String> {
-        if let Some(thread_id) = codex_stream_thread_id(&params) {
-            self.register_thread_event_route_from_store(&thread_id);
-        }
-        self.ensure_notification_router().await;
-        let result = self.codex_app_server.request(method, params).await;
+        let result = self
+            .call_codex_thread_method_without_list_invalidation(method, params)
+            .await;
         if result.is_ok() {
             self.thread_list_cache.invalidate();
         }
         result
+    }
+
+    async fn call_codex_thread_method_without_list_invalidation(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        if let Some(thread_id) = codex_stream_thread_id(&params) {
+            self.register_thread_event_route_from_store(&thread_id);
+        }
+        self.ensure_notification_router().await;
+        self.codex_app_server.request(method, params).await
     }
 
     fn link_from_thread(&self, thread: &Value) -> Option<RuntimeTaskLink> {
@@ -2715,6 +2861,50 @@ impl RuntimeWorkRpcHandler {
 
     fn local_task_link(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
         self.store.get_task(local_task_id)
+    }
+
+    fn archived_link_is_deleted(&self, link: &RuntimeTaskLink) -> bool {
+        self.store.is_deleted_archived_task_id(&link.local_task_id)
+            || link
+                .thread_id
+                .as_deref()
+                .is_some_and(|thread_id| self.store.is_deleted_archived_task_id(thread_id))
+    }
+
+    fn mark_archived_link_deleted(&self, link: &RuntimeTaskLink) {
+        let mut ids = vec![link.local_task_id.clone()];
+        if let Some(thread_id) = &link.thread_id {
+            ids.push(thread_id.clone());
+        }
+        self.store.mark_deleted_archived_task_ids(ids);
+        self.thread_list_cache.invalidate();
+    }
+
+    async fn archived_cleanup_links(
+        &self,
+        payload: &Value,
+    ) -> Result<Vec<RuntimeTaskLink>, AppIpcError> {
+        let items = payload
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if items.is_empty() {
+            return Ok(self.collect_links(true).await);
+        }
+
+        let mut links = Vec::new();
+        let mut seen = HashSet::new();
+        for item in items {
+            let local_task_id = runtime_task_id(&item)
+                .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+            let payload_thread_id = runtime_session_id_from_payload(&item);
+            let link = archived_link_from_payload_item(&item, local_task_id, payload_thread_id);
+            if seen.insert(link.local_task_id.clone()) {
+                links.push(link);
+            }
+        }
+        Ok(links)
     }
 
     fn local_task_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
@@ -3699,12 +3889,39 @@ fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
         .or_else(|| runtime_session_id_from_handle(&link.runtime_handle))
 }
 
+fn archived_link_from_payload_item(
+    item: &Value,
+    local_task_id: String,
+    thread_id: Option<String>,
+) -> RuntimeTaskLink {
+    let workspace_path = workspace_path(item).unwrap_or_default();
+    let title = string_field(item, "title").unwrap_or_else(|| local_task_id.clone());
+    let mut link = RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path, title);
+    link.thread_id = thread_id;
+    if let Some(runtime_handle) = item
+        .get("runtimeHandle")
+        .or_else(|| item.get("runtime_handle"))
+        .cloned()
+    {
+        link.runtime_handle = runtime_handle;
+    }
+    link.status = "archived".to_owned();
+    link.running = false;
+    link
+}
+
 fn runtime_session_id_from_payload(payload: &Value) -> Option<String> {
     let address = payload.get("address");
-    payload
-        .get("runtimeHandle")
-        .or_else(|| payload.get("runtime_handle"))
-        .and_then(runtime_session_id_from_handle)
+    string_field(payload, "threadId")
+        .or_else(|| string_field(payload, "thread_id"))
+        .or_else(|| address.and_then(|address| string_field(address, "threadId")))
+        .or_else(|| address.and_then(|address| string_field(address, "thread_id")))
+        .or_else(|| {
+            payload
+                .get("runtimeHandle")
+                .or_else(|| payload.get("runtime_handle"))
+                .and_then(runtime_session_id_from_handle)
+        })
         .or_else(|| {
             address.and_then(|address| {
                 address
@@ -3798,6 +4015,332 @@ fn fork_error_response(code: &str, error: String) -> Value {
         "error": error,
         "code": code,
     })
+}
+
+fn cleanup_task_files_preview(link: &RuntimeTaskLink) -> Value {
+    cleanup_task_files_response(link, false, true)
+}
+
+fn cleanup_task_files_response(link: &RuntimeTaskLink, delete: bool, measure_bytes: bool) -> Value {
+    let targets = cleanup_targets_for_task(link);
+    let mut cleaned_count = 0_u64;
+    let mut skipped_count = 0_u64;
+    let mut error_count = 0_u64;
+    let mut total_bytes = 0_u64;
+    let mut items = Vec::new();
+
+    for target in targets {
+        let exists = target.path.exists();
+        let bytes = if measure_bytes {
+            path_size(&target.path).unwrap_or(0)
+        } else {
+            0
+        };
+        total_bytes = total_bytes.saturating_add(bytes);
+        let mut item = json!({
+            "kind": target.kind,
+            "path": target.path.to_string_lossy(),
+            "exists": exists,
+            "bytes": bytes,
+        });
+
+        if !exists {
+            skipped_count += 1;
+            item["status"] = json!("missing");
+            items.push(item);
+            continue;
+        }
+
+        if delete {
+            match remove_cleanup_target(&target) {
+                Ok(()) => {
+                    cleaned_count += 1;
+                    item["status"] = json!("cleaned");
+                }
+                Err(error) => {
+                    error_count += 1;
+                    item["status"] = json!("failed");
+                    item["error"] = json!(error);
+                }
+            }
+        } else {
+            cleaned_count += 1;
+            item["status"] = json!("preview");
+        }
+        items.push(item);
+    }
+
+    json!({
+        "taskId": link.local_task_id,
+        "workspacePath": link.workspace_path,
+        "targetCount": items.len(),
+        "cleanableCount": cleaned_count,
+        "skippedCount": skipped_count,
+        "errorCount": error_count,
+        "bytes": total_bytes,
+        "items": items,
+    })
+}
+
+fn cleanup_summary_response(results: Vec<Value>, deleted: bool) -> Value {
+    let target_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("targetCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let cleanable_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("cleanableCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let skipped_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("skippedCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let error_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("errorCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let total_bytes = results
+        .iter()
+        .map(|result| result.get("bytes").and_then(Value::as_u64).unwrap_or(0))
+        .sum::<u64>();
+
+    json!({
+        "success": error_count == 0,
+        "deleted": deleted,
+        "taskCount": results.len(),
+        "targetCount": target_count,
+        "cleanableCount": cleanable_count,
+        "skippedCount": skipped_count,
+        "errorCount": error_count,
+        "bytes": total_bytes,
+        "results": results,
+    })
+}
+
+struct CleanupTarget {
+    kind: &'static str,
+    path: PathBuf,
+}
+
+fn cleanup_targets_for_task(link: &RuntimeTaskLink) -> Vec<CleanupTarget> {
+    let mut targets = Vec::new();
+    let mut seen = HashSet::new();
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        worktree_cleanup_target(&link.workspace_path),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        standalone_chat_cleanup_target(&link.local_task_id, &link.workspace_path),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        workspace_attachment_cleanup_target(link, ".wegent/attachments"),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        workspace_attachment_cleanup_target(
+            link,
+            &format!("{}:executor:attachments", link.local_task_id),
+        ),
+    );
+
+    for path in local_attachment_paths(&link.runtime_handle) {
+        push_cleanup_target(
+            &mut targets,
+            &mut seen,
+            local_attachment_cleanup_target(&path),
+        );
+    }
+    if let Some(parent) = &link.parent {
+        for path in local_attachment_paths(parent) {
+            push_cleanup_target(
+                &mut targets,
+                &mut seen,
+                local_attachment_cleanup_target(&path),
+            );
+        }
+    }
+
+    targets
+}
+
+fn push_cleanup_target(
+    targets: &mut Vec<CleanupTarget>,
+    seen: &mut HashSet<String>,
+    target: Option<CleanupTarget>,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    let key = normalize_workspace_path(&target.path.to_string_lossy());
+    if seen.insert(key) {
+        targets.push(target);
+    }
+}
+
+fn worktree_cleanup_target(path: &str) -> Option<CleanupTarget> {
+    let normalized = normalize_workspace_path(path);
+    if !is_managed_worktree_path(&normalized) {
+        return None;
+    }
+    Some(CleanupTarget {
+        kind: "worktree",
+        path: PathBuf::from(normalized),
+    })
+}
+
+fn standalone_chat_cleanup_target(local_task_id: &str, path: &str) -> Option<CleanupTarget> {
+    let normalized = normalize_workspace_path(path);
+    if !normalized.contains("/Documents/Codex/") {
+        return None;
+    }
+    let segment = workspace_segment(local_task_id);
+    if Path::new(&normalized)
+        .file_name()
+        .and_then(|name| name.to_str())
+        != Some(segment.as_str())
+    {
+        return None;
+    }
+    Some(CleanupTarget {
+        kind: "standalone_workspace",
+        path: PathBuf::from(normalized),
+    })
+}
+
+fn workspace_attachment_cleanup_target(
+    link: &RuntimeTaskLink,
+    relative: &str,
+) -> Option<CleanupTarget> {
+    let workspace = PathBuf::from(normalize_workspace_path(&link.workspace_path));
+    if workspace.as_os_str().is_empty() {
+        return None;
+    }
+    let path = if relative == ".wegent/attachments" {
+        workspace.join(relative).join(&link.local_task_id)
+    } else {
+        workspace.join(relative)
+    };
+    Some(CleanupTarget {
+        kind: "workspace_attachment",
+        path,
+    })
+}
+
+fn local_attachment_cleanup_target(path: &str) -> Option<CleanupTarget> {
+    let normalized = normalize_workspace_path(path);
+    if !is_local_attachment_draft_path(&normalized) {
+        return None;
+    }
+    Some(CleanupTarget {
+        kind: "local_attachment",
+        path: PathBuf::from(normalized),
+    })
+}
+
+fn local_attachment_paths(value: &Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    collect_local_attachment_paths(value, &mut paths);
+    paths
+}
+
+fn collect_local_attachment_paths(value: &Value, paths: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_local_attachment_paths(item, paths);
+            }
+        }
+        Value::Object(map) => {
+            for (key, value) in map {
+                if matches!(
+                    key.as_str(),
+                    "local_path" | "localPath" | "local_preview_url" | "localPreviewUrl"
+                ) {
+                    if let Some(path) = value
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                    {
+                        paths.push(path.to_owned());
+                    }
+                }
+                collect_local_attachment_paths(value, paths);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn remove_cleanup_target(target: &CleanupTarget) -> Result<(), String> {
+    if target.kind == "worktree" {
+        remove_git_worktree_best_effort(&target.path);
+    }
+    if target.path.is_dir() {
+        fs::remove_dir_all(&target.path)
+            .map_err(|error| format!("failed to remove directory: {error}"))?;
+    } else if target.path.is_file() {
+        fs::remove_file(&target.path).map_err(|error| format!("failed to remove file: {error}"))?;
+    }
+    Ok(())
+}
+
+fn remove_git_worktree_best_effort(path: &Path) {
+    let path = path.to_string_lossy().to_string();
+    let _ = std::process::Command::new("git")
+        .args(["-C", &path, "worktree", "remove", "--force", &path])
+        .output();
+}
+
+fn path_size(path: &Path) -> Option<u64> {
+    let metadata = fs::metadata(path).ok()?;
+    if metadata.is_file() {
+        return Some(metadata.len());
+    }
+    if !metadata.is_dir() {
+        return Some(0);
+    }
+    let mut size = 0_u64;
+    for entry in fs::read_dir(path).ok()? {
+        let entry = entry.ok()?;
+        size = size.saturating_add(path_size(&entry.path()).unwrap_or(0));
+    }
+    Some(size)
+}
+
+fn is_managed_worktree_path(path: &str) -> bool {
+    path.contains("/.wecode/wegent-executor/workspace/worktrees/")
+        || path.contains("/.wegent-executor/workspace/worktrees/")
+}
+
+fn is_local_attachment_draft_path(path: &str) -> bool {
+    path.contains("/.wegent-executor/workspace/attachments/draft/")
+        || path.contains("/.wecode/wegent-executor/workspace/attachments/draft/")
 }
 
 fn task_action_success(link: &RuntimeTaskLink) -> Value {
@@ -4444,6 +4987,57 @@ mod tests {
         assert!(result.is_none());
         let _ = std::fs::remove_file(old_path);
         let _ = std::fs::remove_file(new_path);
+    }
+
+    #[test]
+    fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned(),
+            "Task".to_owned(),
+        );
+        link.runtime_handle = json!({
+            "messages": [
+                {
+                    "attachments": [
+                        {
+                            "local_path": "/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let targets = cleanup_targets_for_task(&link);
+        let target_paths = targets
+            .iter()
+            .map(|target| target.path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(target_paths
+            .contains(&"/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned()));
+        assert!(target_paths.contains(
+            &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
+        ));
+    }
+
+    #[test]
+    fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+        let link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/Users/me/project".to_owned(),
+            "Task".to_owned(),
+        );
+
+        let targets = cleanup_targets_for_task(&link);
+        let target_paths = targets
+            .iter()
+            .map(|target| target.path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
+        assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
+        assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
     }
 
     fn temp_runtime_work_index_path(label: &str) -> PathBuf {

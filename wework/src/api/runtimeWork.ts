@@ -25,6 +25,7 @@ import type {
   RuntimeArchiveProjectConversationsRequest,
   RuntimeArchivedConversationBulkRequest,
   RuntimeArchivedConversationBulkResponse,
+  RuntimeArchivedConversationCleanupResponse,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
@@ -178,6 +179,16 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeArchivedConversationBulkRequest
     ): Promise<RuntimeArchivedConversationBulkResponse> {
       return client.post('/runtime-work/archived-conversations/delete-bulk', data)
+    },
+    previewArchivedConversationCleanup(
+      data: RuntimeArchivedConversationBulkRequest
+    ): Promise<RuntimeArchivedConversationCleanupResponse> {
+      return client.post('/runtime-work/archived-conversations/cleanup-preview', data)
+    },
+    cleanupArchivedConversations(
+      data: RuntimeArchivedConversationBulkRequest
+    ): Promise<RuntimeArchivedConversationCleanupResponse> {
+      return client.post('/runtime-work/archived-conversations/cleanup', data)
     },
     cancelRuntimeTask(address: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return client.post('/runtime-work/cancel', address)

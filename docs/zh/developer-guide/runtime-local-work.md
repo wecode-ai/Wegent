@@ -147,9 +147,15 @@ POST /api/runtime-work/archived-conversations/archive-all
 POST /api/runtime-work/archived-conversations/unarchive
 POST /api/runtime-work/archived-conversations/delete
 POST /api/runtime-work/archived-conversations/delete-bulk
+POST /api/runtime-work/archived-conversations/cleanup-preview
+POST /api/runtime-work/archived-conversations/cleanup
 ```
 
-executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unarchive` 和 `thread/delete` 执行归档、恢复和删除；重命名使用 `thread/name/set`。归档列表响应来自 state DB `threads.archived` 过滤结果并合并 JSON LocalTask 索引，标准化 `id`、`localTaskId`、标题、Project 名称、工作区路径、设备、来源和时间字段，并按 Project 汇总计数。刚执行归档/恢复时，如果 state DB 尚未同步，设备侧 LocalTask 索引中的本地覆盖态会先参与列表，避免 UI 短暂消失。批量删除只作用于前端当前提交的归档项集合。
+executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unarchive` 和 `thread/delete` 执行归档、恢复和删除；重命名使用 `thread/name/set`。归档列表响应来自 state DB `threads.archived` 过滤结果并合并 JSON LocalTask 索引，标准化 `id`、`localTaskId`、`threadId`、标题、Project 名称、工作区路径、设备、来源和时间字段，并按 Project 汇总计数。刚执行归档/恢复时，如果 state DB 尚未同步，设备侧 LocalTask 索引中的本地覆盖态会先参与列表，避免 UI 短暂消失。Project 分组必须使用 Project 主目录或 `groupWorkspacePath`，不能把同一 Project 下的不同 worktree 当成不同 Project。
+
+删除归档会话采用两阶段策略。前台 `delete` 和 `delete-bulk` 先在 executor 本地索引写入 tombstone，列表立即隐藏对应项；真正的 Codex `thread/delete`、LocalTask 索引删除、worktree/附件/日志文件清理由 executor 后台单 worker 逐条执行。后台 worker 必须等待当前 app-server `thread/delete` 真正返回后再处理下一条；如果删除变慢，只记录慢操作日志，不能通过客户端 timeout 继续堆叠新的 `thread/delete`，否则会压住 Codex thread store 并让归档列表刷新长期等待。前端批量删除按小批次提交，并把进度保存在页面外状态中，用户离开再进入设置页仍能看到当前删除进度。
+
+`cleanup-preview` 和 `cleanup` 只面向已归档 LocalTask 的残留文件，包括 executor 管理的 Git worktree 目录、LocalTask 记录、会话日志、运行时 handle 中记录的本地附件，以及本机附件草稿路径。清理目标必须从归档项的 `deviceId + workspacePath + localTaskId + threadId/runtimeHandle` 推导并做路径安全校验，只能删除 executor 管理目录、standalone chat 目录或本地附件草稿目录下的文件；普通 Project 根目录、未归档会话、运行中任务和未被前端提交的归档项不能被清理。
 
 如果被归档的 LocalTask 使用 Git worktree，Wework 会先在该任务的 `deviceId + workspacePath` 上执行 `git status --porcelain`。工作树干净时，归档成功后会通过设备命令执行 `git worktree remove --force` 删除对应 worktree 目录；存在未提交代码时，前端先提示用户，默认不归档也不删除目录。用户选择强制归档后，Wework 会继续归档并强制删除该 worktree，因此未提交变更不会被保留。这个清理只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。
 

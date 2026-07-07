@@ -15,6 +15,7 @@ import type {
   DeviceInfo,
   DeviceWorkspacePrepareRequest,
   RuntimeArchivedConversationBulkResponse,
+  RuntimeArchivedConversationCleanupResponse,
   RuntimeRollbackRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
@@ -184,6 +185,36 @@ function removeCurrentAppCloudRuntimeWork(
 
 function emptyArchiveList(): ArchivedConversationsListResponse {
   return { items: [], projectGroups: [], total: 0 }
+}
+
+function emptyCleanupResponse(): RuntimeArchivedConversationCleanupResponse {
+  return {
+    success: true,
+    deleted: false,
+    taskCount: 0,
+    targetCount: 0,
+    cleanableCount: 0,
+    skippedCount: 0,
+    errorCount: 0,
+    bytes: 0,
+    results: [],
+  }
+}
+
+function mergeCleanupResponses(
+  responses: RuntimeArchivedConversationCleanupResponse[]
+): RuntimeArchivedConversationCleanupResponse {
+  return {
+    success: responses.every(response => response.success),
+    deleted: responses.some(response => response.deleted),
+    taskCount: responses.reduce((total, response) => total + response.taskCount, 0),
+    targetCount: responses.reduce((total, response) => total + response.targetCount, 0),
+    cleanableCount: responses.reduce((total, response) => total + response.cleanableCount, 0),
+    skippedCount: responses.reduce((total, response) => total + response.skippedCount, 0),
+    errorCount: responses.reduce((total, response) => total + response.errorCount, 0),
+    bytes: responses.reduce((total, response) => total + response.bytes, 0),
+    results: responses.flatMap(response => response.results),
+  }
 }
 
 function mergeArchiveLists(
@@ -487,6 +518,24 @@ export function createHybridWorkbenchServices(
             }),
       ])
       return mergeBulkResponses(responses)
+    },
+    async previewArchivedConversationCleanup(data) {
+      const localItems = data.items.filter(item => isLocalDeviceId(item.deviceId))
+      const responses = await Promise.all([
+        localItems.length > 0
+          ? localServices.runtimeWorkApi!.previewArchivedConversationCleanup({ items: localItems })
+          : Promise.resolve(emptyCleanupResponse()),
+      ])
+      return mergeCleanupResponses(responses)
+    },
+    async cleanupArchivedConversations(data) {
+      const localItems = data.items.filter(item => isLocalDeviceId(item.deviceId))
+      const responses = await Promise.all([
+        localItems.length > 0
+          ? localServices.runtimeWorkApi!.cleanupArchivedConversations({ items: localItems })
+          : Promise.resolve(emptyCleanupResponse()),
+      ])
+      return mergeCleanupResponses(responses)
     },
     cancelRuntimeTask(address: RuntimeTaskAddress) {
       return routeByAddress(address).cancelRuntimeTask(address)
