@@ -10,9 +10,14 @@ import { AssistantMarkdown } from './AssistantMarkdown'
 interface AssistantPlanCardProps {
   content: string
   onOpenPlan?: (content: string) => void
+  isStreaming?: boolean
 }
 
-export function AssistantPlanCard({ content, onOpenPlan }: AssistantPlanCardProps) {
+export function AssistantPlanCard({
+  content,
+  onOpenPlan,
+  isStreaming = false,
+}: AssistantPlanCardProps) {
   const { t } = useTranslation('chat')
 
   const handleDownload = async () => {
@@ -61,6 +66,18 @@ export function AssistantPlanCard({ content, onOpenPlan }: AssistantPlanCardProp
         <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium">
           <ListChecks className="h-4 w-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
           <span>{t('plan_card.title')}</span>
+          {isStreaming ? (
+            <span
+              data-testid="assistant-plan-streaming-indicator"
+              className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-text-secondary"
+            >
+              <span
+                className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary"
+                aria-hidden="true"
+              />
+              <span>{t('plan_card.generating')}</span>
+            </span>
+          ) : null}
         </div>
         <PlanCardActions content={content} onDownload={handleDownload} onExpand={openPlan} />
       </div>
@@ -72,7 +89,7 @@ export function AssistantPlanCard({ content, onOpenPlan }: AssistantPlanCardProp
           data-testid="assistant-plan-card-content"
           className="assistant-plan-card-content text-sm leading-6 text-text-primary [&_.assistant-markdown_h1]:mb-3 [&_.assistant-markdown_h1]:mt-2 [&_.assistant-markdown_h2]:mb-2 [&_.assistant-markdown_h2]:mt-3 [&_.assistant-markdown_p]:mb-2 [&_.assistant-markdown_p]:leading-5 [&_.assistant-markdown_ul]:mb-2 [&_.assistant-markdown_ul]:space-y-1 [&_.assistant-markdown_li]:leading-5"
         >
-          <AssistantMarkdown content={content} />
+          <AssistantMarkdown content={content} isStreaming={isStreaming} />
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-background to-transparent" />
       </div>
