@@ -3,7 +3,20 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { ArchivedConversationItem, ArchivedConversationsListRequest } from '@/types/api'
+import {
+  getArchivedBulkDeleteProgress,
+  hasArchivedBulkDeletedKey,
+  notifyArchivedBulkDeleteDeleted,
+  setArchivedBulkDeleteProgress,
+  subscribeArchivedBulkDeleteDeleted,
+  subscribeArchivedBulkDeleteProgress,
+  type ArchivedBulkDeleteProgress,
+} from './archivedConversationsSettingsState'
+import type {
+  ArchivedConversationItem,
+  ArchivedConversationsListRequest,
+  RuntimeArchivedConversationCleanupResponse,
+} from '@/types/api'
 
 type SourceFilter = NonNullable<ArchivedConversationsListRequest['source']>
 type SortFilter = NonNullable<ArchivedConversationsListRequest['sort']>
@@ -11,9 +24,13 @@ type PendingDelete =
   | { type: 'single'; item: ArchivedConversationItem }
   | { type: 'bulk'; items: ArchivedConversationItem[] }
 
+const ARCHIVED_DELETE_BATCH_SIZE = 5
+const ARCHIVED_DELETE_MAX_VERIFY_ROUNDS = 5
+
 interface DeleteArchivedConversationDialogProps {
   pendingDelete: PendingDelete
   submitting: boolean
+  progress?: { completed: number; total: number } | null
   onCancel: () => void
   onConfirm: () => void
 }
@@ -39,7 +56,30 @@ function projectOptionKey(group: {
   projectId?: number | null
   name: string
 }) {
-  return group.projectKey || (group.projectId ? `project:${group.projectId}` : group.name)
+  return group.projectId ? `project:${group.projectId}` : group.projectKey || group.name
+}
+
+function itemProjectKey(item: ArchivedConversationItem) {
+  if (item.projectId) return `project:${item.projectId}`
+  return item.projectName || item.projectKey || item.workspacePath
+}
+
+function chunkItems<T>(items: T[], size: number) {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
+function archivedConversationAddress(item: ArchivedConversationItem) {
+  return {
+    deviceId: item.deviceId,
+    workspacePath: item.workspacePath,
+    taskId: item.taskId,
+    ...(item.threadId ? { threadId: item.threadId } : {}),
+    ...(item.runtimeHandle ? { runtimeHandle: item.runtimeHandle } : {}),
+  }
 }
 
 function formatArchivedTime(value?: string | null) {
@@ -59,7 +99,7 @@ function formatArchivedTime(value?: string | null) {
 function groupItems(items: ArchivedConversationItem[]) {
   const groups = new Map<string, { name: string; items: ArchivedConversationItem[] }>()
   items.forEach(item => {
-    const key = item.projectKey || item.projectName || item.workspacePath
+    const key = itemProjectKey(item)
     const existing = groups.get(key)
     if (existing) {
       existing.items.push(item)
@@ -96,6 +136,39 @@ function archivedTimestamp(value?: string | null) {
   return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = value
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+  return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`
+}
+
+function cleanupErrorText(response: RuntimeArchivedConversationCleanupResponse | null) {
+  if (!response || response.errorCount === 0) return null
+  return response.results
+    .flatMap(result => result.items.map(item => item.error).filter(Boolean))
+    .slice(0, 3)
+    .join('; ')
+}
+
+function cleanupErrorsFromResults(results: Record<string, unknown>[]) {
+  return results
+    .flatMap(result => {
+      const cleanup = result.cleanup as
+        | { errorCount?: number; items?: Array<{ error?: string | null }> }
+        | undefined
+      if (!cleanup || !cleanup.errorCount || !Array.isArray(cleanup.items)) return []
+      return cleanup.items.map(item => item.error).filter(Boolean)
+    })
+    .slice(0, 3)
+    .join('; ')
+}
+
 function sortItems(items: ArchivedConversationItem[], sort: SortFilter) {
   const sorted = [...items]
   if (sort === 'alphabetical') {
@@ -116,6 +189,7 @@ function sortItems(items: ArchivedConversationItem[], sort: SortFilter) {
 function DeleteArchivedConversationDialog({
   pendingDelete,
   submitting,
+  progress,
   onCancel,
   onConfirm,
 }: DeleteArchivedConversationDialogProps) {
@@ -153,6 +227,17 @@ function DeleteArchivedConversationDialog({
           {title}
         </h2>
         <p className="mt-5 text-sm leading-6 text-text-secondary">{description}</p>
+        {isBulkDelete && progress && (
+          <div
+            data-testid="archived-bulk-delete-progress"
+            className="mt-5 rounded-md border border-border bg-surface px-3 py-2 text-sm text-text-secondary"
+          >
+            {t('workbench.archived_bulk_delete_progress', '已删除 {{completed}} / {{total}}', {
+              completed: progress.completed,
+              total: progress.total,
+            })}
+          </div>
+        )}
         <div className="mt-6 flex justify-end gap-6">
           <button
             type="button"
@@ -191,6 +276,12 @@ export function ArchivedConversationsSettingsPage() {
   const [projectKey, setProjectKey] = useState('all')
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
+  const [cleanupPreview, setCleanupPreview] =
+    useState<RuntimeArchivedConversationCleanupResponse | null>(null)
+  const [cleanupError, setCleanupError] = useState<string | null>(null)
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<ArchivedBulkDeleteProgress | null>(
+    getArchivedBulkDeleteProgress()
+  )
 
   const api = useMemo(() => createSettingsRuntimeWorkApi(), [])
 
@@ -199,9 +290,20 @@ export function ArchivedConversationsSettingsPage() {
     setError(null)
     try {
       const response = await api.listArchivedConversations()
-      setItems(response.items)
-    } catch {
-      setError(t('workbench.archived_conversations_load_failed', '加载已归档对话失败'))
+      setItems(response.items.filter(item => !hasArchivedBulkDeletedKey(itemAddressKey(item))))
+      setCleanupPreview(null)
+      setCleanupError(null)
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : ''
+      setError(
+        message
+          ? t(
+              'workbench.archived_conversations_load_failed_detail',
+              '加载已归档对话失败：{{message}}',
+              { message }
+            )
+          : t('workbench.archived_conversations_load_failed', '加载已归档对话失败')
+      )
     } finally {
       setLoading(false)
     }
@@ -213,6 +315,18 @@ export function ArchivedConversationsSettingsPage() {
     }, 0)
     return () => window.clearTimeout(loadTimer)
   }, [loadArchivedConversations])
+
+  useEffect(() => subscribeArchivedBulkDeleteProgress(setBulkDeleteProgress), [])
+
+  useEffect(
+    () =>
+      subscribeArchivedBulkDeleteDeleted(deletedKeys => {
+        setItems(currentItems =>
+          currentItems.filter(item => !deletedKeys.has(itemAddressKey(item)))
+        )
+      }),
+    []
+  )
 
   const filteredItemsBeforeProject = useMemo(() => {
     return items.filter(item => {
@@ -227,7 +341,7 @@ export function ArchivedConversationsSettingsPage() {
       { name: string; projectKey?: string | null; projectId?: number | null; count: number }
     >()
     filteredItemsBeforeProject.forEach(item => {
-      const key = item.projectKey || item.projectName || item.workspacePath
+      const key = itemProjectKey(item)
       const existing = groups.get(key)
       if (existing) {
         existing.count += 1
@@ -247,14 +361,13 @@ export function ArchivedConversationsSettingsPage() {
     const projectItems =
       projectKey === 'all'
         ? filteredItemsBeforeProject
-        : filteredItemsBeforeProject.filter(
-            item => (item.projectKey || item.projectName) === projectKey
-          )
+        : filteredItemsBeforeProject.filter(item => itemProjectKey(item) === projectKey)
     return sortItems(projectItems, sort)
   }, [filteredItemsBeforeProject, projectKey, sort])
 
   const groupedItems = useMemo(() => groupItems(visibleItems), [visibleItems])
   const hasArchivedItems = items.length > 0
+  const bulkDeleteRunning = bulkDeleteProgress?.running === true
 
   const handleUnarchive = async (item: ArchivedConversationItem) => {
     const key = `unarchive:${item.id}`
@@ -275,27 +388,123 @@ export function ArchivedConversationsSettingsPage() {
     setPendingDelete({ type: 'single', item })
   }
 
+  const cleanupRequestItems = (targetItems: ArchivedConversationItem[] = items) =>
+    targetItems.map(archivedConversationAddress)
+
+  const handlePreviewCleanup = async () => {
+    setBusyKey('cleanup-preview')
+    setCleanupError(null)
+    try {
+      const response = await api.previewArchivedConversationCleanup({
+        items: cleanupRequestItems(),
+      })
+      setCleanupPreview(response)
+    } catch {
+      setCleanupError(t('workbench.archived_cleanup_preview_failed', '扫描残留文件失败'))
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  const handleCleanup = async () => {
+    setBusyKey('cleanup')
+    setCleanupError(null)
+    try {
+      const response = await api.cleanupArchivedConversations({
+        items: cleanupRequestItems(),
+      })
+      setCleanupPreview(response)
+      const errorText = cleanupErrorText(response)
+      if (errorText) {
+        setCleanupError(
+          t('workbench.archived_cleanup_partial_failed', '部分文件清理失败: {{message}}', {
+            message: errorText,
+          })
+        )
+      }
+    } catch {
+      setCleanupError(t('workbench.archived_cleanup_failed', '清理残留文件失败'))
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
   const confirmDelete = async () => {
     if (!pendingDelete) return
     if (pendingDelete.type === 'bulk' && pendingDelete.items.length === 0) return
 
     if (pendingDelete.type === 'bulk') {
-      const deletedKeys = new Set(pendingDelete.items.map(itemAddressKey))
-      setBusyKey('bulk-delete')
+      let deleteItems = pendingDelete.items
+      setPendingDelete(null)
+      setArchivedBulkDeleteProgress({ completed: 0, total: deleteItems.length, running: true })
       try {
-        await api.deleteArchivedConversationsBulk({
-          items: pendingDelete.items.map(item => ({
-            deviceId: item.deviceId,
-            workspacePath: item.workspacePath,
-            taskId: item.taskId,
-          })),
+        const cleanupErrors: string[] = []
+        let completed = 0
+        let total = deleteItems.length
+        for (let round = 0; round < ARCHIVED_DELETE_MAX_VERIFY_ROUNDS; round += 1) {
+          for (const batch of chunkItems(deleteItems, ARCHIVED_DELETE_BATCH_SIZE)) {
+            const response = await api.deleteArchivedConversationsBulk({
+              items: batch.map(archivedConversationAddress),
+            })
+            const cleanupText = cleanupErrorsFromResults(response.results)
+            if (cleanupText) cleanupErrors.push(cleanupText)
+            const deletedTaskIds = new Set(
+              response.results
+                .filter(result => result.deleted === true)
+                .map(result => String(result.taskId || ''))
+            )
+            const batchDeletedKeys = new Set(
+              batch.filter(item => deletedTaskIds.has(item.taskId)).map(itemAddressKey)
+            )
+            notifyArchivedBulkDeleteDeleted(batchDeletedKeys)
+            completed += batch.length
+            setArchivedBulkDeleteProgress({
+              completed,
+              total,
+              running: true,
+            })
+          }
+
+          const refreshed = await api.listArchivedConversations()
+          const remainingItems = refreshed.items.filter(
+            item => !hasArchivedBulkDeletedKey(itemAddressKey(item))
+          )
+          setItems(remainingItems)
+          if (remainingItems.length === 0) break
+          deleteItems = remainingItems
+          total += remainingItems.length
+          setArchivedBulkDeleteProgress({
+            completed,
+            total,
+            running: true,
+          })
+        }
+        if (cleanupErrors.length > 0) {
+          setCleanupError(
+            t('workbench.archived_cleanup_partial_failed', '部分文件清理失败: {{message}}', {
+              message: cleanupErrors.slice(0, 3).join('; '),
+            })
+          )
+        }
+        setArchivedBulkDeleteProgress({
+          completed,
+          total,
+          running: false,
         })
-        setItems(currentItems =>
-          currentItems.filter(item => !deletedKeys.has(itemAddressKey(item)))
+      } catch (deleteError) {
+        const message = deleteError instanceof Error ? deleteError.message : ''
+        setCleanupError(
+          message
+            ? t('workbench.archived_bulk_delete_failed_detail', '删除已归档聊天失败：{{message}}', {
+                message,
+              })
+            : t('workbench.archived_bulk_delete_failed', '删除已归档聊天失败')
         )
-        setPendingDelete(null)
-      } finally {
-        setBusyKey(null)
+        setArchivedBulkDeleteProgress(
+          getArchivedBulkDeleteProgress()
+            ? { ...getArchivedBulkDeleteProgress()!, running: false }
+            : { completed: 0, total: deleteItems.length, running: false }
+        )
       }
       return
     }
@@ -304,11 +513,15 @@ export function ArchivedConversationsSettingsPage() {
     const key = `delete:${item.id}`
     setBusyKey(key)
     try {
-      await api.deleteArchivedConversation({
-        deviceId: item.deviceId,
-        workspacePath: item.workspacePath,
-        taskId: item.taskId,
-      })
+      const response = await api.deleteArchivedConversation(archivedConversationAddress(item))
+      const cleanupText = cleanupErrorsFromResults([response as unknown as Record<string, unknown>])
+      if (cleanupText) {
+        setCleanupError(
+          t('workbench.archived_cleanup_partial_failed', '部分文件清理失败: {{message}}', {
+            message: cleanupText,
+          })
+        )
+      }
       setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
       setPendingDelete(null)
     } finally {
@@ -319,6 +532,7 @@ export function ArchivedConversationsSettingsPage() {
   const handleBulkDelete = () => {
     if (items.length === 0) return
     setPendingDelete({ type: 'bulk', items })
+    setArchivedBulkDeleteProgress({ completed: 0, total: items.length, running: false })
   }
 
   return (
@@ -341,6 +555,20 @@ export function ArchivedConversationsSettingsPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              data-testid="archived-cleanup-preview-button"
+              onClick={() => void handlePreviewCleanup()}
+              disabled={loading || busyKey === 'cleanup-preview' || busyKey === 'cleanup'}
+              className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busyKey === 'cleanup-preview' ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4" />
+              )}
+              {t('workbench.archived_cleanup_scan', '扫描残留文件')}
+            </button>
+            <button
+              type="button"
               data-testid="archived-refresh-button"
               onClick={() => void loadArchivedConversations()}
               disabled={loading}
@@ -353,10 +581,10 @@ export function ArchivedConversationsSettingsPage() {
               type="button"
               data-testid="archived-bulk-delete-button"
               onClick={() => void handleBulkDelete()}
-              disabled={items.length === 0 || busyKey === 'bulk-delete'}
+              disabled={items.length === 0 || bulkDeleteRunning}
               className="flex h-9 items-center gap-2 rounded-md border border-red-200 px-3 text-sm text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45"
             >
-              {busyKey === 'bulk-delete' ? (
+              {bulkDeleteRunning ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Trash2 className="h-4 w-4" />
@@ -366,6 +594,80 @@ export function ArchivedConversationsSettingsPage() {
           </div>
         )}
       </div>
+
+      {bulkDeleteProgress && (
+        <div
+          data-testid="archived-bulk-delete-background-progress"
+          className="mt-4 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-text-secondary"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              {bulkDeleteProgress.running
+                ? t(
+                    'workbench.archived_bulk_delete_background_progress',
+                    '正在后台删除已归档聊天：{{completed}} / {{total}}',
+                    {
+                      completed: bulkDeleteProgress.completed,
+                      total: bulkDeleteProgress.total,
+                    }
+                  )
+                : t(
+                    'workbench.archived_bulk_delete_background_done',
+                    '已完成删除已归档聊天：{{completed}} / {{total}}',
+                    {
+                      completed: bulkDeleteProgress.completed,
+                      total: bulkDeleteProgress.total,
+                    }
+                  )}
+            </span>
+            {!bulkDeleteProgress.running && (
+              <button
+                type="button"
+                data-testid="archived-bulk-delete-progress-dismiss-button"
+                onClick={() => setArchivedBulkDeleteProgress(null)}
+                className="h-8 rounded-md px-3 text-sm text-text-primary hover:bg-muted"
+              >
+                {t('workbench.archived_bulk_delete_progress_dismiss', '关闭')}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {(cleanupPreview || cleanupError) && (
+        <div
+          data-testid="archived-cleanup-summary"
+          className="mt-4 rounded-lg border border-border bg-surface px-4 py-3 text-sm text-text-secondary"
+        >
+          {cleanupPreview && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>
+                {t(
+                  'workbench.archived_cleanup_summary',
+                  '发现 {{count}} 个可清理目标，约 {{size}}',
+                  {
+                    count: cleanupPreview.cleanableCount,
+                    size: formatBytes(cleanupPreview.bytes),
+                  }
+                )}
+              </span>
+              {cleanupPreview.cleanableCount > 0 && (
+                <button
+                  type="button"
+                  data-testid="archived-cleanup-button"
+                  onClick={() => void handleCleanup()}
+                  disabled={busyKey === 'cleanup'}
+                  className="flex h-8 items-center gap-2 rounded-md bg-red-500/15 px-3 text-sm font-medium text-red-600 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {busyKey === 'cleanup' && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {t('workbench.archived_cleanup_action', '清理残留文件')}
+                </button>
+              )}
+            </div>
+          )}
+          {cleanupError && <p className="mt-2 text-red-600">{cleanupError}</p>}
+        </div>
+      )}
 
       {hasArchivedItems && (
         <div className="mt-6 grid gap-3 md:grid-cols-[1fr_150px_170px_190px]">
@@ -525,6 +827,7 @@ export function ArchivedConversationsSettingsPage() {
         <DeleteArchivedConversationDialog
           pendingDelete={pendingDelete}
           submitting={busyKey !== null}
+          progress={pendingDelete.type === 'bulk' ? bulkDeleteProgress : null}
           onCancel={() => {
             if (busyKey === null) setPendingDelete(null)
           }}

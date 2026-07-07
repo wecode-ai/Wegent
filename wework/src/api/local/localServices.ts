@@ -1565,6 +1565,12 @@ function createRuntimeWorkApi(
     ): Promise<RuntimeArchivedConversationBulkResponse> {
       return requestWithLocalDevice('runtime.archived_conversations.delete_bulk', data)
     },
+    previewArchivedConversationCleanup(data: RuntimeArchivedConversationBulkRequest) {
+      return requestWithLocalDevice('runtime.archived_conversations.cleanup_preview', data)
+    },
+    cleanupArchivedConversations(data: RuntimeArchivedConversationBulkRequest) {
+      return requestWithLocalDevice('runtime.archived_conversations.cleanup', data)
+    },
     cancelRuntimeTask(data: RuntimeTaskAddress): Promise<RuntimeTaskCancelResponse> {
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },

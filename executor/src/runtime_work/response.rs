@@ -334,9 +334,10 @@ pub(crate) fn archived_conversations_response(
 
     let mut groups = std::collections::HashMap::<String, (String, u64)>::new();
     for link in &links {
+        let project_key = archived_conversation_project_key(link);
         let entry = groups
-            .entry(link.workspace_path.clone())
-            .or_insert_with(|| (workspace_label(&link.workspace_path), 0));
+            .entry(project_key.clone())
+            .or_insert_with(|| (workspace_label(&project_key), 0));
         entry.1 += 1;
     }
     let mut project_groups = groups
@@ -431,14 +432,18 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
 }
 
 fn archived_conversation_item(link: &RuntimeTaskLink, device_id: &str) -> Value {
+    let project_key = archived_conversation_project_key(link);
+    let project_name = workspace_label(&project_key);
     json!({
         "id": link.local_task_id,
         "taskId": link.local_task_id,
+        "threadId": link.thread_id,
         "title": link.title,
-        "projectKey": link.workspace_path,
-        "projectName": workspace_label(&link.workspace_path),
+        "projectKey": project_key,
+        "projectName": project_name,
         "workspacePath": link.workspace_path,
         "workspaceKind": infer_workspace_kind(&link.workspace_path),
+        "runtimeHandle": archived_cleanup_runtime_handle(link),
         "deviceId": device_id,
         "deviceName": device_id,
         "source": "local",
@@ -446,6 +451,56 @@ fn archived_conversation_item(link: &RuntimeTaskLink, device_id: &str) -> Value 
         "createdAt": link.created_at,
         "updatedAt": link.updated_at,
     })
+}
+
+fn archived_conversation_project_key(link: &RuntimeTaskLink) -> String {
+    link.group_workspace_path
+        .clone()
+        .unwrap_or_else(|| workspace_group_path(&link.workspace_path))
+}
+
+fn archived_cleanup_runtime_handle(link: &RuntimeTaskLink) -> Value {
+    let mut paths = Vec::new();
+    collect_cleanup_attachment_paths(&link.runtime_handle, &mut paths);
+    if let Some(parent) = &link.parent {
+        collect_cleanup_attachment_paths(parent, &mut paths);
+    }
+    paths.sort();
+    paths.dedup();
+    json!({
+        "cleanupAttachments": paths
+            .into_iter()
+            .map(|path| json!({"local_path": path}))
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn collect_cleanup_attachment_paths(value: &Value, paths: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_cleanup_attachment_paths(item, paths);
+            }
+        }
+        Value::Object(map) => {
+            for (key, value) in map {
+                if matches!(
+                    key.as_str(),
+                    "local_path" | "localPath" | "local_preview_url" | "localPreviewUrl"
+                ) {
+                    if let Some(path) = value
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                    {
+                        paths.push(path.to_owned());
+                    }
+                }
+                collect_cleanup_attachment_paths(value, paths);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn runtime_task_address(link: &RuntimeTaskLink, device_id: &str) -> Value {
