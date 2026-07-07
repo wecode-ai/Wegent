@@ -18,15 +18,16 @@ mod config;
 
 use axum::{
     body::{Body, Bytes},
-    extract::{Multipart, Query, State},
+    extract::{Multipart, Path as AxumPath, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use base64::Engine;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tokio::{process::Command, sync::Semaphore, time::timeout};
 
 use crate::{
@@ -87,6 +88,10 @@ where
         .route("/init", post(envd_init))
         .route("/envs", get(envd_envs))
         .route("/v1/responses", post(openai_responses::<R>))
+        .route(
+            "/v1/codex-responses-proxy/{token}/responses",
+            post(codex_responses_proxy),
+        )
         .route("/v1/attachments/sync", post(sync_attachments))
         .route("/filesystem/list-dir", get(list_workspace_directory))
         .route("/filesystem/file", get(download_workspace_file))
@@ -154,7 +159,11 @@ pub async fn serve(config: ServerConfig) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
         .map_err(|error| format!("failed to bind executor server at {bind_addr}: {error}"))?;
-    write_executor_log_line(&startup_log_line(bind_addr));
+    let local_addr = listener
+        .local_addr()
+        .map_err(|error| format!("failed to read executor server local address: {error}"))?;
+    set_executor_http_addr(local_addr);
+    write_executor_log_line(&startup_log_line(local_addr));
     let _heartbeat = start_heartbeat_from_env();
 
     axum::serve(listener, create_docker_router_from_env()?)
@@ -166,12 +175,204 @@ pub fn startup_log_line(bind_addr: SocketAddr) -> String {
     format!("{} listening on {bind_addr}", executor_log_timestamp())
 }
 
+pub fn executor_loopback_base_url() -> Option<String> {
+    let addr = *executor_http_addr()
+        .lock()
+        .expect("executor HTTP address should not be poisoned");
+    addr.map(|addr| format!("http://127.0.0.1:{}", addr.port()))
+}
+
+fn set_executor_http_addr(addr: SocketAddr) {
+    *executor_http_addr()
+        .lock()
+        .expect("executor HTTP address should not be poisoned") = Some(addr);
+}
+
+fn executor_http_addr() -> &'static Mutex<Option<SocketAddr>> {
+    static ADDR: OnceLock<Mutex<Option<SocketAddr>>> = OnceLock::new();
+    ADDR.get_or_init(|| Mutex::new(None))
+}
+
 async fn health_check() -> Json<Value> {
     Json(json!({"status": "healthy", "service": "task_executor"}))
 }
 
 async fn envd_health_check() -> StatusCode {
     StatusCode::NO_CONTENT
+}
+
+#[derive(Debug, Clone)]
+pub struct CodexResponsesProxyUpstream {
+    pub base_url: String,
+    pub api_key: String,
+    pub default_headers: Vec<(String, String)>,
+}
+
+pub fn register_codex_responses_proxy(upstream: CodexResponsesProxyUpstream) -> String {
+    static NEXT_ID: OnceLock<Mutex<u64>> = OnceLock::new();
+    let token = {
+        let next_id = NEXT_ID.get_or_init(|| Mutex::new(0));
+        let mut guard = next_id
+            .lock()
+            .expect("proxy token counter should not be poisoned");
+        *guard += 1;
+        format!("codex-{}-{}", std::process::id(), *guard)
+    };
+    codex_responses_proxy_registry()
+        .lock()
+        .expect("proxy registry should not be poisoned")
+        .insert(token.clone(), upstream);
+    token
+}
+
+fn codex_responses_proxy_registry() -> &'static Mutex<HashMap<String, CodexResponsesProxyUpstream>>
+{
+    static REGISTRY: OnceLock<Mutex<HashMap<String, CodexResponsesProxyUpstream>>> =
+        OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn codex_responses_proxy(
+    AxumPath(token): AxumPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, HttpError> {
+    let upstream = codex_responses_proxy_registry()
+        .lock()
+        .expect("proxy registry should not be poisoned")
+        .get(&token)
+        .cloned()
+        .ok_or_else(|| HttpError {
+            status: StatusCode::NOT_FOUND,
+            detail: "unknown Codex responses proxy token".to_owned(),
+        })?;
+    let upstream_url = format!("{}/responses", upstream.base_url.trim_end_matches('/'));
+    let client = reqwest::Client::new();
+    let mut request = client
+        .post(upstream_url)
+        .bearer_auth(upstream.api_key)
+        .body(body.to_vec());
+    if let Some(content_type) = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+    {
+        request = request.header(reqwest::header::CONTENT_TYPE, content_type);
+    }
+    if let Some(accept) = headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+    {
+        request = request.header(reqwest::header::ACCEPT, accept);
+    }
+    for (key, value) in upstream.default_headers {
+        request = request.header(key, value);
+    }
+
+    let upstream_response = request.send().await.map_err(|error| HttpError {
+        status: StatusCode::BAD_GATEWAY,
+        detail: format!("Codex responses proxy request failed: {error}"),
+    })?;
+    let status = upstream_response.status();
+    let content_type = upstream_response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let stream = normalize_codex_responses_sse_stream(upstream_response.bytes_stream());
+    let mut response = Response::new(Body::from_stream(stream));
+    *response.status_mut() = status;
+    if let Some(content_type) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type);
+    }
+    Ok(response)
+}
+
+fn normalize_codex_responses_sse_stream(
+    stream: impl futures_util::Stream<Item = Result<Bytes, reqwest::Error>>,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>> {
+    let mut pending = String::new();
+    stream.flat_map(move |chunk| {
+        let mut output = Vec::new();
+        match chunk {
+            Ok(bytes) => {
+                pending.push_str(&String::from_utf8_lossy(&bytes));
+                while let Some(index) = pending.find("\n\n") {
+                    let event = pending[..index].to_owned();
+                    pending = pending[index + 2..].to_owned();
+                    output.push(Ok(Bytes::from(format!(
+                        "{}\n\n",
+                        normalize_codex_responses_sse_event(&event)
+                    ))));
+                }
+            }
+            Err(error) => output.push(Err(std::io::Error::other(error.to_string()))),
+        }
+        futures_util::stream::iter(output)
+    })
+}
+
+fn normalize_codex_responses_sse_event(event: &str) -> String {
+    let mut changed = false;
+    let lines = event
+        .lines()
+        .map(|line| {
+            let Some(data) = line.strip_prefix("data:") else {
+                return line.to_owned();
+            };
+            let data = data.trim_start();
+            if data == "[DONE]" {
+                return line.to_owned();
+            }
+            let Ok(mut value) = serde_json::from_str::<Value>(data) else {
+                return line.to_owned();
+            };
+            if value.get("type").and_then(Value::as_str) != Some("response.completed") {
+                return line.to_owned();
+            }
+            normalize_codex_response_completed_usage(&mut value);
+            changed = true;
+            format!(
+                "data: {}",
+                serde_json::to_string(&value).unwrap_or_else(|_| data.to_owned())
+            )
+        })
+        .collect::<Vec<_>>();
+    if changed {
+        lines.join("\n")
+    } else {
+        event.to_owned()
+    }
+}
+
+fn normalize_codex_response_completed_usage(value: &mut Value) {
+    let Some(response) = value.get_mut("response").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(usage) = response.get_mut("usage").and_then(Value::as_object_mut) else {
+        return;
+    };
+    ensure_object_field_with_default(usage, "input_tokens_details", "cached_tokens");
+    ensure_object_field_with_default(usage, "output_tokens_details", "reasoning_tokens");
+}
+
+fn ensure_object_field_with_default(
+    usage: &mut Map<String, Value>,
+    details_key: &str,
+    field: &str,
+) {
+    match usage.get_mut(details_key) {
+        Some(Value::Object(details)) => {
+            details
+                .entry(field.to_owned())
+                .or_insert_with(|| Value::Number(0.into()));
+        }
+        Some(Value::Null) | None => {}
+        Some(_) => {
+            usage.insert(details_key.to_owned(), Value::Null);
+        }
+    }
 }
 
 async fn envd_metrics() -> Json<MetricsResponse> {
@@ -1761,5 +1962,38 @@ mod tests {
 
         assert!(preview.ends_with("..."));
         assert!(preview.chars().count() <= 19);
+    }
+
+    #[test]
+    fn codex_responses_proxy_fills_missing_completed_usage_detail_fields() {
+        let event = concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"usage\":",
+            "{\"input_tokens\":1,\"input_tokens_details\":{},\"output_tokens\":2,",
+            "\"output_tokens_details\":{},\"total_tokens\":3}}}"
+        );
+
+        let normalized = normalize_codex_responses_sse_event(event);
+        let data = normalized
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .expect("normalized event should contain data");
+        let value = serde_json::from_str::<Value>(data).unwrap();
+
+        assert_eq!(
+            value["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+            json!(0)
+        );
+        assert_eq!(
+            value["response"]["usage"]["output_tokens_details"]["reasoning_tokens"],
+            json!(0)
+        );
+    }
+
+    #[test]
+    fn codex_responses_proxy_leaves_non_completed_events_unchanged() {
+        let event = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}";
+
+        assert_eq!(normalize_codex_responses_sse_event(event), event);
     }
 }

@@ -29,6 +29,7 @@ import {
   normalizeLocalModelBaseUrl,
   saveLocalModelConfig,
   type LocalModelConfig,
+  type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
@@ -175,6 +176,8 @@ interface LocalModelFormState {
   modelId: string
   baseUrl: string
   apiKey: string
+  webSearchMode: LocalModelWebSearchMode
+  imageGenerationEnabled: boolean
   enabled: boolean
 }
 
@@ -194,7 +197,62 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   modelId: '',
   baseUrl: '',
   apiKey: '',
+  webSearchMode: 'disabled',
+  imageGenerationEnabled: false,
   enabled: true,
+}
+
+const LOCAL_MODEL_WEB_SEARCH_OPTIONS: Array<{
+  value: LocalModelWebSearchMode
+  labelKey: string
+}> = [
+  {
+    value: 'disabled',
+    labelKey: 'workbench.local_model_web_search_disabled',
+  },
+  {
+    value: 'cached',
+    labelKey: 'workbench.local_model_web_search_cached',
+  },
+  {
+    value: 'live',
+    labelKey: 'workbench.local_model_web_search_live',
+  },
+]
+
+const LOCAL_MODEL_IMAGE_GENERATION_OPTIONS: Array<{
+  value: 'disabled' | 'enabled'
+  labelKey: string
+}> = [
+  {
+    value: 'disabled',
+    labelKey: 'workbench.local_model_codex_feature_disabled',
+  },
+  {
+    value: 'enabled',
+    labelKey: 'workbench.local_model_codex_feature_enabled',
+  },
+]
+
+function localModelWebSearchLabel(
+  mode: LocalModelWebSearchMode,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const option =
+    LOCAL_MODEL_WEB_SEARCH_OPTIONS.find(candidate => candidate.value === mode) ??
+    LOCAL_MODEL_WEB_SEARCH_OPTIONS[0]
+  return t(option.labelKey)
+}
+
+function localModelImageGenerationLabel(
+  enabled: boolean,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  return t(
+    enabled
+      ? 'workbench.local_model_codex_feature_enabled'
+      : 'workbench.local_model_codex_feature_disabled'
+  )
 }
 
 function localModelResponsesUrl(baseUrl: string): string | null {
@@ -439,6 +497,8 @@ function LocalModelSettingsSection({
       modelId: model.modelId,
       baseUrl: model.baseUrl,
       apiKey: '',
+      webSearchMode: model.webSearchMode ?? 'disabled',
+      imageGenerationEnabled: model.imageGenerationEnabled === true,
       enabled: model.enabled,
     })
     setError(null)
@@ -461,6 +521,8 @@ function LocalModelSettingsSection({
         modelId: form.modelId,
         baseUrl: form.baseUrl,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
+        webSearchMode: form.webSearchMode,
+        imageGenerationEnabled: form.imageGenerationEnabled,
         enabled: form.enabled,
       })
       resetForm()
@@ -479,6 +541,8 @@ function LocalModelSettingsSection({
         modelId: editingModel.modelId,
         baseUrl: editingModel.baseUrl,
         apiKey: null,
+        webSearchMode: editingModel.webSearchMode,
+        imageGenerationEnabled: editingModel.imageGenerationEnabled,
         enabled: editingModel.enabled,
       })
       startEditing({ ...editingModel, apiKey: undefined })
@@ -632,6 +696,56 @@ function LocalModelSettingsSection({
                 />
               </label>
             </div>
+            <div className="grid gap-3 rounded-lg border border-border bg-surface p-3">
+              <div>
+                <div className="text-xs font-semibold text-text-primary">
+                  {t('workbench.local_model_codex_features_title')}
+                </div>
+                <div className="mt-1 text-[11px] leading-5 text-text-muted">
+                  {t('workbench.local_model_codex_features_hint')}
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                  {t('workbench.local_model_web_search_label')}
+                  <select
+                    data-testid="local-model-web-search-select"
+                    value={form.webSearchMode}
+                    onChange={event =>
+                      updateForm({
+                        webSearchMode: event.target.value as LocalModelWebSearchMode,
+                      })
+                    }
+                    className="h-9 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  >
+                    {LOCAL_MODEL_WEB_SEARCH_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {t(option.labelKey)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+                  {t('workbench.local_model_image_generation_label')}
+                  <select
+                    data-testid="local-model-image-generation-select"
+                    value={form.imageGenerationEnabled ? 'enabled' : 'disabled'}
+                    onChange={event =>
+                      updateForm({
+                        imageGenerationEnabled: event.target.value === 'enabled',
+                      })
+                    }
+                    className="h-9 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  >
+                    {LOCAL_MODEL_IMAGE_GENERATION_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {t(option.labelKey)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <label className="inline-flex items-center gap-2 text-sm text-text-secondary">
                 <input
@@ -752,6 +866,19 @@ function LocalModelSettingsSection({
                       {model.group}
                     </span>
                   )}
+                  <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                    {t('workbench.local_model_web_search_badge', {
+                      mode: localModelWebSearchLabel(model.webSearchMode ?? 'disabled', t),
+                    })}
+                  </span>
+                  <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                    {t('workbench.local_model_image_generation_badge', {
+                      mode: localModelImageGenerationLabel(
+                        model.imageGenerationEnabled === true,
+                        t
+                      ),
+                    })}
+                  </span>
                 </div>
                 <div className="mt-1 break-all font-mono text-xs text-text-secondary">
                   {model.modelId} · {model.baseUrl}

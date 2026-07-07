@@ -5,9 +5,13 @@ export interface LocalModelConfig {
   modelId: string
   baseUrl: string
   apiKey?: string
+  webSearchMode: LocalModelWebSearchMode
+  imageGenerationEnabled: boolean
   enabled: boolean
   updatedAt: string
 }
+
+export type LocalModelWebSearchMode = 'disabled' | 'cached' | 'live'
 
 export interface SaveLocalModelConfigInput {
   id?: string | null
@@ -16,6 +20,8 @@ export interface SaveLocalModelConfigInput {
   modelId: string
   baseUrl: string
   apiKey?: string | null
+  webSearchMode?: LocalModelWebSearchMode | null
+  imageGenerationEnabled?: boolean | null
   enabled?: boolean
 }
 
@@ -33,7 +39,7 @@ function readStoredConfigs(): LocalModelConfig[] {
     if (!raw) return []
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(isLocalModelConfig)
+    return parsed.filter(isLocalModelConfig).map(normalizeStoredLocalModelConfig)
   } catch {
     return []
   }
@@ -50,8 +56,24 @@ function isLocalModelConfig(value: unknown): value is LocalModelConfig {
     typeof record.baseUrl === 'string' &&
     typeof record.enabled === 'boolean' &&
     typeof record.updatedAt === 'string' &&
-    (record.apiKey === undefined || typeof record.apiKey === 'string')
+    (record.apiKey === undefined || typeof record.apiKey === 'string') &&
+    (record.webSearchMode === undefined ||
+      record.webSearchMode === 'disabled' ||
+      record.webSearchMode === 'cached' ||
+      record.webSearchMode === 'live') &&
+    (record.imageGenerationEnabled === undefined ||
+      typeof record.imageGenerationEnabled === 'boolean')
   )
+}
+
+function normalizeStoredLocalModelConfig(config: LocalModelConfig): LocalModelConfig {
+  return {
+    ...config,
+    webSearchMode: normalizeLocalModelWebSearchMode(config.webSearchMode),
+    imageGenerationEnabled: normalizeLocalModelImageGenerationEnabled(
+      config.imageGenerationEnabled
+    ),
+  }
 }
 
 function writeStoredConfigs(configs: LocalModelConfig[]): void {
@@ -109,6 +131,17 @@ export function normalizeLocalModelGroup(value?: string | null): string | undefi
   return trimmed || undefined
 }
 
+export function normalizeLocalModelWebSearchMode(
+  value?: LocalModelWebSearchMode | string | null
+): LocalModelWebSearchMode {
+  if (value === 'cached' || value === 'live') return value
+  return 'disabled'
+}
+
+export function normalizeLocalModelImageGenerationEnabled(value?: boolean | null): boolean {
+  return value === true
+}
+
 function nextConfigId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `local-${Date.now().toString(36)}`
 }
@@ -126,6 +159,12 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
   const id = input.id?.trim() || nextConfigId()
   const existing = readStoredConfigs()
   const previous = existing.find(config => config.id === id)
+  const webSearchMode = normalizeLocalModelWebSearchMode(
+    input.webSearchMode ?? previous?.webSearchMode
+  )
+  const imageGenerationEnabled = normalizeLocalModelImageGenerationEnabled(
+    input.imageGenerationEnabled ?? previous?.imageGenerationEnabled
+  )
   const next: LocalModelConfig = {
     id,
     displayName,
@@ -133,6 +172,8 @@ export function saveLocalModelConfig(input: SaveLocalModelConfigInput): LocalMod
     modelId,
     baseUrl,
     apiKey,
+    webSearchMode,
+    imageGenerationEnabled,
     enabled: input.enabled ?? previous?.enabled ?? true,
     updatedAt: new Date().toISOString(),
   }

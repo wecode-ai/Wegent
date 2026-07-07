@@ -59,6 +59,10 @@ export function getNewChatModelSelection(user: User | null): ModelSelectionConfi
   return user?.preferences?.wework_new_chat_model_selection ?? null
 }
 
+export function getRuntimeTaskChatScopeKey(address: RuntimeTaskAddress): string {
+  return ['runtime', address.deviceId, address.taskId].join(':')
+}
+
 function getRuntimeCompatibilityFamily(runtime?: string | null): string | null {
   if (runtime === 'codex') return OPENAI_RESPONSES_RUNTIME_FAMILY
   if (runtime === 'claude_code' || runtime === 'claude') return CLAUDE_CODE_RUNTIME_FAMILY
