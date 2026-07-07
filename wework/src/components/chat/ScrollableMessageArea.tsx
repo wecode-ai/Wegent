@@ -184,6 +184,7 @@ function ScrollableMessagePaneContent({
   const scrollFrameRef = useRef<number | null>(null)
   const restoringScrollKeyRef = useRef<string | null>(null)
   const applyingSavedScrollRef = useRef(false)
+  const userScrollPausedAutoFollowRef = useRef(false)
   const scheduledScrollStateSignatureRef = useRef<string | null>(null)
   const completedScrollStateSignatureRef = useRef<string | null>(null)
   const loadingTranscriptGapKeyRef = useRef<string | null>(null)
@@ -321,7 +322,13 @@ function ScrollableMessagePaneContent({
       const overflow = element.scrollHeight > element.clientHeight + 8
       const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
+      const isScrolledToBottom = distanceToBottom <= 1
       isAtBottomRef.current = isAtBottom
+      if (isScrolledToBottom) {
+        userScrollPausedAutoFollowRef.current = false
+      } else if (options.forceSave) {
+        userScrollPausedAutoFollowRef.current = true
+      }
       if (!isAtBottom && restoringScrollKeyRef.current !== currentScrollKey) {
         clearScheduledScrolls()
       }
@@ -353,6 +360,7 @@ function ScrollableMessagePaneContent({
         saveCurrentScrollPosition(element.scrollHeight)
       }
       isAtBottomRef.current = true
+      userScrollPausedAutoFollowRef.current = false
       setShowScrollButton(false)
     },
     [saveCurrentScrollPosition]
@@ -386,7 +394,9 @@ function ScrollableMessagePaneContent({
       const overflow = element.scrollHeight > element.clientHeight + 8
       const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
+      const isScrolledToBottom = distanceToBottom <= 1
       isAtBottomRef.current = isAtBottom
+      userScrollPausedAutoFollowRef.current = !isScrolledToBottom
       setShowScrollButton(overflow && !isAtBottom)
       setConversationScrollSnapshot(key, savedSnapshot)
 
@@ -488,7 +498,7 @@ function ScrollableMessagePaneContent({
       return
     }
 
-    if (shouldForceBottom || isAtBottomRef.current) {
+    if (shouldForceBottom || (isAtBottomRef.current && !userScrollPausedAutoFollowRef.current)) {
       setScrollToBottom('auto', { saveSnapshot: false })
       scheduleStableScrollToBottom('auto', { saveSnapshot: false })
     }
@@ -544,7 +554,7 @@ function ScrollableMessagePaneContent({
         return
       }
 
-      if (isAtBottomRef.current) {
+      if (isAtBottomRef.current && !userScrollPausedAutoFollowRef.current) {
         scrollToBottom('auto', { saveSnapshot: false })
       }
     })
@@ -562,8 +572,14 @@ function ScrollableMessagePaneContent({
   useEffect(() => clearScheduledScrolls, [clearScheduledScrolls])
 
   const handleScrollToBottom = () => {
+    userScrollPausedAutoFollowRef.current = false
     scrollToBottom('smooth', { saveSnapshot: true })
   }
+
+  const pauseAutoFollowForUserScroll = useCallback(() => {
+    userScrollPausedAutoFollowRef.current = true
+    clearScheduledScrolls()
+  }, [clearScheduledScrolls])
 
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>
@@ -592,6 +608,12 @@ function ScrollableMessagePaneContent({
           (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]',
           scrollerClassName
         )}
+        onWheel={event => {
+          if (event.deltaY < 0) {
+            pauseAutoFollowForUserScroll()
+          }
+        }}
+        onTouchMove={pauseAutoFollowForUserScroll}
         onScroll={() => {
           if (
             applyingSavedScrollRef.current &&
