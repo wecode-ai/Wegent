@@ -125,7 +125,14 @@ function PlanBlockItem({
 }) {
   if (!block.content.trim()) return null
 
-  return <AssistantPlanCard content={block.content} onOpenPlan={onOpenAssistantPlan} />
+  const isStreaming = block.status !== 'done' && block.status !== 'error'
+  return (
+    <AssistantPlanCard
+      content={block.content}
+      isStreaming={isStreaming}
+      onOpenPlan={onOpenAssistantPlan}
+    />
+  )
 }
 
 function ProcessFileChangesBlockItem({

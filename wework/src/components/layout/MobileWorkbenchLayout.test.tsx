@@ -153,7 +153,7 @@ type LegacyMobileWorkbenchLayoutProps = {
   onRequestUserInputSubmit?: (...args: unknown[]) => Promise<boolean> | void
 }
 
-function createPendingRequestUserInputMessage(): WorkbenchMessage {
+function createPendingRequestUserInputMessage(includeAdjustment = false): WorkbenchMessage {
   return {
     id: 'assistant-request',
     role: 'assistant',
@@ -175,6 +175,15 @@ function createPendingRequestUserInputMessage(): WorkbenchMessage {
               question: '执行此计划?',
               options: [{ label: '是的，执行此计划' }],
             },
+            ...(includeAdjustment
+              ? [
+                  {
+                    id: 'adjustment',
+                    question: '否，请告知 WeWork 如何调整',
+                    is_other: true,
+                  },
+                ]
+              : []),
           ],
         },
       },
@@ -560,6 +569,41 @@ describe('MobileWorkbenchLayout', () => {
         },
       },
       { appendUserMessage: true, forceDefaultCollaborationMode: true }
+    )
+  })
+
+  test('keeps plan mode when submitting implementation plan adjustments on mobile', async () => {
+    const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
+    const user = userEvent.setup()
+
+    renderAtMobileWidth(
+      <MobileWorkbenchLayout
+        state={{
+          ...baseState,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage(true)]}
+        projectChat={baseProjectChat}
+        onRequestUserInputSubmit={onRequestUserInputSubmit}
+      />
+    )
+
+    await user.type(screen.getByTestId('request-user-input-custom-adjustment'), '先缩小范围')
+    await user.click(screen.getByTestId('request-user-input-submit-button'))
+
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
+      {
+        requestId: 42,
+        itemId: undefined,
+        answers: {
+          adjustment: { answers: ['先缩小范围'] },
+        },
+      },
+      { appendUserMessage: true, forceDefaultCollaborationMode: false }
     )
   })
 

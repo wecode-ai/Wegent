@@ -616,6 +616,7 @@ describe('MessageList', () => {
 
     const planCard = screen.getByTestId('assistant-plan-card')
     expect(planCard).toHaveTextContent('计划')
+    expect(screen.queryByTestId('assistant-plan-streaming-indicator')).not.toBeInTheDocument()
     expect(planCard).toHaveAttribute('role', 'button')
     expect(screen.getByTestId('assistant-plan-card-preview').className).toContain('max-h-[168px]')
     expect(screen.getByTestId('assistant-plan-card-content').className).toContain('text-sm')
@@ -709,6 +710,7 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('流式计划')
     expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('正在生成第一步')
+    expect(screen.getByTestId('assistant-plan-streaming-indicator')).toHaveTextContent('正在生成')
   })
 
   test('renders untagged streaming plan-shaped markdown as regular assistant markdown', () => {

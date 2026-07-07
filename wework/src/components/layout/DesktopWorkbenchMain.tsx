@@ -49,6 +49,7 @@ import { TaskForkDialog } from './TaskForkDialog'
 import { ContinueInImDialog } from '@/components/chat/ContinueInImDialog'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import {
+  isImplementationPlanConfirmationResponse,
   isImplementationPlanRequestUserInput,
   requestUserInputPayloadKey,
 } from '@/components/chat/requestUserInputMessages'
@@ -1322,10 +1323,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       }
                       payload={pendingRequestUserInput}
                       onSubmit={response => {
-                        const shouldImplementPlan =
+                        const isImplementationPlanRequest =
                           isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                        const shouldImplementPlan =
+                          isImplementationPlanRequest &&
+                          isImplementationPlanConfirmationResponse(response)
                         return paneSession.sendRequestUserInputResponse(response, {
-                          appendUserMessage: shouldImplementPlan,
+                          appendUserMessage: isImplementationPlanRequest,
                           forceDefaultCollaborationMode: shouldImplementPlan,
                         })
                       }}
