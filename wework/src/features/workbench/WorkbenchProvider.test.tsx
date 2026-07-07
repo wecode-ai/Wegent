@@ -189,7 +189,7 @@ function createTurnFileChanges(): TurnFileChangesSummary {
 }
 
 const LOCAL_IMAGE_ATTACHMENT_PATH =
-  '/workspace/project-alpha/.wegent/attachments/draft/-45/photo.png'
+  '/Users/me/.wegent-executor/workspace/attachments/draft/-45/photo.png'
 
 function createImageAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {

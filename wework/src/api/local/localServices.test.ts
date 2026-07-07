@@ -395,8 +395,9 @@ describe('createLocalAppServices', () => {
           status: 'ready',
           file_extension: '.png',
           created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
-          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
+          local_preview_url:
+            '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
     })
@@ -429,8 +430,9 @@ describe('createLocalAppServices', () => {
           status: 'ready',
           file_extension: '.png',
           created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
-          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+          local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
+          local_preview_url:
+            '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
         },
       ],
       executionRequest: expect.objectContaining({
@@ -480,8 +482,9 @@ describe('createLocalAppServices', () => {
             mime_type: 'image/png',
             subtask_id: expect.any(String),
             file_extension: '.png',
-            local_path: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
-            local_preview_url: '/Users/me/project/.wegent/attachments/draft/-45/clipboard.png',
+            local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
+            local_preview_url:
+              '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard.png',
           },
         ],
       }),
@@ -722,8 +725,9 @@ describe('createLocalAppServices', () => {
           status: 'ready',
           file_extension: '.png',
           created_at: '2026-06-29T00:00:00.000Z',
-          local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
-          local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+          local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
+          local_preview_url:
+            '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
         },
       ],
     })
@@ -754,8 +758,9 @@ describe('createLocalAppServices', () => {
             status: 'ready',
             file_extension: '.png',
             created_at: '2026-06-29T00:00:00.000Z',
-            local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
-            local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+            local_path: '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
+            local_preview_url:
+              '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
           },
         ],
         executionRequest: expect.objectContaining({
@@ -800,8 +805,10 @@ describe('createLocalAppServices', () => {
               mime_type: 'image/png',
               subtask_id: expect.any(String),
               file_extension: '.png',
-              local_path: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
-              local_preview_url: '/Users/me/project/.wegent/attachments/draft/-46/follow-up.png',
+              local_path:
+                '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
+              local_preview_url:
+                '/Users/me/.wegent-executor/workspace/attachments/draft/-46/follow-up.png',
             },
           ],
         }),
