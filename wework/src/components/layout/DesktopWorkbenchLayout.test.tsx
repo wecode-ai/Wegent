@@ -3367,7 +3367,7 @@ describe('DesktopWorkbenchLayout', () => {
       '-translate-x-1/2',
       'cursor-col-resize'
     )
-    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveStyle({ left: '422px' })
+    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveStyle({ left: '420px' })
 
     const content = screen.getByTestId('desktop-workbench-content')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
@@ -3801,15 +3801,17 @@ describe('DesktopWorkbenchLayout', () => {
         'top-0',
         'h-full'
       )
-      expect(screen.getByTestId('titlebar-right-workspace-zone')).not.toHaveClass('border-l')
+      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('border-l')
       expect(screen.getByTestId('titlebar-actions')).toHaveClass('min-w-[5rem]')
       expect(screen.getByTestId('titlebar-actions')).toContainElement(
         screen.getByTestId('toggle-right-workspace-panel-button')
       )
       expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
-        width: '580px',
+        width: 'calc(100% - 420px)',
       })
-      expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass('after:bg-border')
+      expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
+        'after:bg-transparent'
+      )
       const tabbar = screen.getByTestId('right-workspace-tabbar')
       expect(titlebarRightPanel).toContainElement(tabbar)
       expect(titlebarRightPanel).toContainElement(screen.getByTestId('right-workspace-file-tab'))
