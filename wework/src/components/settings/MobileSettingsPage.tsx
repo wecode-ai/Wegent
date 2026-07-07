@@ -5,6 +5,7 @@ import {
   GitBranch,
   Package,
   Palette,
+  SlidersHorizontal,
   Sparkles,
   UserRound,
 } from 'lucide-react'
@@ -12,6 +13,7 @@ import { useState } from 'react'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { useTranslation } from '@/hooks/useTranslation'
+import { GeneralSettingsPage } from './GeneralSettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
@@ -26,6 +28,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
   const { t } = useTranslation('common')
   const [activePage, setActivePage] = useState<
     | 'menu'
+    | 'general'
     | 'appearance'
     | 'personal'
     | 'model-settings'
@@ -33,6 +36,32 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
     | 'worktrees'
     | 'archived-conversations'
   >('menu')
+
+  if (activePage === 'general') {
+    return (
+      <main
+        data-testid="mobile-general-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-general-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app', '返回')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">{t('workbench.settings_nav_general')}</h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <GeneralSettingsPage />
+        </div>
+      </main>
+    )
+  }
 
   if (activePage === 'appearance') {
     return (
@@ -225,6 +254,16 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
       </header>
 
       <section className="mt-8 space-y-3">
+        <button
+          type="button"
+          data-testid="mobile-settings-general-button"
+          onClick={() => setActivePage('general')}
+          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+        >
+          <SlidersHorizontal className="h-5 w-5 shrink-0 text-text-secondary" />
+          <span className="min-w-0 flex-1 truncate">{t('workbench.settings_nav_general')}</span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+        </button>
         <button
           type="button"
           data-testid="mobile-settings-appearance-button"

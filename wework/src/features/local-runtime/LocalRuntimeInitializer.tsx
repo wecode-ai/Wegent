@@ -381,7 +381,7 @@ export function LocalRuntimeInitializer({
   }, [minimumDelayElapsed, startupReady, state.error, state.phase, t])
 
   const canMountChildren = state.phase === 'ready'
-  const canRevealChildren = canMountChildren && (!enabled || (startupReady && minimumDelayElapsed))
+  const canRevealChildren = canMountChildren && (!enabled || minimumDelayElapsed)
   const shouldShowStartupScreen = !canRevealChildren
   const failed = state.phase === 'failed'
 
