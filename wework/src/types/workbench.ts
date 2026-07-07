@@ -71,6 +71,8 @@ export type WorkbenchMessage = Omit<
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
   runtimeGoalRequest?: boolean | null
+  runtimeGuidance?: boolean | null
+  runtimeGuidanceSplitBefore?: boolean | null
   codeComments?: CodeCommentContext[] | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null

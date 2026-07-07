@@ -1000,6 +1000,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         id: queuedMessage.id,
         createdAt: queuedMessage.createdAt,
         runtimeGoalRequest: queuedMessage.runtimeGoalRequest,
+        runtimeGuidance: true,
       })
 
       try {
@@ -1664,6 +1665,7 @@ interface CreateLocalUserMessageOptions {
   id?: string
   createdAt?: string
   runtimeGoalRequest?: boolean
+  runtimeGuidance?: boolean
   codeComments?: CodeCommentContext[]
 }
 
@@ -1680,6 +1682,7 @@ function createLocalUserMessage(
     status: 'done',
     createdAt: options.createdAt ?? new Date().toISOString(),
     runtimeGoalRequest: options.runtimeGoalRequest ? true : undefined,
+    runtimeGuidance: options.runtimeGuidance ? true : undefined,
     codeComments: options.codeComments?.length ? options.codeComments : undefined,
   }
 }
@@ -1712,6 +1715,7 @@ function splitActiveAssistantForGuidance(
     runtimeStatus: 'done',
     streamTextOffset: undefined,
     completedAt: guidanceMessage.createdAt,
+    runtimeGuidanceSplitBefore: true,
     blocks: freezeGuidanceAssistantBlocks(assistantMessage.blocks),
   }
 
