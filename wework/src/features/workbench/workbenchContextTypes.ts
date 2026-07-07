@@ -49,6 +49,7 @@ import type {
 } from '@/types/workbench'
 import type { ReactNode } from 'react'
 import type { RuntimeTaskStreamHandlers } from './runtimePaneMessages'
+import type { RuntimeTaskReminderState } from './runtimeTaskReminders'
 import type { WorkbenchServices } from './workbenchServices'
 
 export type ProjectMutationOptions = {
@@ -96,6 +97,7 @@ export interface WorkbenchContextValue {
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
   currentRuntimeTaskRunning: boolean
+  runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
     models: UnifiedModel[]

@@ -170,6 +170,7 @@ vi.mock('@/api/local/codexUsage', () => ({
     tooltip: '5小时额度 无\n7天额度 无',
   }),
   getLocalCodexUsageDisplay: vi.fn(),
+  formatCodexUsageResetTime: vi.fn(() => null),
 }))
 
 vi.mock('@/features/auth/useAuth', async importOriginal => ({

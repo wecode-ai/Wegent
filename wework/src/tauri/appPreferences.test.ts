@@ -11,6 +11,17 @@ vi.mock('@/lib/runtime-environment', () => ({
   isTauriRuntime: isTauriRuntimeMock,
 }))
 
+const mergedDefaultPreferences = {
+  closeToTrayEnabled: true,
+  showMainWindowOnLaunch: true,
+  closeToTrayHintSeen: false,
+  language: 'zh-CN',
+  taskCompletionNotificationsEnabled: false,
+  trayUnreadEnabled: true,
+  trayRunningEnabled: true,
+  trayUsageEnabled: true,
+}
+
 describe('appPreferences', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -23,12 +34,7 @@ describe('appPreferences', () => {
 
     const { getAppPreferences } = await import('./appPreferences')
 
-    await expect(getAppPreferences()).resolves.toEqual({
-      closeToTrayEnabled: true,
-      showMainWindowOnLaunch: true,
-      closeToTrayHintSeen: false,
-      language: 'zh-CN',
-    })
+    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
@@ -39,10 +45,8 @@ describe('appPreferences', () => {
     const { getAppPreferences } = await import('./appPreferences')
 
     await expect(getAppPreferences()).resolves.toEqual({
-      closeToTrayEnabled: true,
+      ...mergedDefaultPreferences,
       showMainWindowOnLaunch: false,
-      closeToTrayHintSeen: false,
-      language: 'zh-CN',
     })
   })
 
@@ -52,30 +56,23 @@ describe('appPreferences', () => {
 
     const { getAppPreferences } = await import('./appPreferences')
 
-    await expect(getAppPreferences()).resolves.toEqual({
-      closeToTrayEnabled: true,
-      showMainWindowOnLaunch: true,
-      closeToTrayHintSeen: false,
-      language: 'zh-CN',
-    })
+    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 
   test('updates preferences through the Tauri command', async () => {
     isTauriRuntimeMock.mockReturnValue(true)
     invokeMock.mockResolvedValue({
+      ...mergedDefaultPreferences,
       closeToTrayEnabled: false,
-      showMainWindowOnLaunch: true,
-      closeToTrayHintSeen: false,
-      language: 'zh-CN',
+      trayRunningEnabled: false,
     })
 
     const { updateAppPreferences } = await import('./appPreferences')
 
     await expect(updateAppPreferences({ closeToTrayEnabled: false })).resolves.toEqual({
+      ...mergedDefaultPreferences,
       closeToTrayEnabled: false,
-      showMainWindowOnLaunch: true,
-      closeToTrayHintSeen: false,
-      language: 'zh-CN',
+      trayRunningEnabled: false,
     })
     expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
       patch: { closeToTrayEnabled: false },
@@ -85,18 +82,14 @@ describe('appPreferences', () => {
   test('updates language preferences through the Tauri command', async () => {
     isTauriRuntimeMock.mockReturnValue(true)
     invokeMock.mockResolvedValue({
-      closeToTrayEnabled: true,
-      showMainWindowOnLaunch: true,
-      closeToTrayHintSeen: false,
+      ...mergedDefaultPreferences,
       language: 'en',
     })
 
     const { updateAppPreferences } = await import('./appPreferences')
 
     await expect(updateAppPreferences({ language: 'en' })).resolves.toEqual({
-      closeToTrayEnabled: true,
-      showMainWindowOnLaunch: true,
-      closeToTrayHintSeen: false,
+      ...mergedDefaultPreferences,
       language: 'en',
     })
     expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
