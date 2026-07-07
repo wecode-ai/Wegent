@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: Publish Image
+name: Wegent Release
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Custom version to release (e.g. 1.2.3). If empty, auto-increment from latest git tag'
+        description: 'Wegent platform version to release (e.g. 1.2.3 or v1.2.3). If empty, auto-increment from latest vX.Y.Z tag'
         type: string
         required: false
 
@@ -45,7 +45,7 @@ jobs:
           ref: ${{ env.GIT_REF }}
           fetch-depth: 0
 
-      - name: Get version from git tags (and bump patch)
+      - name: Get Wegent platform version
         id: get_version
         shell: bash
         env:
@@ -53,10 +53,19 @@ jobs:
         run: |
           set -euo pipefail
 
-          # If custom version is provided, use it directly
+          validate_version() {
+            local version="$1"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Invalid version '$version'. Expected MAJOR.MINOR.PATCH, for example 1.2.3." >&2
+              exit 1
+            fi
+          }
+
           if [ -n "${INPUT_VERSION:-}" ]; then
-            echo "Using custom version: ${INPUT_VERSION}"
-            echo "version=${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+            VERSION="${INPUT_VERSION#v}"
+            validate_version "$VERSION"
+            echo "Using custom Wegent platform version: ${VERSION}"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -69,8 +78,8 @@ jobs:
             exit 0
           fi
 
-          # Remove 'v' prefix
           VERSION="${LATEST_TAG#v}"
+          validate_version "$VERSION"
           echo "Current version: $VERSION (from tag $LATEST_TAG)"
 
           IFS='.' read -ra VERSION_PARTS <<< "$VERSION"

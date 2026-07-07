@@ -237,6 +237,13 @@ describe('createLocalAppServices', () => {
               runtime: 'codex',
               runtimeHandle: {
                 threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+                modelSelection: {
+                  modelName: 'local-model:mimo',
+                  modelType: 'runtime',
+                  options: {
+                    collaborationMode: 'plan',
+                  },
+                },
               },
             },
           ],
@@ -259,6 +266,13 @@ describe('createLocalAppServices', () => {
                   taskId: 'local-visible-task',
                   runtimeHandle: {
                     threadId: '019ee7f6-456a-78a1-96b1-66451afc310e',
+                  },
+                  modelSelection: {
+                    modelName: 'local-model:mimo',
+                    modelType: 'runtime',
+                    options: {
+                      collaborationMode: 'plan',
+                    },
                   },
                 },
               ],
@@ -867,6 +881,8 @@ describe('createLocalAppServices', () => {
       modelId: 'qwen3-coder',
       baseUrl: 'http://localhost:1234/v1',
       apiKey: 'real-key',
+      webSearchMode: 'cached',
+      imageGenerationEnabled: true,
     })
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -923,6 +939,9 @@ describe('createLocalAppServices', () => {
         protocol: 'openai-responses',
         base_url: 'http://localhost:11434/v1',
         api_key: 'dummy',
+        web_search: 'disabled',
+        image_generation: false,
+        codex_responses_compat_proxy: true,
         runtime_config: {
           codex: {
             use_user_config: false,
@@ -936,6 +955,9 @@ describe('createLocalAppServices', () => {
         model_id: 'qwen3-coder',
         base_url: 'http://localhost:1234/v1',
         api_key: 'real-key',
+        web_search: 'cached',
+        image_generation: true,
+        codex_responses_compat_proxy: true,
       })
     )
   })

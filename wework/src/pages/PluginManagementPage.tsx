@@ -35,7 +35,6 @@ export function PluginManagementPage() {
     openStandaloneWorkspace,
     getRemoteDeviceStartupCommand,
     refreshDevices,
-    refreshWorkLists,
     createProject,
     createGitWorkspaceProject,
     prepareDeviceWorkspace,
@@ -129,7 +128,6 @@ export function PluginManagementPage() {
           onListDeviceDirectories={listDeviceDirectories}
           onCreateDeviceDirectory={createDeviceDirectory}
           onOpenSettings={() => setSettingsOpen(true)}
-          onRefreshWorkLists={refreshWorkLists}
           onLogout={logout}
         />
       )}

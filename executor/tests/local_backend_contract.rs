@@ -286,6 +286,7 @@ async fn local_backend_task_execute_streams_claude_assistant_thinking_blocks_as_
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
     let _chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS", "3");
+    let _reasoning_chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_REASONING_CHUNK_CHARS", "3");
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();
@@ -401,6 +402,7 @@ async fn local_backend_task_execute_splits_large_claude_assistant_message_into_d
         ),
     );
     let _claude = EnvGuard::set("CLAUDE_BINARY_PATH", &fake_claude.display().to_string());
+    let _chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS", "20");
     let transport = RecordingTransport::default();
     let runner = LocalBackendRunner::new(local_backend_config(), transport.clone());
     runner.register_handlers();

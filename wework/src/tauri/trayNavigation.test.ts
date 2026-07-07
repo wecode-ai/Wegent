@@ -136,6 +136,8 @@ describe('trayNavigation', () => {
     expect(invokeMock).toHaveBeenCalledWith(SET_TRAY_MENU_STATE_COMMAND, {
       state: {
         language: 'en',
+        usageTitle: null,
+        usageTooltip: null,
         running: [],
         runningMore: [],
         pinned: [],
@@ -154,11 +156,16 @@ describe('trayNavigation', () => {
       recent: [{ id: 'task-1', title: 'Running task', projectName: 'Wegent' }],
       recentMore: [],
     }
-    syncTrayMenuState(taskGroups, 'en-US')
+    syncTrayMenuState(taskGroups, 'en-US', {
+      title: '5h 90%\n7d 80%',
+      tooltip: '5小时额度 90%\n7天额度 80%',
+    })
 
     expect(invokeMock).toHaveBeenLastCalledWith(SET_TRAY_MENU_STATE_COMMAND, {
       state: {
         language: 'en',
+        usageTitle: '5h 90%\n7d 80%',
+        usageTooltip: '5小时额度 90%\n7天额度 80%',
         ...taskGroups,
       },
     })
@@ -168,6 +175,8 @@ describe('trayNavigation', () => {
     expect(invokeMock).toHaveBeenLastCalledWith(SET_TRAY_MENU_STATE_COMMAND, {
       state: {
         language: 'zh-CN',
+        usageTitle: '5h 90%\n7d 80%',
+        usageTooltip: '5小时额度 90%\n7天额度 80%',
         ...taskGroups,
       },
     })

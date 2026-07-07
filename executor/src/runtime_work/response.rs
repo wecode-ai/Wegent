@@ -397,19 +397,7 @@ pub(crate) fn search_result_item(
 }
 
 fn local_task_json(link: RuntimeTaskLink) -> Value {
-    let mut runtime_handle = link
-        .runtime_handle
-        .as_object()
-        .cloned()
-        .unwrap_or_else(Map::new);
-    runtime_handle.insert(
-        "threadId".to_owned(),
-        link.thread_id
-            .as_ref()
-            .map(|thread_id| Value::String(thread_id.clone()))
-            .unwrap_or(Value::Null),
-    );
-
+    let runtime_handle = runtime_handle_with_thread_id(&link);
     let mut task = Map::new();
     task.insert("taskId".to_owned(), Value::String(link.local_task_id));
     task.insert(
@@ -461,11 +449,37 @@ fn archived_conversation_item(link: &RuntimeTaskLink, device_id: &str) -> Value 
 }
 
 fn runtime_task_address(link: &RuntimeTaskLink, device_id: &str) -> Value {
-    json!({
-        "deviceId": device_id,
-        "workspacePath": link.workspace_path,
-        "taskId": link.local_task_id,
-    })
+    let mut address = Map::new();
+    address.insert("deviceId".to_owned(), Value::String(device_id.to_owned()));
+    address.insert(
+        "workspacePath".to_owned(),
+        Value::String(link.workspace_path.clone()),
+    );
+    address.insert(
+        "taskId".to_owned(),
+        Value::String(link.local_task_id.clone()),
+    );
+    address.insert(
+        "runtimeHandle".to_owned(),
+        Value::Object(runtime_handle_with_thread_id(link)),
+    );
+    Value::Object(address)
+}
+
+fn runtime_handle_with_thread_id(link: &RuntimeTaskLink) -> Map<String, Value> {
+    let mut runtime_handle = link
+        .runtime_handle
+        .as_object()
+        .cloned()
+        .unwrap_or_else(Map::new);
+    runtime_handle.insert(
+        "threadId".to_owned(),
+        link.thread_id
+            .as_ref()
+            .map(|thread_id| Value::String(thread_id.clone()))
+            .unwrap_or(Value::Null),
+    );
+    runtime_handle
 }
 
 fn thread_status(thread: &Value) -> String {
