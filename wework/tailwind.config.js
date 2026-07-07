@@ -1,6 +1,11 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{ts,tsx}', './wecode/**/*.{ts,tsx}'],
+  content: [
+    './index.html',
+    './src/**/*.{ts,tsx}',
+    './wecode/**/*.{ts,tsx}',
+    './node_modules/streamdown/dist/*.js',
+  ],
   theme: {
     extend: {
       colors: {

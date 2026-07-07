@@ -1500,7 +1500,11 @@ function AssistantMessage({
           )}
           {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
           {hasVisibleContent ? (
-            <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
+            <AssistantMarkdown
+              content={visibleContent}
+              isStreaming={isStreaming}
+              onOpenFile={openFileFromLink}
+            />
           ) : null}
           {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (

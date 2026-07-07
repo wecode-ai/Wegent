@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { FileText, Link2 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { Streamdown } from 'streamdown'
+import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
   getAuthenticatedImageFetchUrl,
@@ -20,19 +20,42 @@ const ASSISTANT_MARKDOWN_LINK_CLASS = [
   '[&_code]:!rounded-none [&_code]:!bg-transparent [&_code]:!px-0 [&_code]:!py-0 [&_code]:!font-[inherit] [&_code]:!text-inherit',
 ].join(' ')
 const CODEX_PLAN_TAG_PATTERN = /<\/?\s*proposed_plan\s*>/gi
+const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
+const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
+const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
+const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
 
 interface AssistantMarkdownProps {
   content: string
+  isStreaming?: boolean
   onOpenFile?: (path: string) => void
 }
 
-export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProps) {
-  const displayContent = normalizeAssistantMarkdownContent(content)
+export const AssistantMarkdown = memo(function AssistantMarkdown({
+  content,
+  isStreaming = false,
+  onOpenFile,
+}: AssistantMarkdownProps) {
+  const displayContent = prepareAssistantMarkdownContent(content)
+  const openFileRef = useRef(onOpenFile)
+
+  useEffect(() => {
+    openFileRef.current = onOpenFile
+  }, [onOpenFile])
+
+  const openFile = (path: string) => {
+    openFileRef.current?.(path)
+  }
 
   return (
     <div className="assistant-markdown min-w-0 max-w-full break-words">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+      <Streamdown
+        mode={isStreaming ? 'streaming' : 'static'}
+        isAnimating={isStreaming}
+        controls={false}
+        linkSafety={{ enabled: false }}
+        lineNumbers={false}
+        urlTransform={url => url}
         components={{
           h1: ({ children }) => (
             <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold">
@@ -62,12 +85,17 @@ export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProp
             </li>
           ),
           strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-          code: ({ className, children }) => {
+          code: ({ className, children, node, ...props }) => {
             const match = /language-(\w*)/.exec(className || '')
-            const isBlock = Boolean(match) || String(children).includes('\n')
+            const text = reactNodeToText(children)
+            const isBlock =
+              ('data-block' in props && Boolean(props['data-block'])) ||
+              node?.properties?.dataBlock === 'true' ||
+              Boolean(match) ||
+              text.includes('\n')
             if (isBlock) {
               const lang = match ? match[1] || '' : ''
-              return <MarkdownCodeBlock lang={lang}>{children}</MarkdownCodeBlock>
+              return <MarkdownCodeBlock lang={lang}>{text || children}</MarkdownCodeBlock>
             }
             return (
               <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
@@ -75,7 +103,11 @@ export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProp
               </code>
             )
           },
-          pre: ({ children }) => <>{children}</>,
+          inlineCode: ({ children }) => (
+            <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
+              {children}
+            </code>
+          ),
           blockquote: ({ children }) => (
             <blockquote
               data-scroll-anchor
@@ -94,7 +126,7 @@ export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProp
           ),
           td: ({ children }) => <td className="border-b border-border px-3 py-2">{children}</td>,
           a: ({ href, children }) => (
-            <AssistantMarkdownLink href={href} onOpenFile={onOpenFile}>
+            <AssistantMarkdownLink href={href} onOpenFile={openFile}>
               {children}
             </AssistantMarkdownLink>
           ),
@@ -102,13 +134,53 @@ export function AssistantMarkdown({ content, onOpenFile }: AssistantMarkdownProp
         }}
       >
         {displayContent}
-      </ReactMarkdown>
+      </Streamdown>
     </div>
   )
+}, areAssistantMarkdownPropsEqual)
+
+function areAssistantMarkdownPropsEqual(
+  previous: AssistantMarkdownProps,
+  next: AssistantMarkdownProps
+): boolean {
+  return previous.content === next.content && previous.isStreaming === next.isStreaming
 }
 
-function normalizeAssistantMarkdownContent(content: string): string {
-  return content.replace(CODEX_PLAN_TAG_PATTERN, '')
+function prepareAssistantMarkdownContent(content: string): string {
+  return encodeLocalMarkdownLinks(content.replace(CODEX_PLAN_TAG_PATTERN, ''))
+}
+
+function encodeLocalMarkdownLinks(content: string): string {
+  return content.replace(MARKDOWN_LINK_PATTERN, (match, imageMarker, label, rawHref) => {
+    if (imageMarker) return match
+    const href = String(rawHref).trim()
+    const target = classifyMarkdownLink(href)
+    if (target.kind !== 'file') return match
+    return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(href)})`
+  })
+}
+
+function decodeLocalMarkdownHref(href?: string): string | undefined {
+  if (!href) return href
+  try {
+    const url = new URL(href)
+    if (
+      url.protocol === 'https:' &&
+      url.hostname === WEWORK_MARKDOWN_FILE_LINK_HOST &&
+      url.pathname === WEWORK_MARKDOWN_FILE_LINK_PATH
+    ) {
+      return url.searchParams.get('path') ?? href
+    }
+  } catch {
+    return href
+  }
+  return href
+}
+
+function reactNodeToText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(reactNodeToText).join('')
+  return ''
 }
 
 function formatMarkdownLineLabel(target: Extract<MarkdownLinkTarget, { kind: 'file' }>): string {
@@ -167,7 +239,7 @@ function AssistantMarkdownLink({
   onOpenFile?: (path: string) => void
   children?: ReactNode
 }) {
-  const target = classifyMarkdownLink(href)
+  const target = classifyMarkdownLink(decodeLocalMarkdownHref(href))
   const icon =
     target.kind === 'file' ? (
       getMarkdownFileIcon(target.path)

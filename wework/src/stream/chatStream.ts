@@ -18,7 +18,13 @@ import {
 
 export type WorkbenchSocket = SocketClientSocket
 
+export interface ChatStreamScope {
+  deviceId?: string
+  taskId?: string
+}
+
 export interface ChatStreamHandlers {
+  scope?: ChatStreamScope
   onChatStart?: (payload: ChatStartPayload) => void
   onChatChunk?: (payload: ChatChunkPayload) => void
   onChatDone?: (payload: ChatDonePayload) => void

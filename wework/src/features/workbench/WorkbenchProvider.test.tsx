@@ -725,6 +725,35 @@ function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
   )
 }
 
+function RuntimePaneSessionIdentityProbe() {
+  const [address, setAddress] = useState<RuntimeTaskAddress>({
+    deviceId: 'device-1',
+    workspacePath: '/workspace/project-alpha',
+    taskId: 'runtime-a',
+  })
+  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address })
+
+  return (
+    <div>
+      <span data-testid="runtime-session-messages">
+        {paneSession.messages.map(message => message.content).join('|')}
+      </span>
+      <button
+        type="button"
+        onClick={() =>
+          setAddress({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-a',
+          })
+        }
+      >
+        rebuild same runtime address
+      </button>
+    </div>
+  )
+}
+
 function RuntimeProjectMutationProbe() {
   const workbench = useWorkbench()
   return (
@@ -4065,6 +4094,45 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('message a')
     expect(screen.getByTestId('runtime-transcript-loading')).toHaveTextContent('idle')
+  })
+
+  test('keeps the runtime stream subscription when the same task address is rebuilt', async () => {
+    const runtimeCleanup = vi.fn()
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) =>
+      handlers.scope?.taskId === 'runtime-a' ? runtimeCleanup : vi.fn()
+    )
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [{ id: 'runtime-a:user:1', role: 'user', content: 'message a' }],
+      } satisfies RuntimeTranscriptResponse),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    render(
+      <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
+        <RuntimePaneSessionIdentityProbe />
+      </WorkbenchProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-session-messages')).toHaveTextContent('message a')
+    )
+    const runtimeSubscribeCount = () =>
+      subscribe.mock.calls.filter(([handlers]) => handlers.scope?.taskId === 'runtime-a').length
+    await waitFor(() => expect(runtimeSubscribeCount()).toBe(1))
+
+    await userEvent.click(screen.getByText('rebuild same runtime address'))
+
+    expect(runtimeSubscribeCount()).toBe(1)
+    expect(runtimeCleanup).not.toHaveBeenCalled()
   })
 
   test('reuses the current runtime task address for follow-up messages', async () => {
