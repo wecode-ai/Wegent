@@ -10,6 +10,7 @@ import type {
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
   ProjectExecutionMode,
+  RuntimeContextUsage,
   RuntimeTaskAddress,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
@@ -44,6 +45,7 @@ import {
   findProjectDeviceWorkspace,
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
+  getRuntimeTaskRouteKey,
   getSingleProjectDeviceWorkspaceId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -140,6 +142,9 @@ export function WorkbenchProvider({
   const [projectExecutionMode, setProjectExecutionMode] =
     useState<ProjectExecutionMode>('current_workspace')
   const [projectWorktreeBranch, setProjectWorktreeBranchState] = useState<string | null>(null)
+  const [contextUsageByRuntimeTask, setContextUsageByRuntimeTask] = useState<
+    Record<string, RuntimeContextUsage>
+  >({})
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
@@ -148,6 +153,9 @@ export function WorkbenchProvider({
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
   )
+  const currentContextUsage = state.currentRuntimeTask
+    ? contextUsageByRuntimeTask[getRuntimeTaskRouteKey(state.currentRuntimeTask)]
+    : undefined
 
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
@@ -386,12 +394,25 @@ export function WorkbenchProvider({
           Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
         ),
         attachmentCount: attachmentSelection.attachments.length,
+        contextUsagePercent: currentContextUsage
+          ? Math.round(
+              Math.min(
+                100,
+                Math.max(
+                  0,
+                  (currentContextUsage.total.totalTokens / currentContextUsage.modelContextWindow) *
+                    100
+                )
+              )
+            )
+          : undefined,
       },
     })
   }, [
     attachmentSelection.attachments.length,
     cloudWorkStatus,
     currentRuntimeTaskRunning,
+    currentContextUsage,
     draftInput.length,
     draftInputByScope,
     projectChatScopeKey,
@@ -678,6 +699,13 @@ export function WorkbenchProvider({
     ) =>
       runtimeTasks.subscribeRuntimeTaskStream(address, {
         ...handlers,
+        onContextUsageUpdated: usage => {
+          setContextUsageByRuntimeTask(current => ({
+            ...current,
+            [getRuntimeTaskRouteKey(address)]: usage,
+          }))
+          handlers.onContextUsageUpdated?.(usage)
+        },
         onAssistantSettled: () => {
           dispatch({ type: 'runtime_task_settled', address })
           handlers.onAssistantSettled?.()
@@ -799,6 +827,7 @@ export function WorkbenchProvider({
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
       errors: attachmentSelection.errors,
+      contextUsage: currentContextUsage,
       isOptionsLocked,
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
@@ -826,6 +855,7 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       draftInput,
       handleBlockedModelSelect,
+      currentContextUsage,
       isOptionsLocked,
       listLocalSkills,
       modelSelection.isSelectionReady,
@@ -855,6 +885,7 @@ export function WorkbenchProvider({
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
       errors: attachmentSelection.errors,
+      contextUsage: currentContextUsage,
       isOptionsLocked: false,
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
@@ -882,6 +913,7 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       draftInput,
       handleBlockedModelSelect,
+      currentContextUsage,
       listLocalSkills,
       modelSelection.isSelectionReady,
       modelSelection.models,

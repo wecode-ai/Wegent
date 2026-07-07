@@ -8,6 +8,7 @@ import type {
   ChatStartPayload,
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
+  RuntimeContextUsage,
   RuntimeGoalEventPayload,
   RuntimeSubagentActivityPayload,
   NormalizedRuntimeMessage,
@@ -26,6 +27,7 @@ export interface RuntimeTaskStreamHandlers {
   onAssistantStart?: () => void
   onAssistantSettled?: () => void
   onRefreshWorkLists?: () => void
+  onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
@@ -55,9 +57,14 @@ export function createRuntimeTaskStreamHandlers(
     },
     onChatChunk: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
+      const contextUsage = payload.result?.contextUsage
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       const reasoningChunk = getReasoningChunk(payload.result)
       if (!identity) {
+        if (contextUsage && !payload.content && !reasoningChunk) {
+          handlers.onContextUsageUpdated?.(contextUsage)
+          return
+        }
         warnAndDropRuntimeStreamEvent('chat:chunk', address, payload, {
           hasContent: Boolean(payload.content),
           hasReasoningChunk: Boolean(reasoningChunk),
@@ -66,11 +73,18 @@ export function createRuntimeTaskStreamHandlers(
       }
       const blocks = getResultBlocks(identity.subtaskId, payload.result)
       if (!payload.content && !reasoningChunk && (!blocks || blocks.length === 0)) {
+        if (contextUsage) {
+          handlers.onContextUsageUpdated?.(contextUsage)
+          return
+        }
         warnAndDropEmptyRuntimeChunk(address, payload, {
           reason: 'empty_chunk',
           resultKeys: isRecord(payload.result) ? Object.keys(payload.result) : [],
         })
         return
+      }
+      if (contextUsage) {
+        handlers.onContextUsageUpdated?.(contextUsage)
       }
       debugRuntimeStreamEvent('chat:chunk', address, payload, true, {
         hasContent: Boolean(payload.content),
@@ -98,6 +112,9 @@ export function createRuntimeTaskStreamHandlers(
         blockCount: getResultBlocks(identity.subtaskId, payload.result)?.length ?? 0,
       })
       handlers.onAssistantSettled?.()
+      if (payload.result.contextUsage) {
+        handlers.onContextUsageUpdated?.(payload.result.contextUsage)
+      }
       handlers.onMessageAction({
         type: 'assistant_done',
         subtaskId: identity.subtaskId,

@@ -1129,12 +1129,27 @@ export interface ChatStartPayload {
   deviceId?: string
 }
 
+export interface RuntimeTokenUsageBreakdown {
+  totalTokens: number
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  reasoningOutputTokens: number
+}
+
+export interface RuntimeContextUsage {
+  total: RuntimeTokenUsageBreakdown
+  last: RuntimeTokenUsageBreakdown
+  modelContextWindow: number
+}
+
 export type ChatResultPayload = Record<string, unknown> & {
   value?: string
   error?: string
   reasoningChunk?: string
   blocks?: ChatBlock[]
   fileChanges?: TurnFileChangesSummary
+  contextUsage?: RuntimeContextUsage
 }
 
 export interface ChatChunkPayload {

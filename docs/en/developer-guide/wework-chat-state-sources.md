@@ -28,6 +28,7 @@ This document records the state sources for the Wework chat path. The goal is to
 | Transcript loading and pagination  | `transcriptLoading`, `transcriptHasMoreBefore`, `transcriptBeforeCursor`, `loadedTranscriptRanges` | Infinite scroll, turn navigation                                                                                   | Update only from transcript API responses                                                                                                                                                                |
 | Runtime goal                       | `threadGoal` + `pendingGoalState`                                                                  | Goal bar, goal draft, first-message initial goal                                                                   | Persisted goals come from the runtime goal API; goals before task creation live in pending seeds                                                                                                         |
 | Answered request user input ids    | `answeredRequestUserInputIds`                                                                      | Hide already submitted or ignored request user input cards                                                         | Update only from submit or ignore actions                                                                                                                                                                |
+| Model context usage                | Codex `thread/tokenUsage/updated` runtime stream events                                             | Context-window usage ring and tooltip in the bottom-right composer controls                                        | The executor must forward Codex token usage notifications unchanged; UI stores them only as `projectChat.contextUsage` for the current runtime task                                                       |
 | Attachment/model/skill selection   | `projectChat` context                                                                              | Send payload, composer controls                                                                                    | In-task option locking is derived from `projectChat.isOptionsLocked`                                                                                                                                     |
 | Device availability                | `state.devices` + current task/project device selection                                            | Composer disabled reason, device prompts                                                                           | Use only for send preconditions; never for assistant streaming status                                                                                                                                    |
 
@@ -37,8 +38,9 @@ This document records the state sources for the Wework chat path. The goal is to
 2. After runtime accepts the request, `sendPhase` becomes `awaiting_assistant`.
 3. `chat:start` becomes `assistant_started`; the reducer creates or updates the assistant streaming message and `sendPhase` returns to `idle`.
 4. `chat:chunk` and block events update only `messages`.
-5. `chat:done`, `chat:error`, and cancellation events settle the assistant message through the reducer and refresh the work list.
-6. If runtime work and message state disagree, do not settle it with fallback logic; fix the missing stream event, transcript data, or reducer action.
+5. Codex `thread/tokenUsage/updated` events update only `projectChat.contextUsage`; they must not create empty messages or write transcript data.
+6. `chat:done`, `chat:error`, and cancellation events settle the assistant message through the reducer and refresh the work list.
+7. If runtime work and message state disagree, do not settle it with fallback logic; fix the missing stream event, transcript data, or reducer action.
 
 ## Guidance Message Order
 

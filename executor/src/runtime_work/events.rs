@@ -271,6 +271,16 @@ impl CodexNotificationEventMapper {
                     notification.params,
                 );
             }
+            "thread/tokenUsage/updated" => {
+                emit_response_event(
+                    event_tx,
+                    device_id,
+                    "thread/tokenUsage/updated",
+                    local_task_id,
+                    request,
+                    notification.params.clone(),
+                );
+            }
             "collab-agent/activity" => {
                 emit_collab_agent_activity(
                     event_tx,
@@ -1431,6 +1441,60 @@ mod tests {
             "I will inspect."
         );
         assert_eq!(event["payload"]["data"]["block"]["status"], "done");
+    }
+
+    #[test]
+    fn forwards_codex_token_usage_updates_to_response_stream() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "thread/tokenUsage/updated",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "tokenUsage": {
+                        "total": {
+                            "totalTokens": 15_000,
+                            "inputTokens": 12_000,
+                            "cachedInputTokens": 2_000,
+                            "outputTokens": 3_000,
+                            "reasoningOutputTokens": 0
+                        },
+                        "last": {
+                            "totalTokens": 8_000,
+                            "inputTokens": 7_000,
+                            "cachedInputTokens": 1_000,
+                            "outputTokens": 1_000,
+                            "reasoningOutputTokens": 0
+                        },
+                        "modelContextWindow": 258_000
+                    }
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["event"], "thread/tokenUsage/updated");
+        assert_eq!(event["payload"]["taskId"], "local-1");
+        assert_eq!(event["payload"]["subtaskId"], "8");
+        assert_eq!(
+            event["payload"]["data"]["tokenUsage"]["modelContextWindow"],
+            json!(258_000)
+        );
+        assert_eq!(
+            event["payload"]["data"]["tokenUsage"]["total"]["totalTokens"],
+            json!(15_000)
+        );
     }
 
     #[test]

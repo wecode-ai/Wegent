@@ -7,6 +7,7 @@ import type {
   ModelOptions,
   ProjectExecutionMode,
   ProjectWithTasks,
+  RuntimeContextUsage,
   RuntimeGoal,
   RuntimeWorkListResponse,
   SkillRef,
@@ -32,6 +33,7 @@ export interface ProjectChatControls {
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number }>
   errors: Map<string, string>
+  contextUsage?: RuntimeContextUsage
   isOptionsLocked: boolean
   modelSelectorOpenSignal?: number
   setSelectedModel: (model: UnifiedModel | null) => void
@@ -154,6 +156,7 @@ export function ChatInput({
     attachments: [],
     uploadingFiles: new Map(),
     errors: new Map(),
+    contextUsage: undefined,
     isOptionsLocked: false,
     modelSelectorOpenSignal: undefined,
     setSelectedModel: () => {},
@@ -229,6 +232,7 @@ export function ChatInput({
           codeComments={codeComments}
           uploadingFiles={controls.uploadingFiles}
           attachmentErrors={controls.errors}
+          contextUsage={controls.contextUsage}
           onSelectModel={controls.setSelectedModel}
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}
