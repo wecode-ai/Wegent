@@ -1156,7 +1156,7 @@ function RuntimeTaskRow({
       aria-pressed={notificationsSubscribed}
       onClick={handleToggleNotification}
       className={cn(
-        'flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
+        'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
         notificationsSubscribed && 'text-primary'
       )}
       title={notificationActionLabel}
@@ -1164,7 +1164,7 @@ function RuntimeTaskRow({
     >
       <NotificationIcon
         data-testid={iconTestId}
-        className={cn('h-4 w-4', notificationsSubscribed && 'fill-current')}
+        className={cn('h-[15px] w-[15px]', notificationsSubscribed && 'fill-current')}
       />
     </button>
   )
@@ -1201,7 +1201,7 @@ function RuntimeTaskRow({
         </span>
         <span
           data-testid={`runtime-local-task-trailing-${task.taskId}`}
-          className="relative ml-1 flex h-8 min-w-[32px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[104px]"
+          className="relative ml-1 flex h-8 min-w-[32px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[72px]"
         >
           <span
             data-testid={`runtime-local-task-time-${task.taskId}`}
@@ -1253,7 +1253,7 @@ function RuntimeTaskRow({
           </span>
           <span
             data-testid={`runtime-local-task-hover-actions-${task.taskId}`}
-            className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[104px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+            className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[72px] -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
           >
             {renderNotificationButton(
               notificationsSubscribed
@@ -1268,7 +1268,7 @@ function RuntimeTaskRow({
               data-testid={`runtime-local-task-mark-${task.taskId}`}
               onClick={handleToggleMark}
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
+                'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
                 marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
               )}
               title={
@@ -1284,7 +1284,7 @@ function RuntimeTaskRow({
             >
               <Pin
                 data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
-                className={cn('h-4 w-4', marked && 'fill-current')}
+                className={cn('h-[15px] w-[15px]', marked && 'fill-current')}
               />
             </button>
             <button
@@ -1292,7 +1292,7 @@ function RuntimeTaskRow({
               data-testid={`runtime-local-task-archive-${task.taskId}`}
               disabled={archiveDisabled}
               onClick={handleArchive}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+              className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
               title={t('workbench.archive_runtime_task', '归档')}
               aria-label={t('workbench.archive_runtime_task', '归档')}
             >
@@ -1301,7 +1301,7 @@ function RuntimeTaskRow({
               ) : (
                 <Archive
                   data-testid={`runtime-local-task-archive-icon-${task.taskId}`}
-                  className="h-4 w-4"
+                  className="h-[15px] w-[15px]"
                 />
               )}
             </button>

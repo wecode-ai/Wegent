@@ -1300,8 +1300,8 @@ describe('DesktopSidebar', () => {
 
     expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[32px]', 'group-hover/task:w-[104px]')
-    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[104px]')
+    expect(trailing).toHaveClass('min-w-[32px]', 'group-hover/task:w-[72px]')
+    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[72px]')
   })
 
   test('moves pinned runtime tasks to the top of the project task list', async () => {
