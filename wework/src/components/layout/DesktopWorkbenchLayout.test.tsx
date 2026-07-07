@@ -607,7 +607,7 @@ describe('DesktopWorkbenchLayout', () => {
     onLogout: vi.fn(),
   }
 
-  function createPendingRequestUserInputMessage(): WorkbenchMessage {
+  function createPendingRequestUserInputMessage(includeAdjustment = false): WorkbenchMessage {
     return {
       id: 'assistant-request',
       role: 'assistant',
@@ -629,6 +629,15 @@ describe('DesktopWorkbenchLayout', () => {
                 question: '执行此计划?',
                 options: [{ label: '是的，执行此计划' }],
               },
+              ...(includeAdjustment
+                ? [
+                    {
+                      id: 'adjustment',
+                      question: '否，请告知 WeWork 如何调整',
+                      is_other: true,
+                    },
+                  ]
+                : []),
             ],
           },
         },
@@ -1146,6 +1155,41 @@ describe('DesktopWorkbenchLayout', () => {
         },
       },
       { appendUserMessage: true, forceDefaultCollaborationMode: true }
+    )
+  })
+
+  test('keeps plan mode when submitting implementation plan adjustments', async () => {
+    const onRequestUserInputSubmit = vi.fn().mockResolvedValue(true)
+    const user = userEvent.setup()
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          currentRuntimeTask: {
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-plan',
+          },
+        }}
+        messages={[createPendingRequestUserInputMessage(true)]}
+        onRequestUserInputSubmit={onRequestUserInputSubmit}
+      />
+    )
+
+    await user.type(screen.getByTestId('request-user-input-custom-adjustment'), '先缩小范围')
+    await user.click(screen.getByTestId('request-user-input-submit-button'))
+
+    expect(onRequestUserInputSubmit).toHaveBeenCalledWith(
+      {
+        requestId: 42,
+        itemId: undefined,
+        answers: {
+          adjustment: { answers: ['先缩小范围'] },
+        },
+      },
+      { appendUserMessage: true, forceDefaultCollaborationMode: false }
     )
   })
 
@@ -3278,7 +3322,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(baseProps.onSelectProject).toHaveBeenCalledTimes(2)
   })
 
-  test('opens the independent connection settings page from the settings menu', async () => {
+  test('opens the general settings page from the settings menu', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await userEvent.click(screen.getByTestId('settings-button'))
@@ -3287,11 +3331,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('settings-back-button')).toHaveTextContent('返回')
     expect(screen.queryByText('返回应用')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: '云端设置' })).toBeInTheDocument()
-    expect(screen.getByText('已连接云端')).toBeInTheDocument()
-    expect(screen.getByText('当前域名:')).toBeInTheDocument()
-    expect(screen.getByText('云端模型')).toBeInTheDocument()
-    expect(screen.getByText('云端设备')).toBeInTheDocument()
+    expect(screen.getByTestId('general-settings-page')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '通用' })).toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-general')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]'
+    )
+    expect(screen.queryByRole('heading', { name: '云端设置' })).not.toBeInTheDocument()
     expect(screen.queryByText('连接这台设备')).not.toBeInTheDocument()
     expect(screen.queryByText('链接这台设备')).not.toBeInTheDocument()
     expect(screen.queryByText('控制其他设备')).not.toBeInTheDocument()
@@ -3302,12 +3347,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('Personal Devices')).not.toBeInTheDocument()
     expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
     expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
-    expect(await screen.findByText('云设备')).toBeInTheDocument()
-    expect(
-      screen.getByTestId('connection-device-24a59054-4638-4744-983d-372706c30fcd')
-    ).toBeInTheDocument()
-    expect(screen.getByText('yunpeng7-executor-372706c30fcd')).toBeInTheDocument()
-    expect(screen.getByText('v1.712')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('settings-nav-connections'))
+
+    expect(await screen.findByRole('heading', { name: '云端设置' })).toBeInTheDocument()
+    expect(screen.getByText('已连接云端')).toBeInTheDocument()
     expect(screen.getByText('在线')).toBeInTheDocument()
     expect(screen.queryByText('Online')).not.toBeInTheDocument()
     expect(

@@ -616,6 +616,7 @@ describe('MessageList', () => {
 
     const planCard = screen.getByTestId('assistant-plan-card')
     expect(planCard).toHaveTextContent('计划')
+    expect(screen.queryByTestId('assistant-plan-streaming-indicator')).not.toBeInTheDocument()
     expect(planCard).toHaveAttribute('role', 'button')
     expect(screen.getByTestId('assistant-plan-card-preview').className).toContain('max-h-[168px]')
     expect(screen.getByTestId('assistant-plan-card-content').className).toContain('text-sm')
@@ -709,6 +710,7 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('流式计划')
     expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('正在生成第一步')
+    expect(screen.getByTestId('assistant-plan-streaming-indicator')).toHaveTextContent('正在生成')
   })
 
   test('renders untagged streaming plan-shaped markdown as regular assistant markdown', () => {
@@ -1338,6 +1340,50 @@ describe('MessageList', () => {
     expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByText('正在运行 pwd')).toBeInTheDocument()
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
+  })
+
+  test('keeps processing expanded for the assistant segment before runtime guidance', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'process-1',
+        subtaskId: 11,
+        type: 'text',
+        content: '我正在检查项目结构。',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'tool-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/workspace/project\n',
+        status: 'done',
+        createdAt: 1770000001000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-before-guidance',
+            role: 'assistant',
+            content: '先看一下当前目录。',
+            status: 'done',
+            blocks,
+            runtimeGuidanceSplitBefore: true,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByText('我正在检查项目结构。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
   })
 
   test('renders final answer web search sources as a Codex-style source chip', async () => {
@@ -3053,6 +3099,28 @@ describe('MessageList', () => {
             role: 'user',
             content: '短消息',
             status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('max-h-44')
+  })
+
+  test('does not collapse long runtime guidance messages', () => {
+    const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行引导`).join('\n')
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'guidance-user',
+            role: 'user',
+            content,
+            status: 'done',
+            runtimeGuidance: true,
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
         ]}

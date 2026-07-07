@@ -611,8 +611,9 @@ function UserMessage({
   const hasImagePreviews = imagePreviewAttachments.length > 0
   const hasMultipleImagePreviews = imagePreviewAttachments.length > 1
   const shouldCollapse =
-    displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
-    displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
+    message.runtimeGuidance !== true &&
+    (displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
+      displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES)
   const showSourceBadge = isIMSource(message.source)
   const showGoalRequestBadge = message.runtimeGoalRequest === true
   const codeCommentCount = message.codeComments?.length ?? 0
@@ -1486,7 +1487,7 @@ function AssistantMessage({
               blocks={displayBlocks}
               isStreaming={isStreaming}
               startedAt={getProcessingSummaryStartMs(message, displayBlocks, isStreaming)}
-              forceExpanded={isCancelled}
+              forceExpanded={isCancelled || message.runtimeGuidanceSplitBefore === true}
               hasFinalContent={hasVisibleContent}
               showSummary={!isCancelled}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}

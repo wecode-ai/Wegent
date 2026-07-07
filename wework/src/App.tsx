@@ -29,6 +29,8 @@ import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { createLocalAppServices } from '@/api/local/localServices'
+import { defaultAppPreferences, getAppPreferences } from '@/tauri/appPreferences'
+import { applyLanguagePreference } from '@/i18n/languagePreference'
 import {
   KEYBINDINGS_CHANGED_EVENT,
   GO_BACK_COMMAND,
@@ -110,6 +112,29 @@ function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
 }
 
 export default function App() {
+  useEffect(() => {
+    let cancelled = false
+
+    getAppPreferences()
+      .then(preferences => {
+        if (!cancelled) {
+          return applyLanguagePreference(preferences.language)
+        }
+        return undefined
+      })
+      .catch(error => {
+        console.error('[Wework] Failed to initialize language preference:', error)
+        if (!cancelled) {
+          return applyLanguagePreference(defaultAppPreferences.language)
+        }
+        return undefined
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   return (
     <AppearanceProvider>
       <AppUpdateProvider>

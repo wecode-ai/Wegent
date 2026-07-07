@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { cn } from '@/lib/utils'
 import type { RuntimeContextUsage } from '@/types/api'
 
@@ -9,7 +10,7 @@ interface ContextUsageIndicatorProps {
 
 export function ContextUsageIndicator({ usage }: ContextUsageIndicatorProps) {
   const { t } = useTranslation('common')
-  const metrics = useMemo(() => (usage ? contextUsageMetrics(usage) : null), [usage])
+  const metrics = useMemo(() => (usage ? runtimeContextUsageMetrics(usage) : null), [usage])
 
   if (!usage || !metrics) return null
 
@@ -45,27 +46,13 @@ export function ContextUsageIndicator({ usage }: ContextUsageIndicatorProps) {
         </div>
         <div className="whitespace-nowrap font-light">
           {t('workbench.context_usage_tokens', {
-            usedTokens: formatCompactTokens(usage.total.totalTokens),
-            totalTokens: formatCompactTokens(usage.modelContextWindow),
+            usedTokens: formatCompactTokens(metrics.usedTokens),
+            totalTokens: formatCompactTokens(metrics.totalTokens),
           })}
         </div>
       </div>
     </div>
   )
-}
-
-function contextUsageMetrics(usage: RuntimeContextUsage) {
-  if (usage.modelContextWindow <= 0) return null
-
-  const usedPercent = Math.min(
-    100,
-    Math.max(0, Math.round((usage.total.totalTokens / usage.modelContextWindow) * 100))
-  )
-
-  return {
-    usedPercent,
-    remainingPercent: Math.max(0, 100 - usedPercent),
-  }
 }
 
 function formatCompactTokens(value: number): string {

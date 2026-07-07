@@ -241,7 +241,9 @@ struct AppPreferences {
     show_main_window_on_launch: bool,
     #[serde(default)]
     close_to_tray_hint_seen: bool,
-    #[serde(default = "default_true")]
+    #[serde(default = "default_language_preference")]
+    language: String,
+    #[serde(default)]
     task_completion_notifications_enabled: bool,
     #[serde(default = "default_true")]
     tray_unread_enabled: bool,
@@ -257,13 +259,19 @@ fn default_true() -> bool {
 }
 
 #[cfg(desktop)]
+fn default_language_preference() -> String {
+    "zh-CN".to_string()
+}
+
+#[cfg(desktop)]
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
             close_to_tray_hint_seen: false,
-            task_completion_notifications_enabled: true,
+            language: default_language_preference(),
+            task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
             tray_running_enabled: true,
             tray_usage_enabled: true,
@@ -278,6 +286,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
+    language: Option<String>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -358,6 +367,9 @@ fn update_app_preferences(
     if let Some(value) = patch.close_to_tray_hint_seen {
         preferences.close_to_tray_hint_seen = value;
     }
+    if let Some(value) = patch.language {
+        preferences.language = value;
+    }
     if let Some(value) = patch.task_completion_notifications_enabled {
         preferences.task_completion_notifications_enabled = value;
     }
@@ -381,6 +393,7 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
     close_to_tray_hint_seen: bool,
+    language: String,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
@@ -394,6 +407,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
+    language: Option<String>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -407,7 +421,8 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
         close_to_tray_hint_seen: false,
-        task_completion_notifications_enabled: true,
+        language: "zh-CN".to_string(),
+        task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
         tray_running_enabled: true,
         tray_usage_enabled: true,
@@ -424,9 +439,10 @@ fn update_app_preferences(
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
+        language: patch.language.unwrap_or_else(|| "zh-CN".to_string()),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
-            .unwrap_or(true),
+            .unwrap_or(false),
         tray_unread_enabled: patch.tray_unread_enabled.unwrap_or(true),
         tray_running_enabled: patch.tray_running_enabled.unwrap_or(true),
         tray_usage_enabled: patch.tray_usage_enabled.unwrap_or(true),

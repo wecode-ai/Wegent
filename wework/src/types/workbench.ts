@@ -4,6 +4,7 @@ import type {
   CodexReference,
   DeviceInfo,
   ProjectWithTasks,
+  RuntimeContextUsage,
   RuntimeTaskAddress,
   RuntimeTurnNavigationItem,
   RuntimeWorkListResponse,
@@ -71,6 +72,8 @@ export type WorkbenchMessage = Omit<
   completedAt?: string | number | null
   stoppedNotice?: boolean | null
   runtimeGoalRequest?: boolean | null
+  runtimeGuidance?: boolean | null
+  runtimeGuidanceSplitBefore?: boolean | null
   codeComments?: CodeCommentContext[] | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null
@@ -98,6 +101,7 @@ export interface GuidanceWorkbenchMessage {
 
 export interface RuntimePaneTranscript {
   messages: WorkbenchMessage[]
+  contextUsage?: RuntimeContextUsage | null
   turnNavigation?: RuntimeTurnNavigationItem[]
   rangeStart?: number | null
   rangeEnd?: number | null
