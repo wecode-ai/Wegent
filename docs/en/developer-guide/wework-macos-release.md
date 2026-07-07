@@ -87,16 +87,39 @@ To validate local updater behavior, serve the script output directory:
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
 
-## CI DMG Without Apple Developer
+## GitHub Release Auto Update
 
-The repository includes `.github/workflows/wework-app.yml` for producing macOS test DMGs on GitHub Actions without the Apple Developer Program. The workflow applies an ad-hoc codesign signature to the `.app`, but it does not perform Apple notarization, so first launch still triggers Gatekeeper. Use this mode for internal testing and developer distribution only; do not label it as a notarized production package.
+The repository includes `.github/workflows/wework-app.yml` for producing macOS DMGs, Tauri updater archives, signature files, and `latest.json` on GitHub Actions. The updater endpoint embedded in the client points to the GitHub Release latest asset:
 
-The workflow does not require Apple signing secrets. It creates or updates the `wework-v<version>` GitHub prerelease and uploads two release assets:
+```text
+https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+```
+
+The workflow creates or updates a `wework-v<version>` draft release. After both architecture builds finish, it generates `latest.json`, uploads it to the same release, and then publishes that release as GitHub latest. The client reads this manifest during automatic startup checks and when the titlebar update action is used.
+
+Configure these repository secrets in GitHub Actions:
+
+- `TAURI_SIGNING_PRIVATE_KEY`: Tauri updater private key.
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: private key password; leave empty if the key has no password.
+- `TAURI_UPDATER_PUBKEY`: updater public key matching the private key. It is injected into the built app.
+
+Do not rotate the updater private key unless it is acceptable for already-installed clients to stop receiving automatic updates. Tauri verifies new releases with the public key embedded in the installed client.
+
+The workflow uploads these release assets:
 
 - `WeWork_<version>_macos_arm64_unsigned-adhoc.dmg`
 - `WeWork_<version>_macos_x64_unsigned-adhoc.dmg`
+- `WeWork_<version>_macos_arm64.app.tar.gz`
+- `WeWork_<version>_macos_arm64.app.tar.gz.sig`
+- `WeWork_<version>_macos_x64.app.tar.gz`
+- `WeWork_<version>_macos_x64.app.tar.gz.sig`
+- `latest.json`
 
-When downloaded from GitHub Release assets, the link points directly to the `.dmg` file and is not wrapped by an Actions artifact `.zip`. When the workflow is triggered manually without a version input, the release tag uses `wework-v<package-version>-<short-sha>`.
+When downloaded from GitHub Release assets, the link points directly to the `.dmg` file and is not wrapped by an Actions artifact `.zip`. When the workflow is triggered manually without a version input, the release tag auto-increments the patch version from the latest `wework-vX.Y.Z` tag.
+
+## CI DMG Without Apple Developer
+
+The GitHub workflow applies an ad-hoc codesign signature to the `.app`, but it does not perform Apple notarization, so first launch still triggers Gatekeeper. Use this mode for internal testing and developer distribution only; do not label it as a notarized production package.
 
 To force-open the app on first launch. On macOS 15 and later, the warning can still include a **Move to Trash** button; as long as CI passed `codesign --verify --deep --strict`, this is usually the normal Gatekeeper block for a non-notarized app, not a damaged package:
 
