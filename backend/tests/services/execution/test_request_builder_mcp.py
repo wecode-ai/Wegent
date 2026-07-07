@@ -9,6 +9,7 @@ Verifies that skill MCP extraction, type normalization, and reachability
 filtering work correctly when preparing MCP servers for Claude Code executor.
 """
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -81,6 +82,59 @@ class TestClarificationSkillInjection:
         result = TaskRequestBuilder._inject_clarification_skill(preload_skills)
 
         assert result == preload_skills
+
+
+class TestDefaultAvailableHelpSkills:
+    def test_inject_default_help_skills_adds_public_available_refs(self):
+        refs = TaskRequestBuilder._inject_default_help_skills(
+            [
+                {
+                    "name": "subscription-manager",
+                    "namespace": "default",
+                    "is_public": True,
+                }
+            ]
+        )
+
+        assert refs == [
+            {"name": "subscription-manager", "namespace": "default", "is_public": True},
+            {"name": "wegent-help", "namespace": "default", "is_public": True},
+            {
+                "name": "wegent-help-knowledge",
+                "namespace": "default",
+                "is_public": True,
+            },
+        ]
+
+    def test_inject_default_help_skills_deduplicates_existing_refs(self):
+        refs = TaskRequestBuilder._inject_default_help_skills(
+            [{"name": "wegent-help", "namespace": "default", "is_public": True}]
+        )
+
+        assert [item["name"] for item in refs] == [
+            "wegent-help",
+            "wegent-help-knowledge",
+        ]
+
+    def test_inject_default_help_skills_preserves_user_ref_on_name_collision(self):
+        user_ref = {
+            "name": "wegent-help",
+            "namespace": "team-space",
+            "is_public": False,
+            "force_preload": False,
+        }
+
+        refs = TaskRequestBuilder._inject_default_help_skills([user_ref])
+
+        assert refs[0] == user_ref
+        assert refs[0] is user_ref
+
+    def test_build_appends_user_default_refs_before_injected_help_defaults(self):
+        source = inspect.getsource(TaskRequestBuilder.build)
+
+        assert source.index("for skill_ref in user_default_skill_refs:") < source.index(
+            "extra_available_skills = self._inject_default_help_skills("
+        )
 
 
 class TestExtractSkillMcpToList:

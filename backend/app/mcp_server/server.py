@@ -8,6 +8,8 @@ This module provides MCP servers for Wegent Backend with these endpoints:
 - /mcp/system - System-level tools (silent_exit) automatically injected into all tasks
 - /mcp/knowledge - Knowledge MCP module root
   - /mcp/knowledge/sse - Knowledge MCP streamable HTTP transport endpoint
+- /mcp/help-knowledge - Wegent Help query-only knowledge MCP module root
+  - /mcp/help-knowledge/sse - Wegent Help query MCP streamable HTTP endpoint
 - /mcp/knowledge-external - Trusted external knowledge integration MCP root
   - /mcp/knowledge-external/sse - External knowledge MCP streamable HTTP transport endpoint
 New MCP servers should follow /mcp/<name>/sse for streamable HTTP transport.
@@ -56,6 +58,8 @@ SYSTEM_MCP_MOUNT_PATH = "/mcp/system"
 SYSTEM_MCP_TRANSPORT_PATH = "/"
 KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge"
 KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
+HELP_KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/help-knowledge"
+HELP_KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
 EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH = "/mcp/knowledge-external"
 EXTERNAL_KNOWLEDGE_MCP_TRANSPORT_PATH = "/sse"
 EXTERNAL_KNOWLEDGE_PUBLIC_PATHS = frozenset({"", "/", "/health"})
@@ -204,6 +208,14 @@ knowledge_mcp_server = FastMCP(
     transport_security=_build_transport_security_settings(),
 )
 
+help_knowledge_mcp_server = FastMCP(
+    "wegent-help-knowledge-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
+
 external_knowledge_mcp_server = FastMCP(
     "wegent-knowledge-external-mcp",
     stateless_http=True,
@@ -216,9 +228,13 @@ external_knowledge_mcp_server = FastMCP(
 _knowledge_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
     contextvars.ContextVar("_knowledge_request_token_info", default=None)
 )
+_help_knowledge_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_help_knowledge_request_token_info", default=None)
+)
 
 # Flag to track if tools have been registered
 _knowledge_tools_registered = False
+_help_knowledge_tools_registered = False
 
 _external_knowledge_request_user: contextvars.ContextVar[
     Optional[ExternalKnowledgeUser]
@@ -315,6 +331,31 @@ def ensure_knowledge_tools_registered() -> None:
     all @mcp_tool decorated endpoints as MCP tools.
     """
     _register_knowledge_tools()
+
+
+def _register_help_knowledge_tools() -> None:
+    """Register Wegent Help query-only tools."""
+    global _help_knowledge_tools_registered
+    if _help_knowledge_tools_registered:
+        return
+
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import (  # noqa: F401 side-effect: triggers @mcp_tool registration
+        help_knowledge,
+    )
+
+    count = register_tools_to_server(help_knowledge_mcp_server, "help_knowledge")
+    logger.info(
+        "[MCP:HelpKnowledge] Registered %s tools from decorated endpoints",
+        count,
+    )
+
+    _help_knowledge_tools_registered = True
+
+
+def ensure_help_knowledge_tools_registered() -> None:
+    """Ensure Wegent Help query-only MCP tools are registered."""
+    _register_help_knowledge_tools()
 
 
 def _register_external_knowledge_tools() -> None:
@@ -545,6 +586,17 @@ _KNOWLEDGE_MCP_SPEC = McpAppSpec(
     include_root_metadata=True,
 )
 
+_HELP_KNOWLEDGE_MCP_SPEC = McpAppSpec(
+    name="help_knowledge",
+    service_name="wegent-help-knowledge-mcp",
+    mount_path=HELP_KNOWLEDGE_MCP_MOUNT_PATH,
+    transport_path=HELP_KNOWLEDGE_MCP_TRANSPORT_PATH,
+    server=help_knowledge_mcp_server,
+    token_context=_help_knowledge_request_token_info,
+    log_prefix="HelpKnowledge",
+    include_root_metadata=True,
+)
+
 _INTERACTIVE_FORM_MCP_SPEC = McpAppSpec(
     name="interactive_form_question",
     service_name="wegent-interactive-form-question-mcp",
@@ -581,6 +633,7 @@ _SUBSCRIPTION_MCP_SPEC = McpAppSpec(
 MCP_APP_SPECS = (
     _SYSTEM_MCP_SPEC,
     _KNOWLEDGE_MCP_SPEC,
+    _HELP_KNOWLEDGE_MCP_SPEC,
     _INTERACTIVE_FORM_MCP_SPEC,
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
@@ -611,6 +664,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
     # Ensure tools are registered before creating the app
     if spec.name == "knowledge":
         ensure_knowledge_tools_registered()
+    elif spec.name == "help_knowledge":
+        ensure_help_knowledge_tools_registered()
     elif spec.name == "interactive_form_question":
         ensure_interactive_form_question_tools_registered()
     elif spec.name == "prompt_optimization":
@@ -660,6 +715,7 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
                 # Set MCPRequestContext for decorator-based tools
                 if spec.name in (
                     "knowledge",
+                    "help_knowledge",
                     "interactive_form_question",
                     "prompt_optimization",
                     "subscription",
@@ -730,6 +786,11 @@ def _create_system_mcp_app() -> Starlette:
 def _create_knowledge_mcp_app() -> Starlette:
     """Create Starlette app for knowledge MCP server."""
     return _build_mcp_app(_KNOWLEDGE_MCP_SPEC)
+
+
+def _create_help_knowledge_mcp_app() -> Starlette:
+    """Create Starlette app for Wegent Help query-only MCP server."""
+    return _build_mcp_app(_HELP_KNOWLEDGE_MCP_SPEC)
 
 
 def register_mcp_apps(app: FastAPI, mount_prefix: str = "") -> None:

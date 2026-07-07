@@ -204,6 +204,14 @@ COPY docker/standalone/nginx.conf /etc/nginx/conf.d/default.conf
 # Copy init_data directory with default resources and skills
 COPY backend/init_data /app/init_data
 
+# Generate built-in Wegent Help knowledge seed from repository docs.
+COPY backend/scripts/generate_wegent_help_knowledge_seed.py /app/backend/scripts/generate_wegent_help_knowledge_seed.py
+COPY docs /app/docs
+RUN python /app/backend/scripts/generate_wegent_help_knowledge_seed.py \
+    --docs-root /app/docs \
+    --output-dir /app/init_data/system_knowledge/wegent-help \
+    && rm -rf /app/docs
+
 # Copy startup script
 COPY docker/standalone/start.sh /app/start.sh
 RUN sed -i 's/\r$//' /app/start.sh && chmod +x /app/start.sh

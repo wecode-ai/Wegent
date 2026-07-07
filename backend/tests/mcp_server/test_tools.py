@@ -8,7 +8,7 @@ import importlib
 import inspect
 import json
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,6 +27,14 @@ def get_silent_exit_module():
 def get_knowledge_module():
     """Get the knowledge module, handling import caching issues."""
     module_name = "app.mcp_server.tools.knowledge"
+    if module_name not in sys.modules:
+        importlib.import_module(module_name)
+    return sys.modules[module_name]
+
+
+def get_help_knowledge_module():
+    """Get the help knowledge module, handling import caching issues."""
+    module_name = "app.mcp_server.tools.help_knowledge"
     if module_name not in sys.modules:
         importlib.import_module(module_name)
     return sys.modules[module_name]
@@ -269,3 +277,90 @@ class TestKnowledgeTool:
             "plain-text" in tool_info["description"].lower()
             or "text" in tool_info["description"].lower()
         )
+
+
+class TestHelpKnowledgeTool:
+    """Tests for the Wegent Help query-only MCP tools."""
+
+    def test_help_knowledge_mcp_tools_registry_contains_only_query_tool(self):
+        """Test that the help knowledge MCP exposes only the query tool."""
+        module = get_help_knowledge_module()
+
+        assert list(module.HELP_KNOWLEDGE_MCP_TOOLS) == ["wegent_help_query"]
+
+    @pytest.mark.asyncio
+    async def test_query_wegent_help_uses_seeded_system_kb(self):
+        """Test that the help query tool finds the seeded system knowledge base."""
+        module = get_help_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1,
+            subtask_id=2,
+            user_id=3,
+            user_name="alice",
+        )
+        mock_user = object()
+        mock_kb = MagicMock()
+        mock_kb.id = 77
+        mock_kb.json = {
+            "metadata": {
+                "labels": {
+                    "source": "system_knowledge_seed",
+                    "seed_id": "wegent-help",
+                }
+            },
+            "spec": {"name": "Wegent Help"},
+        }
+        mock_session = MagicMock()
+        mock_user_query = MagicMock()
+        mock_user_query.filter.return_value.first.return_value = mock_user
+        mock_kb_query = MagicMock()
+        mock_kb_query.filter.return_value.all.return_value = [mock_kb]
+        mock_session.query.side_effect = [mock_user_query, mock_kb_query]
+        mock_retrieve = AsyncMock(
+            return_value={
+                "query": "how to use Wegent?",
+                "records": [
+                    {
+                        "knowledge_base_id": 77,
+                        "knowledge_base_name": "Wegent Help",
+                        "document_id": 9,
+                        "document_name": "Quick Start",
+                    }
+                ],
+                "total": 1,
+                "mode": "rag_retrieval",
+            }
+        )
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(
+                module.knowledge_orchestrator,
+                "retrieve_knowledge",
+                mock_retrieve,
+            ),
+        ):
+            result = await module.query_wegent_help(
+                token_info=token_info,
+                query="how to use Wegent?",
+                max_results=5,
+            )
+
+        mock_retrieve.assert_awaited_once_with(
+            db=mock_session,
+            user=mock_user,
+            knowledge_base_id=77,
+            query="how to use Wegent?",
+            max_results=5,
+            route_mode="rag_retrieval",
+        )
+        assert result["knowledge_base_id"] == 77
+        assert result["sources"] == [
+            {
+                "document_id": 9,
+                "document_name": "Quick Start",
+                "knowledge_base_id": 77,
+                "knowledge_base_name": "Wegent Help",
+            }
+        ]
+        mock_session.close.assert_called_once()

@@ -267,6 +267,9 @@ class TaskRequestBuilder:
                 effective_preload_skills.append(skill_ref)
             else:
                 extra_available_skills.append(skill_ref)
+        extra_available_skills = self._inject_default_help_skills(
+            extra_available_skills
+        )
 
         user_preload_skills = None
         if effective_preload_skills:
@@ -2142,6 +2145,33 @@ Response template:
                 "is_public": True,
             }
         ]
+
+    @staticmethod
+    def _inject_default_help_skills(extra_available_skills: list) -> list:
+        """Add default on-demand help skills without preloading them."""
+        default_skill_refs = [
+            {
+                "name": "wegent-help",
+                "namespace": "default",
+                "is_public": True,
+            },
+            {
+                "name": "wegent-help-knowledge",
+                "namespace": "default",
+                "is_public": True,
+            },
+        ]
+        merged = list(extra_available_skills or [])
+        existing_names = {
+            item.get("name")
+            for item in merged
+            if isinstance(item, dict) and item.get("name")
+        }
+        for skill_ref in default_skill_refs:
+            if skill_ref["name"] not in existing_names:
+                merged.append(skill_ref)
+                existing_names.add(skill_ref["name"])
+        return merged
 
     def _inject_conditional_provider_skills(
         self,

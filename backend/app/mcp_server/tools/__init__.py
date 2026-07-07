@@ -8,6 +8,7 @@ Contains tools for:
 - System MCP (silent_exit)
 - Knowledge MCP (list_knowledge_bases, list_documents, create_knowledge_base,
   create_document, update_document_content)
+- Help Knowledge MCP (query-only access to built-in Wegent Help)
 
 Knowledge MCP tools are implemented independently using the KnowledgeOrchestrator
 service layer, with Celery-based async task scheduling for indexing and summary.
@@ -26,12 +27,14 @@ from .decorator import (
     get_registered_mcp_tools,
     mcp_tool,
 )
+from .help_knowledge import HELP_KNOWLEDGE_MCP_TOOLS
 from .knowledge import KNOWLEDGE_MCP_TOOLS
 from .silent_exit import silent_exit
 from .subscription import create_subscription, preview_subscription
 
 __all__ = [
     "silent_exit",
+    "HELP_KNOWLEDGE_MCP_TOOLS",
     "KNOWLEDGE_MCP_TOOLS",
     "mcp_tool",
     "get_registered_mcp_tools",
