@@ -869,9 +869,27 @@ async fn app_runtime_searches_codex_titles_and_transcripts() {
     assert_eq!(title_result["success"], true);
     assert_eq!(title_result["items"][0]["address"]["taskId"], "thread-1");
     assert_eq!(title_result["items"][0]["address"]["deviceId"], "device-1");
+    assert_eq!(
+        title_result["items"][0]["address"]["runtimeHandle"]["threadId"],
+        "thread-1"
+    );
     assert_eq!(title_result["items"][0]["title"], "Fix CI");
     assert_eq!(title_result["items"][0]["snippet"], "Fix CI");
     assert_eq!(title_result["items"][0]["messageRole"], "title");
+
+    let transcript_from_search_result = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": title_result["items"][0]["address"].clone()
+        }))
+        .await
+        .expect("search result address should load transcript");
+
+    assert_eq!(transcript_from_search_result["success"], true);
+    assert_eq!(
+        transcript_from_search_result["messages"][0]["content"],
+        "please fix ci"
+    );
 
     let transcript_result = handler
         .handle_runtime_rpc(json!({

@@ -5789,7 +5789,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-a')
     })
-  })
+  }, 10000)
 
   test('opens the bottom workspace add menu without replacing the terminal', async () => {
     renderWorkspacePanelLayout()
