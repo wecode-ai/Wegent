@@ -23,7 +23,13 @@ import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 
 interface WorkspacePanelActionsProps {
-  mode?: 'all' | 'environment' | 'panel-toggles'
+  mode?:
+    | 'all'
+    | 'environment'
+    | 'primary-target'
+    | 'panel-toggles'
+    | 'bottom-panel-toggle'
+    | 'right-panel-toggle'
   currentProject?: ProjectWithTasks | null
   devices?: DeviceInfo[]
   workspaceTarget?: WorkspaceTarget | null
@@ -60,8 +66,12 @@ export function WorkspacePanelActions({
   const { t } = useTranslation('common')
   const [ideLoading, setIdeLoading] = useState(false)
   const [ideError, setIdeError] = useState<string | null>(null)
-  const showEnvironmentInfo = mode !== 'panel-toggles'
-  const showPanelToggles = mode !== 'environment'
+  const showEnvironmentInfo = mode === 'all' || mode === 'environment'
+  const showPrimaryTarget = mode === 'all' || mode === 'primary-target'
+  const showBottomPanelToggle =
+    mode === 'all' || mode === 'panel-toggles' || mode === 'bottom-panel-toggle'
+  const showRightPanelToggle =
+    mode === 'all' || mode === 'panel-toggles' || mode === 'right-panel-toggle'
   const hasEnvironmentContext = Boolean(
     environmentInfo.branchName?.trim() ||
     environmentInfo.deviceId?.trim() ||
@@ -160,7 +170,7 @@ export function WorkspacePanelActions({
           onOpenChangesReview={onOpenEnvironmentChangesReview}
         />
       )}
-      {showPanelToggles && canOpenCodeServer && localWorkspaceEnabled && (
+      {showPrimaryTarget && canOpenCodeServer && localWorkspaceEnabled && (
         <div
           data-testid="local-workspace-titlebar-control"
           className={cn(
@@ -203,7 +213,7 @@ export function WorkspacePanelActions({
           />
         </div>
       )}
-      {showPanelToggles && canOpenCodeServer && !localWorkspaceEnabled && (
+      {showPrimaryTarget && canOpenCodeServer && !localWorkspaceEnabled && (
         <button
           type="button"
           data-testid="open-code-server-titlebar-button"
@@ -225,40 +235,44 @@ export function WorkspacePanelActions({
         </button>
       )}
       {ideError && <CodeServerErrorDialog message={ideError} onClose={() => setIdeError(null)} />}
-      {showPanelToggles && (
+      {(showBottomPanelToggle || showRightPanelToggle) && (
         <>
-          <TitlebarTooltip
-            label={t('workbench.toggle_bottom_workspace_panel_visible', '切换底部面板显示')}
-            shortcut="Command+J"
-            align="end"
-          >
-            <button
-              type="button"
-              data-testid="toggle-bottom-workspace-panel-button"
-              onClick={onToggleBottomPanel}
-              className={cn(
-                DESKTOP_TOP_BAR_BUTTON_CLASS,
-                bottomPanelOpen && 'bg-black/[0.10] text-[#374151]'
-              )}
-              aria-label={bottomPanelTitle}
+          {showBottomPanelToggle && (
+            <TitlebarTooltip
+              label={t('workbench.toggle_bottom_workspace_panel_visible', '切换底部面板显示')}
+              shortcut="Command+J"
+              align="end"
             >
-              <PanelBottom />
-            </button>
-          </TitlebarTooltip>
-          <TitlebarTooltip label={rightPanelTitle} shortcut="Alt+Command+B" align="end">
-            <button
-              type="button"
-              data-testid="toggle-right-workspace-panel-button"
-              onClick={onToggleRightPanel}
-              className={cn(
-                DESKTOP_TOP_BAR_BUTTON_CLASS,
-                rightPanelOpen && 'bg-black/[0.10] text-[#374151]'
-              )}
-              aria-label={rightPanelTitle}
-            >
-              <PanelRight />
-            </button>
-          </TitlebarTooltip>
+              <button
+                type="button"
+                data-testid="toggle-bottom-workspace-panel-button"
+                onClick={onToggleBottomPanel}
+                className={cn(
+                  DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  bottomPanelOpen && 'bg-black/[0.10] text-[#374151]'
+                )}
+                aria-label={bottomPanelTitle}
+              >
+                <PanelBottom />
+              </button>
+            </TitlebarTooltip>
+          )}
+          {showRightPanelToggle && (
+            <TitlebarTooltip label={rightPanelTitle} shortcut="Alt+Command+B" align="end">
+              <button
+                type="button"
+                data-testid="toggle-right-workspace-panel-button"
+                onClick={onToggleRightPanel}
+                className={cn(
+                  DESKTOP_TOP_BAR_BUTTON_CLASS,
+                  rightPanelOpen && 'bg-black/[0.10] text-[#374151]'
+                )}
+                aria-label={rightPanelTitle}
+              >
+                <PanelRight />
+              </button>
+            </TitlebarTooltip>
+          )}
         </>
       )}
     </>

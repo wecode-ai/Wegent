@@ -2203,8 +2203,10 @@ impl RuntimeWorkRpcHandler {
             if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
                 continue;
             }
-            if !self.is_active_local_task(&link.local_task_id) {
-                normalize_unmapped_pending_codex_task(&mut link);
+            if !self.is_active_local_task(&link.local_task_id)
+                && normalize_inactive_running_codex_task(&mut link)
+            {
+                self.store.upsert_task(link.clone());
             }
             link.list_order = Some(links.len());
             links.push(link);
@@ -2661,8 +2663,8 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .is_some_and(|link| self.is_active_local_task(&link.local_task_id));
         if let Some(link) = &mut local_link {
-            if link.running && !local_active {
-                link.running = false;
+            if !local_active && normalize_inactive_running_codex_task(link) {
+                self.store.upsert_task(link.clone());
             }
         }
         let workspace_path = string_field(thread, "cwd")
@@ -2837,19 +2839,32 @@ fn is_unmapped_pending_codex_shadow(
             .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
 }
 
-fn normalize_unmapped_pending_codex_task(link: &mut RuntimeTaskLink) {
-    if !is_unmapped_pending_codex_task(link) {
-        return;
+fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
+    if !is_inactive_running_codex_task(link) {
+        return false;
     }
     link.status = "active".to_owned();
     link.running = false;
+    link.updated_at = now_ms();
+    true
+}
+
+fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
+    if !link.running || !is_codex_runtime(&link.runtime) {
+        return false;
+    }
+    let status = link.status.replace(['_', '-'], "").to_ascii_lowercase();
+    matches!(
+        status.as_str(),
+        "running" | "inprogress" | "busy" | "pending"
+    )
 }
 
 fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
+    if !is_inactive_running_codex_task(link) {
+        return false;
+    }
     link.thread_id.is_none()
-        && link.running
-        && link.status == "running"
-        && is_codex_runtime(&link.runtime)
 }
 
 fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {

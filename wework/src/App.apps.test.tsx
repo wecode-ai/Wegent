@@ -1,5 +1,4 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import './i18n'
 import App from './App'
@@ -39,6 +38,8 @@ vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
+  requestLocalExecutor: vi.fn().mockResolvedValue({}),
+  subscribeLocalExecutorEvents: vi.fn().mockResolvedValue(vi.fn()),
   connectLocalExecutorToBackend: vi
     .fn()
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
@@ -127,13 +128,12 @@ describe('App center route', () => {
     })
   }
 
-  test('opens the app center from the fixed titlebar tab', async () => {
-    window.history.pushState({}, '', '/')
+  test('renders the app center with fixed titlebar tabs on the app route', async () => {
+    window.history.pushState({}, '', '/apps')
 
     render(<App />)
 
     await waitForStartupScreenToClose()
-    await userEvent.click(await screen.findByTestId('chrome-tab-apps'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
     expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
@@ -152,20 +152,14 @@ describe('App center route', () => {
     expect(screen.queryByText('插件包')).not.toBeInTheDocument()
   })
 
-  test('overlays the workbench titlebar so the sidebar can reach the window top', async () => {
+  test('does not render the global chrome titlebar on the workbench route', async () => {
     window.history.pushState({}, '', '/')
 
     render(<App />)
 
     await waitForStartupScreenToClose()
-    expect(screen.getByTestId('chrome-titlebar')).toHaveClass(
-      'absolute',
-      'inset-x-0',
-      'top-0',
-      'z-system',
-      'bg-transparent'
-    )
-    expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
   })
 
   test('keeps the app center sidebar available on desktop app widths', async () => {

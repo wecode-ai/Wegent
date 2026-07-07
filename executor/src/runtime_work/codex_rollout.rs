@@ -152,6 +152,10 @@ fn rollout_tail_is_running(thread: &Value) -> bool {
             running = false;
             continue;
         }
+        if is_final_assistant_message_item(&item) {
+            running = false;
+            continue;
+        }
         if rollout_transcript_item(&item).is_some() || is_rollout_activity_item(&item) {
             running = true;
         }
@@ -204,6 +208,7 @@ fn rollout_path_turns(path: &Path, thread: &Value) -> Vec<Value> {
         current.items.push(transcript_item);
     }
 
+    complete_current_turn_if_final_assistant_message(&mut current, fallback_started_at);
     push_rollout_turn(&mut turns, &mut current, fallback_started_at);
     turns
 }
@@ -386,6 +391,35 @@ fn rollout_transcript_item(item: &Value) -> Option<Value> {
         "eventmsg" if rollout_event_is_transcript_item(item) => Some(item.clone()),
         _ => None,
     }
+}
+
+fn is_final_assistant_message_item(item: &Value) -> bool {
+    if item_type(item) != "responseitem" || !is_root_turn_marker(item) {
+        return false;
+    }
+    let Some(payload) = codex_wrapped_item_payload(item) else {
+        return false;
+    };
+    item_type(payload) == "message"
+        && string_field(payload, "role").is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+}
+
+fn complete_current_turn_if_final_assistant_message(
+    current: &mut RolloutTurn,
+    fallback_started_at: i64,
+) {
+    if current.status != "running" {
+        return;
+    }
+    let Some(last_item) = current
+        .items
+        .last()
+        .filter(|item| is_final_assistant_message_item(item))
+    else {
+        return;
+    };
+    current.status = "completed".to_owned();
+    current.completed_at = item_timestamp_ms(last_item).or(Some(fallback_started_at));
 }
 
 fn is_rollout_activity_item(item: &Value) -> bool {
@@ -623,6 +657,29 @@ mod tests {
                 json!({"type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"done"}]}})
                     .to_string(),
                 json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let thread = thread_with_path(&path);
+        let hydrated = thread_with_rollout_turns(&thread).expect("rollout should hydrate thread");
+        assert_eq!(hydrated["turns"][0]["status"], "completed");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn detects_inactive_turn_when_rollout_ends_with_assistant_message() {
+        let path = temp_rollout_path("assistant-message-complete");
+        fs::write(
+            &path,
+            [
+                json!({"type":"event_msg","payload":{"type":"user_message","message":"fix"}})
+                    .to_string(),
+                json!({"type":"event_msg","payload":{"type":"agent_message","message":"done"}})
+                    .to_string(),
+                json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}})
+                    .to_string(),
             ]
             .join("\n"),
         )
@@ -873,6 +930,29 @@ mod tests {
                 .len(),
             0
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn running_status_detects_final_assistant_message_tail() {
+        let path = temp_rollout_path("running-status-final-message");
+        fs::write(
+            &path,
+            [
+                json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
+                json!({"type":"event_msg","payload":{"type":"agent_message","message":"done"}})
+                    .to_string(),
+                json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}})
+                    .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let thread = thread_with_path(&path);
+        let state = thread_with_rollout_running_status(&thread);
+
+        assert_ne!(state["status"], "running");
         let _ = fs::remove_file(path);
     }
 

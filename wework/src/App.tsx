@@ -129,6 +129,7 @@ function AppShell() {
   const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
   const titlebarOverlaysContent = isTauri && activeAppKey === 'wework'
+  const showChromeTitlebar = isTauri && activeAppKey !== 'wework'
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
 
@@ -272,7 +273,7 @@ function AppShell() {
           titlebarOverlaysContent ? 'relative' : 'flex flex-col'
         )}
       >
-        {isTauri && (
+        {showChromeTitlebar && (
           <ChromeTitlebar
             tabs={tabs}
             activeKey={activeAppKey}

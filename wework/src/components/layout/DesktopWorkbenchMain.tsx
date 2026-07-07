@@ -31,9 +31,13 @@ import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { useResizableRightSplitChat } from './workspace-panels/useResizableWorkspacePanel'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
-import { TitlebarActionsPortal } from '@/components/topnav/TitlebarActionsPortal'
+import {
+  TITLEBAR_ACTIONS_PORTAL_ID,
+  TITLEBAR_RIGHT_PANEL_PORTAL_ID,
+} from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   listenEmbeddedBrowserOpenRequests,
@@ -98,8 +102,8 @@ const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
 const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
-const RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR = '--right-workspace-titlebar-width'
-const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '17rem'
+const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
+const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
 
 interface PendingBlankBrowserMigration {
@@ -323,8 +327,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const [composerPointerActive, setComposerPointerActive] = useState(false)
+  const isTauri = isTauriRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
-  const [workbenchMainWidth, setWorkbenchMainWidth] = useState(0)
   const floatingComposerCardRef = useRef<HTMLDivElement | null>(null)
   const [floatingComposerHeight, setFloatingComposerHeight] = useState(
     DEFAULT_FLOATING_COMPOSER_HEIGHT_PX
@@ -351,15 +355,18 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onCollapse: closeRightPanel,
   })
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
-  const paneTitleWidth = rightPanelOpen
-    ? chatColumnWidth
-    : `calc(100% - ${COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE})`
+  const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
-  const rightPanelTitlebarWidth =
-    rightPanelOpen && workbenchMainWidth > rightSplitChatWidth
-      ? `${workbenchMainWidth - rightSplitChatWidth}px`
-      : 'auto'
-  const shouldRenderRightPanel = rightPanelOpen || rightPanelTabs.length > 0
+  const rightPanelTitlebarWidth = rightPanelOpen
+    ? rightPanelShellWidth
+    : COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE
+  const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
+    if (rightPanelView === 'launcher') return rightPanelTabs
+    return rightPanelTabs.includes(rightPanelView)
+      ? rightPanelTabs
+      : [...rightPanelTabs, rightPanelView]
+  }, [rightPanelTabs, rightPanelView])
+  const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const floatingComposerClearance =
     floatingComposerHeight + FLOATING_COMPOSER_BOTTOM_OFFSET_PX + FLOATING_COMPOSER_MESSAGE_GAP_PX
@@ -453,22 +460,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     migratedEmbeddedBrowserLabel,
   ])
 
-  useLayoutEffect(() => {
-    const main = workbenchMainRef.current
-    if (!main) return
-
-    const updateMainWidth = () => {
-      setWorkbenchMainWidth(main.getBoundingClientRect().width)
-    }
-
-    updateMainWidth()
-    if (typeof ResizeObserver === 'undefined') return
-
-    const observer = new ResizeObserver(updateMainWidth)
-    observer.observe(main)
-    return () => observer.disconnect()
-  }, [])
-
   const bottomPanelWorkspaceKey = createBottomPanelWorkspaceKey({
     currentRuntimeTask,
     workspaceProjectId: workspaceProject?.id,
@@ -560,7 +551,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [paneMessages])
   const rightPanelSessionKey = paneKey
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
-  const isTauri = isTauriRuntime()
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const hasQueuedComposerRows = paneQueuedMessages.length > 0 || paneGuidanceMessages.length > 0
@@ -659,7 +649,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelTabs(current => {
-        const next = current.filter(openTab => openTab !== tab)
+        const currentTabs = current.includes(tab) ? current : [...current, tab]
+        const next = currentTabs.filter(openTab => openTab !== tab)
         if (next.length === 0) {
           setRightPanelOpen(false)
           setRightPanelView('launcher')
@@ -889,12 +880,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const nextOpen = !open
       if (nextOpen) {
         setRightPanelView(current =>
-          rightPanelTabs.includes(current as RightWorkspacePanelTab) ? current : 'launcher'
+          effectiveRightPanelTabs.includes(current as RightWorkspacePanelTab) ? current : 'launcher'
         )
       }
       return nextOpen
     })
-  }, [rightPanelTabs, setRightPanelOpen, setRightPanelView])
+  }, [effectiveRightPanelTabs, setRightPanelOpen, setRightPanelView])
   const toggleBottomPanel = useCallback(
     () => setCurrentBottomPanelOpen(open => !open),
     [setCurrentBottomPanelOpen]
@@ -909,7 +900,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => window.removeEventListener(WEWORK_OPEN_TERMINAL_EVENT, handleOpenTerminal)
   }, [toggleBottomPanel])
 
-  const renderWorkspacePanelActions = (mode: 'all' | 'environment' | 'panel-toggles') => (
+  const renderWorkspacePanelActions = (
+    mode:
+      | 'all'
+      | 'environment'
+      | 'primary-target'
+      | 'panel-toggles'
+      | 'bottom-panel-toggle'
+      | 'right-panel-toggle'
+  ) => (
     <WorkspacePanelActions
       mode={mode}
       currentProject={currentProject}
@@ -931,20 +930,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     />
   )
   const workspacePanelActions = renderWorkspacePanelActions('all')
+  const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
+  const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
+  const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
   const runtimeTaskTitle = findRuntimeTask(runtimeWork, currentRuntimeTask)?.title.trim() || null
-  const paneTaskTitle = runtimeTaskTitle ? (
-    <div
-      data-testid="workbench-pane-task-title"
-      className={cn(
-        'pointer-events-none absolute left-0 top-0 z-chrome flex h-11 min-w-0 truncate items-center pr-7 text-[13px] font-medium leading-none text-text-primary',
-        sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
-        rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
-      )}
-      style={{ width: paneTitleWidth }}
-    >
-      <span className="block w-full min-w-0 truncate">{runtimeTaskTitle}</span>
-    </div>
-  ) : undefined
+  const paneTaskTitle =
+    runtimeTaskTitle && !isTauri ? (
+      <div
+        data-testid="workbench-pane-task-title"
+        className={cn(
+          'pointer-events-none absolute left-0 top-0 z-chrome flex h-11 min-w-0 truncate items-center pr-7 text-[13px] font-medium leading-none text-text-primary',
+          sidebarCollapsed ? 'pl-[14rem]' : 'pl-4',
+          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+        )}
+        style={{ width: paneTitleWidth }}
+      >
+        <span className="block w-full min-w-0 truncate">{runtimeTaskTitle}</span>
+      </div>
+    ) : undefined
   const topBarLeftActions = !isTauri ? (
     sidebarCollapsed ? (
       <DesktopWindowControls
@@ -960,7 +963,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     )
   ) : undefined
   const topBarLeftContent = topBarLeftActions ? <>{topBarLeftActions}</> : undefined
-  const showPageTopBar = !isTauri || Boolean(topBarLeftContent) || Boolean(paneTaskTitle)
+  const showPageTopBar = !isTauri && (Boolean(topBarLeftContent) || Boolean(paneTaskTitle))
   const hasSubagentStatuses = (paneSession.subagentStatuses?.length ?? 0) > 0
   const canForkCurrentRuntimeTask = Boolean(currentRuntimeTask && forkCurrentRuntimeTask)
   const forkTaskButton = canForkCurrentRuntimeTask ? (
@@ -988,13 +991,96 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       <MessageCircle />
     </button>
   ) : undefined
-  const topRightActions = (
+  const mainHeaderActions = (
+    <>
+      {forkTaskButton}
+      {continueInImButton}
+      {mainHeaderProjectAction}
+      {mainHeaderEnvironmentAction}
+    </>
+  )
+  const topRightActions = isTauri ? (
+    <>{panelChromeActions}</>
+  ) : (
     <>
       {forkTaskButton}
       {continueInImButton}
       {workspacePanelActions}
     </>
   )
+  const tauriMainHeader = isTauri ? (
+    <header
+      data-testid="workbench-main-header"
+      className="relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40 bg-background/95"
+    >
+      <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
+      {sidebarCollapsed && (
+        <div
+          data-testid="workbench-main-header-left-controls"
+          className={cn(
+            'relative z-10 flex h-full shrink-0 items-center pr-1',
+            MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS
+          )}
+        >
+          <DesktopWindowControls
+            sidebarCollapsed
+            onToggleSidebar={() => onSidebarCollapsedChange(false)}
+            onNewChat={startNewChat}
+            className="gap-1"
+          />
+        </div>
+      )}
+      {runtimeTaskTitle ? (
+        <div
+          data-testid="workbench-pane-task-title"
+          className={cn(
+            'pointer-events-none relative z-10 flex h-full min-w-0 flex-1 items-center truncate pl-4 text-[13px] font-medium leading-none text-text-primary',
+            rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+          )}
+        >
+          <span className="block min-w-0 truncate">{runtimeTaskTitle}</span>
+        </div>
+      ) : (
+        <div className="min-w-0 flex-1" />
+      )}
+      <div
+        data-testid="titlebar-main-actions"
+        className="relative z-10 flex h-full shrink-0 items-center justify-end gap-1 pr-1"
+      >
+        {mainHeaderActions}
+      </div>
+      <div
+        aria-hidden="true"
+        className={cn(
+          'shrink-0',
+          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+        )}
+        style={{ width: rightPanelTitlebarWidth }}
+      />
+      <div
+        data-testid="titlebar-right-workspace-zone"
+        className={cn(
+          'pointer-events-none absolute right-0 top-0 z-10 flex h-full min-w-0 items-center overflow-hidden bg-background/95',
+          rightPanelOpen ? 'border-l border-border/60' : undefined,
+          rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
+        )}
+        style={{ width: rightPanelTitlebarWidth }}
+      >
+        <div
+          id={TITLEBAR_RIGHT_PANEL_PORTAL_ID}
+          data-testid="titlebar-right-panel"
+          className="pointer-events-auto flex h-full min-w-0 flex-1 items-center"
+        />
+        <div
+          id={TITLEBAR_ACTIONS_PORTAL_ID}
+          data-testid="titlebar-actions"
+          className="pointer-events-auto flex h-full min-w-[5rem] shrink-0 items-center justify-end gap-1 pr-2"
+        >
+          {topRightActions}
+        </div>
+      </div>
+    </header>
+  ) : undefined
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
       return
@@ -1065,17 +1151,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     <main
       ref={workbenchMainRef}
       className={cn(
-        'absolute inset-0 flex min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/60 bg-background shadow-[0_3px_16px_rgba(0,0,0,0.04)]',
+        'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden bg-background',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         sidebarResizing && 'transition-none',
-        !isTauri && 'mt-1.5'
+        'top-0',
+        !isTauri && 'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
+      {tauriMainHeader}
       <WorkbenchPaneActiveOnly>
-        {isTauri && (
-          <RightWorkspaceTitlebarLayoutSync open={rightPanelOpen} width={rightPanelTitlebarWidth} />
-        )}
-        {isTauri && <TitlebarActionsPortal>{topRightActions}</TitlebarActionsPortal>}
         {!isTauri && (
           <div
             data-testid="workspace-panel-floating-actions"
@@ -1354,7 +1438,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               'absolute bottom-[-6px] top-0 z-critical w-1.5 -translate-x-1/2 cursor-col-resize bg-transparent after:absolute after:bottom-0 after:left-1/2 after:top-0 after:w-px after:-translate-x-1/2 after:bg-border after:transition-colors after:duration-150 after:ease-out hover:after:bg-primary/40',
               rightSplitResizing ? 'transition-none' : RIGHT_PANEL_HANDLE_TRANSITION_CLASS
             )}
-            style={{ left: rightSplitChatWidth + 2 }}
+            style={{ left: rightSplitChatWidth }}
             onPointerDown={handleRightSplitResizeStart}
           />
         )}
@@ -1364,7 +1448,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           className={cn(
             'relative z-popover min-w-0 shrink-0 overflow-hidden bg-background',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_SHELL_TRANSITION_CLASS,
-            rightPanelOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+            rightPanelOpen
+              ? 'pointer-events-auto border-l border-border/60 opacity-100'
+              : 'pointer-events-none opacity-0'
           )}
           style={{ width: rightPanelShellWidth }}
           aria-hidden={!rightPanelOpen}
@@ -1373,7 +1459,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             <RightWorkspacePanel
               visible={paneActive && rightPanelOpen}
               activeView={rightPanelView}
-              openTabs={rightPanelTabs}
+              openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}
               currentRuntimeTask={currentRuntimeTask}
               devices={devices}
@@ -1461,19 +1547,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     </main>
   )
 })
-
-function RightWorkspaceTitlebarLayoutSync({ open, width }: { open: boolean; width: string }) {
-  useLayoutEffect(() => {
-    const root = document.documentElement
-    root.style.setProperty(RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR, open ? width : 'auto')
-
-    return () => {
-      root.style.removeProperty(RIGHT_WORKSPACE_TITLEBAR_WIDTH_VAR)
-    }
-  }, [open, width])
-
-  return null
-}
 
 function sanitizeEmbeddedBrowserLabelSegment(value: string) {
   return value

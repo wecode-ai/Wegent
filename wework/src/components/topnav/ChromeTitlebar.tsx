@@ -2,7 +2,11 @@ import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { AppTab } from '@/config/apps'
 import { Grid3X3, Globe2 } from 'lucide-react'
-import { TITLEBAR_ACTIONS_PORTAL_ID, TITLEBAR_RIGHT_PANEL_PORTAL_ID } from './TitlebarActionsPortal'
+import {
+  TITLEBAR_ACTIONS_PORTAL_ID,
+  TITLEBAR_CENTER_PORTAL_ID,
+  TITLEBAR_RIGHT_PANEL_PORTAL_ID,
+} from './TitlebarActionsPortal'
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import type { ReactNode } from 'react'
@@ -113,11 +117,12 @@ export function ChromeTitlebar({
       )}
 
       <div
-        data-testid="chrome-titlebar-window-drag-region"
-        className="min-w-6 flex-1 self-stretch"
+        id={TITLEBAR_CENTER_PORTAL_ID}
+        data-testid="titlebar-center"
+        className="pointer-events-none relative z-chrome flex h-full min-w-6 flex-1 items-center overflow-hidden"
         {...(isTauri ? { 'data-tauri-drag-region': '' } : {})}
       >
-        {isTauri && <MacOSTitleBarDragRegion />}
+        {isTauri && <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />}
       </div>
       {isTauri && <TitlebarExtensionSlot />}
       <div
@@ -141,7 +146,7 @@ export function ChromeTitlebar({
         <div
           id={TITLEBAR_ACTIONS_PORTAL_ID}
           data-testid="titlebar-actions"
-          className="pointer-events-auto flex shrink-0 items-center gap-1 pr-3"
+          className="pointer-events-auto flex h-full shrink-0 items-center gap-1 pr-3"
         />
       </div>
 
