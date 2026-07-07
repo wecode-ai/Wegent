@@ -233,11 +233,18 @@ struct AppPreferences {
     show_main_window_on_launch: bool,
     #[serde(default)]
     close_to_tray_hint_seen: bool,
+    #[serde(default = "default_language_preference")]
+    language: String,
 }
 
 #[cfg(desktop)]
 fn default_true() -> bool {
     true
+}
+
+#[cfg(desktop)]
+fn default_language_preference() -> String {
+    "zh-CN".to_string()
 }
 
 #[cfg(desktop)]
@@ -247,6 +254,7 @@ impl Default for AppPreferences {
             close_to_tray_enabled: true,
             show_main_window_on_launch: true,
             close_to_tray_hint_seen: false,
+            language: default_language_preference(),
         }
     }
 }
@@ -258,6 +266,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
+    language: Option<String>,
 }
 
 #[cfg(desktop)]
@@ -334,6 +343,9 @@ fn update_app_preferences(
     if let Some(value) = patch.close_to_tray_hint_seen {
         preferences.close_to_tray_hint_seen = value;
     }
+    if let Some(value) = patch.language {
+        preferences.language = value;
+    }
     write_app_preferences_impl(&app, &preferences)?;
     Ok(preferences)
 }
@@ -345,6 +357,7 @@ struct AppPreferences {
     close_to_tray_enabled: bool,
     show_main_window_on_launch: bool,
     close_to_tray_hint_seen: bool,
+    language: String,
 }
 
 #[cfg(not(desktop))]
@@ -354,6 +367,7 @@ struct AppPreferencesPatch {
     close_to_tray_enabled: Option<bool>,
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
+    language: Option<String>,
 }
 
 #[cfg(not(desktop))]
@@ -363,6 +377,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         close_to_tray_enabled: true,
         show_main_window_on_launch: true,
         close_to_tray_hint_seen: false,
+        language: "zh-CN".to_string(),
     })
 }
 
@@ -376,6 +391,7 @@ fn update_app_preferences(
         close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
+        language: patch.language.unwrap_or_else(|| "zh-CN".to_string()),
     })
 }
 

@@ -341,7 +341,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     devices={state.devices}
                     upgradingDevices={upgradingDevices}
                     onUpgradeDevice={upgradeDevice}
-                    onOpenCloudDeviceSettings={() => navigateTo('/settings')}
+                    onOpenCloudDeviceSettings={() => navigateTo('/settings/connections')}
                     activeDeviceId={activeDeviceId}
                     requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
                     compact
@@ -448,7 +448,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 devices={state.devices}
                 upgradingDevices={upgradingDevices}
                 onUpgradeDevice={upgradeDevice}
-                onOpenCloudDeviceSettings={() => navigateTo('/settings')}
+                onOpenCloudDeviceSettings={() => navigateTo('/settings/connections')}
                 activeDeviceId={activeDeviceId}
                 requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
                 compact

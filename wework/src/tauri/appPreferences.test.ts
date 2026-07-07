@@ -27,6 +27,7 @@ describe('appPreferences', () => {
       closeToTrayEnabled: true,
       showMainWindowOnLaunch: true,
       closeToTrayHintSeen: false,
+      language: 'zh-CN',
     })
     expect(invokeMock).not.toHaveBeenCalled()
   })
@@ -41,6 +42,21 @@ describe('appPreferences', () => {
       closeToTrayEnabled: true,
       showMainWindowOnLaunch: false,
       closeToTrayHintSeen: false,
+      language: 'zh-CN',
+    })
+  })
+
+  test('falls back to the default language for invalid stored language values', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({ language: 'fr' })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      closeToTrayEnabled: true,
+      showMainWindowOnLaunch: true,
+      closeToTrayHintSeen: false,
+      language: 'zh-CN',
     })
   })
 
@@ -50,6 +66,7 @@ describe('appPreferences', () => {
       closeToTrayEnabled: false,
       showMainWindowOnLaunch: true,
       closeToTrayHintSeen: false,
+      language: 'zh-CN',
     })
 
     const { updateAppPreferences } = await import('./appPreferences')
@@ -58,9 +75,32 @@ describe('appPreferences', () => {
       closeToTrayEnabled: false,
       showMainWindowOnLaunch: true,
       closeToTrayHintSeen: false,
+      language: 'zh-CN',
     })
     expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
       patch: { closeToTrayEnabled: false },
+    })
+  })
+
+  test('updates language preferences through the Tauri command', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      closeToTrayEnabled: true,
+      showMainWindowOnLaunch: true,
+      closeToTrayHintSeen: false,
+      language: 'en',
+    })
+
+    const { updateAppPreferences } = await import('./appPreferences')
+
+    await expect(updateAppPreferences({ language: 'en' })).resolves.toEqual({
+      closeToTrayEnabled: true,
+      showMainWindowOnLaunch: true,
+      closeToTrayHintSeen: false,
+      language: 'en',
+    })
+    expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
+      patch: { language: 'en' },
     })
   })
 })
