@@ -205,7 +205,10 @@ fn startup_plan_for_config(
     }
 
     Ok(StartupPlan {
-        http_server: None,
+        http_server: Some(HttpServerPlan {
+            host: "127.0.0.1".to_owned(),
+            port: 0,
+        }),
         socket_sidecar: Some(SocketSidecarPlan {
             backend_enabled: !config.connection.backend_url.trim().is_empty(),
             device_id: normalize_device_id(config.device_id.clone()),

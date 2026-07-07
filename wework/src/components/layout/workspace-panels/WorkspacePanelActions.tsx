@@ -72,13 +72,6 @@ export function WorkspacePanelActions({
     mode === 'all' || mode === 'panel-toggles' || mode === 'bottom-panel-toggle'
   const showRightPanelToggle =
     mode === 'all' || mode === 'panel-toggles' || mode === 'right-panel-toggle'
-  const hasEnvironmentContext = Boolean(
-    environmentInfo.branchName?.trim() ||
-    environmentInfo.deviceId?.trim() ||
-    environmentInfo.workspacePath?.trim() ||
-    environmentInfo.error?.trim()
-  )
-  const canShowEnvironmentInfo = environmentInfo.loading !== false || hasEnvironmentContext
   const codeServerProjectDeviceId = workspaceTarget?.deviceId ?? getProjectDeviceId(currentProject)
   const canOpenCodeServer = Boolean(currentProject && codeServerProjectDeviceId)
   const codeServerDevice = codeServerProjectDeviceId
@@ -158,7 +151,7 @@ export function WorkspacePanelActions({
 
   return (
     <>
-      {showEnvironmentInfo && canShowEnvironmentInfo && (
+      {showEnvironmentInfo && (
         <EnvironmentInfoPopover
           info={environmentInfo}
           devices={devices}

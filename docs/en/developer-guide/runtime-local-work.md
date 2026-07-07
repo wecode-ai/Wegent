@@ -58,11 +58,11 @@ Wework searches device-local work with:
 POST /api/runtime-work/search
 ```
 
-Backend fans out `runtime.tasks.search` only to the current user's online or busy devices. It does not read central `TaskResource`, `Subtask`, or cached history rows. The executor searches local task titles and transcripts, then returns snippets, message metadata, update time, device name, workspace path, and the transient task address.
+Backend fans out `runtime.tasks.search` only to the current user's online or busy devices. It does not read central `TaskResource`, `Subtask`, or cached history rows. The executor searches local task titles and transcripts, then returns snippets, message metadata, update time, device name, workspace path, and the transient task address. For Codex history threads, the transient task address must include `runtimeHandle.threadId` so opening a search result can load the original conversation through the transcript RPC without depending on a matching link already existing in the local task index.
 
 Search results are merged by `updatedAt` descending and capped by the request `limit`. `includeArchived` is passed to the executor so it can decide whether archived LocalTasks are included. When the request includes `projectId`, Backend derives the Project from each workspace path and only returns results under that Project; `workspaceKind: chat` Conversation results have no Project owner.
 
-The frontend search dialog opens only the `deviceId + localTaskId` address from the result, then restores workspace context from the latest runtime work list.
+The frontend search dialog opens the runtime address from the result, then restores workspace context from the latest runtime work list. The dialog only keeps recent query results in memory to avoid repeating the same RPC while the dialog is open; cached results are not written to Backend and do not replace executor-side transcript reads.
 
 ## Open And Continue
 

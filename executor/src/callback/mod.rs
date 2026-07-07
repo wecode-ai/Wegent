@@ -133,6 +133,7 @@ async fn send_callback_with_retries(
         }
 
         let is_final_attempt = attempt == retry_config.max_attempts;
+        let started = std::time::Instant::now();
         match send_callback_once(
             client,
             callback_url,
@@ -145,6 +146,7 @@ async fn send_callback_with_retries(
             Ok(status) => {
                 let mut success_fields = attempt_fields;
                 success_fields.push(("status", status.to_string()));
+                success_fields.push(("elapsed_ms", started.elapsed().as_millis().to_string()));
                 if log_success {
                     log_executor_event("callback request finished", &success_fields);
                 }

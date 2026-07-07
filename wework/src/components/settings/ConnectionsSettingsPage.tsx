@@ -22,6 +22,7 @@ import {
   Plus,
   RotateCcw,
   Server,
+  SlidersHorizontal,
   Terminal,
   Trash2,
   UserRound,
@@ -66,6 +67,7 @@ import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
+import { GeneralSettingsPage } from './GeneralSettingsPage'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -83,6 +85,12 @@ interface SettingsNavItem {
 }
 
 const settingsNavItems: SettingsNavItem[] = [
+  {
+    key: 'general',
+    icon: SlidersHorizontal,
+    label: 'settings_nav_general',
+    fallback: '通用',
+  },
   {
     key: 'connections',
     icon: Globe2,
@@ -168,6 +176,7 @@ function getSettingsNavPath(key: string): string {
   if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
   if (key === 'keyboard-shortcuts') return '/settings/personal/keyboard-shortcuts'
+  if (key === 'general') return '/settings/general'
   return key === 'connections' ? '/settings' : `/settings/${key}`
 }
 
@@ -1488,7 +1497,9 @@ export function ConnectionsSettingsPage({
       </aside>
 
       <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
-        {activeNav === 'appearance' ? (
+        {activeNav === 'general' ? (
+          <GeneralSettingsPage />
+        ) : activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
         ) : activeNav === 'model-settings' ? (
           <ModelSettingsPage onOpenCloudSettings={openCloudSettings} />

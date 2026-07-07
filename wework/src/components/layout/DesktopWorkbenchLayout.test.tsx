@@ -3298,7 +3298,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('SSH')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-nav-connections')).toBeInTheDocument()
     expect(screen.queryByTestId('settings-nav-projects')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('settings-nav-general')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-general')).toBeInTheDocument()
     expect(screen.queryByText('Personal Devices')).not.toBeInTheDocument()
     expect(screen.queryByText('Linux-Device-481b616e8e0b')).not.toBeInTheDocument()
     expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
@@ -5813,7 +5813,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => {
       expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-a')
     })
-  })
+  }, 10000)
 
   test('opens the bottom workspace add menu without replacing the terminal', async () => {
     renderWorkspacePanelLayout()

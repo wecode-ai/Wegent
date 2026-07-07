@@ -13,8 +13,10 @@
     "windows": [
       {
         "title": "WeWork",
+        "create": false,
         "width": 1280,
         "height": 720,
+        "visible": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "decorations": true,

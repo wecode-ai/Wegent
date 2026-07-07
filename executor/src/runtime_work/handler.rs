@@ -66,6 +66,8 @@ const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
+const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
+const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
@@ -1053,6 +1055,7 @@ impl RuntimeWorkRpcHandler {
             title.clone(),
         );
         link.ephemeral = request.ephemeral || bool_field(&payload, "ephemeral").unwrap_or(false);
+        set_runtime_handle_model_selection(&mut link.runtime_handle, &payload);
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
@@ -2187,7 +2190,7 @@ impl RuntimeWorkRpcHandler {
             if link_archived != archived {
                 continue;
             }
-            if is_cached_codex_link_hidden(&link) {
+            if is_cached_codex_link_hidden(&link, &discovered_thread_ids) {
                 continue;
             }
             if discovered_local_task_ids.contains(&link.local_task_id) {
@@ -3195,10 +3198,16 @@ fn payload_runtime_is_codex(payload: &Value) -> bool {
         .unwrap_or(true)
 }
 
-fn is_cached_codex_link_hidden(link: &RuntimeTaskLink) -> bool {
+fn is_cached_codex_link_hidden(
+    link: &RuntimeTaskLink,
+    discovered_thread_ids: &HashSet<String>,
+) -> bool {
     is_codex_runtime(&link.runtime)
         && !link.running
-        && link.thread_id.is_some()
+        && link
+            .thread_id
+            .as_ref()
+            .is_some_and(|thread_id| discovered_thread_ids.contains(thread_id))
         && link.status != "archived"
 }
 
@@ -3243,13 +3252,14 @@ fn first_message_search_result(
         let Some((match_start, match_end)) = text_match(&content, query) else {
             continue;
         };
+        let snippet = bounded_search_snippet(&content, match_start, match_end);
         return Some(search_result_item(
             link,
             device_id,
             SearchResultMatch {
-                snippet: content,
-                match_start,
-                match_end,
+                snippet: snippet.text,
+                match_start: snippet.match_start,
+                match_end: snippet.match_end,
                 message_id: string_field(&message, "id").unwrap_or_default(),
                 message_role: string_field(&message, "role")
                     .unwrap_or_else(|| "message".to_owned()),
@@ -3258,6 +3268,56 @@ fn first_message_search_result(
         ));
     }
     None
+}
+
+struct SearchSnippet {
+    text: String,
+    match_start: usize,
+    match_end: usize,
+}
+
+fn bounded_search_snippet(text: &str, match_start: usize, match_end: usize) -> SearchSnippet {
+    let total_chars = text.chars().count();
+    if total_chars <= SEARCH_SNIPPET_MAX_CHARS {
+        return SearchSnippet {
+            text: text.to_owned(),
+            match_start,
+            match_end,
+        };
+    }
+
+    let match_start_char = text[..match_start].chars().count();
+    let match_end_char = text[..match_end].chars().count();
+    let match_chars = match_end_char.saturating_sub(match_start_char);
+    let context_budget = SEARCH_SNIPPET_MAX_CHARS.saturating_sub(match_chars);
+    let before_budget = context_budget.min(SEARCH_SNIPPET_CONTEXT_CHARS);
+    let after_budget = context_budget.saturating_sub(before_budget);
+    let before_chars = before_budget.min(match_start_char);
+    let mut after_chars = after_budget.min(total_chars.saturating_sub(match_end_char));
+
+    let unused_before_budget = before_budget.saturating_sub(before_chars);
+    if unused_before_budget > 0 {
+        after_chars =
+            (after_chars + unused_before_budget).min(total_chars.saturating_sub(match_end_char));
+    }
+
+    let snippet_start_char = match_start_char.saturating_sub(before_chars);
+    let snippet_end_char = (match_end_char + after_chars).min(total_chars);
+    let snippet_start_byte = byte_index_for_char(text, snippet_start_char);
+    let snippet_end_byte = byte_index_for_char(text, snippet_end_char);
+
+    SearchSnippet {
+        text: text[snippet_start_byte..snippet_end_byte].to_owned(),
+        match_start: match_start.saturating_sub(snippet_start_byte),
+        match_end: match_end.saturating_sub(snippet_start_byte),
+    }
+}
+
+fn byte_index_for_char(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(byte_index, _)| byte_index)
+        .unwrap_or(text.len())
 }
 
 fn cached_transcript_response(
@@ -3583,6 +3643,36 @@ fn runtime_handle_json(link: &RuntimeTaskLink) -> Value {
             .unwrap_or(Value::Null),
     );
     Value::Object(object)
+}
+
+fn set_runtime_handle_model_selection(runtime_handle: &mut Value, payload: &Value) {
+    let Some(model_name) =
+        string_field(payload, "modelId").or_else(|| string_field(payload, "model_id"))
+    else {
+        return;
+    };
+    let mut selection = Map::new();
+    selection.insert("modelName".to_owned(), Value::String(model_name));
+    selection.insert(
+        "modelType".to_owned(),
+        string_field(payload, "modelType")
+            .or_else(|| string_field(payload, "model_type"))
+            .map(Value::String)
+            .unwrap_or(Value::Null),
+    );
+    selection.insert(
+        "options".to_owned(),
+        payload
+            .get("modelOptions")
+            .or_else(|| payload.get("model_options"))
+            .filter(|value| value.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({})),
+    );
+
+    let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
+    object.insert("modelSelection".to_owned(), Value::Object(selection));
+    *runtime_handle = Value::Object(object);
 }
 
 fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
@@ -3992,6 +4082,36 @@ mod tests {
     }
 
     #[test]
+    fn first_message_search_result_returns_bounded_snippet() {
+        let link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Long message task".to_owned(),
+        );
+        let content = format!("{}needle{}", "a".repeat(300), "b".repeat(300));
+
+        let result = first_message_search_result(
+            &link,
+            "device-1",
+            vec![json!({
+                "id": "message-1",
+                "role": "user",
+                "content": content,
+                "createdAt": 1780000000,
+            })],
+            "needle",
+        )
+        .expect("long matching message should produce a result");
+        let snippet = result["snippet"].as_str().unwrap();
+        let match_start = result["matchStart"].as_u64().unwrap() as usize;
+        let match_end = result["matchEnd"].as_u64().unwrap() as usize;
+
+        assert!(snippet.len() < 300);
+        assert!(snippet.contains("needle"));
+        assert_eq!(&snippet[match_start..match_end], "needle");
+    }
+
+    #[test]
     fn pending_thread_event_route_promotes_on_thread_started() {
         let index_path = temp_runtime_work_index_path("pending-thread-event-route");
         let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -4017,6 +4137,64 @@ mod tests {
             .local_task_link(&local_task_id)
             .expect("local task should be stored");
         assert_eq!(link.thread_id.as_deref(), Some("thread-1"));
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cached_codex_link_stays_visible_until_provider_thread_is_discovered() {
+        let mut link = RuntimeTaskLink::new_pending(
+            "local-task-1".to_owned(),
+            "/Users/test/Documents/Codex/2026-07-07/hi".to_owned(),
+            "hi".to_owned(),
+        );
+        link.thread_id = Some("thread-1".to_owned());
+        link.running = false;
+        link.status = "active".to_owned();
+
+        assert!(!is_cached_codex_link_hidden(&link, &HashSet::new()));
+
+        let discovered_thread_ids = HashSet::from(["thread-1".to_owned()]);
+        assert!(is_cached_codex_link_hidden(&link, &discovered_thread_ids));
+    }
+
+    #[tokio::test]
+    async fn create_task_stores_model_selection_in_runtime_handle() {
+        let index_path = temp_runtime_work_index_path("create-task-model-selection");
+        let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        handler.store = RuntimeWorkStore::new(index_path.clone());
+
+        handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.create",
+                "payload": {
+                    "taskId": "local-task-1",
+                    "workspacePath": "/tmp/project",
+                    "title": "Use mimo",
+                    "modelId": "local-model:mimo",
+                    "modelType": "runtime",
+                    "modelOptions": {
+                        "collaborationMode": "plan"
+                    },
+                    "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
+                }
+            }))
+            .await
+            .expect("runtime task should be created");
+
+        let link = handler
+            .local_task_link("local-task-1")
+            .expect("created task should be stored");
+        assert_eq!(
+            link.runtime_handle["modelSelection"],
+            json!({
+                "modelName": "local-model:mimo",
+                "modelType": "runtime",
+                "options": {
+                    "collaborationMode": "plan"
+                }
+            })
+        );
 
         let _ = fs::remove_file(index_path);
     }

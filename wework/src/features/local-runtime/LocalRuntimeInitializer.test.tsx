@@ -76,7 +76,7 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 
-  test('mounts children behind the startup screen until app startup is ready', async () => {
+  test('reveals children once executor is ready even while app startup continues', async () => {
     ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
 
     render(
@@ -85,14 +85,21 @@ describe('LocalRuntimeInitializer', () => {
       </LocalRuntimeInitializer>
     )
 
-    expect(await screen.findByTestId('main-app')).not.toBeVisible()
-    expect(screen.getByTestId('local-runtime-initializer')).toBeInTheDocument()
+    expect(await screen.findByTestId('main-app')).toBeVisible()
+    expect(screen.queryByTestId('local-runtime-initializer')).not.toBeInTheDocument()
   })
 
   test('shows slow startup help and copies diagnostic details with executor log', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-28T10:30:00Z'))
-    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+    let resolveEnsure: ((value: { running: true; ready: true; deviceId: string }) => void) | null =
+      null
+    ensureMock.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveEnsure = resolve
+        })
+    )
     readLogMock.mockResolvedValue({
       path: '~/.wegent-executor/logs/executor.log',
       content: 'executor waiting for socket via Tauri runtime detail',
@@ -156,8 +163,8 @@ describe('LocalRuntimeInitializer', () => {
     })
 
     expect(readLogMock).toHaveBeenCalledTimes(1)
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Startup phase: ready'))
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Startup check: resolved'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Startup phase: starting'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Startup check: pending'))
     expect(writeText).toHaveBeenCalledWith(
       expect.stringContaining('Socket path: ~/.wegent-executor/app-ipc.sock')
     )
@@ -200,11 +207,16 @@ describe('LocalRuntimeInitializer', () => {
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('executor waiting for socket'))
     expect(writeText).toHaveBeenCalledWith(expect.not.stringMatching(/tauri/i))
     expect(screen.getByTestId('local-runtime-copy-debug-button')).toHaveTextContent('已复制')
+
+    await act(async () => {
+      resolveEnsure?.({ running: true, ready: true, deviceId: 'local-device' })
+      await Promise.resolve()
+    })
   })
 
   test('copies debug details through native app fallback when Web Clipboard is unavailable', async () => {
     vi.useFakeTimers()
-    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+    ensureMock.mockImplementation(() => new Promise(() => undefined))
     readLogMock.mockResolvedValue({
       path: '~/.wegent-executor/logs/executor.log',
       content: 'executor native clipboard path',
@@ -254,8 +266,8 @@ describe('LocalRuntimeInitializer', () => {
     expect(screen.getByTestId('local-runtime-copy-debug-button')).toHaveTextContent('已复制')
   })
 
-  test('keeps the startup screen titlebar draggable', async () => {
-    ensureMock.mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' })
+  test('keeps the startup screen titlebar draggable while executor is starting', async () => {
+    ensureMock.mockImplementation(() => new Promise(() => undefined))
 
     render(
       <LocalRuntimeInitializer startupReady={false}>
@@ -283,7 +295,7 @@ describe('LocalRuntimeInitializer', () => {
       </LocalRuntimeInitializer>
     )
 
-    expect(await screen.findByTestId('main-app')).not.toBeVisible()
+    expect(await screen.findByTestId('main-app')).toBeVisible()
     await waitFor(() => expect(onMount).toHaveBeenCalledTimes(1))
 
     rerender(

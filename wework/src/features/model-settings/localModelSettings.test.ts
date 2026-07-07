@@ -55,6 +55,8 @@ describe('localModelSettings', () => {
       group: '本地推理',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
+      webSearchMode: 'disabled',
+      imageGenerationEnabled: false,
       enabled: true,
     })
     expect(withoutKey.apiKey).toBeUndefined()
@@ -79,6 +81,8 @@ describe('localModelSettings', () => {
         displayName: 'Local A Updated',
         modelId: 'model-a-new',
         baseUrl: 'http://localhost:1234/v1',
+        webSearchMode: 'cached',
+        imageGenerationEnabled: true,
         enabled: false,
       })
 
@@ -87,6 +91,8 @@ describe('localModelSettings', () => {
         id: 'local-a',
         displayName: 'Local A Updated',
         modelId: 'model-a-new',
+        webSearchMode: 'cached',
+        imageGenerationEnabled: true,
         enabled: false,
       })
 

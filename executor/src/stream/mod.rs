@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashSet;
+
 use serde_json::Value;
 
 use crate::{
@@ -35,6 +37,26 @@ pub struct ClaudeToolResult {
     pub tool_use_id: String,
     pub content: Option<String>,
     pub is_error: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct ClaudeAsyncTaskTracker {
+    active_tool_use_ids: HashSet<String>,
+}
+
+impl ClaudeAsyncTaskTracker {
+    pub fn observe(&mut self, value: &Value) {
+        if let Some(tool_use_id) = claude_task_started_tool_use_id(value) {
+            self.active_tool_use_ids.insert(tool_use_id);
+        }
+        if let Some(tool_use_id) = claude_task_notification_tool_use_id(value) {
+            self.active_tool_use_ids.remove(&tool_use_id);
+        }
+    }
+
+    pub fn has_active_task(&self) -> bool {
+        !self.active_tool_use_ids.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +136,9 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
     let mut usage = Value::Null;
     let mut retryable_api_error = false;
     let mut json_buffer = ClaudeStdoutJsonBuffer::default();
+    let mut saw_claude_message = false;
+    let mut saw_result_message = false;
+    let mut async_tasks = ClaudeAsyncTaskTracker::default();
     for (index, line) in output.lines().enumerate() {
         let line_number = index + 1;
         let Some(value) = (match json_buffer.push_line(line, line_number) {
@@ -135,6 +160,10 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
         };
         let line = line.trim();
         retryable_api_error |= contains_retryable_api_error(line);
+        if value.get("type").and_then(Value::as_str).is_some() {
+            saw_claude_message = true;
+        }
+        async_tasks.observe(&value);
         if let Some(value) = value.get("session_id").and_then(Value::as_str) {
             let value = value.trim();
             if !value.is_empty() {
@@ -159,6 +188,7 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
             current_assistant_text.clear();
         }
         if value.get("type").and_then(Value::as_str) == Some("result") {
+            saw_result_message = true;
             if let Some(reason) = value
                 .get("stop_reason")
                 .and_then(Value::as_str)
@@ -209,21 +239,35 @@ pub fn collect_claude_stream_summary(output: &str) -> ClaudeStreamSummary {
             pending_error = Some(error);
             continue;
         }
-        if let Some(text) = extract_claude_assistant_message_text(&value) {
-            current_assistant_text.push_str(&text);
-            final_text = current_assistant_text.clone();
-        } else if let Some(delta) = extract_claude_text_delta(&value) {
-            current_assistant_text.push_str(&delta);
-            final_text = current_assistant_text.clone();
-        } else if let Some(delta) = extract_codex_agent_delta(&value) {
+        if !async_tasks.has_active_task() {
+            if let Some(text) = extract_claude_assistant_message_text(&value) {
+                current_assistant_text.push_str(&text);
+                final_text = current_assistant_text.clone();
+                continue;
+            }
+            if let Some(delta) = extract_claude_text_delta(&value) {
+                current_assistant_text.push_str(&delta);
+                final_text = current_assistant_text.clone();
+                continue;
+            }
+        }
+        if let Some(delta) = extract_codex_agent_delta(&value) {
             final_text.push_str(&delta);
         }
     }
 
     let outcome = terminal_outcome
         .or_else(|| pending_error.map(|message| ExecutionOutcome::Failed { message }))
-        .unwrap_or(ExecutionOutcome::Completed {
-            content: final_text,
+        .unwrap_or_else(|| {
+            if saw_claude_message && !saw_result_message {
+                ExecutionOutcome::Failed {
+                    message: "Claude stdout ended before result message".to_owned(),
+                }
+            } else {
+                ExecutionOutcome::Completed {
+                    content: final_text,
+                }
+            }
         });
     ClaudeStreamSummary {
         outcome,
@@ -300,6 +344,34 @@ fn extract_result_outcome(value: &Value) -> Option<ExecutionOutcome> {
     }
 }
 
+fn claude_task_started_tool_use_id(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("system")
+        || value.get("subtype").and_then(Value::as_str) != Some("task_started")
+        || value.get("task_type").and_then(Value::as_str) != Some("local_agent")
+    {
+        return None;
+    }
+    non_empty_string_field(value, "tool_use_id")
+}
+
+fn claude_task_notification_tool_use_id(value: &Value) -> Option<String> {
+    if value.get("type").and_then(Value::as_str) != Some("system")
+        || value.get("subtype").and_then(Value::as_str) != Some("task_notification")
+    {
+        return None;
+    }
+    non_empty_string_field(value, "tool_use_id")
+}
+
+fn non_empty_string_field(value: &Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 fn result_stop_reason(value: &Value) -> String {
     value
         .get("stop_reason")
@@ -365,6 +437,9 @@ pub fn extract_reasoning(value: &Value) -> Option<String> {
 }
 
 pub fn extract_claude_tool_uses(value: &Value) -> Vec<ClaudeToolUse> {
+    if is_child_agent_event(value) {
+        return Vec::new();
+    }
     let Some(content) = value
         .get("message")
         .and_then(|message| message.get("content"))
@@ -402,6 +477,9 @@ pub fn extract_claude_tool_uses(value: &Value) -> Vec<ClaudeToolUse> {
 }
 
 pub fn extract_claude_tool_results(value: &Value) -> Vec<ClaudeToolResult> {
+    if is_child_agent_event(value) {
+        return Vec::new();
+    }
     let Some(content) = value
         .get("message")
         .and_then(|message| message.get("content"))
@@ -459,6 +537,9 @@ fn is_claude_assistant_message(value: &Value) -> bool {
     if value.get("type").and_then(Value::as_str) != Some("assistant") {
         return false;
     }
+    if is_child_agent_event(value) {
+        return false;
+    }
 
     value
         .get("message")
@@ -466,6 +547,15 @@ fn is_claude_assistant_message(value: &Value) -> bool {
         .and_then(Value::as_str)
         .map(|role| role == "assistant")
         .unwrap_or(true)
+}
+
+fn is_child_agent_event(value: &Value) -> bool {
+    value
+        .get("parent_tool_use_id")
+        .or_else(|| value.get("parentToolUseId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
 }
 
 fn stringify_tool_result_content(value: Option<&Value>) -> Option<String> {
@@ -487,6 +577,9 @@ fn stringify_tool_result_content(value: Option<&Value>) -> Option<String> {
 }
 
 fn extract_claude_text_delta(value: &Value) -> Option<String> {
+    if is_child_agent_event(value) {
+        return None;
+    }
     let delta = value.get("delta")?;
     (delta.get("type").and_then(Value::as_str) == Some("text_delta"))
         .then(|| delta.get("text").and_then(Value::as_str))
@@ -495,6 +588,9 @@ fn extract_claude_text_delta(value: &Value) -> Option<String> {
 }
 
 fn extract_claude_thinking_delta(value: &Value) -> Option<String> {
+    if is_child_agent_event(value) {
+        return None;
+    }
     let delta = value.get("delta")?;
     (delta.get("type").and_then(Value::as_str) == Some("thinking_delta"))
         .then(|| delta.get("thinking").and_then(Value::as_str))

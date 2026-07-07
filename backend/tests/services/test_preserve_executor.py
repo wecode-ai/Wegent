@@ -269,8 +269,15 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
             "executor-1", "default"
         )
 
-    async def test_cleanup_continues_when_archive_fails(self, job_service, mock_db):
-        """Test executor cleanup continues even when workspace archive fails."""
+    async def test_cleanup_skips_deletion_when_archive_fails(
+        self, job_service, mock_db
+    ):
+        """Test executor deletion is skipped when workspace archive fails.
+
+        Deleting the pod after a failed archive would make the workspace
+        unrecoverable, so cleanup must leave the executor in place for a
+        later retry.
+        """
         mock_subtask = self._create_mock_subtask(1, 100)
         mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
         mock_task.json["metadata"]["labels"]["taskType"] = "code"
@@ -282,7 +289,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
                 job_service,
                 "_archive_workspace",
                 new_callable=AsyncMock,
-                side_effect=RuntimeError("archive failed"),
+                return_value=False,
             ),
             patch(
                 "app.services.adapters.executor_job.executor_kinds_service"
@@ -297,9 +304,7 @@ class TestCleanupStaleExecutorsWithPreserveFlag(CleanupExecutorTestHelpers):
 
             await job_service.cleanup_stale_executors(mock_db)
 
-        mock_executor_service.delete_executor_task_async.assert_called_once_with(
-            "executor-1", "default"
-        )
+        mock_executor_service.delete_executor_task_async.assert_not_called()
 
     async def test_cleanup_marks_deleted_using_subtask_ids(self, job_service, mock_db):
         """Test cleanup passes subtask ids to the short-lived delete marker."""
@@ -1014,6 +1019,69 @@ class TestCleanupTaskExecutorAPI(CleanupExecutorTestHelpers):
             "executor-1", "default"
         )
         mark_deleted.assert_called_once_with([1])
+
+    async def test_cleanup_task_executor_reports_archive_failure(
+        self, job_service, mock_db
+    ):
+        """Test manual cleanup reports skip (not success) when archive fails.
+
+        Retaining the pod after a failed archive must not be reported as a
+        deletion, otherwise callers believe the executor is gone while it was
+        intentionally kept for a later retry.
+        """
+        mock_task = self._create_mock_task_resource(100, 1, preserve_executor=False)
+        mock_task.json["metadata"]["labels"]["taskType"] = "code"
+        mock_subtask = self._create_mock_subtask(1, 100)
+
+        with (
+            patch("app.services.task_member_service.task_member_service") as members,
+            patch.object(
+                job_service,
+                "_get_active_task_resource",
+                new_callable=AsyncMock,
+                return_value=mock_task,
+            ),
+            patch.object(
+                job_service,
+                "_get_cleanup_subtasks_for_task",
+                new_callable=AsyncMock,
+                return_value=[mock_subtask],
+            ),
+            patch.object(
+                job_service,
+                "_archive_workspace",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch.object(
+                job_service, "_mark_executor_deleted", new_callable=AsyncMock
+            ) as mark_deleted,
+            patch(
+                "app.services.adapters.executor_job.executor_kinds_service"
+            ) as executor_service,
+        ):
+            members.is_member.return_value = True
+            mock_db.run_sync = AsyncMock(return_value=True)
+            executor_service.delete_executor_task_async = AsyncMock()
+
+            result = await job_service.cleanup_task_executor(
+                mock_db, task_id=100, user_id=1
+            )
+
+        assert result == {
+            "task_id": 100,
+            "deleted": False,
+            "skipped": True,
+            "reason": "archive_failed",
+            "executors": [
+                {
+                    "executor_name": "executor-1",
+                    "executor_namespace": "default",
+                }
+            ],
+        }
+        executor_service.delete_executor_task_async.assert_not_called()
+        mark_deleted.assert_not_called()
 
     async def test_cleanup_stale_task_executor_skips_recent_task_executor(
         self, job_service, mock_db
