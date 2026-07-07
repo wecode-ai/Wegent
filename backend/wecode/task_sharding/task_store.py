@@ -1412,7 +1412,19 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         is_group_chat: bool | None = None,
         client_origin: str | None = None,
         project_id: int | None = None,
-    ) -> tuple[list[TaskResource], int]:
+    ) -> tuple[list[Any], int]:
+        if client_origin and project_id is not None and is_group_chat is not None:
+            return self._candidate_scanned_owned_active_task_page_and_total(
+                db,
+                user_id=user_id,
+                skip=skip,
+                limit=limit,
+                exclude_system_namespace=exclude_system_namespace,
+                is_group_chat=is_group_chat,
+                client_origin=client_origin,
+                project_id=project_id,
+            )
+
         page_limit = skip + limit
         shard_model = task_model_for_user(user_id)
         legacy_query = self._owned_active_task_query(
@@ -1448,12 +1460,79 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         page_rows = ordered_rows[skip : skip + limit]
         return page_rows, legacy_total + shard_total
 
+    def _candidate_scanned_owned_active_task_page_and_total(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int,
+        limit: int,
+        exclude_system_namespace: bool,
+        is_group_chat: bool,
+        client_origin: str,
+        project_id: int,
+    ) -> tuple[list[Any], int]:
+        rows = [
+            *self._owned_active_task_candidate_rows(
+                db,
+                TaskResource,
+                user_id=user_id,
+                client_origin=client_origin,
+                project_id=project_id,
+            ),
+            *self._owned_active_task_candidate_rows(
+                db,
+                task_model_for_user(user_id),
+                user_id=user_id,
+                client_origin=client_origin,
+                project_id=project_id,
+            ),
+        ]
+        filtered_rows = [
+            row
+            for row in rows
+            if row.kind == "Task"
+            and row.is_group_chat == is_group_chat
+            and (not exclude_system_namespace or row.namespace != "system")
+        ]
+        ordered_rows = self._order_tasks_by_created_at_desc(filtered_rows)
+        return ordered_rows[skip : skip + limit], len(filtered_rows)
+
+    def _owned_active_task_candidate_rows(
+        self,
+        db: Session,
+        model: type,
+        *,
+        user_id: int,
+        client_origin: str,
+        project_id: int,
+    ) -> list:
+        return (
+            db.query(
+                model.id,
+                model.created_at,
+                model.kind,
+                model.namespace,
+                model.is_group_chat,
+            )
+            .filter(
+                model.user_id == user_id,
+                model.is_active == TaskResource.STATE_ACTIVE,
+                model.client_origin == client_origin,
+                model.project_id == project_id,
+            )
+            .all()
+        )
+
     def _count_query_rows(self, query) -> int:
         return int(query.order_by(None).with_entities(func.count()).scalar() or 0)
 
     def _ordered_limited_rows(self, query, model: type, *, limit: int) -> list:
         return (
-            query.order_by(model.created_at.desc(), model.id.desc()).limit(limit).all()
+            query.with_entities(model.id, model.created_at)
+            .order_by(model.created_at.desc(), model.id.desc())
+            .limit(limit)
+            .all()
         )
 
     def _owned_active_task_query(

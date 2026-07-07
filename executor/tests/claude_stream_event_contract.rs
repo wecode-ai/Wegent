@@ -26,6 +26,7 @@ fn claude_tool_use_stream_blocks_do_not_leak_arguments_into_final_text() {
 {"type":"content_block_stop","index":0}
 {"type":"assistant","message":{"content":[{"type":"tool_use","id":"Bash_0","name":"Bash","input":{"command":"pwd"}}]}}
 {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"done"}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}
 "#;
 
     let outcome = collect_ndjson_outcome(output);
@@ -44,6 +45,7 @@ fn claude_thinking_deltas_are_not_final_answer_text() {
 {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"private reasoning"}}
 {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"opaque"}}
 {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"visible answer"}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}
 "#;
 
     let outcome = collect_ndjson_outcome(output);
@@ -80,6 +82,7 @@ fn claude_user_skill_context_text_is_not_final_answer_text() {
     let output = r#"
 {"type":"user","message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: /root/.claude/skills/example\n\n# Skill instructions"}]}}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"visible answer"}]}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}
 "#;
 
     let outcome = collect_ndjson_outcome(output);

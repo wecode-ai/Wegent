@@ -324,6 +324,7 @@ export interface RuntimeTaskSummary {
   running?: boolean
   status?: string | null
   runtimeHandle?: Record<string, unknown> | null
+  modelSelection?: ModelSelectionConfig | null
   parent?: Record<string, unknown> | null
   children?: Record<string, unknown>[]
 }

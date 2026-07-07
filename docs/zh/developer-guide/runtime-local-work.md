@@ -58,11 +58,11 @@ Wework 使用运行时搜索能力查找设备上的本地任务：
 POST /api/runtime-work/search
 ```
 
-Backend 只向当前用户在线或 busy 的设备 fan-out `runtime.tasks.search` RPC，不读取中心库 `TaskResource`、`Subtask` 或历史缓存。executor 在本机任务标题和 transcript 中搜索，并返回匹配片段、消息元数据、更新时间、设备名、工作区路径和临时任务地址。
+Backend 只向当前用户在线或 busy 的设备 fan-out `runtime.tasks.search` RPC，不读取中心库 `TaskResource`、`Subtask` 或历史缓存。executor 在本机任务标题和 transcript 中搜索，并返回匹配片段、消息元数据、更新时间、设备名、工作区路径和临时任务地址。对于 Codex 历史线程，临时任务地址必须携带 `runtimeHandle.threadId`，这样点击搜索结果后可以直接通过 transcript RPC 读取原始会话，而不依赖本地任务索引中已经存在对应 link。
 
 搜索结果按 `updatedAt` 倒序聚合，并受请求 `limit` 限制。`includeArchived` 传给 executor 决定是否包含已归档 LocalTask。请求携带 `projectId` 时，Backend 会根据工作区路径推导 Project，并只返回该 Project 下的搜索结果；`workspaceKind: chat` 的 Conversation 结果没有 Project 归属。
 
-前端搜索框只打开结果里的 `deviceId + localTaskId` 地址，随后仍通过最新 runtime work 列表恢复工作区上下文。
+前端搜索框打开结果里的运行时地址，随后仍通过最新 runtime work 列表恢复工作区上下文。搜索框只在内存中保留最近查询结果，用于避免同一会话内重复输入触发相同 RPC；缓存结果不写入 Backend，也不替代 executor 侧的 transcript 读取。
 
 ## 打开和继续任务
 

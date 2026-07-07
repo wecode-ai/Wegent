@@ -19,7 +19,7 @@ export interface TaskDetail {
 }
 
 export interface TeamDisplayConfig {
-  hide_tool_details?: boolean
+  show_final_answer_only?: boolean
 }
 
 export interface TaskDetailSubtask {

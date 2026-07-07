@@ -33,6 +33,9 @@ use crate::{
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
     runtime_work::codex_stream_debug_enabled,
+    server::{
+        executor_loopback_base_url, register_codex_responses_proxy, CodexResponsesProxyUpstream,
+    },
 };
 
 use super::{model_id, prompt_text};
@@ -49,6 +52,7 @@ const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
+const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
 The messages before this boundary are inherited reference context from the main thread.
@@ -2083,6 +2087,9 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     launch_config
         .config_overrides
         .extend(codex_streaming_patch_config_overrides());
+    launch_config
+        .config_overrides
+        .extend(codex_model_config_overrides(&request.model_config));
 
     if let Some(model) = &model {
         launch_config
@@ -2106,6 +2113,12 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         api_key(&request.model_config),
     ) {
         let model_provider = model_provider(&request.model_config);
+        let provider_base_url = codex_provider_base_url(&request.model_config, &base_url, &api_key);
+        let provider_api_key = if provider_base_url == base_url.trim_end_matches('/') {
+            api_key.clone()
+        } else {
+            "wegent-codex-responses-proxy".to_owned()
+        };
         launch_config.model_provider = Some(model_provider.clone());
         launch_config.config_overrides.extend([
             "forced_login_method=api".to_owned(),
@@ -2120,7 +2133,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
             ),
             format!(
                 "model_providers.{model_provider}.base_url={}",
-                toml_value(base_url.trim_end_matches('/'))
+                toml_value(&provider_base_url)
             ),
             format!(
                 "model_providers.{model_provider}.wire_api={}",
@@ -2128,7 +2141,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
             ),
             format!(
                 "model_providers.{model_provider}.experimental_bearer_token={}",
-                toml_value(&api_key)
+                toml_value(&provider_api_key)
             ),
         ]);
         launch_config.config_overrides.extend(header_overrides(
@@ -2164,6 +2177,63 @@ fn codex_streaming_patch_config_overrides() -> Vec<String> {
         CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE.to_owned(),
         CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned(),
     ]
+}
+
+fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
+    let mut overrides = Vec::new();
+    if let Some(web_search) = codex_web_search_mode(model_config) {
+        overrides.push(format!("web_search={}", toml_value(&web_search)));
+    }
+    if let Some(image_generation) = codex_image_generation_enabled(model_config) {
+        overrides.push(format!("features.image_generation={image_generation}"));
+    }
+    overrides
+}
+
+fn codex_web_search_mode(model_config: &Value) -> Option<String> {
+    let value = non_empty_config(model_config, "web_search")
+        .or_else(|| non_empty_config(model_config, "webSearch"))
+        .or_else(|| non_empty_config(model_config, "web_search_mode"))
+        .or_else(|| non_empty_config(model_config, "webSearchMode"))?;
+    let normalized = value.to_ascii_lowercase();
+    match normalized.as_str() {
+        "disabled" | "cached" | "indexed" | "live" => Some(normalized),
+        _ => None,
+    }
+}
+
+fn codex_image_generation_enabled(model_config: &Value) -> Option<bool> {
+    bool_value(model_config.get("image_generation"))
+        .or_else(|| bool_value(model_config.get("imageGeneration")))
+        .or_else(|| bool_value(model_config.get("image_generation_enabled")))
+        .or_else(|| bool_value(model_config.get("imageGenerationEnabled")))
+}
+
+fn codex_provider_base_url(model_config: &Value, base_url: &str, api_key: &str) -> String {
+    let normalized_base_url = base_url.trim_end_matches('/').to_owned();
+    let wire_api = wire_api(model_config);
+    let use_compat_proxy = bool_value(model_config.get("codex_responses_compat_proxy"))
+        .unwrap_or(false)
+        || bool_value(model_config.get("codexResponsesCompatProxy")).unwrap_or(false);
+    if wire_api != "responses" || !use_compat_proxy {
+        return normalized_base_url;
+    }
+
+    let token = register_codex_responses_proxy(CodexResponsesProxyUpstream {
+        base_url: normalized_base_url,
+        api_key: api_key.to_owned(),
+        default_headers: parse_header_map(model_config.get("default_headers")),
+    });
+    let base_url = executor_loopback_base_url()
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
+    format!("{base_url}/v1/codex-responses-proxy/{token}")
+}
+
+fn executor_server_port() -> u16 {
+    env::var("PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_EXECUTOR_SERVER_PORT)
 }
 
 fn thread_config(
@@ -3562,6 +3632,55 @@ mod tests {
         assert!(launch_config
             .config_overrides
             .contains(&CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE.to_owned()));
+    }
+
+    #[test]
+    fn codex_launch_config_forwards_web_search_mode() {
+        let request = ExecutionRequest {
+            prompt: Value::String("create a file".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5-codex",
+                "web_search": "disabled",
+                "image_generation": false,
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+        let params = thread_start_params(&request, &launch_config);
+        let config = params
+            .get("config")
+            .and_then(Value::as_object)
+            .expect("thread config should be present");
+
+        assert_eq!(config.get("web_search"), Some(&json!("disabled")));
+        assert_eq!(config.get("features.image_generation"), Some(&json!(false)));
+    }
+
+    #[test]
+    fn codex_launch_config_routes_marked_responses_models_through_compat_proxy() {
+        let request = ExecutionRequest {
+            prompt: Value::String("create a file".to_owned()),
+            model_config: json!({
+                "model_id": "mimo-v2.5-pro",
+                "base_url": "http://models.local/v1",
+                "api_key": "sk-local",
+                "api_format": "responses",
+                "codex_responses_compat_proxy": true,
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+
+        assert!(launch_config.config_overrides.iter().any(|override_value| {
+            override_value.starts_with("model_providers.wecode-openai.base_url=\"http://127.0.0.1:")
+                && override_value.contains("/v1/codex-responses-proxy/codex-")
+        }));
+        assert!(launch_config.config_overrides.contains(
+            &"model_providers.wecode-openai.experimental_bearer_token=\"wegent-codex-responses-proxy\""
+                .to_owned()
+        ));
     }
 
     #[test]

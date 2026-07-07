@@ -386,7 +386,7 @@ class ShellRef(BaseModel):
 class TeamDisplayConfig(BaseModel):
     """Team display configuration"""
 
-    hide_tool_details: Optional[bool] = None
+    show_final_answer_only: Optional[bool] = None
 
 
 def dump_team_display_config(

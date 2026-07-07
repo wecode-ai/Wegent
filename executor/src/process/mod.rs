@@ -11,7 +11,7 @@ use std::{
     pin::Pin,
     process::Stdio,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -40,12 +40,13 @@ use crate::{
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     stream::{
         collect_claude_stream_summary, extract_claude_tool_results, extract_claude_tool_uses,
-        extract_reasoning, extract_text, ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError,
-        ClaudeToolUse,
+        extract_reasoning, extract_text, ClaudeAsyncTaskTracker, ClaudeStdoutJsonBuffer,
+        ClaudeStdoutJsonError, ClaudeToolUse,
     },
 };
 
-const DEFAULT_STREAM_CHUNK_CHARS: usize = 20;
+const DEFAULT_STREAM_TEXT_CHUNK_CHARS: usize = 256;
+const DEFAULT_STREAM_REASONING_CHUNK_CHARS: usize = 4_096;
 const MAX_DEFERRED_MCP_RETRIES: usize = 2;
 const MAX_API_ERROR_RETRIES: usize = 3;
 const DEBUG_CLAUDE_STDOUT_ENV: &str = "WEGENT_DEBUG_CLAUDE_STDOUT";
@@ -66,6 +67,7 @@ impl EventSink for NoopEventSink {
 struct StreamingEventDispatcher {
     sender: UnboundedSender<QueuedStreamEvent>,
     pending: Arc<AtomicUsize>,
+    compact_pending_text: Arc<AtomicBool>,
 }
 
 struct QueuedStreamEvent {
@@ -74,13 +76,73 @@ struct QueuedStreamEvent {
 
 enum QueuedStreamEventKind {
     Callback {
-        event: EventEnvelope,
+        event: Box<EventEnvelope>,
         log_name: &'static str,
         fields: Vec<(&'static str, String)>,
+        text_delta_chars: usize,
     },
     Flush {
         done: oneshot::Sender<()>,
     },
+}
+
+struct CompactedTextDelta {
+    event: EventEnvelope,
+    text: String,
+}
+
+fn compact_text_delta(
+    compacted: &mut Option<CompactedTextDelta>,
+    event: Box<EventEnvelope>,
+) -> Result<(), Box<EventEnvelope>> {
+    if event.event_type != "response.output_text.delta" {
+        return Err(event);
+    }
+    let Some(delta) = event
+        .data
+        .get("delta")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return Err(event);
+    };
+    if delta.is_empty() {
+        return Ok(());
+    }
+    if let Some(existing) = compacted.as_mut() {
+        existing.text.push_str(&delta);
+        return Ok(());
+    }
+    let event = *event;
+    *compacted = Some(CompactedTextDelta { event, text: delta });
+    Ok(())
+}
+
+async fn send_compacted_text_delta<S>(sink: &S, compacted: &mut Option<CompactedTextDelta>)
+where
+    S: EventSink,
+{
+    let Some(mut compacted_text) = compacted.take() else {
+        return;
+    };
+    let text_chars = compacted_text.text.chars().count();
+    compacted_text.event.data["delta"] = Value::String(compacted_text.text);
+    let task_id = compacted_text.event.task_id.clone();
+    let subtask_id = compacted_text.event.subtask_id.clone();
+    if let Err(message) = sink.send(compacted_text.event).await {
+        let fields = vec![
+            ("task_id", task_id.clone()),
+            ("subtask_id", subtask_id.clone()),
+            ("error_len", message.len().to_string()),
+        ];
+        log_executor_event("streaming compacted text callback failed", &fields);
+    }
+    let fields = vec![
+        ("task_id", task_id),
+        ("subtask_id", subtask_id),
+        ("text_chars", text_chars.to_string()),
+    ];
+    log_executor_event("streaming compacted text emitted", &fields);
 }
 
 impl StreamingEventDispatcher {
@@ -91,14 +153,33 @@ impl StreamingEventDispatcher {
         let (sender, mut receiver) = unbounded_channel::<QueuedStreamEvent>();
         let pending = Arc::new(AtomicUsize::new(0));
         let worker_pending = Arc::clone(&pending);
+        let compact_pending_text = Arc::new(AtomicBool::new(false));
+        let worker_compact_pending_text = Arc::clone(&compact_pending_text);
         tokio::spawn(async move {
+            let mut compacted_text: Option<CompactedTextDelta> = None;
             while let Some(queued) = receiver.recv().await {
                 match queued.kind {
                     QueuedStreamEventKind::Callback {
                         event,
                         log_name,
                         fields,
+                        text_delta_chars,
                     } => {
+                        let event = if worker_compact_pending_text.load(Ordering::Relaxed)
+                            && text_delta_chars > 0
+                        {
+                            match compact_text_delta(&mut compacted_text, event) {
+                                Ok(()) => {
+                                    worker_pending.fetch_sub(1, Ordering::Relaxed);
+                                    continue;
+                                }
+                                Err(original_event) => original_event,
+                            }
+                        } else {
+                            event
+                        };
+                        send_compacted_text_delta(&sink, &mut compacted_text).await;
+                        let event = *event;
                         let started = Instant::now();
                         let event_type = event.event_type.clone();
                         let task_id = event.task_id.clone();
@@ -126,12 +207,17 @@ impl StreamingEventDispatcher {
                         }
                     }
                     QueuedStreamEventKind::Flush { done } => {
+                        send_compacted_text_delta(&sink, &mut compacted_text).await;
                         let _ = done.send(());
                     }
                 }
             }
         });
-        Self { sender, pending }
+        Self {
+            sender,
+            pending,
+            compact_pending_text,
+        }
     }
 
     async fn flush(&self) {
@@ -149,11 +235,45 @@ impl StreamingEventDispatcher {
         let _ = wait.await;
     }
 
+    async fn compact_pending_text_and_flush(&self, task_id: &str, subtask_id: &str) {
+        self.compact_pending_text.store(true, Ordering::Relaxed);
+        let fields = vec![
+            ("task_id", task_id.to_string()),
+            ("subtask_id", subtask_id.to_string()),
+            (
+                "pending_depth",
+                self.pending.load(Ordering::Relaxed).to_string(),
+            ),
+        ];
+        log_executor_event("streaming callback queue compaction requested", &fields);
+        self.flush().await;
+    }
+
     fn send(
         &self,
         event: EventEnvelope,
         log_name: &'static str,
         fields: Vec<(&'static str, String)>,
+    ) {
+        self.send_internal(event, log_name, fields, 0);
+    }
+
+    fn send_text_delta(
+        &self,
+        event: EventEnvelope,
+        log_name: &'static str,
+        fields: Vec<(&'static str, String)>,
+        text_delta_chars: usize,
+    ) {
+        self.send_internal(event, log_name, fields, text_delta_chars);
+    }
+
+    fn send_internal(
+        &self,
+        event: EventEnvelope,
+        log_name: &'static str,
+        fields: Vec<(&'static str, String)>,
+        text_delta_chars: usize,
     ) {
         let depth = self.pending.fetch_add(1, Ordering::Relaxed) + 1;
         if depth % 100 == 0 {
@@ -166,9 +286,10 @@ impl StreamingEventDispatcher {
             .sender
             .send(QueuedStreamEvent {
                 kind: QueuedStreamEventKind::Callback {
-                    event,
+                    event: Box::new(event),
                     log_name,
                     fields,
+                    text_delta_chars,
                 },
             })
             .is_err()
@@ -915,6 +1036,7 @@ where
     let mut lines = BufReader::new(stdout).lines();
     let mut line_number = 0usize;
     let mut json_buffer = ClaudeStdoutJsonBuffer::default();
+    let mut async_tasks = ClaudeAsyncTaskTracker::default();
     let dispatcher = StreamingEventDispatcher::new(sink);
     while let Ok(Some(line)) = lines.next_line().await {
         line_number += 1;
@@ -935,6 +1057,7 @@ where
         }) else {
             continue;
         };
+        async_tasks.observe(&value);
         if let Some(reasoning) = extract_reasoning(&value) {
             if !reasoning.is_empty() {
                 emit_reasoning_chunks(&dispatcher, &builder, &reasoning, &task_id, &subtask_id);
@@ -962,6 +1085,9 @@ where
                 &subtask_id,
             );
         }
+        if async_tasks.has_active_task() {
+            continue;
+        }
         let Some(text) = extract_text(&value) else {
             continue;
         };
@@ -984,7 +1110,9 @@ where
         ];
         log_executor_event("streaming text chunks emitted", &fields);
     }
-    dispatcher.flush().await;
+    dispatcher
+        .compact_pending_text_and_flush(&task_id, &subtask_id)
+        .await;
     StreamingStdoutOutcome::Success(output.trim().to_owned())
 }
 
@@ -1036,7 +1164,7 @@ fn emit_reasoning_chunks(
     task_id: &str,
     subtask_id: &str,
 ) {
-    let chunks = split_stream_text(reasoning, stream_chunk_chars());
+    let chunks = split_stream_text(reasoning, stream_reasoning_chunk_chars());
     let chunk_count = chunks.len();
     for delta in chunks {
         let event = builder.response_reasoning_delta(&delta);
@@ -1066,18 +1194,20 @@ fn emit_text_chunks(
     task_id: &str,
     subtask_id: &str,
 ) -> usize {
-    let chunks = split_stream_text(text, stream_chunk_chars());
+    let chunks = split_stream_text(text, stream_text_chunk_chars());
     let chunk_count = chunks.len();
     for delta in chunks {
         let event = builder.response_text_delta(&delta, *offset);
-        *offset += delta.chars().count();
-        dispatcher.send(
+        let delta_chars = delta.chars().count();
+        *offset += delta_chars;
+        dispatcher.send_text_delta(
             event,
             "streaming chunk callback failed",
             vec![
                 ("task_id", task_id.to_string()),
                 ("subtask_id", subtask_id.to_string()),
             ],
+            delta_chars,
         );
     }
     chunk_count
@@ -1099,12 +1229,20 @@ fn split_stream_text(text: &str, chunk_chars: usize) -> Vec<String> {
     chunks
 }
 
-fn stream_chunk_chars() -> usize {
+fn stream_text_chunk_chars() -> usize {
     env::var("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS")
         .ok()
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|value| *value > 0)
-        .unwrap_or(DEFAULT_STREAM_CHUNK_CHARS)
+        .unwrap_or(DEFAULT_STREAM_TEXT_CHUNK_CHARS)
+}
+
+fn stream_reasoning_chunk_chars() -> usize {
+    env::var("WEGENT_EXECUTOR_STREAM_REASONING_CHUNK_CHARS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_STREAM_REASONING_CHUNK_CHARS)
 }
 
 async fn read_process_output<R>(output: R) -> String
@@ -1386,11 +1524,25 @@ mod tests {
     }
 
     #[test]
-    fn stream_chunk_defaults_are_tuned_for_smooth_device_chat() {
+    fn stream_chunk_defaults_are_tuned_for_callback_backpressure() {
         let _lock = env_lock();
         let _chunk_chars = EnvGuard::remove("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS");
+        let _reasoning_chunk_chars =
+            EnvGuard::remove("WEGENT_EXECUTOR_STREAM_REASONING_CHUNK_CHARS");
 
-        assert_eq!(stream_chunk_chars(), 20);
+        assert_eq!(stream_text_chunk_chars(), 256);
+        assert_eq!(stream_reasoning_chunk_chars(), 4_096);
+    }
+
+    #[test]
+    fn stream_chunk_env_overrides_defaults() {
+        let _lock = env_lock();
+        let _chunk_chars = EnvGuard::set("WEGENT_EXECUTOR_STREAM_CHUNK_CHARS", "128");
+        let _reasoning_chunk_chars =
+            EnvGuard::set("WEGENT_EXECUTOR_STREAM_REASONING_CHUNK_CHARS", "256");
+
+        assert_eq!(stream_text_chunk_chars(), 128);
+        assert_eq!(stream_reasoning_chunk_chars(), 256);
     }
 
     #[test]

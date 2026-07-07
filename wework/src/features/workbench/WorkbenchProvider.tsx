@@ -36,11 +36,13 @@ import {
   getBlockedModelSelectionMessage,
   getCurrentRuntimeTaskCompatibilityFamily,
   getNewChatModelSelection,
+  getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
 import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
 import {
   findSelectableProject,
   findProjectDeviceWorkspace,
+  findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getSingleProjectDeviceWorkspaceId,
   writeLastProjectId,
@@ -281,8 +283,11 @@ export function WorkbenchProvider({
     [currentUser.preferences, projectExecutionMode, resolvedServices.userApi, state.currentProject]
   )
   const modelSelectionConfig = useMemo(() => {
+    if (state.currentRuntimeTask) {
+      return findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)?.modelSelection ?? null
+    }
     return getNewChatModelSelection(currentUser) ?? null
-  }, [currentUser])
+  }, [currentUser, state.currentRuntimeTask, state.runtimeWork])
   const modelCompatibilityConfig = useMemo(() => null, [])
   const modelCompatibilityFamily = useMemo(
     () => getCurrentRuntimeTaskCompatibilityFamily(state.runtimeWork, state.currentRuntimeTask),
@@ -324,7 +329,7 @@ export function WorkbenchProvider({
     api: resolvedServices.modelApi,
     locked: false,
     scopeKey: projectChatScopeKey,
-    persistSelection: false,
+    persistSelection: !state.currentRuntimeTask,
     selectionConfig: modelSelectionConfig,
     compatibilityConfig: modelCompatibilityConfig,
     compatibilityFamily: modelCompatibilityFamily,
@@ -1142,7 +1147,7 @@ function getProjectChatScopeKey({
   standaloneChatKey: number
 }): string {
   if (currentRuntimeTask) {
-    return ['runtime', currentRuntimeTask.deviceId, currentRuntimeTask.taskId].join(':')
+    return getRuntimeTaskChatScopeKey(currentRuntimeTask)
   }
   return `blank:${standaloneChatKey}`
 }

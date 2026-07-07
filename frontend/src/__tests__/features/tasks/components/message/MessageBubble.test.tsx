@@ -80,6 +80,8 @@ jest.mock('@/features/tasks/components/message/ErrorCard', () => ({
 const mockReasoningDisplay = jest.fn()
 const mockMixedContentView = jest.fn()
 const mockThinkingDisplay = jest.fn()
+const mockSourceReferences = jest.fn()
+const mockGeminiAnnotations = jest.fn()
 
 jest.mock('@/features/tasks/components/message/thinking', () => ({
   ReasoningDisplay: (props: { reasoningContent: string; isStreaming?: boolean }) => {
@@ -127,11 +129,17 @@ jest.mock('@/features/tasks/components/clarification/ClarificationAnswerSummary'
 }))
 
 jest.mock('@/features/tasks/components/chat/SourceReferences', () => ({
-  SourceReferences: () => null,
+  SourceReferences: (props: unknown) => {
+    mockSourceReferences(props)
+    return <div data-testid="source-references" />
+  },
 }))
 
 jest.mock('@/features/tasks/components/chat/GeminiAnnotations', () => ({
-  GeminiAnnotations: () => null,
+  GeminiAnnotations: (props: unknown) => {
+    mockGeminiAnnotations(props)
+    return <div data-testid="gemini-annotations" />
+  },
 }))
 
 jest.mock('@/features/tasks/components/message/CollapsibleMessage', () => ({
@@ -160,6 +168,8 @@ describe('MessageBubble', () => {
     mockReasoningDisplay.mockClear()
     mockMixedContentView.mockClear()
     mockThinkingDisplay.mockClear()
+    mockSourceReferences.mockClear()
+    mockGeminiAnnotations.mockClear()
     mockStreamingWaitIndicator.mockClear()
   })
 
@@ -356,7 +366,7 @@ describe('MessageBubble', () => {
     )
   })
 
-  it('passes team-level tool detail visibility to thinking renderers', () => {
+  it('passes final-answer-only display to thinking renderers as hidden tool details', () => {
     const msg: Message = {
       type: 'ai',
       content: '',
@@ -385,7 +395,7 @@ describe('MessageBubble', () => {
         index={0}
         selectedTaskDetail={null}
         selectedTeam={makeTeam({
-          display_config: { hide_tool_details: true },
+          display_config: { show_final_answer_only: true },
         })}
         theme="light"
         t={t}
@@ -399,7 +409,56 @@ describe('MessageBubble', () => {
     )
   })
 
-  it('uses explicit tool detail visibility override without selected team', () => {
+  it('hides source references and Gemini annotations when compact answer display is enabled', () => {
+    const msg: Message = {
+      type: 'ai',
+      content: '${$$}$answer',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      botName: 'Knowledge Bot',
+      subtaskStatus: 'COMPLETED',
+      status: 'completed',
+      result: {
+        sources: [
+          {
+            index: 1,
+            title: 'Source 1',
+            kb_id: 1,
+          },
+        ],
+        retrieval_summary: {
+          searched_source_ids: ['1'],
+          ignored_source_ids: [],
+          source_statuses: [],
+        },
+        annotations: [
+          {
+            start_index: 0,
+            end_index: 6,
+            source: 'https://example.com/source',
+          },
+        ],
+      },
+    }
+
+    render(
+      <MessageBubble
+        msg={msg}
+        index={0}
+        selectedTaskDetail={null}
+        selectedTeam={makeTeam({
+          display_config: { show_final_answer_only: true },
+        })}
+        theme="light"
+        t={t}
+      />
+    )
+
+    expect(screen.getByText('answer')).toBeInTheDocument()
+    expect(mockSourceReferences).not.toHaveBeenCalled()
+    expect(mockGeminiAnnotations).not.toHaveBeenCalled()
+  })
+
+  it('uses explicit final-answer-only override without selected team', () => {
     const msg: Message = {
       type: 'ai',
       content: '',
@@ -430,7 +489,7 @@ describe('MessageBubble', () => {
         selectedTeam={null}
         theme="light"
         t={t}
-        hideToolDetailsOverride={true}
+        showFinalAnswerOnlyOverride={true}
       />
     )
 

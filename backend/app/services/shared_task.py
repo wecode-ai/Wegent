@@ -71,6 +71,11 @@ TOOL_DETAIL_PUBLIC_KEYS = {
     "timestamp",
     "created_at",
 }
+FINAL_ANSWER_ONLY_RESULT_HIDDEN_KEYS = {
+    "annotations",
+    "retrieval_summary",
+    "sources",
+}
 
 
 class SharedTaskService:
@@ -406,6 +411,24 @@ class SharedTaskService:
             else:
                 redacted[key] = self._redact_public_tool_details(item_value)
         return redacted
+
+    def _redact_public_final_answer_only_result(self, value: Any) -> Any:
+        """Return public result data with non-answer metadata removed."""
+        redacted_value = self._redact_public_tool_details(value)
+        if isinstance(redacted_value, list):
+            return [
+                self._redact_public_final_answer_only_result(item)
+                for item in redacted_value
+            ]
+
+        if not isinstance(redacted_value, dict):
+            return redacted_value
+
+        return {
+            key: self._redact_public_final_answer_only_result(item_value)
+            for key, item_value in redacted_value.items()
+            if key not in FINAL_ANSWER_ONLY_RESULT_HIDDEN_KEYS
+        }
 
     def generate_share_url(self, share_token: str) -> str:
         """Generate share URL with token"""
@@ -988,7 +1011,7 @@ class SharedTaskService:
             task_title=task.name or "Untitled Task",
         )
         display_config = self._get_public_task_display_config(db, task)
-        hide_tool_details = display_config.get("hide_tool_details") is True
+        show_final_answer_only = display_config.get("show_final_answer_only") is True
 
         # Get all subtasks (only public data, no sensitive information)
         subtasks = subtask_store.list_by_task_ordered(
@@ -1040,8 +1063,8 @@ class SharedTaskService:
             if sub.sender_user_id and sub.sender_user_id > 0:
                 sender_user_name = user_name_map.get(sub.sender_user_id)
             public_result = (
-                self._redact_public_tool_details(sub.result)
-                if hide_tool_details and sub.role != "USER"
+                self._redact_public_final_answer_only_result(sub.result)
+                if show_final_answer_only and sub.role != "USER"
                 else sub.result
             )
 

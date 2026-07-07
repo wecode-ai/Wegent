@@ -245,8 +245,8 @@
         "model_description": "Uses the system default when unset; choose one only when needed.",
         "prompt_description": "Defines the agent role, goals, and response style.",
         "skills_description": "Add common skills so the agent can call tools when needed.",
-        "hide_tool_details_label": "Hide tool details",
-        "hide_tool_details_description": "When enabled, chats show only tool call status without expanding tool input and output.",
+        "show_final_answer_only_label": "Compact answer display",
+        "show_final_answer_only_description": "When enabled, chats show only the final answer and hide tool steps, source references, and retrieval summaries.",
         "knowledge_description": "New chats start with these knowledge bases; more can still be added in chat.",
         "mcp_description": "Connect external MCP services to add tool capabilities."
       },

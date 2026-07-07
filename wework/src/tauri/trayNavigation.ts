@@ -14,6 +14,8 @@ let traySettingsNavigationListener: Promise<UnlistenFn> | null = null
 let trayTaskNavigationListener: Promise<UnlistenFn> | null = null
 let trayLanguageSyncInstalled = false
 let latestTrayTaskGroups = EMPTY_TRAY_MENU_TASK_GROUPS
+let latestUsageTitle: string | null = null
+let latestUsageTooltip: string | null = null
 
 function getTrayLanguage(language?: string): string {
   return language?.toLowerCase().startsWith('en') ? 'en' : 'zh-CN'
@@ -22,15 +24,22 @@ function getTrayLanguage(language?: string): string {
 function getTrayMenuState(language = i18n.resolvedLanguage || i18n.language) {
   return {
     language: getTrayLanguage(language),
+    usageTitle: latestUsageTitle,
+    usageTooltip: latestUsageTooltip,
     ...latestTrayTaskGroups,
   }
 }
 
 export function syncTrayMenuState(
   taskGroups: TrayMenuTaskGroups = latestTrayTaskGroups,
-  language = i18n.resolvedLanguage || i18n.language
+  language = i18n.resolvedLanguage || i18n.language,
+  usage?: { title: string | null; tooltip: string | null }
 ) {
   latestTrayTaskGroups = taskGroups
+  if (usage) {
+    latestUsageTitle = usage.title
+    latestUsageTooltip = usage.tooltip
+  }
 
   if (!isTauriRuntime()) {
     return

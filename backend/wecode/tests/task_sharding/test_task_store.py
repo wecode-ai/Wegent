@@ -1341,7 +1341,7 @@ def test_list_owned_and_personal_task_ids_merge_legacy_and_owner_shard(
     assert shard_group.id not in personal_ids
 
 
-def test_list_personal_task_ids_uses_sql_limited_pages(
+def test_list_personal_task_ids_uses_lightweight_candidate_scan(
     test_db,
     fixed_clock,
 ):
@@ -1393,7 +1393,9 @@ def test_list_personal_task_ids_uses_sql_limited_pages(
         if "FROM TASKS" in statement and "COUNT" not in statement
     ]
     assert row_selects
-    assert all(" LIMIT " in statement for statement in row_selects)
+    assert all("JSON" not in statement for statement in row_selects)
+    assert all("ORDER BY" not in statement for statement in row_selects)
+    assert all("COUNT" not in statement for statement in row_selects)
 
 
 def test_list_accessible_task_ids_reads_members_by_id_across_shards(

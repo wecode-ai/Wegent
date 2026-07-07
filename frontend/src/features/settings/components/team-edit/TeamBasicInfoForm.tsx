@@ -28,8 +28,8 @@ interface TeamBasicInfoFormProps {
   setBindMode: (bindMode: TaskType[]) => void
   icon?: string | null
   setIcon?: (icon: string) => void
-  hideToolDetails?: boolean
-  setHideToolDetails?: (hideToolDetails: boolean) => void
+  showFinalAnswerOnly?: boolean
+  setShowFinalAnswerOnly?: (showFinalAnswerOnly: boolean) => void
   requiresWorkspace?: boolean | null
   setRequiresWorkspace?: (value: boolean | null) => void
 }
@@ -47,8 +47,8 @@ export default function TeamBasicInfoForm({
   setBindMode,
   icon,
   setIcon,
-  hideToolDetails = false,
-  setHideToolDetails,
+  showFinalAnswerOnly = false,
+  setShowFinalAnswerOnly,
   requiresWorkspace,
   setRequiresWorkspace,
 }: TeamBasicInfoFormProps) {
@@ -151,20 +151,20 @@ export default function TeamBasicInfoForm({
         </div>
       )}
 
-      {setHideToolDetails && (
+      {setShowFinalAnswerOnly && (
         <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2">
           <div className="min-w-0">
             <div className="text-sm font-medium text-text-primary">
-              {t('settings:team.simple.core.hide_tool_details_label')}
+              {t('settings:team.simple.core.show_final_answer_only_label')}
             </div>
             <div className="text-xs text-text-muted">
-              {t('settings:team.simple.core.hide_tool_details_description')}
+              {t('settings:team.simple.core.show_final_answer_only_description')}
             </div>
           </div>
           <Switch
-            checked={hideToolDetails}
-            onCheckedChange={setHideToolDetails}
-            data-testid="team-hide-tool-details-switch"
+            checked={showFinalAnswerOnly}
+            onCheckedChange={setShowFinalAnswerOnly}
+            data-testid="team-show-final-answer-only-switch"
           />
         </div>
       )}

@@ -218,7 +218,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     Record<string, SkillRefMeta>
   >({})
   const [simplePreloadSkills, setSimplePreloadSkills] = useState<string[]>([])
-  const [hideToolDetails, setHideToolDetails] = useState(false)
+  const [showFinalAnswerOnly, setShowFinalAnswerOnly] = useState(false)
   const [simpleAllSkills, setSimpleAllSkills] = useState<UnifiedSkill[]>([])
   const [simpleAvailableSkills, setSimpleAvailableSkills] = useState<UnifiedSkill[]>([])
   const [simpleLoadingSkills, setSimpleLoadingSkills] = useState(false)
@@ -345,7 +345,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkills(fullLeaderBot?.skills || [])
       setSimpleSelectedSkillRefs(fullLeaderBot?.skill_refs || {})
       setSimplePreloadSkills(fullLeaderBot?.preload_skills || [])
-      setHideToolDetails(formTeam.display_config?.hide_tool_details === true)
+      setShowFinalAnswerOnly(formTeam.display_config?.show_final_answer_only === true)
       setSimpleDefaultKnowledgeBaseRefs(fullLeaderBot?.default_knowledge_base_refs || [])
       setSimpleMcpConfig(stringifyMcpConfig(fullLeaderBot?.mcp_servers || {}))
       setSimpleModelName(
@@ -398,7 +398,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleSelectedSkills([])
       setSimpleSelectedSkillRefs({})
       setSimplePreloadSkills([])
-      setHideToolDetails(false)
+      setShowFinalAnswerOnly(false)
       setSimpleDefaultKnowledgeBaseRefs([])
       setSimpleMcpConfig('')
       // Default to true for new teams (requires workspace by default)
@@ -702,7 +702,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           description,
           quickPhrases,
           bindMode,
-          hideToolDetails,
+          showFinalAnswerOnly,
           icon,
           requiresWorkspace,
           namespace,
@@ -760,7 +760,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
     const quickPhrasePayload = getQuickPhrasePayload(quickPhrases)
     const displayConfigPayload = {
-      hide_tool_details: hideToolDetails === true,
+      show_final_answer_only: showFinalAnswerOnly === true,
     }
 
     // For solo mode, save bot first via BotEdit ref
@@ -1012,8 +1012,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 preloadSkills={simplePreloadSkills}
                 onPreloadSkillsChange={setSimplePreloadSkills}
                 supportsPreloadSkills={simpleSupportsPreloadSkills}
-                hideToolDetails={hideToolDetails}
-                setHideToolDetails={setHideToolDetails}
+                showFinalAnswerOnly={showFinalAnswerOnly}
+                setShowFinalAnswerOnly={setShowFinalAnswerOnly}
                 availableSkills={simpleAvailableSkills}
                 allSkills={simpleAllSkills}
                 loadingSkills={simpleLoadingSkills}
@@ -1059,8 +1059,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setBindMode={setBindMode}
                   icon={icon}
                   setIcon={setIcon}
-                  hideToolDetails={hideToolDetails}
-                  setHideToolDetails={setHideToolDetails}
+                  showFinalAnswerOnly={showFinalAnswerOnly}
+                  setShowFinalAnswerOnly={setShowFinalAnswerOnly}
                   requiresWorkspace={requiresWorkspace}
                   setRequiresWorkspace={setRequiresWorkspace}
                 />
