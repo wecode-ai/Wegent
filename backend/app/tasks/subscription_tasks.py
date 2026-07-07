@@ -1297,7 +1297,8 @@ def _cleanup_stale_running_executions(db: Session) -> int:
     2. The executor/chat_shell never completed or failed to callback
     3. The execution is now stuck in RUNNING forever
 
-    Uses FLOW_STALE_RUNNING_HOURS from settings (default 3 hours).
+    Uses FLOW_STALE_RUNNING_HOURS as the candidate scan window, then applies
+    each subscription's own timeoutSeconds before marking it failed.
 
     Args:
         db: Database session
@@ -1309,9 +1310,8 @@ def _cleanup_stale_running_executions(db: Session) -> int:
     from app.schemas.subscription import BackgroundExecutionStatus
 
     try:
-        stale_threshold = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
-            hours=settings.FLOW_STALE_RUNNING_HOURS
-        )
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        stale_threshold = now_utc - timedelta(hours=settings.FLOW_STALE_RUNNING_HOURS)
 
         stale_executions = (
             db.query(BackgroundExecution)
@@ -1319,6 +1319,7 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                 BackgroundExecution.status == BackgroundExecutionStatus.RUNNING.value,
                 BackgroundExecution.started_at < stale_threshold,
             )
+            .order_by(BackgroundExecution.started_at.asc())
             .limit(50)
             .all()
         )
@@ -1334,16 +1335,26 @@ def _cleanup_stale_running_executions(db: Session) -> int:
         cleaned = 0
         for execution in stale_executions:
             try:
-                running_duration = (
-                    datetime.now(timezone.utc).replace(tzinfo=None)
-                    - execution.started_at
+                running_duration = now_utc - execution.started_at
+                running_seconds = int(running_duration.total_seconds())
+                timeout_seconds = _get_subscription_execution_timeout_seconds(
+                    db, execution
                 )
+                if running_seconds < timeout_seconds:
+                    logger.info(
+                        f"[subscription_tasks] RUNNING execution {execution.id} "
+                        f"has not exceeded subscription timeout: "
+                        f"running_seconds={running_seconds}, timeout_seconds={timeout_seconds}"
+                    )
+                    continue
+
                 running_hours = running_duration.total_seconds() / 3600
+                timeout_hours = timeout_seconds / 3600
 
                 execution.status = BackgroundExecutionStatus.FAILED.value
                 execution.error_message = (
                     f"Execution timed out after {running_hours:.1f} hour(s) "
-                    f"(stuck in RUNNING state, threshold: {settings.FLOW_STALE_RUNNING_HOURS}h)"
+                    f"(stuck in RUNNING state, timeout: {timeout_hours:.1f}h)"
                 )
                 execution.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 execution.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1353,7 +1364,7 @@ def _cleanup_stale_running_executions(db: Session) -> int:
                     f"[subscription_tasks] Cleaned stale RUNNING execution {execution.id}: "
                     f"subscription_id={execution.subscription_id}, task_id={execution.task_id}, "
                     f"started_at={execution.started_at}, running_hours={running_hours:.1f}h, "
-                    f"reason=exceeded {settings.FLOW_STALE_RUNNING_HOURS}h threshold"
+                    f"reason=exceeded subscription timeout {timeout_seconds}s"
                 )
 
             except Exception as e:
@@ -1372,6 +1383,34 @@ def _cleanup_stale_running_executions(db: Session) -> int:
             exc_info=True,
         )
         return 0
+
+
+def _get_subscription_execution_timeout_seconds(db: Session, execution: Any) -> int:
+    """Resolve the configured timeout for a running subscription execution."""
+    from app.models.kind import Kind
+
+    fallback_timeout = settings.FLOW_STALE_RUNNING_HOURS * 3600
+    subscription = (
+        db.query(Kind)
+        .filter(
+            Kind.id == execution.subscription_id,
+            Kind.kind == "Subscription",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+    if not subscription:
+        return fallback_timeout
+
+    try:
+        subscription_crd = validate_subscription_for_read(subscription.json)
+        return int(subscription_crd.spec.timeoutSeconds)
+    except Exception as e:
+        logger.warning(
+            f"[subscription_tasks] Failed to resolve timeout for subscription "
+            f"{execution.subscription_id}: {e}"
+        )
+        return fallback_timeout
 
 
 def _get_trigger_reason(subscription_crd: Any, trigger_type: str) -> str:
