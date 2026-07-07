@@ -82,6 +82,7 @@ dependencies = [
  "ctrlc",
  "libc",
  "log",
+ "objc2",
  "objc2-app-kit",
  "objc2-foundation",
  "portable-pty",

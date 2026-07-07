@@ -3,15 +3,25 @@ mod local_executor;
 mod local_terminal;
 mod process_environment;
 
+#[cfg(all(desktop, target_os = "macos"))]
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+#[cfg(desktop)]
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use tauri::Manager;
 
 #[cfg(desktop)]
 use tauri::{
     menu::{Menu, MenuBuilder, MenuItem, SubmenuBuilder},
-    tray::TrayIconBuilder,
-    Emitter,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Emitter, WebviewWindowBuilder,
 };
+
+#[cfg(desktop)]
+use tauri::webview::PageLoadEvent;
 
 #[cfg(desktop)]
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -20,6 +30,8 @@ const TRAY_OPEN_SETTINGS_EVENT: &str = "wework-tray-open-settings";
 #[cfg(desktop)]
 const TRAY_OPEN_TASK_EVENT: &str = "wework-tray-open-task";
 #[cfg(desktop)]
+const CLOSE_TO_TRAY_HINT_REQUESTED_EVENT: &str = "wework-close-to-tray-hint-requested";
+#[cfg(desktop)]
 const TRAY_MENU_OPEN_ID: &str = "open";
 #[cfg(desktop)]
 const TRAY_MENU_SETTINGS_ID: &str = "settings";
@@ -27,6 +39,12 @@ const TRAY_MENU_SETTINGS_ID: &str = "settings";
 const TRAY_MENU_QUIT_ID: &str = "quit";
 #[cfg(desktop)]
 const TRAY_MENU_TASK_PREFIX: &str = "task:";
+
+#[cfg(all(desktop, target_os = "macos"))]
+thread_local! {
+    static MACOS_CACHED_DOCK_ICON: RefCell<Option<objc2::rc::Retained<objc2_app_kit::NSImage>>> =
+        const { RefCell::new(None) };
+}
 #[cfg(desktop)]
 const TRAY_ID: &str = "wework-main";
 #[cfg(desktop)]
@@ -57,6 +75,8 @@ const RUST_LOG_FILE_NAME: &str = "wework-tauri";
 const WEBVIEW_LOG_FILE_NAME: &str = "wework-frontend";
 #[cfg(desktop)]
 const WEBVIEW_DEVTOOLS_ENV: &str = "WEWORK_WEBVIEW_DEVTOOLS";
+#[cfg(desktop)]
+const APP_PREFERENCES_FILE_NAME: &str = "app-preferences.json";
 
 #[cfg(desktop)]
 fn app_log_directory(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -201,6 +221,162 @@ fn env_flag_enabled(key: &str) -> bool {
         .ok()
         .and_then(normalized_non_empty)
         .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+}
+
+#[cfg(desktop)]
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppPreferences {
+    #[serde(default = "default_true")]
+    close_to_tray_enabled: bool,
+    #[serde(default = "default_true")]
+    show_main_window_on_launch: bool,
+    #[serde(default)]
+    close_to_tray_hint_seen: bool,
+}
+
+#[cfg(desktop)]
+fn default_true() -> bool {
+    true
+}
+
+#[cfg(desktop)]
+impl Default for AppPreferences {
+    fn default() -> Self {
+        Self {
+            close_to_tray_enabled: true,
+            show_main_window_on_launch: true,
+            close_to_tray_hint_seen: false,
+        }
+    }
+}
+
+#[cfg(desktop)]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppPreferencesPatch {
+    close_to_tray_enabled: Option<bool>,
+    show_main_window_on_launch: Option<bool>,
+    close_to_tray_hint_seen: Option<bool>,
+}
+
+#[cfg(desktop)]
+#[derive(Clone)]
+enum MainWindowOpenAction {
+    Settings,
+    Task(String),
+}
+
+#[cfg(desktop)]
+#[derive(Default)]
+struct MainWindowLifecycleState {
+    destroy_to_tray_in_progress: AtomicBool,
+    pending_open_action: Mutex<Option<MainWindowOpenAction>>,
+}
+
+#[cfg(desktop)]
+fn app_preferences_path<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Failed to locate app config directory: {error}"))?
+        .join(APP_PREFERENCES_FILE_NAME))
+}
+
+#[cfg(desktop)]
+fn read_app_preferences_impl<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppPreferences {
+    let Ok(path) = app_preferences_path(app) else {
+        return AppPreferences::default();
+    };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return AppPreferences::default();
+    };
+    serde_json::from_str::<AppPreferences>(&content).unwrap_or_default()
+}
+
+#[cfg(desktop)]
+fn write_app_preferences_impl(
+    app: &tauri::AppHandle,
+    preferences: &AppPreferences,
+) -> Result<(), String> {
+    let path = app_preferences_path(app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create app config directory: {error}"))?;
+    }
+    let content = serde_json::to_string_pretty(preferences)
+        .map_err(|error| format!("Failed to serialize app preferences: {error}"))?;
+    std::fs::write(path, content)
+        .map_err(|error| format!("Failed to write app preferences: {error}"))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn get_app_preferences(app: tauri::AppHandle) -> Result<AppPreferences, String> {
+    Ok(read_app_preferences_impl(&app))
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn update_app_preferences(
+    app: tauri::AppHandle,
+    patch: AppPreferencesPatch,
+) -> Result<AppPreferences, String> {
+    let mut preferences = read_app_preferences_impl(&app);
+    if let Some(value) = patch.close_to_tray_enabled {
+        preferences.close_to_tray_enabled = value;
+    }
+    if let Some(value) = patch.show_main_window_on_launch {
+        preferences.show_main_window_on_launch = value;
+    }
+    if let Some(value) = patch.close_to_tray_hint_seen {
+        preferences.close_to_tray_hint_seen = value;
+    }
+    write_app_preferences_impl(&app, &preferences)?;
+    Ok(preferences)
+}
+
+#[cfg(not(desktop))]
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppPreferences {
+    close_to_tray_enabled: bool,
+    show_main_window_on_launch: bool,
+    close_to_tray_hint_seen: bool,
+}
+
+#[cfg(not(desktop))]
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppPreferencesPatch {
+    close_to_tray_enabled: Option<bool>,
+    show_main_window_on_launch: Option<bool>,
+    close_to_tray_hint_seen: Option<bool>,
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String> {
+    Ok(AppPreferences {
+        close_to_tray_enabled: true,
+        show_main_window_on_launch: true,
+        close_to_tray_hint_seen: false,
+    })
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn update_app_preferences(
+    _app: tauri::AppHandle,
+    patch: AppPreferencesPatch,
+) -> Result<AppPreferences, String> {
+    Ok(AppPreferences {
+        close_to_tray_enabled: patch.close_to_tray_enabled.unwrap_or(true),
+        show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
+        close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
+    })
 }
 
 #[cfg(all(desktop, any(debug_assertions, feature = "release-devtools")))]
@@ -974,19 +1150,261 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
 }
 
 #[cfg(desktop)]
-fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
+fn set_dock_icon_visible<R: tauri::Runtime>(app: &tauri::AppHandle<R>, visible: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        if !visible {
+            cache_current_macos_dock_icon();
+        }
+        let policy = if visible {
+            tauri::ActivationPolicy::Regular
+        } else {
+            tauri::ActivationPolicy::Accessory
+        };
+        if let Err(error) = app.set_activation_policy(policy) {
+            log::warn!("Failed to update macOS activation policy: {error}");
+        }
+        if visible {
+            refresh_macos_dock_icon();
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, visible);
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn macos_application() -> Option<objc2::rc::Retained<objc2_app_kit::NSApplication>> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+
+    let Some(main_thread) = MainThreadMarker::new() else {
+        log::warn!("Skipped macOS Dock icon operation outside the main thread");
+        return None;
+    };
+    Some(NSApplication::sharedApplication(main_thread))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn cache_current_macos_dock_icon() {
+    let Some(app) = macos_application() else {
+        return;
+    };
+    let Some(app_icon) = app.applicationIconImage() else {
+        return;
+    };
+    MACOS_CACHED_DOCK_ICON.with(|cached| {
+        *cached.borrow_mut() = Some(app_icon);
+    });
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn refresh_macos_dock_icon() {
+    let Some(app) = macos_application() else {
+        return;
+    };
+    MACOS_CACHED_DOCK_ICON.with(|cached| {
+        if let Some(app_icon) = cached.borrow().as_ref() {
+            unsafe {
+                app.setApplicationIconImage(Some(app_icon));
+            }
+        }
+    });
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn initialize_macos_dock_icon_cache() {
+    if let Some(app) = macos_application() {
+        if let Some(app_icon) = app.applicationIconImage() {
+            MACOS_CACHED_DOCK_ICON.with(|cached| {
+                *cached.borrow_mut() = Some(app_icon);
+            });
+        }
     }
 }
 
 #[cfg(desktop)]
+fn emit_main_window_open_action<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    action: MainWindowOpenAction,
+) {
+    match action {
+        MainWindowOpenAction::Settings => {
+            if let Err(error) = app.emit(TRAY_OPEN_SETTINGS_EVENT, ()) {
+                log::warn!("Failed to emit tray settings navigation event: {error}");
+            }
+        }
+        MainWindowOpenAction::Task(id) => {
+            if let Err(error) = app.emit(TRAY_OPEN_TASK_EVENT, TrayTaskOpenPayload { id }) {
+                log::warn!("Failed to emit tray task navigation event: {error}");
+            }
+        }
+    }
+}
+
+#[cfg(desktop)]
+fn emit_pending_main_window_open_action<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<MainWindowLifecycleState>();
+    let Ok(mut pending_action) = state.pending_open_action.lock() else {
+        return;
+    };
+    if let Some(action) = pending_action.take() {
+        emit_main_window_open_action(app, action);
+    }
+}
+
+#[cfg(desktop)]
+fn main_window_config<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<tauri::utils::config::WindowConfig, String> {
+    app.config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == MAIN_WINDOW_LABEL)
+        .cloned()
+        .ok_or_else(|| format!("Window config '{MAIN_WINDOW_LABEL}' was not found"))
+}
+
+#[cfg(desktop)]
+fn ensure_main_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    action: Option<MainWindowOpenAction>,
+) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        set_dock_icon_visible(app, true);
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        if let Some(action) = action {
+            emit_main_window_open_action(app, action);
+        }
+        return Ok(());
+    }
+
+    {
+        let state = app.state::<MainWindowLifecycleState>();
+        let mut pending_action = state
+            .pending_open_action
+            .lock()
+            .map_err(|_| "Failed to lock pending main window action".to_string())?;
+        *pending_action = action;
+    }
+
+    let config = main_window_config(app)?;
+    let app_handle = app.clone();
+    let window = WebviewWindowBuilder::from_config(app, &config)
+        .map_err(|error| format!("Failed to prepare main window: {error}"))?
+        .on_page_load(move |_window, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                emit_pending_main_window_open_action(&app_handle);
+            }
+        })
+        .build()
+        .map_err(|error| format!("Failed to create main window: {error}"))?;
+    let _ = window.show();
+    set_dock_icon_visible(app, true);
+    let _ = window.set_focus();
+    Ok(())
+}
+
+#[cfg(desktop)]
+fn maybe_show_main_window_on_launch(app: &tauri::AppHandle) {
+    if read_app_preferences_impl(app).show_main_window_on_launch {
+        if let Err(error) = ensure_main_window(app, None) {
+            log::warn!("Failed to show main window on launch: {error}");
+        }
+    } else {
+        set_dock_icon_visible(app, false);
+    }
+}
+
+#[cfg(desktop)]
+fn destroy_main_window_to_tray<R: tauri::Runtime>(window: &tauri::Window<R>) {
+    let app = window.app_handle();
+    let state = app.state::<MainWindowLifecycleState>();
+    state
+        .destroy_to_tray_in_progress
+        .store(true, Ordering::SeqCst);
+    if let Err(error) = window.destroy() {
+        state
+            .destroy_to_tray_in_progress
+            .store(false, Ordering::SeqCst);
+        set_dock_icon_visible(app, true);
+        log::warn!("Failed to destroy main window for tray background mode: {error}");
+        return;
+    }
+    set_dock_icon_visible(app, false);
+}
+
+#[cfg(desktop)]
+fn hide_main_window_on_close<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    event: &tauri::WindowEvent,
+) -> bool {
+    if window.label() != MAIN_WINDOW_LABEL {
+        return false;
+    }
+
+    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        let preferences = read_app_preferences_impl(window.app_handle());
+        if !preferences.close_to_tray_enabled {
+            api.prevent_close();
+            shutdown_local_executor_for_app(window.app_handle());
+            window.app_handle().exit(0);
+            return true;
+        }
+
+        api.prevent_close();
+        if !preferences.close_to_tray_hint_seen {
+            if let Err(error) = window
+                .app_handle()
+                .emit(CLOSE_TO_TRAY_HINT_REQUESTED_EVENT, ())
+            {
+                log::warn!("Failed to emit close-to-tray hint event: {error}");
+            }
+            return true;
+        }
+        destroy_main_window_to_tray(window);
+        return true;
+    }
+
+    false
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn close_main_window_to_tray(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .ok_or_else(|| format!("WebView window '{MAIN_WINDOW_LABEL}' was not found"))?;
+    let state = app.state::<MainWindowLifecycleState>();
+    state
+        .destroy_to_tray_in_progress
+        .store(true, Ordering::SeqCst);
+    if let Err(error) = window.destroy() {
+        state
+            .destroy_to_tray_in_progress
+            .store(false, Ordering::SeqCst);
+        set_dock_icon_visible(&app, true);
+        return Err(format!(
+            "Failed to destroy main window for tray background mode: {error}"
+        ));
+    }
+    set_dock_icon_visible(&app, false);
+    Ok(())
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn close_main_window_to_tray(_app: tauri::AppHandle) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(desktop)]
 fn open_settings_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    show_main_window(app);
-    if let Err(error) = app.emit(TRAY_OPEN_SETTINGS_EVENT, ()) {
-        log::warn!("Failed to emit tray settings navigation event: {error}");
+    if let Err(error) = ensure_main_window(app, Some(MainWindowOpenAction::Settings)) {
+        log::warn!("Failed to open settings from tray: {error}");
     }
 }
 
@@ -998,14 +1416,10 @@ struct TrayTaskOpenPayload {
 
 #[cfg(desktop)]
 fn open_task_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, task_id: &str) {
-    show_main_window(app);
-    if let Err(error) = app.emit(
-        TRAY_OPEN_TASK_EVENT,
-        TrayTaskOpenPayload {
-            id: task_id.to_string(),
-        },
-    ) {
-        log::warn!("Failed to emit tray task navigation event: {error}");
+    if let Err(error) =
+        ensure_main_window(app, Some(MainWindowOpenAction::Task(task_id.to_string())))
+    {
+        log::warn!("Failed to open task from tray: {error}");
     }
 }
 
@@ -1385,11 +1799,31 @@ fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .tooltip("WeWork")
-        .show_menu_on_left_click(true)
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => {
+                if let Err(error) = ensure_main_window(tray.app_handle(), None) {
+                    log::warn!("Failed to open main window from tray click: {error}");
+                }
+            }
+            _ => {}
+        })
         .on_menu_event(|app, event| {
             let event_id = event.id().as_ref();
             match event_id {
-                TRAY_MENU_OPEN_ID => show_main_window(app),
+                TRAY_MENU_OPEN_ID => {
+                    if let Err(error) = ensure_main_window(app, None) {
+                        log::warn!("Failed to open main window from tray menu: {error}");
+                    }
+                }
                 TRAY_MENU_SETTINGS_ID => open_settings_from_tray(app),
                 TRAY_MENU_QUIT_ID => quit_from_tray(app),
                 _ => {
@@ -1565,15 +1999,31 @@ pub fn run() {
 
     #[cfg(all(desktop, not(debug_assertions)))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        show_main_window(app);
+        if let Err(error) = ensure_main_window(app, None) {
+            log::warn!("Failed to open main window from single-instance activation: {error}");
+        }
     }));
 
     let app = builder
         .manage(embedded_browser::EmbeddedBrowserState::default())
+        .manage(MainWindowLifecycleState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .on_window_event(|window, event| {
+            #[cfg(desktop)]
+            if hide_main_window_on_close(window, event) {
+                return;
+            }
+
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                #[cfg(desktop)]
+                if window.label() == MAIN_WINDOW_LABEL {
+                    let lifecycle = window.app_handle().state::<MainWindowLifecycleState>();
+                    if lifecycle.destroy_to_tray_in_progress.load(Ordering::SeqCst) {
+                        return;
+                    }
+                }
+
                 let state = window
                     .app_handle()
                     .state::<local_executor::LocalExecutorState>();
@@ -1615,6 +2065,8 @@ pub fn run() {
             #[cfg(desktop)]
             setup_system_tray(app)?;
             #[cfg(desktop)]
+            maybe_show_main_window_on_launch(app.handle());
+            #[cfg(desktop)]
             install_shutdown_signal_handler(app.handle().clone())
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
             #[cfg(desktop)]
@@ -1654,10 +2106,13 @@ pub fn run() {
             local_executor::local_executor_restart,
             local_executor::local_executor_status,
             get_app_log_directory,
+            get_app_preferences,
+            close_main_window_to_tray,
             open_app_log_directory,
             get_wework_process_snapshot,
             open_main_webview_devtools,
             set_tray_menu_state,
+            update_app_preferences,
             download_local_file_to_downloads,
             save_text_file_to_downloads,
             local_path_exists,
@@ -1674,11 +2129,26 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         #[cfg(desktop)]
-        if matches!(
-            event,
-            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
-        ) {
-            shutdown_local_executor_for_app(app_handle);
+        match event {
+            tauri::RunEvent::Ready => {
+                #[cfg(target_os = "macos")]
+                initialize_macos_dock_icon_cache();
+            }
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                let lifecycle = app_handle.state::<MainWindowLifecycleState>();
+                if lifecycle.destroy_to_tray_in_progress.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                    lifecycle
+                        .destroy_to_tray_in_progress
+                        .store(false, Ordering::SeqCst);
+                    return;
+                }
+                shutdown_local_executor_for_app(app_handle);
+            }
+            tauri::RunEvent::Exit => {
+                shutdown_local_executor_for_app(app_handle);
+            }
+            _ => {}
         }
     });
 }

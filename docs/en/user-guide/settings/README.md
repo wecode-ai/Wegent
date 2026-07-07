@@ -10,13 +10,14 @@ The Settings module provides configuration functionality for the Wegent system, 
 
 ## 📋 Documentation in This Module
 
-| Document                                      | Description                                                 |
-| --------------------------------------------- | ----------------------------------------------------------- |
-| [Agent Settings](./agent-settings.md)         | Configure Agents, Bots, prompts, and collaboration modes    |
-| [Configuring Models](./configuring-models.md) | Configure AI models (Anthropic Claude, OpenAI GPT, etc.)    |
-| [Configuring Shells](./configuring-shells.md) | Configure runtime environments (ClaudeCode, Dify, Chat)     |
-| [Managing Skills](./managing-skills.md)       | Upload, manage, and use Skill capability extension packages |
-| [Keyboard Shortcuts](./keyboard-shortcuts.md) | Manage local shortcuts for the Wework desktop app           |
+| Document                                                  | Description                                                    |
+| --------------------------------------------------------- | -------------------------------------------------------------- |
+| [Agent Settings](./agent-settings.md)                     | Configure Agents, Bots, prompts, and collaboration modes       |
+| [Configuring Models](./configuring-models.md)             | Configure AI models (Anthropic Claude, OpenAI GPT, etc.)       |
+| [Configuring Shells](./configuring-shells.md)             | Configure runtime environments (ClaudeCode, Dify, Chat)        |
+| [Managing Skills](./managing-skills.md)                   | Upload, manage, and use Skill capability extension packages    |
+| [Keyboard Shortcuts](./keyboard-shortcuts.md)             | Manage local shortcuts for the Wework desktop app              |
+| [Desktop App Preferences](./desktop-app-preferences.md)   | Configure Wework desktop launch, background, and tray behavior |
 
 ---
 
@@ -69,6 +70,10 @@ Skills are Claude Code capability extension packages:
 ### Archived Chat Management
 
 Desktop Wework settings can show archived Project and Conversation chats. Deleting one archived chat or using **Delete all** first opens a confirmation dialog; the app only permanently deletes the selected local runtime conversation records after confirmation. Bulk deletion applies only to the items currently listed as archived and does not affect non-archived chats.
+
+### Desktop App Preferences
+
+Desktop Wework's **General** settings control whether the main window is shown after launch and whether the app keeps running after the main window is closed. When background running is enabled, closing the main window releases the main WebView resources without stopping running tasks. Users can click the system tray icon to reopen the main window.
 
 ---
 
