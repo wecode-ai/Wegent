@@ -1069,7 +1069,7 @@ async fn runtime_workspace_oplog_overlays_project_changes_while_codex_is_running
 }
 
 #[tokio::test]
-async fn runtime_task_list_ignores_stale_cached_codex_store_entries() {
+async fn runtime_task_list_keeps_cached_codex_store_entries_until_provider_discovers_thread() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-stale-store-home", "dir");
     let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
@@ -1124,7 +1124,13 @@ async fn runtime_task_list_ignores_stale_cached_codex_store_entries() {
         .await
         .expect("task list should succeed");
 
-    assert_eq!(listed, json!({"success": true, "workspaces": []}));
+    let workspaces = listed["workspaces"].as_array().unwrap();
+    assert_eq!(workspaces.len(), 1);
+    assert_eq!(workspaces[0]["workspacePath"], "/repo/Wegent");
+    let tasks = workspaces[0]["tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["taskId"], "stale-thread");
+    assert_eq!(tasks[0]["runtimeHandle"]["threadId"], "stale-thread");
 }
 
 #[tokio::test]
