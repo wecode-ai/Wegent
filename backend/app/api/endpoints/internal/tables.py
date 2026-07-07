@@ -17,7 +17,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import verify_internal_service_token
+from app.api.internal.deps import verify_internal_service_token
 from pydantic import BaseModel, Field
 
 from app.services.tables import DataTableService, TableQueryRequest
@@ -33,7 +33,7 @@ class InternalTableQueryRequest(BaseModel):
 
     provider: str = Field(description="Table provider (e.g., 'dingtalk')")
     base_id: str = Field(description="Table base ID")
-    sheet_id_or_name: str = Field(description="Sheet ID or name")
+    sheetsheet_id_or_name: str = Field(description="Sheet ID or name")
     user_name: str = Field(description="User name for access control")
     max_records: int = Field(default=100, description="Maximum records to return")
     filters: dict | None = Field(default=None, description="Query filters")
