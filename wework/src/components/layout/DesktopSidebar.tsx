@@ -30,6 +30,7 @@ import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
+import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { CloudConnectionSidebarButton } from '@/features/cloud-connection/CloudConnectionSidebarButton'
 import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
@@ -95,6 +96,7 @@ interface DesktopSidebarProps {
   standaloneDeviceId?: string | null
   standaloneWorkspacePath?: string | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
+  unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'plugins' | 'automation'
   collapsed?: boolean
@@ -112,6 +114,7 @@ interface DesktopSidebarProps {
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onMarkRuntimeTaskRead?: (address: RuntimeTaskAddress) => void
   onRenameRuntimeTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
   onArchiveRuntimeTask?: (
     address: RuntimeTaskAddress,
@@ -473,11 +476,6 @@ function writeStoredStringSet(key: string, values: Set<string>) {
   }
 }
 
-function readStoredStringSetForVersion(key: string, version: number): Set<string> {
-  void version
-  return readStoredStringSet(key)
-}
-
 function pruneProjectIdSet(values: Set<number>, projects: ProjectWithTasks[]): Set<number> {
   if (projects.length === 0) return values
   const projectIds = new Set(projects.map(project => project.id))
@@ -666,13 +664,6 @@ function getRuntimeNotificationKey(address: RuntimeTaskAddress): string {
 }
 
 function getRuntimeTaskPinKey(workspace: RuntimeDeviceWorkspace, task: RuntimeTaskSummary): string {
-  return getRuntimeNotificationKey(getRuntimeTaskAddress(workspace, task))
-}
-
-function getRuntimeTaskUnreadKey(
-  workspace: RuntimeDeviceWorkspace,
-  task: RuntimeTaskSummary
-): string {
   return getRuntimeNotificationKey(getRuntimeTaskAddress(workspace, task))
 }
 
@@ -1662,7 +1653,7 @@ function ProjectItem({
                     workspace={workspace}
                     task={task}
                     selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
-                    unread={unreadTaskKeys.has(getRuntimeTaskUnreadKey(workspace, task))}
+                    unread={unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))}
                     marked={pinnedRuntimeTaskKeys.has(getRuntimeTaskPinKey(workspace, task))}
                     indentClassName="pl-9"
                     imNotificationSettings={imNotificationSettings}
@@ -1770,6 +1761,7 @@ export function DesktopSidebar({
   standaloneDeviceId,
   standaloneWorkspacePath,
   imNotificationSettings,
+  unreadRuntimeTaskKeys,
   preferredDeviceId,
   activeItem = 'chat',
   onNewChat,
@@ -1777,6 +1769,7 @@ export function DesktopSidebar({
   onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeTask,
+  onMarkRuntimeTaskRead,
   onRenameRuntimeTask,
   onArchiveRuntimeTask,
   onArchiveProjectConversations,
@@ -1827,14 +1820,6 @@ export function DesktopSidebar({
     storageScope,
     'expandedProjectIds'
   )
-  const unreadRuntimeTaskKeysStorageKey = getDesktopSidebarStorageKey(
-    storageScope,
-    'unreadRuntimeTaskKeys'
-  )
-  const runningRuntimeTaskKeysStorageKey = getDesktopSidebarStorageKey(
-    storageScope,
-    'runningRuntimeTaskKeys'
-  )
   const storageScopeRef = useRef(storageScope)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [imNotificationMenuOpen, setImNotificationMenuOpen] = useState(false)
@@ -1865,7 +1850,7 @@ export function DesktopSidebar({
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() =>
     readStoredNumberSet(expandedProjectIdsStorageKey)
   )
-  const [runtimeTaskReadVersion, setRuntimeTaskReadVersion] = useState(0)
+  const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? new Set<string>()
   const standaloneProjectWork = useMemo(
     () =>
       standaloneRuntimeProjectWork(
@@ -1898,60 +1883,6 @@ export function DesktopSidebar({
     () => getRuntimeChatSidebarTaskItems(chatWorkspaces),
     [chatWorkspaces]
   )
-  const allRuntimeTaskItems = useMemo(
-    () => [
-      ...filteredRuntimeProjects.flatMap(projectWork =>
-        getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces)
-      ),
-      ...chatTaskItems,
-    ],
-    [chatTaskItems, filteredRuntimeProjects]
-  )
-  const storedUnreadRuntimeTaskKeys = useMemo(
-    () => readStoredStringSetForVersion(unreadRuntimeTaskKeysStorageKey, runtimeTaskReadVersion),
-    [runtimeTaskReadVersion, unreadRuntimeTaskKeysStorageKey]
-  )
-  const runtimeTaskReadState = useMemo(() => {
-    const previousRunningKeys = readStoredStringSet(runningRuntimeTaskKeysStorageKey)
-    const currentTaskKeys = new Set<string>()
-    const currentRunningKeys = new Set<string>()
-    const selectedKeys = new Set<string>()
-    const completedFromPreviousRunKeys = new Set<string>()
-
-    allRuntimeTaskItems.forEach(({ workspace, task }) => {
-      const taskKey = getRuntimeTaskUnreadKey(workspace, task)
-      currentTaskKeys.add(taskKey)
-
-      if (task.running) {
-        currentRunningKeys.add(taskKey)
-      } else if (previousRunningKeys.has(taskKey)) {
-        completedFromPreviousRunKeys.add(taskKey)
-      }
-
-      if (isRuntimeTaskSelected(currentRuntimeTask, workspace, task)) {
-        selectedKeys.add(taskKey)
-      }
-    })
-
-    const unreadKeys = new Set(
-      [...storedUnreadRuntimeTaskKeys].filter(key => currentTaskKeys.has(key))
-    )
-    completedFromPreviousRunKeys.forEach(taskKey => {
-      if (!selectedKeys.has(taskKey)) {
-        unreadKeys.add(taskKey)
-      }
-    })
-    selectedKeys.forEach(taskKey => {
-      unreadKeys.delete(taskKey)
-    })
-
-    return { currentRunningKeys, unreadKeys }
-  }, [
-    allRuntimeTaskItems,
-    currentRuntimeTask,
-    runningRuntimeTaskKeysStorageKey,
-    storedUnreadRuntimeTaskKeys,
-  ])
   const projectSectionArchiveItems = useMemo(() => {
     return filteredRuntimeProjects
       .map(projectWork => ({
@@ -2102,14 +2033,6 @@ export function DesktopSidebar({
     })
   }
 
-  const markRuntimeTaskRead = (address: RuntimeTaskAddress) => {
-    const taskKey = getRuntimeNotificationKey(address)
-    const nextKeys = readStoredStringSet(unreadRuntimeTaskKeysStorageKey)
-    nextKeys.delete(taskKey)
-    writeStoredStringSet(unreadRuntimeTaskKeysStorageKey, nextKeys)
-    setRuntimeTaskReadVersion(version => version + 1)
-  }
-
   useEffect(() => {
     if (selectedRuntimeProjectId === null || !selectedRuntimeProjectAutoExpandKey) return
 
@@ -2164,25 +2087,11 @@ export function DesktopSidebar({
     setProjectsExpanded(readStoredBoolean(projectsExpandedStorageKey, true))
     setChatsExpanded(readStoredBoolean(chatsExpandedStorageKey, true))
     setExpandedProjectIds(readStoredNumberSet(expandedProjectIdsStorageKey))
-    setRuntimeTaskReadVersion(version => version + 1)
   }, [
     chatsExpandedStorageKey,
     expandedProjectIdsStorageKey,
     projectsExpandedStorageKey,
     storageScope,
-  ])
-
-  useEffect(() => {
-    if (!runtimeWork && !standaloneProjectWork) return
-
-    writeStoredStringSet(unreadRuntimeTaskKeysStorageKey, runtimeTaskReadState.unreadKeys)
-    writeStoredStringSet(runningRuntimeTaskKeysStorageKey, runtimeTaskReadState.currentRunningKeys)
-  }, [
-    runningRuntimeTaskKeysStorageKey,
-    runtimeWork,
-    runtimeTaskReadState,
-    standaloneProjectWork,
-    unreadRuntimeTaskKeysStorageKey,
   ])
 
   useEffect(() => {
@@ -2479,7 +2388,7 @@ export function DesktopSidebar({
                         `pinnedRuntimeTaskKeys.${project.id}`
                       )}
                       currentRuntimeTask={currentRuntimeTask}
-                      unreadTaskKeys={runtimeTaskReadState.unreadKeys}
+                      unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
                       imNotificationSettings={imNotificationSettings}
                       showDeviceMarker={false}
                       onToggleProject={handleToggleProject}
@@ -2488,7 +2397,7 @@ export function DesktopSidebar({
                       onRemoveProject={onRemoveProject}
                       onRenameProject={setRenamingProject}
                       onOpenRuntimeTask={onOpenRuntimeTask}
-                      onMarkRuntimeTaskRead={markRuntimeTaskRead}
+                      onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
                       onRenameRuntimeTask={onRenameRuntimeTask}
                       onArchiveRuntimeTask={onArchiveRuntimeTask}
                       onArchiveProjectConversations={onArchiveProjectConversations}
@@ -2556,14 +2465,14 @@ export function DesktopSidebar({
                         workspace={workspace}
                         task={task}
                         selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
-                        unread={runtimeTaskReadState.unreadKeys.has(
-                          getRuntimeTaskUnreadKey(workspace, task)
+                        unread={visibleUnreadRuntimeTaskKeys.has(
+                          getRuntimeTaskReminderItemKey(workspace, task)
                         )}
                         indentClassName="pl-2.5"
                         imNotificationSettings={imNotificationSettings}
                         showDeviceMarker={false}
                         onOpenRuntimeTask={onOpenRuntimeTask}
-                        onMarkRuntimeTaskRead={markRuntimeTaskRead}
+                        onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
                         onRenameRuntimeTask={onRenameRuntimeTask}
                         onArchiveRuntimeTask={onArchiveRuntimeTask}
                         onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}

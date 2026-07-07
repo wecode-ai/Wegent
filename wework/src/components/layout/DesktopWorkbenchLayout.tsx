@@ -30,6 +30,7 @@ import {
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
+import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -75,8 +76,10 @@ export function DesktopWorkbenchLayout() {
     updateGlobalImNotification: onUpdateGlobalImNotification,
     subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
+    runtimeTaskReminders,
   } = useWorkbench()
   const activeItem = 'chat'
+  const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState(false)
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
@@ -419,6 +422,7 @@ export function DesktopWorkbenchLayout() {
       standaloneDeviceId={state.standaloneDeviceId}
       standaloneWorkspacePath={state.standaloneWorkspacePath}
       imNotificationSettings={imNotificationSettings}
+      unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
       preferredDeviceId={
         state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
       }
@@ -438,6 +442,7 @@ export function DesktopWorkbenchLayout() {
       onSelectProject={onSelectProject}
       onStartNewProjectChat={onStartNewProjectChat}
       onOpenRuntimeTask={onOpenRuntimeTask}
+      onMarkRuntimeTaskRead={taskReminders.markRuntimeTaskRead}
       onRenameRuntimeTask={onRenameRuntimeTask}
       onArchiveRuntimeTask={onArchiveRuntimeTask}
       onArchiveProjectConversations={onArchiveProjectConversations}

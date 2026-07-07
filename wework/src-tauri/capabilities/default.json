@@ -15,6 +15,7 @@
     "core:webview:allow-set-webview-size",
     "core:webview:allow-set-webview-focus",
     "log:default",
+    "notification:default",
     "opener:allow-open-url",
     "opener:allow-default-urls",
     "shell:allow-open",

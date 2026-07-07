@@ -42,6 +42,7 @@ import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
+import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
@@ -85,6 +86,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     revertTurnFileChanges,
     forkCurrentRuntimeTask,
     startNewChat: onNewChat,
+    runtimeTaskReminders,
     startStandaloneChat: onStartStandaloneChat,
     selectProject: onSelectProject,
     openRuntimeTask: onOpenRuntimeTask,
@@ -104,6 +106,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   } = useWorkbenchPaneContext()
   const { t } = useTranslation('common')
   const activeItem = 'chat'
+  const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const [settingsOpen, setSettingsOpen] = useState(() =>
@@ -488,6 +491,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
         runtimeWork={state.runtimeWork}
         currentProjectId={activeConversationProject?.id}
         currentRuntimeTask={currentRuntimeTask}
+        unreadRuntimeTaskKeys={taskReminders.unreadTaskKeys}
         activeItem={activeItem}
         onClose={() => setDrawerOpen(false)}
         onNewChat={onNewChat}

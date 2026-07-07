@@ -27,6 +27,7 @@ import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
+import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import type {
   WorkbenchContextValue,
@@ -152,6 +153,11 @@ export function WorkbenchProvider({
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
   )
+  const runtimeTaskReminders = useRuntimeTaskReminders({
+    userId: user.id,
+    runtimeWork: state.runtimeWork,
+    currentRuntimeTask: state.currentRuntimeTask,
+  })
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[getRuntimeTaskRouteKey(state.currentRuntimeTask)]
     : undefined
@@ -908,6 +914,7 @@ export function WorkbenchProvider({
     isStartupReady,
     workspaceFileApi,
     currentRuntimeTaskRunning,
+    runtimeTaskReminders,
     cloudWorkStatus,
     upgradingDevices,
     projectExecutionMode,
@@ -981,6 +988,7 @@ export function WorkbenchProvider({
       state: paneState,
       isStartupReady,
       workspaceFileApi,
+      runtimeTaskReminders,
       projectChat: paneProjectChatValue,
       upgradingDevices,
       projectExecutionMode,
@@ -1054,6 +1062,7 @@ export function WorkbenchProvider({
       paneState,
       projectExecutionMode,
       projectWorktreeBranch,
+      runtimeTaskReminders,
       stableArchiveChatConversations,
       stableArchiveProjectConversations,
       stableArchiveProjectsConversations,

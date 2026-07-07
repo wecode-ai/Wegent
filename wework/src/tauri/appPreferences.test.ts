@@ -27,6 +27,10 @@ describe('appPreferences', () => {
       closeToTrayEnabled: true,
       showMainWindowOnLaunch: true,
       closeToTrayHintSeen: false,
+      taskCompletionNotificationsEnabled: true,
+      trayUnreadEnabled: true,
+      trayRunningEnabled: true,
+      trayUsageEnabled: true,
     })
     expect(invokeMock).not.toHaveBeenCalled()
   })
@@ -41,6 +45,10 @@ describe('appPreferences', () => {
       closeToTrayEnabled: true,
       showMainWindowOnLaunch: false,
       closeToTrayHintSeen: false,
+      taskCompletionNotificationsEnabled: true,
+      trayUnreadEnabled: true,
+      trayRunningEnabled: true,
+      trayUsageEnabled: true,
     })
   })
 
@@ -50,6 +58,10 @@ describe('appPreferences', () => {
       closeToTrayEnabled: false,
       showMainWindowOnLaunch: true,
       closeToTrayHintSeen: false,
+      taskCompletionNotificationsEnabled: true,
+      trayUnreadEnabled: true,
+      trayRunningEnabled: false,
+      trayUsageEnabled: true,
     })
 
     const { updateAppPreferences } = await import('./appPreferences')
@@ -58,6 +70,10 @@ describe('appPreferences', () => {
       closeToTrayEnabled: false,
       showMainWindowOnLaunch: true,
       closeToTrayHintSeen: false,
+      taskCompletionNotificationsEnabled: true,
+      trayUnreadEnabled: true,
+      trayRunningEnabled: false,
+      trayUsageEnabled: true,
     })
     expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
       patch: { closeToTrayEnabled: false },
