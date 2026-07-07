@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import ContextSelector from '@/features/tasks/components/chat/ContextSelector'
 import type { ContextItem } from '@/types/context'
@@ -273,7 +273,10 @@ describe('ContextSelector organization grouping', () => {
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-kb-1')).toBeInTheDocument()
     })
-    fireEvent.click(screen.getByTestId('knowledge-picker-kb-1'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('knowledge-picker-kb-1'))
+      await Promise.resolve()
+    })
 
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -440,7 +443,10 @@ describe('ContextSelector organization grouping', () => {
     })
     expect(screen.getByTestId('knowledge-picker-kb-77')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-kb-77'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('knowledge-picker-kb-77'))
+      await Promise.resolve()
+    })
     expect(onSelect).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 77,
@@ -696,6 +702,54 @@ describe('ContextSelector organization grouping', () => {
         document_names: ['Beyond First Page.md'],
       })
     )
+  })
+
+  it('constrains the internal document column so long document lists can scroll', async () => {
+    mockGetFolderTree.mockResolvedValue([])
+    mockListDocuments.mockResolvedValue({
+      items: Array.from({ length: 30 }, (_, index) => ({
+        id: index + 1,
+        name: `Long Document ${index + 1}.md`,
+        folder_id: 0,
+      })),
+      has_more: false,
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-organization')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-organization'))
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-kb-1')).toBeInTheDocument()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('knowledge-picker-kb-1'))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-document-node-document-1')).toBeInTheDocument()
+    })
+
+    const firstDocumentRow = screen.getByTestId('knowledge-picker-document-node-document-1')
+    const scrollContainer = firstDocumentRow.parentElement?.parentElement
+    const documentColumn = scrollContainer?.parentElement
+
+    expect(scrollContainer).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto')
+    expect(documentColumn).toHaveClass('flex', 'h-full', 'min-h-0', 'flex-col')
   })
 
   it('renders DingTalk docs inside the knowledge source picker with a virtual all-docs container', async () => {

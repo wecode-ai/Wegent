@@ -1276,7 +1276,7 @@ export function KnowledgeSourcePicker({
           )
         : []
       return (
-        <div className="flex min-h-0 flex-col">
+        <div className="flex h-full min-h-0 flex-col">
           <DocumentColumnHeader title={kb.name} documentCount={kb.document_count} />
           {state?.loading ? (
             <PickerLoading label={t('picker.loadingDocuments')} />
