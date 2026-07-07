@@ -144,7 +144,6 @@ interface DesktopSidebarProps {
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   onOpenSettings: (options?: { autoOpenAddCloudDeviceDialog?: boolean }) => void
-  onRefreshWorkLists?: () => Promise<void>
   onLogout: () => void
 }
 
@@ -1786,7 +1785,6 @@ export function DesktopSidebar({
   onListDeviceDirectories,
   onCreateDeviceDirectory,
   onOpenSettings,
-  onRefreshWorkLists,
   onLogout,
   collapsed = false,
   containerTestId = 'desktop-sidebar',
@@ -1824,7 +1822,6 @@ export function DesktopSidebar({
   const storageScopeRef = useRef(storageScope)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
   const [imNotificationMenuOpen, setImNotificationMenuOpen] = useState(false)
-  const [isRefreshing, setIsRefreshing] = useState(false)
   const [archiveSectionMode, setArchiveSectionMode] = useState<'projects' | 'chats' | null>(null)
   const [forceArchiveSectionMode, setForceArchiveSectionMode] = useState<
     'projects' | 'chats' | null
@@ -2556,27 +2553,6 @@ export function DesktopSidebar({
                   setStandaloneWorkspaceDialogMode('remote')
                 }}
               />
-              {onRefreshWorkLists && (
-                <button
-                  type="button"
-                  data-testid="refresh-worklists-button"
-                  disabled={isRefreshing}
-                  onClick={async () => {
-                    if (isRefreshing) return
-                    setIsRefreshing(true)
-                    try {
-                      await onRefreshWorkLists()
-                    } finally {
-                      setIsRefreshing(false)
-                    }
-                  }}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-60"
-                  title={t('workbench.refresh_worklists', '刷新')}
-                  aria-label={t('workbench.refresh_worklists', '刷新')}
-                >
-                  <RotateCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
-                </button>
-              )}
               {settingsMenuOpen && (
                 <DesktopSettingsMenu
                   user={user}

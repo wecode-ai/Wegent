@@ -48,7 +48,7 @@ impl Drop for EnvGuard {
 }
 
 #[test]
-fn default_startup_mode_plans_socket_sidecar_without_http_server() {
+fn default_startup_mode_plans_loopback_http_server_and_socket_sidecar() {
     let _lock = env_lock();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
@@ -64,7 +64,10 @@ fn default_startup_mode_plans_socket_sidecar_without_http_server() {
     assert_eq!(
         plan,
         StartupPlan {
-            http_server: None,
+            http_server: Some(HttpServerPlan {
+                host: "127.0.0.1".to_owned(),
+                port: 0,
+            }),
             socket_sidecar: Some(SocketSidecarPlan {
                 backend_enabled: false,
                 device_id: plan.socket_sidecar.as_ref().unwrap().device_id.clone(),
@@ -78,7 +81,7 @@ fn default_startup_mode_plans_socket_sidecar_without_http_server() {
 }
 
 #[test]
-fn startup_plan_with_backend_enables_backend_sidecar_without_http_server() {
+fn startup_plan_with_backend_enables_backend_sidecar_and_loopback_http_server() {
     let _lock = env_lock();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
     let _port = EnvGuard::set("PORT", "10089");
@@ -93,7 +96,10 @@ fn startup_plan_with_backend_enables_backend_sidecar_without_http_server() {
     assert_eq!(
         plan,
         StartupPlan {
-            http_server: None,
+            http_server: Some(HttpServerPlan {
+                host: "127.0.0.1".to_owned(),
+                port: 0,
+            }),
             socket_sidecar: Some(SocketSidecarPlan {
                 backend_enabled: true,
                 device_id: "device-1".to_owned(),

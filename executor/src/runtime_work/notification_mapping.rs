@@ -4,6 +4,7 @@
 
 use std::{env, sync::OnceLock};
 
+use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 
 use crate::{
@@ -31,6 +32,12 @@ pub(crate) enum TextChunkMapping {
         text: String,
     },
     FinalCompleted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ToolOutputDeltaMapping {
+    pub(crate) tool_use_id: String,
+    pub(crate) delta: String,
 }
 
 pub(crate) fn map_text_chunk(
@@ -87,6 +94,37 @@ pub(crate) fn map_text_chunk(
     }
 }
 
+pub(crate) fn map_tool_output_delta(
+    method: &str,
+    params: &Value,
+) -> Result<Option<ToolOutputDeltaMapping>, &'static str> {
+    if method != "item/tool/outputDelta"
+        && method != "item/commandExecution/outputDelta"
+        && method != "process/outputDelta"
+        && method != "command/exec/outputDelta"
+    {
+        return Ok(None);
+    }
+
+    let tool_use_id = string_field(params, "call_id")
+        .or_else(|| string_field(params, "callId"))
+        .or_else(|| string_field(params, "itemId"))
+        .or_else(|| string_field(params, "item_id"))
+        .or_else(|| string_field(params, "processId"))
+        .or_else(|| string_field(params, "process_id"))
+        .or_else(|| string_field(params, "processHandle"))
+        .or_else(|| string_field(params, "process_handle"))
+        .ok_or("missing_tool_output_delta_id")?;
+    let delta = raw_string_field(params, "chunk")
+        .or_else(|| raw_string_field(params, "delta"))
+        .or_else(|| decoded_base64_field(params, "deltaBase64"))
+        .or_else(|| decoded_base64_field(params, "delta_base64"))
+        .filter(|delta| !delta.is_empty())
+        .ok_or("missing_tool_output_delta")?;
+
+    Ok(Some(ToolOutputDeltaMapping { tool_use_id, delta }))
+}
+
 pub(crate) fn notification_item_id(params: &Value) -> Option<String> {
     params
         .get("item")
@@ -94,6 +132,12 @@ pub(crate) fn notification_item_id(params: &Value) -> Option<String> {
         .or_else(|| string_field(params, "itemId"))
         .or_else(|| string_field(params, "item_id"))
         .or_else(|| codex_item_id(params))
+}
+
+fn decoded_base64_field(value: &Value, key: &str) -> Option<String> {
+    let encoded = raw_string_field(value, key)?;
+    let bytes = general_purpose::STANDARD.decode(encoded).ok()?;
+    Some(String::from_utf8_lossy(&bytes).to_string())
 }
 
 pub(crate) fn log_dropped_notification(

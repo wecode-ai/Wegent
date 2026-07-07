@@ -57,7 +57,6 @@ export function DesktopWorkbenchLayout() {
     rememberExecutionDevice: onRememberExecutionDevice,
     refreshDevices: onRefreshDevices,
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
-    refreshWorkLists: onRefreshWorkLists,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
@@ -459,7 +458,6 @@ export function DesktopWorkbenchLayout() {
         setSettingsOpen(true)
         navigateTo('/settings')
       }}
-      onRefreshWorkLists={onRefreshWorkLists}
       onLogout={onLogout}
     />
   )

@@ -495,6 +495,7 @@ export function WorkspaceBrowserPanel({
   const handledOpenRequestIdRef = useRef<number | null>(null)
   const syncBoundsTimerRef = useRef<number | null>(null)
   const syncBoundsAnimationFrameRef = useRef<number | null>(null)
+  const postOpenSyncTimerRefs = useRef<number[]>([])
   const annotationEmptyPollLogCountRef = useRef(0)
   const [debugPanelExpanded, setDebugPanelExpanded] = useState(false)
   const [address, setAddress] = useState('')
@@ -608,13 +609,28 @@ export function WorkspaceBrowserPanel({
     }
   }, [annotationMode, codeCommentCount, exitAnnotationMode])
 
+  const clearScheduledBoundsSync = useCallback(() => {
+    if (syncBoundsAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(syncBoundsAnimationFrameRef.current)
+      syncBoundsAnimationFrameRef.current = null
+    }
+    if (syncBoundsTimerRef.current !== null) {
+      window.clearTimeout(syncBoundsTimerRef.current)
+      syncBoundsTimerRef.current = null
+    }
+    postOpenSyncTimerRefs.current.forEach(timer => window.clearTimeout(timer))
+    postOpenSyncTimerRefs.current = []
+  }, [])
+
   const scheduleEmbeddedBrowserBoundsSync = useCallback(
     (visible = active) => {
       if (syncBoundsAnimationFrameRef.current !== null) {
         window.cancelAnimationFrame(syncBoundsAnimationFrameRef.current)
+        syncBoundsAnimationFrameRef.current = null
       }
       if (syncBoundsTimerRef.current !== null) {
         window.clearTimeout(syncBoundsTimerRef.current)
+        syncBoundsTimerRef.current = null
       }
 
       syncBoundsAnimationFrameRef.current = window.requestAnimationFrame(() => {
@@ -636,13 +652,19 @@ export function WorkspaceBrowserPanel({
   const schedulePostOpenBoundsSync = useCallback(
     (visible = active) => {
       EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS.forEach(delay => {
-        window.setTimeout(() => {
+        const timer = window.setTimeout(() => {
+          postOpenSyncTimerRefs.current = postOpenSyncTimerRefs.current.filter(
+            pendingTimer => pendingTimer !== timer
+          )
           scheduleEmbeddedBrowserBoundsSync(visible)
         }, delay)
+        postOpenSyncTimerRefs.current.push(timer)
       })
     },
     [active, scheduleEmbeddedBrowserBoundsSync]
   )
+
+  useEffect(() => clearScheduledBoundsSync, [clearScheduledBoundsSync])
 
   const refreshPageState = useCallback(async () => {
     if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
@@ -790,15 +812,11 @@ export function WorkspaceBrowserPanel({
       observer.disconnect()
       window.removeEventListener('resize', handleBoundsChange)
       window.visualViewport?.removeEventListener('resize', handleBoundsChange)
-      if (syncBoundsAnimationFrameRef.current !== null) {
-        window.cancelAnimationFrame(syncBoundsAnimationFrameRef.current)
-      }
-      if (syncBoundsTimerRef.current !== null) {
-        window.clearTimeout(syncBoundsTimerRef.current)
-      }
+      clearScheduledBoundsSync()
     }
   }, [
     active,
+    clearScheduledBoundsSync,
     currentUrl,
     embeddedBrowserAvailable,
     scheduleEmbeddedBrowserBoundsSync,

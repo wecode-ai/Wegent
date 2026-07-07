@@ -66,7 +66,7 @@ describe('WorkspacePanelActions', () => {
     openExternalUrlMock.mockResolvedValue(true)
   })
 
-  test('shows environment info while loading and keeps it when environment context is available', () => {
+  test('keeps environment info action visible after environment refresh resolves empty context', () => {
     const { rerender } = render(<WorkspacePanelActions {...baseProps} />)
 
     expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
@@ -83,7 +83,7 @@ describe('WorkspacePanelActions', () => {
       />
     )
 
-    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
 
     rerender(
       <WorkspacePanelActions
