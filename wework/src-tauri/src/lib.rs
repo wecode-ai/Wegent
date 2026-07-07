@@ -1033,21 +1033,15 @@ fn default_executor_home(app: &tauri::AppHandle) -> Result<std::path::PathBuf, S
     Ok(home.join(".wegent-executor"))
 }
 
-fn local_attachment_root(
-    app: &tauri::AppHandle,
-    workspace_path: Option<String>,
-) -> Result<std::path::PathBuf, String> {
-    if let Some(workspace_path) = workspace_path.and_then(normalized_non_empty) {
-        return Ok(std::path::PathBuf::from(workspace_path)
-            .join(".wegent")
-            .join("attachments")
-            .join("draft"));
-    }
-
-    Ok(default_executor_home(app)?
+fn executor_home_attachment_root(executor_home: &std::path::Path) -> std::path::PathBuf {
+    executor_home
         .join("workspace")
         .join("attachments")
-        .join("draft"))
+        .join("draft")
+}
+
+fn local_attachment_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(executor_home_attachment_root(&default_executor_home(app)?))
 }
 
 fn unique_attachment_directory(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
@@ -1074,7 +1068,7 @@ fn unique_attachment_directory(root: &std::path::Path) -> Result<std::path::Path
 #[tauri::command]
 fn save_local_attachment_file(
     app: tauri::AppHandle,
-    workspace_path: Option<String>,
+    _workspace_path: Option<String>,
     filename: String,
     bytes: Vec<u8>,
 ) -> Result<String, String> {
@@ -1082,7 +1076,7 @@ fn save_local_attachment_file(
         return Err("Attachment file is empty".to_string());
     }
 
-    let root = local_attachment_root(&app, workspace_path)?;
+    let root = local_attachment_root(&app)?;
     std::fs::create_dir_all(&root)
         .map_err(|error| format!("Failed to create attachment directory: {error}"))?;
     let directory = unique_attachment_directory(&root)?;
@@ -1887,8 +1881,8 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_process, collect_descendant_pids, local_workspace_opener_app_name,
-        parse_process_snapshot_line, RawProcessInfo,
+        classify_process, collect_descendant_pids, executor_home_attachment_root,
+        local_workspace_opener_app_name, parse_process_snapshot_line, RawProcessInfo,
     };
     use std::collections::HashSet;
 
@@ -1912,6 +1906,14 @@ mod tests {
             Some("IntelliJ IDEA")
         );
         assert_eq!(local_workspace_opener_app_name("unknown"), None);
+    }
+
+    #[test]
+    fn places_local_attachment_drafts_under_executor_home() {
+        assert_eq!(
+            executor_home_attachment_root(std::path::Path::new("/Users/me/.wegent-executor")),
+            std::path::PathBuf::from("/Users/me/.wegent-executor/workspace/attachments/draft")
+        );
     }
 
     #[test]

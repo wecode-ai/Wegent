@@ -42,7 +42,6 @@ import {
 import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
 import {
   findSelectableProject,
-  findProjectDeviceWorkspace,
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
@@ -181,35 +180,10 @@ export function WorkbenchProvider({
       standaloneDeviceId: state.standaloneDeviceId,
     })
   const activeDeviceIdRef = useRef(activeDeviceId)
-  const activeAttachmentWorkspacePath = useMemo(() => {
-    if (state.currentRuntimeTask?.workspacePath) return state.currentRuntimeTask.workspacePath
-    const selectedProjectWorkspace = findProjectDeviceWorkspace(
-      state.runtimeWork,
-      activeProject?.id,
-      state.selectedDeviceWorkspaceId
-    )
-    return (
-      selectedProjectWorkspace?.workspacePath ??
-      state.standaloneWorkspacePath ??
-      activeProject?.config?.workspace?.localPath ??
-      null
-    )
-  }, [
-    activeProject,
-    state.currentRuntimeTask?.workspacePath,
-    state.runtimeWork,
-    state.selectedDeviceWorkspaceId,
-    state.standaloneWorkspacePath,
-  ])
-  const activeAttachmentWorkspacePathRef = useRef(activeAttachmentWorkspacePath)
 
   useEffect(() => {
     activeDeviceIdRef.current = activeDeviceId
   }, [activeDeviceId])
-
-  useEffect(() => {
-    activeAttachmentWorkspacePathRef.current = activeAttachmentWorkspacePath
-  }, [activeAttachmentWorkspacePath])
 
   useEffect(() => {
     const socketClient = resolvedServices.socketClient
@@ -363,9 +337,7 @@ export function WorkbenchProvider({
   const uploadWorkbenchAttachment = useMemo(() => {
     if (!resolvedServices.attachmentApi?.uploadAttachment) return undefined
     return (file: File, onProgress?: (progress: number) => void) =>
-      resolvedServices.attachmentApi!.uploadAttachment(file, onProgress, {
-        workspacePath: activeAttachmentWorkspacePathRef.current,
-      })
+      resolvedServices.attachmentApi!.uploadAttachment(file, onProgress)
   }, [resolvedServices.attachmentApi])
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: uploadWorkbenchAttachment,

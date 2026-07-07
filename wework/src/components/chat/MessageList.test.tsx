@@ -2791,7 +2791,7 @@ describe('MessageList', () => {
       created_at: '2026-05-25T15:09:00.000+08:00',
       text_preview: '{ "event_type": "http_exchange", "id": "e9972aac" }',
       local_path:
-        '/Users/me/project/.wegent/attachments/draft/-45/clipboard-text-1783070360990.txt',
+        '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt',
     }
 
     render(
@@ -2825,7 +2825,7 @@ describe('MessageList', () => {
 
     await waitFor(() =>
       expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
-        '/Users/me/project/.wegent/attachments/draft/-45/clipboard-text-1783070360990.txt'
+        '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt'
       )
     )
   })
