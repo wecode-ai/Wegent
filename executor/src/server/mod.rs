@@ -3,15 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     env, fs,
     future::Future,
     io::Read,
     net::SocketAddr,
     path::{Path, PathBuf},
+    pin::Pin,
     process::Stdio,
     sync::{Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 mod config;
@@ -25,7 +26,7 @@ use axum::{
     Json, Router,
 };
 use base64::Engine;
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio::{process::Command, sync::Semaphore, time::timeout};
@@ -237,6 +238,8 @@ async fn codex_responses_proxy(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, HttpError> {
+    let request_id = next_codex_responses_proxy_request_id();
+    let started_at = Instant::now();
     let upstream = codex_responses_proxy_registry()
         .lock()
         .expect("proxy registry should not be poisoned")
@@ -247,6 +250,23 @@ async fn codex_responses_proxy(
             detail: "unknown Codex responses proxy token".to_owned(),
         })?;
     let upstream_url = format!("{}/responses", upstream.base_url.trim_end_matches('/'));
+    log_executor_event(
+        "codex responses proxy request started",
+        &[
+            ("request_id", request_id.clone()),
+            ("token", token.clone()),
+            ("upstream", codex_responses_proxy_log_target(&upstream_url)),
+            ("body_bytes", body.len().to_string()),
+            (
+                "accept",
+                headers
+                    .get(header::ACCEPT)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("")
+                    .to_owned(),
+            ),
+        ],
+    );
     let client = reqwest::Client::new();
     let mut request = client
         .post(upstream_url)
@@ -268,17 +288,45 @@ async fn codex_responses_proxy(
         request = request.header(key, value);
     }
 
-    let upstream_response = request.send().await.map_err(|error| HttpError {
-        status: StatusCode::BAD_GATEWAY,
-        detail: format!("Codex responses proxy request failed: {error}"),
-    })?;
+    let upstream_response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            log_executor_event(
+                "codex responses proxy request failed",
+                &[
+                    ("request_id", request_id),
+                    ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                    ("error", error.to_string()),
+                ],
+            );
+            return Err(HttpError {
+                status: StatusCode::BAD_GATEWAY,
+                detail: format!("Codex responses proxy request failed: {error}"),
+            });
+        }
+    };
+    let upstream_headers_elapsed = started_at.elapsed();
     let status = upstream_response.status();
     let content_type = upstream_response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    let stream = normalize_codex_responses_sse_stream(upstream_response.bytes_stream());
+    log_executor_event(
+        "codex responses proxy upstream headers received",
+        &[
+            ("request_id", request_id.clone()),
+            ("status", status.as_u16().to_string()),
+            (
+                "elapsed_ms",
+                upstream_headers_elapsed.as_millis().to_string(),
+            ),
+            ("content_type", content_type.clone().unwrap_or_default()),
+        ],
+    );
+    let stream_stats = CodexResponsesProxyStreamStats::new(request_id, started_at);
+    let stream =
+        normalize_codex_responses_sse_stream(upstream_response.bytes_stream(), stream_stats);
     let mut response = Response::new(Body::from_stream(stream));
     *response.status_mut() = status;
     if let Some(content_type) = content_type.and_then(|value| HeaderValue::from_str(&value).ok()) {
@@ -289,31 +337,248 @@ async fn codex_responses_proxy(
     Ok(response)
 }
 
-fn normalize_codex_responses_sse_stream(
-    stream: impl futures_util::Stream<Item = Result<Bytes, reqwest::Error>>,
-) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>> {
-    let mut pending = String::new();
-    stream.flat_map(move |chunk| {
-        let mut output = Vec::new();
-        match chunk {
-            Ok(bytes) => {
-                pending.push_str(&String::from_utf8_lossy(&bytes));
-                while let Some(index) = pending.find("\n\n") {
-                    let event = pending[..index].to_owned();
-                    pending = pending[index + 2..].to_owned();
-                    output.push(Ok(Bytes::from(format!(
-                        "{}\n\n",
-                        normalize_codex_responses_sse_event(&event)
-                    ))));
+fn next_codex_responses_proxy_request_id() -> String {
+    static NEXT_ID: OnceLock<Mutex<u64>> = OnceLock::new();
+    let next_id = NEXT_ID.get_or_init(|| Mutex::new(0));
+    let mut guard = next_id
+        .lock()
+        .expect("proxy request id counter should not be poisoned");
+    *guard += 1;
+    format!("proxy-{}-{}", std::process::id(), *guard)
+}
+
+fn codex_responses_proxy_log_target(upstream_url: &str) -> String {
+    reqwest::Url::parse(upstream_url)
+        .ok()
+        .and_then(|url| {
+            let host = url.host_str()?;
+            let port = url
+                .port()
+                .map(|port| format!(":{port}"))
+                .unwrap_or_default();
+            Some(format!("{}://{}{}{}", url.scheme(), host, port, url.path()))
+        })
+        .unwrap_or_else(|| "<invalid-url>".to_owned())
+}
+
+#[derive(Debug)]
+struct CodexResponsesProxyStreamStats {
+    request_id: String,
+    started_at: Instant,
+    first_upstream_chunk_ms: Option<u128>,
+    first_forwarded_event_ms: Option<u128>,
+    last_upstream_chunk_at: Option<Instant>,
+    last_forwarded_event_at: Option<Instant>,
+    max_upstream_chunk_gap_ms: u128,
+    max_forward_gap_ms: u128,
+    upstream_chunk_count: u64,
+    upstream_bytes: u64,
+    forwarded_event_count: u64,
+    completed_event_count: u64,
+    max_pending_bytes: usize,
+}
+
+impl CodexResponsesProxyStreamStats {
+    fn new(request_id: String, started_at: Instant) -> Self {
+        Self {
+            request_id,
+            started_at,
+            first_upstream_chunk_ms: None,
+            first_forwarded_event_ms: None,
+            last_upstream_chunk_at: None,
+            last_forwarded_event_at: None,
+            max_upstream_chunk_gap_ms: 0,
+            max_forward_gap_ms: 0,
+            upstream_chunk_count: 0,
+            upstream_bytes: 0,
+            forwarded_event_count: 0,
+            completed_event_count: 0,
+            max_pending_bytes: 0,
+        }
+    }
+
+    fn record_upstream_chunk(&mut self, bytes_len: usize, pending_len: usize) {
+        let now = Instant::now();
+        if let Some(last_upstream_chunk_at) = self.last_upstream_chunk_at {
+            let gap_ms = now.duration_since(last_upstream_chunk_at).as_millis();
+            self.max_upstream_chunk_gap_ms = self.max_upstream_chunk_gap_ms.max(gap_ms);
+        }
+        self.last_upstream_chunk_at = Some(now);
+        self.upstream_chunk_count += 1;
+        self.upstream_bytes += bytes_len as u64;
+        self.max_pending_bytes = self.max_pending_bytes.max(pending_len);
+        if self.first_upstream_chunk_ms.is_none() {
+            let elapsed_ms = self.started_at.elapsed().as_millis();
+            self.first_upstream_chunk_ms = Some(elapsed_ms);
+            log_executor_event(
+                "codex responses proxy first upstream chunk received",
+                &[
+                    ("request_id", self.request_id.clone()),
+                    ("elapsed_ms", elapsed_ms.to_string()),
+                    ("chunk_bytes", bytes_len.to_string()),
+                ],
+            );
+        }
+    }
+
+    fn record_forwarded_event(&mut self, event_type: Option<&str>, output_bytes: usize) {
+        let now = Instant::now();
+        let elapsed_ms = self.started_at.elapsed().as_millis();
+        if self.first_forwarded_event_ms.is_none() {
+            self.first_forwarded_event_ms = Some(elapsed_ms);
+            log_executor_event(
+                "codex responses proxy first event forwarded",
+                &[
+                    ("request_id", self.request_id.clone()),
+                    ("elapsed_ms", elapsed_ms.to_string()),
+                    ("event_type", event_type.unwrap_or("").to_owned()),
+                    ("output_bytes", output_bytes.to_string()),
+                ],
+            );
+        }
+        if let Some(last_forwarded_event_at) = self.last_forwarded_event_at {
+            let gap_ms = now.duration_since(last_forwarded_event_at).as_millis();
+            self.max_forward_gap_ms = self.max_forward_gap_ms.max(gap_ms);
+        }
+        self.last_forwarded_event_at = Some(now);
+        self.forwarded_event_count += 1;
+        if event_type == Some("response.completed") {
+            self.completed_event_count += 1;
+        }
+    }
+
+    fn record_upstream_error(&self, error: &reqwest::Error) {
+        log_executor_event(
+            "codex responses proxy upstream stream error",
+            &[
+                ("request_id", self.request_id.clone()),
+                (
+                    "elapsed_ms",
+                    self.started_at.elapsed().as_millis().to_string(),
+                ),
+                ("error", error.to_string()),
+            ],
+        );
+    }
+
+    fn log_finished(&self, pending_bytes: usize) {
+        log_executor_event(
+            "codex responses proxy stream finished",
+            &[
+                ("request_id", self.request_id.clone()),
+                (
+                    "elapsed_ms",
+                    self.started_at.elapsed().as_millis().to_string(),
+                ),
+                (
+                    "first_upstream_chunk_ms",
+                    self.first_upstream_chunk_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "first_forwarded_event_ms",
+                    self.first_forwarded_event_ms
+                        .map(|value| value.to_string())
+                        .unwrap_or_default(),
+                ),
+                (
+                    "upstream_chunk_count",
+                    self.upstream_chunk_count.to_string(),
+                ),
+                ("upstream_bytes", self.upstream_bytes.to_string()),
+                (
+                    "forwarded_event_count",
+                    self.forwarded_event_count.to_string(),
+                ),
+                (
+                    "completed_event_count",
+                    self.completed_event_count.to_string(),
+                ),
+                (
+                    "max_upstream_chunk_gap_ms",
+                    self.max_upstream_chunk_gap_ms.to_string(),
+                ),
+                ("max_forward_gap_ms", self.max_forward_gap_ms.to_string()),
+                ("max_pending_bytes", self.max_pending_bytes.to_string()),
+                ("pending_bytes", pending_bytes.to_string()),
+            ],
+        );
+    }
+}
+
+struct CodexResponsesProxyStreamState<S> {
+    stream: Pin<Box<S>>,
+    pending: String,
+    output: VecDeque<Result<Bytes, std::io::Error>>,
+    stats: CodexResponsesProxyStreamStats,
+}
+
+fn normalize_codex_responses_sse_stream<S>(
+    stream: S,
+    stats: CodexResponsesProxyStreamStats,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>>
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+{
+    let state = CodexResponsesProxyStreamState {
+        stream: Box::pin(stream),
+        pending: String::new(),
+        output: VecDeque::new(),
+        stats,
+    };
+    futures_util::stream::unfold(state, |mut state| async move {
+        loop {
+            if let Some(output) = state.output.pop_front() {
+                return Some((output, state));
+            }
+            match state.stream.next().await {
+                Some(Ok(bytes)) => {
+                    state.pending.push_str(&String::from_utf8_lossy(&bytes));
+                    state
+                        .stats
+                        .record_upstream_chunk(bytes.len(), state.pending.len());
+                    while let Some(index) = state.pending.find("\n\n") {
+                        let event = state.pending[..index].to_owned();
+                        state.pending = state.pending[index + 2..].to_owned();
+                        let event_type = codex_responses_sse_event_type(&event);
+                        let normalized = normalize_codex_responses_sse_event(&event);
+                        let output = Bytes::from(format!("{normalized}\n\n"));
+                        state
+                            .stats
+                            .record_forwarded_event(event_type.as_deref(), output.len());
+                        state.output.push_back(Ok(output));
+                    }
+                }
+                Some(Err(error)) => {
+                    state.stats.record_upstream_error(&error);
+                    return Some((Err(std::io::Error::other(error.to_string())), state));
+                }
+                None => {
+                    state.stats.log_finished(state.pending.len());
+                    return None;
                 }
             }
-            Err(error) => output.push(Err(std::io::Error::other(error.to_string()))),
         }
-        futures_util::stream::iter(output)
+    })
+}
+
+fn codex_responses_sse_event_type(event: &str) -> Option<String> {
+    event.lines().find_map(|line| {
+        let data = line.strip_prefix("data:")?.trim_start();
+        if data == "[DONE]" {
+            return Some("[DONE]".to_owned());
+        }
+        serde_json::from_str::<Value>(data)
+            .ok()
+            .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
     })
 }
 
 fn normalize_codex_responses_sse_event(event: &str) -> String {
+    if !event.contains("response.completed") {
+        return event.to_owned();
+    }
     let mut changed = false;
     let lines = event
         .lines()
