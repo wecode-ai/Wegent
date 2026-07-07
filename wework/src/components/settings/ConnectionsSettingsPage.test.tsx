@@ -192,7 +192,7 @@ describe('ConnectionsSettingsPage', () => {
       apiBaseUrl: '/api',
       cloudDeviceScalingWikiUrl: '',
     }
-    window.history.pushState({}, '', '/')
+    window.history.pushState({}, '', '/settings/connections')
     isLocalTerminalAvailableMock.mockReturnValue(true)
     getLocalExecutorDeviceIdMock.mockResolvedValue('local-claude')
     openExternalUrlMock.mockResolvedValue(true)
@@ -299,6 +299,18 @@ describe('ConnectionsSettingsPage', () => {
       updated_at: '2026-06-09T00:00:00Z',
     })
     createUserApiMock.mockReturnValue(userApi as ReturnType<typeof createUserApi>)
+  })
+
+  test('opens general settings by default', async () => {
+    window.history.pushState({}, '', '/settings')
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    expect(await screen.findByTestId('general-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-general')).toHaveClass(
+      'bg-[rgb(var(--color-sidebar-active))]'
+    )
   })
 
   test('adds titlebar clearance for the settings back button in Tauri', () => {
@@ -535,7 +547,7 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByRole('heading', { name: '云端设置' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-cloud-connect-button')).toHaveTextContent('连接云端')
-    expect(window.location.pathname).toBe('/settings')
+    expect(window.location.pathname).toBe('/settings/connections')
   })
 
   test('saves personal proxy from proxy settings', async () => {

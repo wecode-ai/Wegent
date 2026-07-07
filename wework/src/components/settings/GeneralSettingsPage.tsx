@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { applyLanguagePreference, languagePreferenceOptions } from '@/i18n/languagePreference'
 import {
   defaultAppPreferences,
   getAppPreferences,
   updateAppPreferences,
+  type AppLanguagePreference,
   type AppPreferences,
 } from '@/tauri/appPreferences'
 
@@ -80,6 +82,28 @@ export function GeneralSettingsPage() {
     }
   }
 
+  const handleLanguageChange = async (language: AppLanguagePreference) => {
+    if (language === preferences.language) {
+      return
+    }
+
+    const previousLanguage = preferences.language
+    setPreferences(current => ({ ...current, language }))
+    setSaving(true)
+    setError(null)
+    try {
+      const nextPreferences = await updateAppPreferences({ language })
+      setPreferences(nextPreferences)
+      await applyLanguagePreference(nextPreferences.language)
+    } catch (saveError) {
+      console.error('[Wework] Failed to update app language preference', saveError)
+      setPreferences(current => ({ ...current, language: previousLanguage }))
+      setError(t('workbench.general_settings_save_failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div data-testid="general-settings-page" className="mx-auto w-full max-w-[880px] pb-10">
       <div>
@@ -92,6 +116,51 @@ export function GeneralSettingsPage() {
       </div>
 
       <section className="mt-8 overflow-hidden rounded-lg border border-border bg-surface">
+        <div className="border-b border-border px-4 py-3">
+          <h2 className="text-sm font-semibold text-text-primary">
+            {t('workbench.general_settings_language_title')}
+          </h2>
+        </div>
+        <div className="flex min-h-[72px] flex-col justify-center gap-3 px-4 py-3 md:flex-row md:items-center md:justify-between md:gap-4">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-text-primary">
+              {t('workbench.general_settings_language_preference')}
+            </div>
+            <p className="mt-1 text-xs leading-5 text-text-secondary">
+              {t('workbench.general_settings_language_description')}
+            </p>
+          </div>
+          <div className="grid h-8 w-full shrink-0 grid-cols-3 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
+            {languagePreferenceOptions.map(option => {
+              const active = preferences.language === option.value
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  data-testid={`general-language-${option.value}-button`}
+                  disabled={loading || saving}
+                  title={t(`workbench.${option.descriptionKey}`)}
+                  aria-pressed={active}
+                  onClick={() => {
+                    void handleLanguageChange(option.value)
+                  }}
+                  className={[
+                    'flex min-w-0 items-center justify-center rounded-[5px] px-2 text-[13px] font-medium leading-[18px] transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+                    active
+                      ? 'bg-text-primary text-background shadow-sm'
+                      : 'text-text-secondary hover:bg-muted hover:text-text-primary',
+                  ].join(' ')}
+                >
+                  <span className="truncate">{t(`workbench.${option.shortLabelKey}`)}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
         <div className="border-b border-border px-4 py-3">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.general_settings_startup')}

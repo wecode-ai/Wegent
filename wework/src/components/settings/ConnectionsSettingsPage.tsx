@@ -164,20 +164,21 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
 
 function getSettingsNavFromPath(path: string): string {
   const normalizedPath = stripAppBasePath(path)
+  if (normalizedPath === '/settings') return 'general'
   if (normalizedPath === '/settings/personal') return 'model-settings'
   const matchedItem = settingsNavItems.find(item => getSettingsNavPath(item.key) === normalizedPath)
   if (matchedItem) return matchedItem.key
   const match = normalizedPath.match(/^\/settings\/([^/]+)$/)
-  if (!match) return 'connections'
-  return settingsNavItems.some(item => item.key === match[1]) ? match[1] : 'connections'
+  if (!match) return 'general'
+  return settingsNavItems.some(item => item.key === match[1]) ? match[1] : 'general'
 }
 
 function getSettingsNavPath(key: string): string {
   if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
   if (key === 'keyboard-shortcuts') return '/settings/personal/keyboard-shortcuts'
-  if (key === 'general') return '/settings/general'
-  return key === 'connections' ? '/settings' : `/settings/${key}`
+  if (key === 'general') return '/settings'
+  return `/settings/${key}`
 }
 
 function StatusPill({ status }: { status: DeviceInfo['status'] }) {

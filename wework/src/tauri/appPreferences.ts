@@ -5,18 +5,39 @@ export interface AppPreferences {
   closeToTrayEnabled: boolean
   showMainWindowOnLaunch: boolean
   closeToTrayHintSeen: boolean
+  language: AppLanguagePreference
 }
+
+export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
 
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
   closeToTrayHintSeen?: boolean
+  language?: AppLanguagePreference
 }
 
 export const defaultAppPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   closeToTrayHintSeen: false,
+  language: 'zh-CN',
+}
+
+const supportedLanguagePreferences = new Set<AppLanguagePreference>(['system', 'zh-CN', 'en'])
+
+function canInvokeAppPreferencesCommand() {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  const tauriInternals = (
+    window as typeof window & {
+      __TAURI_INTERNALS__?: { invoke?: unknown }
+    }
+  ).__TAURI_INTERNALS__
+
+  return !tauriInternals || typeof tauriInternals.invoke === 'function'
 }
 
 function mergeAppPreferences(value: unknown): AppPreferences {
@@ -38,11 +59,16 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.closeToTrayHintSeen === 'boolean'
         ? record.closeToTrayHintSeen
         : defaultAppPreferences.closeToTrayHintSeen,
+    language:
+      typeof record.language === 'string' &&
+      supportedLanguagePreferences.has(record.language as AppLanguagePreference)
+        ? (record.language as AppLanguagePreference)
+        : defaultAppPreferences.language,
   }
 }
 
 export async function getAppPreferences(): Promise<AppPreferences> {
-  if (!isTauriRuntime()) {
+  if (!isTauriRuntime() || !canInvokeAppPreferencesCommand()) {
     return defaultAppPreferences
   }
 
@@ -50,7 +76,7 @@ export async function getAppPreferences(): Promise<AppPreferences> {
 }
 
 export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<AppPreferences> {
-  if (!isTauriRuntime()) {
+  if (!isTauriRuntime() || !canInvokeAppPreferencesCommand()) {
     return mergeAppPreferences({ ...defaultAppPreferences, ...patch })
   }
 

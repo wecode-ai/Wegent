@@ -171,7 +171,7 @@ export function DesktopWorkbenchLayout() {
   const openCloudDeviceSettings = useCallback(() => {
     setAutoOpenAddCloudDeviceDialog(true)
     setSettingsOpen(true)
-    navigateTo('/settings')
+    navigateTo('/settings/connections')
   }, [])
 
   const openSidebarPreview = useCallback(() => {
@@ -459,7 +459,7 @@ export function DesktopWorkbenchLayout() {
       onOpenSettings={options => {
         setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
         setSettingsOpen(true)
-        navigateTo('/settings')
+        navigateTo(options?.autoOpenAddCloudDeviceDialog ? '/settings/connections' : '/settings')
       }}
       onLogout={onLogout}
     />

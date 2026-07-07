@@ -6,6 +6,12 @@ sidebar_position: 6
 
 The Wework desktop app exposes window and background behavior in **Settings → General**. These preferences only affect the local desktop app. They do not change cloud tasks, model settings, or shell settings.
 
+## Interface Language
+
+**Interface language** changes the language used by the Wework desktop UI and the system tray menu. Users can choose **System**, **中文**, or **EN**.
+
+When **System** is selected, Wework automatically uses Chinese or English based on the current system language. When **中文** or **EN** is selected manually, Wework saves the preference and restores it the next time the app starts.
+
 ## Show the Main Window on Launch
 
 When **Show main window on launch** is enabled, Wework opens the main window when the app starts. When disabled, the app starts in the system tray only, which is useful when you want task capability to stay available in the background.

@@ -73,7 +73,7 @@ Desktop Wework settings can show archived Project and Conversation chats. Deleti
 
 ### Desktop App Preferences
 
-Desktop Wework's **General** settings control whether the main window is shown after launch and whether the app keeps running after the main window is closed. When background running is enabled, closing the main window releases the main WebView resources without stopping running tasks. Users can click the system tray icon to reopen the main window.
+Desktop Wework's **General** settings control the interface language, whether the main window is shown after launch, and whether the app keeps running after the main window is closed. When background running is enabled, closing the main window releases the main WebView resources without stopping running tasks. Users can click the system tray icon to reopen the main window.
 
 ---
 

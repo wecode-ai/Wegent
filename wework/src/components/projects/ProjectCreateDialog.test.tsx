@@ -89,7 +89,7 @@ describe('ProjectCreateDialog', () => {
 
     const settingsLink = screen.getByTestId('open-cloud-device-settings-link')
 
-    expect(settingsLink).toHaveAttribute('href', '/settings')
+    expect(settingsLink).toHaveAttribute('href', '/settings/connections')
 
     await userEvent.click(settingsLink)
 
