@@ -41,6 +41,8 @@ The Debug Panel can be expanded, collapsed, refreshed, copied as a snapshot, and
 
 The local executor keeps Codex delta details enabled by default so developers can diagnose streaming order, phase classification, and final-content overwrite issues. By default, it records raw Codex delta events and run-state classification summaries.
 
+The **Enable Stream Logs** / **Disable Stream Logs** command in the Developer Commands menu toggles both frontend local chat stream logs and Codex executor stream logs. Prefer this command during live investigation; it keeps frontend `console.debug` stream subscription/event logs and executor Codex stream details under the same switch.
+
 To avoid excessive logs in debug builds during long responses or high-frequency token output, runtime work cache/emit mapping logs are disabled by default. Those logs add extra records for the cache path and UI event dispatch path of the same delta, and are only needed when diagnosing local runtime work routing.
 
 Available environment variables:

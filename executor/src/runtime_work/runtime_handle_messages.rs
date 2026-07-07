@@ -27,6 +27,8 @@ use super::{
     },
 };
 
+const STREAM_DELTA_PERSIST_INTERVAL_MS: i64 = 10_000;
+
 pub(crate) fn cached_messages(link: &RuntimeTaskLink) -> Vec<Value> {
     link.runtime_handle
         .get("messages")
@@ -551,7 +553,7 @@ fn append_runtime_assistant_tool_output_delta(
     tool_use_id: &str,
     delta: String,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         append_tool_output_delta(blocks, tool_use_id, delta);
     });
 }
@@ -565,7 +567,7 @@ fn append_runtime_assistant_process_delta(
     process_item_id: Option<String>,
     delta: String,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         append_process_block_delta(
             blocks,
             local_task_id,
@@ -626,7 +628,7 @@ fn append_runtime_assistant_content_delta(
     request: &ExecutionRequest,
     delta: String,
 ) {
-    mutate_cached_assistant_message(store, local_task_id, request, |message| {
+    mutate_cached_assistant_message_throttled(store, local_task_id, request, |message| {
         append_message_content_delta(message, delta);
     });
 }
@@ -698,19 +700,73 @@ fn mutate_cached_assistant_blocks(
     });
 }
 
+fn mutate_cached_assistant_blocks_throttled(
+    store: &RuntimeWorkStore,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    mutate_blocks: impl FnOnce(&mut Vec<Value>),
+) {
+    mutate_cached_assistant_message_with_persistence(
+        store,
+        local_task_id,
+        request,
+        false,
+        |assistant| {
+            let blocks = ensure_message_blocks(assistant);
+            mutate_blocks(blocks);
+        },
+    );
+}
+
 fn mutate_cached_assistant_message(
     store: &RuntimeWorkStore,
     local_task_id: &str,
     request: &ExecutionRequest,
     mutate_message: impl FnOnce(&mut Value),
 ) {
-    store.update_task(local_task_id, |link| {
+    mutate_cached_assistant_message_with_persistence(
+        store,
+        local_task_id,
+        request,
+        true,
+        mutate_message,
+    );
+}
+
+fn mutate_cached_assistant_message_throttled(
+    store: &RuntimeWorkStore,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    mutate_message: impl FnOnce(&mut Value),
+) {
+    mutate_cached_assistant_message_with_persistence(
+        store,
+        local_task_id,
+        request,
+        false,
+        mutate_message,
+    );
+}
+
+fn mutate_cached_assistant_message_with_persistence(
+    store: &RuntimeWorkStore,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    persist: bool,
+    mutate_message: impl FnOnce(&mut Value),
+) {
+    let update = |link: &mut RuntimeTaskLink| {
         let mut messages = cached_messages(link);
         let assistant = ensure_cached_assistant_message(&mut messages, local_task_id, request);
         mutate_message(assistant);
         link.updated_at = now_ms();
         set_runtime_handle_messages(&mut link.runtime_handle, messages);
-    });
+    };
+    if persist {
+        store.update_task(local_task_id, update);
+    } else {
+        store.update_task_throttled(local_task_id, STREAM_DELTA_PERSIST_INTERVAL_MS, update);
+    }
 }
 
 fn mutate_existing_cached_assistant_message(
@@ -1283,6 +1339,65 @@ mod tests {
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["blocks"][0]["id"], "ctx-1");
         assert_eq!(messages[0]["blocks"][0]["type"], "tool");
+        assert_eq!(messages[0]["blocks"][0]["tool_name"], "context_compaction");
+        assert_eq!(messages[0]["blocks"][0]["status"], "done");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_completed_context_compaction_item_marks_existing_block_done() {
+        let index_path = temp_index_path("context-compaction-completed-cache");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "ctx-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "ctx-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["blocks"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[0]["blocks"][0]["id"], "ctx-1");
         assert_eq!(messages[0]["blocks"][0]["tool_name"], "context_compaction");
         assert_eq!(messages[0]["blocks"][0]["status"], "done");
 

@@ -2,12 +2,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vi
 import { installDeveloperCommandMenu } from './developerCommandMenu'
 
 const invokeMock = vi.hoisted(() => vi.fn())
+const requestLocalExecutorMock = vi.hoisted(() => vi.fn())
 const isTauriRuntimeMock = vi.hoisted(() => vi.fn())
 const getWorkbenchDebugSnapshotMock = vi.hoisted(() => vi.fn())
 const clearWorkbenchDebugLogsMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: invokeMock,
+}))
+
+vi.mock('@/tauri/localExecutor', () => ({
+  requestLocalExecutor: requestLocalExecutorMock,
 }))
 
 vi.mock('./runtime-environment', () => ({
@@ -26,6 +31,7 @@ describe('developerCommandMenu', () => {
 
   beforeEach(() => {
     invokeMock.mockResolvedValue(undefined)
+    requestLocalExecutorMock.mockResolvedValue({ enabled: false })
     isTauriRuntimeMock.mockReturnValue(true)
     getWorkbenchDebugSnapshotMock.mockReturnValue(createDebugSnapshot())
     localStorage.clear()
@@ -43,9 +49,27 @@ describe('developerCommandMenu', () => {
     expect(screenCommand('reload')).toBeInTheDocument()
     expect(screenCommand('open-debug-panel')).toBeInTheDocument()
     expect(screenCommand('toggle-performance-diagnostics')).toBeInTheDocument()
+    expect(screenCommand('toggle-stream-logs')).toBeInTheDocument()
     expect(screenCommand('print-performance-snapshot')).toBeInTheDocument()
     expect(screenCommand('open-log-directory')).toBeInTheDocument()
     expect(screenCommand('open-web-inspector')).toBeInTheDocument()
+  })
+
+  test('toggles Codex stream logs through the local executor', async () => {
+    requestLocalExecutorMock
+      .mockResolvedValueOnce({ enabled: false })
+      .mockResolvedValueOnce({ enabled: true })
+    dispatchDeveloperShortcut()
+    await flushPromises()
+
+    screenCommand('toggle-stream-logs').click()
+    await flushPromises()
+
+    expect(requestLocalExecutorMock).toHaveBeenCalledWith('runtime.codex.stream_debug.get')
+    expect(requestLocalExecutorMock).toHaveBeenCalledWith('runtime.codex.stream_debug.set', {
+      enabled: true,
+    })
+    expect(localStorage.getItem('wework:debug-local-chat-stream')).toBe('1')
   })
 
   test('opens the app log directory through Tauri', () => {
@@ -134,6 +158,10 @@ function screenCollapsedDebugPanel(): HTMLElement {
     throw new Error('Collapsed debug panel was not found')
   }
   return element
+}
+
+function flushPromises(): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, 0))
 }
 
 function createDebugSnapshot() {

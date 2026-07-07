@@ -53,6 +53,7 @@
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^15.6.6",
     "remark-gfm": "^4.0.1",
+    "streamdown": "2.5.0",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {

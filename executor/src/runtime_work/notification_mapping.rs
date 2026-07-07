@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, sync::OnceLock};
+use std::{
+    env,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        OnceLock,
+    },
+};
 
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
@@ -225,8 +231,16 @@ pub(crate) fn log_stream_text_mapping(
 }
 
 pub(crate) fn codex_stream_debug_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| env_bool("WEGENT_CODEX_STREAM_DEBUG", true))
+    codex_stream_debug_flag().load(Ordering::Relaxed)
+}
+
+pub(crate) fn set_codex_stream_debug_enabled(enabled: bool) {
+    codex_stream_debug_flag().store(enabled, Ordering::Relaxed);
+}
+
+fn codex_stream_debug_flag() -> &'static AtomicBool {
+    static ENABLED: OnceLock<AtomicBool> = OnceLock::new();
+    ENABLED.get_or_init(|| AtomicBool::new(env_bool("WEGENT_CODEX_STREAM_DEBUG", false)))
 }
 
 fn codex_stream_mapping_debug_enabled() -> bool {
@@ -321,4 +335,25 @@ fn truncate_log_text(text: &str, max_chars: usize) -> String {
         result.push(ch);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{codex_stream_debug_enabled, env_bool, set_codex_stream_debug_enabled};
+
+    #[test]
+    fn stream_debug_env_defaults_to_off_for_missing_values() {
+        let env_name = format!("WEGENT_TEST_MISSING_STREAM_DEBUG_{}", std::process::id());
+
+        assert!(!env_bool(&env_name, false));
+    }
+
+    #[test]
+    fn stream_debug_can_be_toggled_at_runtime() {
+        set_codex_stream_debug_enabled(true);
+        assert!(codex_stream_debug_enabled());
+
+        set_codex_stream_debug_enabled(false);
+        assert!(!codex_stream_debug_enabled());
+    }
 }
