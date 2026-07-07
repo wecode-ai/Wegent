@@ -12,6 +12,7 @@ fn ndjson_parser_collects_claude_text_blocks_and_deltas() {
     let output = r#"
 {"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}
 {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}
 "#;
 
     let outcome = collect_ndjson_outcome(output);
@@ -44,6 +45,47 @@ fn ndjson_parser_uses_last_assistant_message_as_final_content() {
 }
 
 #[test]
+fn ndjson_parser_ignores_child_agent_assistant_messages() {
+    let output = r#"
+{"type":"assistant","parent_tool_use_id":"Agent_0","message":{"role":"assistant","content":[{"type":"text","text":"child draft"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"root final"}]}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn"}
+"#;
+
+    let outcome = collect_ndjson_outcome(output);
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "root final".to_owned()
+        }
+    );
+}
+
+#[test]
+fn ndjson_parser_ignores_root_assistant_text_while_async_agent_is_running() {
+    let output = r#"
+{"type":"assistant","message":{"role":"assistant","content":[{"id":"Agent_0","name":"Agent","type":"tool_use","input":{"description":"write"}}]}}
+{"type":"system","subtype":"task_started","task_type":"local_agent","tool_use_id":"Agent_0","task_id":"agent-1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"draft before agent finishes"}]}}
+{"type":"assistant","parent_tool_use_id":"Agent_0","message":{"role":"assistant","content":[{"type":"text","text":"child transcript"}]}}
+{"type":"system","subtype":"task_notification","status":"completed","tool_use_id":"Agent_0","task_id":"agent-1","summary":"child result"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"final after agent"}]}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","result":"draft before agent finishes"}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":"end_turn","origin":{"kind":"task-notification"},"result":"final after agent"}
+"#;
+
+    let outcome = collect_ndjson_outcome(output);
+
+    assert_eq!(
+        outcome,
+        ExecutionOutcome::Completed {
+            content: "final after agent".to_owned()
+        }
+    );
+}
+
+#[test]
 fn ndjson_parser_skips_non_json_stdout_lines() {
     let output = r#"
 [SandboxDebug] enabled
@@ -62,7 +104,7 @@ fn ndjson_parser_skips_non_json_stdout_lines() {
 }
 
 #[test]
-fn ndjson_parser_ignores_incomplete_trailing_json_like_python_sdk() {
+fn ndjson_parser_fails_claude_stdout_without_result_message() {
     let output = r#"
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"partial"}]}}
 {"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"broken
@@ -70,12 +112,10 @@ fn ndjson_parser_ignores_incomplete_trailing_json_like_python_sdk() {
 
     let outcome = collect_ndjson_outcome(output);
 
-    assert_eq!(
-        outcome,
-        ExecutionOutcome::Completed {
-            content: "partial".to_owned()
-        }
-    );
+    assert!(matches!(outcome, ExecutionOutcome::Failed { .. }));
+    if let ExecutionOutcome::Failed { message } = outcome {
+        assert!(message.contains("Claude stdout ended before result message"));
+    }
 }
 
 #[test]
