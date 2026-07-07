@@ -1543,6 +1543,66 @@ mod tests {
     }
 
     #[test]
+    fn maps_completed_context_compaction_item_to_completed_tool_block() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "ctx-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "ctx-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+
+        let pending = event_rx
+            .try_recv()
+            .expect("pending event should be emitted");
+        let completed = event_rx
+            .try_recv()
+            .expect("completed event should be emitted");
+        assert_eq!(pending["event"], "response.block.created");
+        assert_eq!(pending["payload"]["data"]["block"]["id"], "ctx-1");
+        assert_eq!(pending["payload"]["data"]["block"]["status"], "pending");
+        assert_eq!(completed["event"], "response.block.created");
+        assert_eq!(completed["payload"]["data"]["block"]["id"], "ctx-1");
+        assert_eq!(
+            completed["payload"]["data"]["block"]["tool_name"],
+            "context_compaction"
+        );
+        assert_eq!(completed["payload"]["data"]["block"]["status"], "done");
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn maps_codex_started_final_agent_message_deltas_to_output_text() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {

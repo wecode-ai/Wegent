@@ -2,6 +2,8 @@ import type { Attachment, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import type { DragDropEvent } from '@tauri-apps/api/webview'
+import type { Event } from '@tauri-apps/api/event'
 import type { DragEventHandler } from 'react'
 import { useEffect, useRef } from 'react'
 import { isTauriRuntime } from '@/lib/runtime-environment'
@@ -58,9 +60,75 @@ interface NativeDroppedFile {
   bytes: number[]
 }
 
+type NativeDropHandler = (event: Event<DragDropEvent>) => void
+
+const nativeDropHandlers = new Set<NativeDropHandler>()
+let nativeDropUnlistenPromise: Promise<() => void> | null = null
+let nativeDropUnlisten: (() => void) | null = null
+let nativeDropReleaseTimer: ReturnType<typeof setTimeout> | null = null
+
 async function readNativeDroppedFiles(paths: string[]): Promise<File[]> {
   const droppedFiles = await invoke<NativeDroppedFile[]>('read_dropped_files', { paths })
   return droppedFiles.map(file => new File([new Uint8Array(file.bytes)], file.name))
+}
+
+function subscribeNativeDropHandler(handler: NativeDropHandler): () => void {
+  if (nativeDropReleaseTimer !== null) {
+    clearTimeout(nativeDropReleaseTimer)
+    nativeDropReleaseTimer = null
+  }
+
+  nativeDropHandlers.add(handler)
+
+  if (!nativeDropUnlistenPromise) {
+    try {
+      nativeDropUnlistenPromise = getCurrentWindow()
+        .onDragDropEvent(event => {
+          nativeDropHandlers.forEach(currentHandler => currentHandler(event))
+        })
+        .then(unlisten => {
+          nativeDropUnlisten = unlisten
+          if (nativeDropHandlers.size === 0 && nativeDropReleaseTimer === null) {
+            nativeDropUnlisten?.()
+            nativeDropUnlisten = null
+            nativeDropUnlistenPromise = null
+          }
+          return unlisten
+        })
+        .catch(error => {
+          nativeDropUnlistenPromise = null
+          console.error('Failed to listen for native file drops:', error)
+          return () => {}
+        })
+    } catch (error) {
+      nativeDropUnlistenPromise = null
+      console.error('Failed to listen for native file drops:', error)
+    }
+  }
+
+  return () => {
+    nativeDropHandlers.delete(handler)
+    if (nativeDropHandlers.size > 0) return
+    if (nativeDropReleaseTimer !== null) return
+
+    nativeDropReleaseTimer = setTimeout(() => {
+      nativeDropReleaseTimer = null
+      if (nativeDropHandlers.size > 0) return
+
+      const currentUnlisten = nativeDropUnlisten
+      const pendingUnlisten = nativeDropUnlistenPromise
+      nativeDropUnlisten = null
+      nativeDropUnlistenPromise = null
+      if (currentUnlisten) {
+        currentUnlisten()
+        return
+      }
+
+      if (pendingUnlisten) {
+        void pendingUnlisten.then(unlisten => unlisten())
+      }
+    }, 1000)
+  }
 }
 
 export function ProjectChatComposer({
@@ -98,6 +166,8 @@ export function ProjectChatComposer({
   onPause,
 }: ProjectChatComposerProps) {
   const formRef = useRef<HTMLFormElement>(null)
+  const disabledRef = useRef(disabled)
+  const onFileSelectRef = useRef(onFileSelect)
   const textareaRef = useAutoResizeTextarea(value, 168)
   const canSend =
     (value.trim().length > 0 || attachments.length > 0 || codeComments.length > 0) && !disabled
@@ -126,39 +196,38 @@ export function ProjectChatComposer({
   }
 
   useEffect(() => {
+    disabledRef.current = disabled
+  }, [disabled])
+
+  useEffect(() => {
+    onFileSelectRef.current = onFileSelect
+  }, [onFileSelect])
+
+  useEffect(() => {
     if (!isTauriRuntime()) return
 
-    let unlisten: (() => void) | undefined
-    let cancelled = false
+    const unsubscribe = subscribeNativeDropHandler(event => {
+      const { payload } = event
+      if (
+        payload.type !== 'drop' ||
+        payload.paths.length === 0 ||
+        disabledRef.current ||
+        !formRef.current
+      ) {
+        return
+      }
 
-    async function listenForNativeFileDrops() {
-      unlisten = await getCurrentWindow().onDragDropEvent(event => {
-        const { payload } = event
-        if (payload.type !== 'drop' || payload.paths.length === 0 || disabled || !formRef.current) {
-          return
-        }
-
-        void readNativeDroppedFiles(payload.paths)
-          .then(files => {
-            if (files.length > 0) onFileSelect(files)
-          })
-          .catch(error => {
-            console.error('Failed to read dropped files:', error)
-          })
-      })
-
-      if (cancelled) unlisten()
-    }
-
-    void listenForNativeFileDrops().catch(error => {
-      console.error('Failed to listen for native file drops:', error)
+      void readNativeDroppedFiles(payload.paths)
+        .then(files => {
+          if (files.length > 0) onFileSelectRef.current(files)
+        })
+        .catch(error => {
+          console.error('Failed to read dropped files:', error)
+        })
     })
 
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [disabled, onFileSelect])
+    return unsubscribe
+  }, [])
 
   return (
     <div className="relative w-full rounded-[26px] bg-surface shadow-[0_18px_44px_rgba(0,0,0,0.09)]">

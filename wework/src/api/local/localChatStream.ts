@@ -14,8 +14,85 @@ interface LocalChatStreamDeps {
 
 let nextLocalChatStreamSubscriptionId = 1
 let activeLocalChatStreamSubscriptions = 0
+const LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY = 'wework:debug-local-chat-stream'
+
+export function isLocalChatStreamDebugEnabled(): boolean {
+  return globalThis.localStorage?.getItem(LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY) === '1'
+}
+
+export function setLocalChatStreamDebugEnabled(enabled: boolean): void {
+  if (enabled) {
+    globalThis.localStorage?.setItem(LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY, '1')
+    return
+  }
+  globalThis.localStorage?.removeItem(LOCAL_CHAT_STREAM_DEBUG_STORAGE_KEY)
+}
 
 export function createLocalChatStream(deps: LocalChatStreamDeps) {
+  const subscriptions = new Map<
+    number,
+    {
+      handlers: ChatStreamHandlers
+      state: ReturnType<typeof createResponseApiStreamState>
+      eventCount: number
+      textDeltaCount: number
+    }
+  >()
+  let nativeCleanup: (() => void) | null = null
+  let nativeSubscribePromise: Promise<void> | null = null
+
+  function ensureNativeListener(): void {
+    if (nativeCleanup || nativeSubscribePromise) return
+    nativeSubscribePromise = deps
+      .subscribe(event => {
+        for (const [subscriptionId, subscription] of Array.from(subscriptions)) {
+          if (!isLocalExecutorEventInScope(event, subscription.handlers.scope)) {
+            continue
+          }
+          subscription.eventCount += 1
+          if (event.event === 'response.output_text.delta') {
+            subscription.textDeltaCount += 1
+          }
+          logLocalChatStreamEvent(
+            subscriptionId,
+            event,
+            subscription.eventCount,
+            subscription.textDeltaCount
+          )
+          emitResponseApiEvent(
+            subscription.handlers,
+            event.event,
+            event.payload,
+            subscription.state
+          )
+        }
+      })
+      .then(unlisten => {
+        nativeSubscribePromise = null
+        if (subscriptions.size === 0) {
+          logLocalChatStreamNativeSubscription('late-native-listener-cleanup')
+          unlisten()
+          return
+        }
+        nativeCleanup = unlisten
+        logLocalChatStreamNativeSubscription('native-listener-ready')
+      })
+      .catch(error => {
+        nativeSubscribePromise = null
+        logLocalChatStreamNativeSubscription('native-listener-failed', {
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
+  }
+
+  function releaseNativeListenerIfIdle(): void {
+    if (subscriptions.size > 0) return
+    if (!nativeCleanup) return
+    nativeCleanup()
+    nativeCleanup = null
+    logLocalChatStreamNativeSubscription('native-listener-released')
+  }
+
   return {
     sendGuidance(payload: ChatGuidePayload): Promise<ChatGuideAck> {
       return deps.request<ChatGuideAck>(
@@ -30,64 +107,60 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
       )
     },
     subscribe(handlers: ChatStreamHandlers): () => void {
+      if (!hasLocalExecutorResponseHandlers(handlers)) {
+        return () => undefined
+      }
       const subscriptionId = nextLocalChatStreamSubscriptionId++
-      let cleanup: (() => void) | null = null
-      let active = true
       let released = false
-      let eventCount = 0
-      let textDeltaCount = 0
-      const state = createResponseApiStreamState()
+      subscriptions.set(subscriptionId, {
+        handlers,
+        state: createResponseApiStreamState(),
+        eventCount: 0,
+        textDeltaCount: 0,
+      })
       activeLocalChatStreamSubscriptions += 1
       logLocalChatStreamSubscription('subscribed', subscriptionId, {
         activeSubscriptions: activeLocalChatStreamSubscriptions,
+        ...streamScopeDebug(handlers.scope),
       })
-
-      void deps
-        .subscribe(event => {
-          if (active) {
-            eventCount += 1
-            if (event.event === 'response.output_text.delta') {
-              textDeltaCount += 1
-            }
-            logLocalChatStreamEvent(subscriptionId, event, eventCount, textDeltaCount)
-            emitResponseApiEvent(handlers, event.event, event.payload, state)
-          }
-        })
-        .then(unlisten => {
-          if (active) {
-            cleanup = unlisten
-            logLocalChatStreamSubscription('native-listener-ready', subscriptionId, {
-              activeSubscriptions: activeLocalChatStreamSubscriptions,
-            })
-            return
-          }
-          logLocalChatStreamSubscription('late-native-listener-cleanup', subscriptionId, {
-            activeSubscriptions: activeLocalChatStreamSubscriptions,
-          })
-          unlisten()
-        })
-        .catch(error => {
-          logLocalChatStreamSubscription('native-listener-failed', subscriptionId, {
-            activeSubscriptions: activeLocalChatStreamSubscriptions,
-            error: error instanceof Error ? error.message : String(error),
-          })
-        })
+      ensureNativeListener()
 
       return () => {
         if (released) return
         released = true
-        active = false
+        const subscription = subscriptions.get(subscriptionId)
+        subscriptions.delete(subscriptionId)
         activeLocalChatStreamSubscriptions = Math.max(0, activeLocalChatStreamSubscriptions - 1)
         logLocalChatStreamSubscription('unsubscribed', subscriptionId, {
           activeSubscriptions: activeLocalChatStreamSubscriptions,
-          eventCount,
-          textDeltaCount,
-          hadNativeCleanup: Boolean(cleanup),
+          eventCount: subscription?.eventCount ?? 0,
+          textDeltaCount: subscription?.textDeltaCount ?? 0,
+          ...streamScopeDebug(subscription?.handlers.scope),
         })
-        cleanup?.()
-        cleanup = null
+        releaseNativeListenerIfIdle()
       }
     },
+  }
+}
+
+function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean {
+  return Boolean(
+    handlers.onChatStart ||
+    handlers.onChatChunk ||
+    handlers.onChatDone ||
+    handlers.onChatError ||
+    handlers.onBlockCreated ||
+    handlers.onBlockUpdated ||
+    handlers.onSubagentActivity ||
+    handlers.onRuntimeGoalUpdated ||
+    handlers.onRuntimeGoalCleared
+  )
+}
+
+function streamScopeDebug(scope: ChatStreamHandlers['scope']): Record<string, unknown> {
+  return {
+    scopeTaskId: scope?.taskId ?? null,
+    scopeDeviceId: scope?.deviceId ?? null,
   }
 }
 
@@ -96,9 +169,22 @@ function logLocalChatStreamSubscription(
   subscriptionId: number,
   details: Record<string, unknown>
 ): void {
+  if (!isLocalChatStreamDebugEnabled()) return
   console.debug('[Wework] Local chat stream subscription', {
     action,
     subscriptionId,
+    ...details,
+  })
+}
+
+function logLocalChatStreamNativeSubscription(
+  action: string,
+  details: Record<string, unknown> = {}
+): void {
+  if (!isLocalChatStreamDebugEnabled()) return
+  console.debug('[Wework] Local chat stream native subscription', {
+    action,
+    activeSubscriptions: activeLocalChatStreamSubscriptions,
     ...details,
   })
 }
@@ -109,6 +195,8 @@ function logLocalChatStreamEvent(
   eventCount: number,
   textDeltaCount: number
 ): void {
+  if (!isLocalChatStreamDebugEnabled()) return
+  if (!shouldLogLocalChatStreamEvent(event.event)) return
   const payload = asRecord(event.payload)
   const data = asRecord(payload.data)
   console.debug('[Wework] Local chat stream event', {
@@ -124,6 +212,28 @@ function logLocalChatStreamEvent(
     deltaLength: typeof data.delta === 'string' ? data.delta.length : undefined,
     offset: typeof data.offset === 'number' ? data.offset : undefined,
   })
+}
+
+function isLocalExecutorEventInScope(
+  event: LocalExecutorEvent,
+  scope: ChatStreamHandlers['scope']
+): boolean {
+  if (!scope?.taskId) return true
+  const payload = asRecord(event.payload)
+  const taskId = stringField(payload, 'taskId')
+  if (taskId && taskId !== scope.taskId) return false
+  const deviceId = stringField(payload, 'deviceId')
+  if (scope.deviceId && deviceId && deviceId !== scope.deviceId) return false
+  return true
+}
+
+function shouldLogLocalChatStreamEvent(eventName: string): boolean {
+  return (
+    eventName === 'response.completed' ||
+    eventName === 'response.failed' ||
+    eventName === 'response.incomplete' ||
+    eventName === 'error'
+  )
 }
 
 function isMappedResponseApiEvent(eventName: string): boolean {

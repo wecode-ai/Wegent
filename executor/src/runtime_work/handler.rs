@@ -38,6 +38,7 @@ use super::{
         thread_with_rollout_turns, thread_with_turns,
     },
     events::{emit_response_event, CodexNotificationEventMapper},
+    notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, search_result_item, workspace_response, RuntimeTaskLink,
         RuntimeWorkspaceLink, SearchResultMatch,
@@ -329,6 +330,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
+            "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
+            "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.archived_conversations.list" => {
                 self.list_archived_conversations(payload).await
             }
@@ -369,6 +372,21 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         Ok(json!({ "keybindings": keybindings }))
+    }
+
+    async fn get_codex_stream_debug(&self) -> Result<Value, AppIpcError> {
+        Ok(json!({ "enabled": codex_stream_debug_enabled() }))
+    }
+
+    async fn set_codex_stream_debug(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let Some(enabled) = bool_field(&payload, "enabled") else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "enabled must be a boolean",
+            ));
+        };
+        set_codex_stream_debug_enabled(enabled);
+        Ok(json!({ "enabled": codex_stream_debug_enabled() }))
     }
 
     async fn update_keybindings(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -4058,6 +4076,33 @@ mod tests {
 
         assert_eq!(result["taskId"], "local-task-1");
         assert_eq!(result["messages"][0]["content"], "cached");
+    }
+
+    #[tokio::test]
+    async fn codex_stream_debug_rpc_toggles_runtime_flag() {
+        set_codex_stream_debug_enabled(false);
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let initial = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.stream_debug.get",
+                "payload": {}
+            }))
+            .await
+            .expect("debug state should return");
+        assert_eq!(initial["enabled"], false);
+
+        let updated = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.stream_debug.set",
+                "payload": {"enabled": true}
+            }))
+            .await
+            .expect("debug state should update");
+        assert_eq!(updated["enabled"], true);
+        assert!(codex_stream_debug_enabled());
+
+        set_codex_stream_debug_enabled(false);
     }
 
     #[tokio::test]

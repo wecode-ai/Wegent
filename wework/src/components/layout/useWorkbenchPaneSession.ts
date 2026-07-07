@@ -148,10 +148,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const loadedRuntimeTranscriptKeyRef = useRef<string | null>(null)
   const loadRuntimeTranscriptForPaneRef = useRef(loadRuntimeTranscriptForPane)
   const subscribeRuntimeTaskStreamRef = useRef(subscribeRuntimeTaskStream)
+  const getRuntimeGoalRef = useRef(getRuntimeGoal)
   const refreshWorkListsRef = useRef(refreshWorkLists)
+  const currentRuntimeTaskRef = useRef(currentRuntimeTask)
+  const runtimeTaskLoadTargetRef = useRef<{
+    key: string
+    address: RuntimeTaskAddress
+  } | null>(null)
   const messagesRef = useRef<WorkbenchMessage[]>([])
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
   const guidanceSplitBoundariesRef = useRef(new Map<string, GuidanceSplitBoundary>())
+  const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
+  const messageActionFrameRef = useRef<number | null>(null)
   const runtimeTaskLoadTarget = useMemo(() => {
     if (!currentRuntimeTask) return null
     return {
@@ -159,33 +167,68 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       address: currentRuntimeTask,
     }
   }, [currentRuntimeTask])
+  const runtimeTaskStreamTargetKey = runtimeTaskLoadTarget
+    ? runtimeTranscriptPaneIdentityKey(runtimeTaskLoadTarget.address)
+    : null
   const [messages, setMessages] = useState<WorkbenchMessage[]>([])
-  const dispatchMessages = useCallback(
-    (action: RuntimePaneMessageAction) => {
-      setMessages(currentMessages => {
+  const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
+    if (actions.length === 0) return
+    setMessages(currentMessages => {
+      let nextMessages = currentMessages
+      for (const action of actions) {
         const actionForReduction = transformRuntimePaneActionForGuidanceSplits(
           action,
           guidanceSplitBoundariesRef.current
         )
-        const nextMessages = reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(
-          currentMessages,
+        nextMessages = reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(
+          nextMessages,
           actionForReduction
         )
-        if (currentRuntimeTask) {
-          snapshotRuntimePaneMessages(currentRuntimeTask, nextMessages)
-          debugRuntimePaneMessageFlow('message-action', {
-            address: runtimeAddressDebug(currentRuntimeTask),
-            actionType: action.type,
-            reducedActionType: actionForReduction.type,
-            previousCount: currentMessages.length,
-            nextCount: nextMessages.length,
-            nextMessages: summarizeWorkbenchMessages(nextMessages),
-          })
-        }
-        return nextMessages
+      }
+      const activeRuntimeTask = currentRuntimeTaskRef.current
+      if (activeRuntimeTask) {
+        snapshotRuntimePaneMessages(activeRuntimeTask, nextMessages)
+        debugRuntimePaneMessageFlow('message-action', {
+          address: runtimeAddressDebug(activeRuntimeTask),
+          actionType: actions.length === 1 ? actions[0].type : 'batched',
+          actionCount: actions.length,
+          previousCount: currentMessages.length,
+          nextCount: nextMessages.length,
+          nextMessages: summarizeWorkbenchMessages(nextMessages),
+        })
+      }
+      return nextMessages
+    })
+  }, [])
+  const flushPendingMessageActions = useCallback(() => {
+    if (messageActionFrameRef.current !== null) {
+      cancelAnimationFrame(messageActionFrameRef.current)
+      messageActionFrameRef.current = null
+    }
+    const pendingActions = pendingMessageActionsRef.current
+    if (pendingActions.length === 0) return
+    pendingMessageActionsRef.current = []
+    applyMessageActions(pendingActions)
+  }, [applyMessageActions])
+  const dispatchMessages = useCallback(
+    (action: RuntimePaneMessageAction) => {
+      if (!isBatchableRuntimePaneMessageAction(action)) {
+        flushPendingMessageActions()
+        applyMessageActions([action])
+        return
+      }
+
+      pendingMessageActionsRef.current.push(action)
+      if (messageActionFrameRef.current !== null) return
+      messageActionFrameRef.current = requestAnimationFrame(() => {
+        messageActionFrameRef.current = null
+        const pendingActions = pendingMessageActionsRef.current
+        if (pendingActions.length === 0) return
+        pendingMessageActionsRef.current = []
+        applyMessageActions(pendingActions)
       })
     },
-    [currentRuntimeTask]
+    [applyMessageActions, flushPendingMessageActions]
   )
   const taskExecution = useMemo(
     () => getRuntimePaneTaskExecution(workbenchState.runtimeWork, currentRuntimeTask),
@@ -220,6 +263,24 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   /* eslint-disable react-hooks/set-state-in-effect -- Runtime task changes reset pane transcript state before the async transcript load completes. */
   useEffect(() => {
+    currentRuntimeTaskRef.current = currentRuntimeTask
+  }, [currentRuntimeTask])
+
+  useEffect(() => {
+    return () => {
+      if (messageActionFrameRef.current !== null) {
+        cancelAnimationFrame(messageActionFrameRef.current)
+        messageActionFrameRef.current = null
+      }
+      pendingMessageActionsRef.current = []
+    }
+  }, [])
+
+  useEffect(() => {
+    runtimeTaskLoadTargetRef.current = runtimeTaskLoadTarget
+  }, [runtimeTaskLoadTarget])
+
+  useEffect(() => {
     messagesRef.current = messages
   }, [messages])
 
@@ -238,6 +299,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   useEffect(() => {
     subscribeRuntimeTaskStreamRef.current = subscribeRuntimeTaskStream
   }, [subscribeRuntimeTaskStream])
+
+  useEffect(() => {
+    getRuntimeGoalRef.current = getRuntimeGoal
+  }, [getRuntimeGoal])
 
   useEffect(() => {
     refreshWorkListsRef.current = refreshWorkLists
@@ -382,26 +447,28 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   /* eslint-disable react-hooks/set-state-in-effect -- Queued runtime messages are advanced when the active runtime response becomes idle. */
   useEffect(() => {
-    if (!runtimeTaskLoadTarget) {
+    const target = runtimeTaskLoadTargetRef.current
+    if (!target) {
       return
     }
 
-    const { address } = runtimeTaskLoadTarget
+    const { address } = target
     const unsubscribe = subscribeRuntimeTaskStreamRef.current(address, {
       onMessageAction: dispatchMessages,
       onAssistantStart: () => setSendPhase('idle'),
       onAssistantSettled: () => {
         setSendPhase('idle')
         setSubagentStatuses(markRuntimeSubagentsSettled)
-        void getRuntimeGoal(address)
+        void getRuntimeGoalRef
+          .current(address)
           .then(response => {
             const loadedGoal = response.accepted ? response.goal : null
             setThreadGoal(loadedGoal)
             if (loadedGoal) {
               clearRuntimePaneGoalSeed(address)
+              const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
               setPendingGoalState(current =>
-                current &&
-                isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
+                current && isPendingGoalVisibleForRuntimeTarget(current, latestAddress)
                   ? null
                   : current
               )
@@ -424,24 +491,22 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         const loadedGoal = payload.goal ?? null
         setThreadGoal(loadedGoal)
         clearRuntimePaneGoalSeed(address)
+        const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
         setPendingGoalState(current =>
-          current && isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
-            ? null
-            : current
+          current && isPendingGoalVisibleForRuntimeTarget(current, latestAddress) ? null : current
         )
       },
       onRuntimeGoalCleared: () => {
         setThreadGoal(null)
         clearRuntimePaneGoalSeed(address)
+        const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
         setPendingGoalState(current =>
-          current && isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
-            ? null
-            : current
+          current && isPendingGoalVisibleForRuntimeTarget(current, latestAddress) ? null : current
         )
       },
     })
     return unsubscribe
-  }, [dispatchMessages, getRuntimeGoal, runtimeTaskLoadTarget])
+  }, [dispatchMessages, runtimeTaskStreamTargetKey])
 
   const loadMoreTranscriptBefore = useCallback(async () => {
     if (!runtimeTaskLoadTarget || !transcriptBeforeCursor || transcriptLoadingMoreBefore) return
@@ -1585,6 +1650,10 @@ function debugRuntimePaneMessageFlow(event: string, details: Record<string, unkn
     event,
     ...details,
   })
+}
+
+function isBatchableRuntimePaneMessageAction(action: RuntimePaneMessageAction): boolean {
+  return action.type === 'assistant_chunk' || action.type === 'block_updated'
 }
 
 function isRuntimeDebugEnabled(): boolean {
