@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createDeviceApi } from '@/api/devices'
 import { createHttpClient } from '@/api/http'
 import { getLocalCodexOfficialModels } from '@/api/local/codexOfficialModels'
@@ -188,6 +189,12 @@ type LocalModelTestResult =
       message: string
     }
 
+type PendingLocalModelFormAction =
+  | { kind: 'create' }
+  | { kind: 'edit'; model: LocalModelConfig }
+  | { kind: 'reset' }
+  | { kind: 'delete'; model: LocalModelConfig }
+
 const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   displayName: '',
   group: '',
@@ -204,6 +211,98 @@ function localModelResponsesUrl(baseUrl: string): string | null {
   } catch {
     return null
   }
+}
+
+function isLocalModelFormDirty(
+  form: LocalModelFormState,
+  editingModel: LocalModelConfig | null
+): boolean {
+  if (!editingModel) {
+    return (
+      form.displayName.trim() !== '' ||
+      form.group.trim() !== '' ||
+      form.modelId.trim() !== '' ||
+      form.baseUrl.trim() !== '' ||
+      form.apiKey.trim() !== '' ||
+      !form.enabled
+    )
+  }
+
+  return (
+    form.displayName !== editingModel.displayName ||
+    form.group !== (editingModel.group ?? '') ||
+    form.modelId !== editingModel.modelId ||
+    form.baseUrl !== editingModel.baseUrl ||
+    form.apiKey.trim() !== '' ||
+    form.enabled !== editingModel.enabled
+  )
+}
+
+function LocalModelDiscardChangesDialog({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  const { t } = useTranslation('common')
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+      onClick={event => {
+        if (event.target === event.currentTarget) onCancel()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="local-model-discard-changes-title"
+        data-testid="local-model-discard-changes-dialog"
+        className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+        onClick={event => event.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-600">
+            <AlertCircle className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2
+              id="local-model-discard-changes-title"
+              className="text-sm font-semibold text-text-primary"
+            >
+              {t('workbench.local_model_discard_changes_title', '放弃未保存的模型配置？')}
+            </h2>
+            <p className="mt-1.5 text-xs leading-5 text-text-secondary">
+              {t(
+                'workbench.local_model_discard_changes_description',
+                '当前表单有未保存内容，继续操作会丢弃这些修改。'
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            data-testid="local-model-discard-changes-cancel-button"
+            onClick={onCancel}
+            className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+          >
+            {t('common.cancel', '取消')}
+          </button>
+          <button
+            type="button"
+            data-testid="local-model-discard-changes-confirm-button"
+            onClick={onConfirm}
+            className="inline-flex h-8 items-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
+          >
+            {t('workbench.local_model_discard_changes_confirm', '放弃修改')}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
 }
 
 function CodexOfficialModelsSection({
@@ -398,6 +497,8 @@ function LocalModelSettingsSection({
   const [error, setError] = useState<string | null>(null)
   const [testingModel, setTestingModel] = useState(false)
   const [testResult, setTestResult] = useState<LocalModelTestResult | null>(null)
+  const [pendingDiscardAction, setPendingDiscardAction] =
+    useState<PendingLocalModelFormAction | null>(null)
 
   const refreshModels = useCallback(() => {
     setModels(listLocalModelConfigs())
@@ -413,6 +514,10 @@ function LocalModelSettingsSection({
     [editingId, models]
   )
   const testRequestUrl = useMemo(() => localModelResponsesUrl(form.baseUrl), [form.baseUrl])
+  const formDirty = useMemo(
+    () => formVisible && isLocalModelFormDirty(form, editingModel),
+    [editingModel, form, formVisible]
+  )
 
   const resetForm = () => {
     setEditingId(null)
@@ -422,7 +527,7 @@ function LocalModelSettingsSection({
     setTestResult(null)
   }
 
-  const startCreating = () => {
+  const performStartCreating = () => {
     setEditingId(null)
     setFormVisible(true)
     setForm(EMPTY_LOCAL_MODEL_FORM)
@@ -430,7 +535,7 @@ function LocalModelSettingsSection({
     setTestResult(null)
   }
 
-  const startEditing = (model: LocalModelConfig) => {
+  const performStartEditing = (model: LocalModelConfig) => {
     setEditingId(model.id)
     setFormVisible(true)
     setForm({
@@ -443,6 +548,42 @@ function LocalModelSettingsSection({
     })
     setError(null)
     setTestResult(null)
+  }
+
+  const runDiscardableAction = (action: PendingLocalModelFormAction) => {
+    if (formDirty) {
+      setPendingDiscardAction(action)
+      return
+    }
+    executeDiscardableAction(action)
+  }
+
+  const executeDiscardableAction = (action: PendingLocalModelFormAction) => {
+    switch (action.kind) {
+      case 'create':
+        performStartCreating()
+        break
+      case 'edit':
+        performStartEditing(action.model)
+        break
+      case 'reset':
+        resetForm()
+        break
+      case 'delete':
+        deleteModel(action.model)
+        break
+    }
+  }
+
+  const confirmDiscardChanges = () => {
+    if (!pendingDiscardAction) return
+    const action = pendingDiscardAction
+    setPendingDiscardAction(null)
+    executeDiscardableAction(action)
+  }
+
+  const cancelDiscardChanges = () => {
+    setPendingDiscardAction(null)
   }
 
   const updateForm = (patch: Partial<LocalModelFormState>) => {
@@ -481,7 +622,7 @@ function LocalModelSettingsSection({
         apiKey: null,
         enabled: editingModel.enabled,
       })
-      startEditing({ ...editingModel, apiKey: undefined })
+      performStartEditing({ ...editingModel, apiKey: undefined })
     } catch (clearError) {
       setError(
         getErrorMessage(
@@ -523,6 +664,18 @@ function LocalModelSettingsSection({
     }
   }
 
+  const deleteModel = (model: LocalModelConfig) => {
+    setError(null)
+    try {
+      deleteLocalModelConfig(model.id)
+      if (editingId === model.id) resetForm()
+    } catch (deleteError) {
+      setError(
+        getErrorMessage(deleteError, t('workbench.local_model_delete_failed', '删除模型失败'))
+      )
+    }
+  }
+
   return (
     <section data-testid="model-interface-settings">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -540,7 +693,7 @@ function LocalModelSettingsSection({
         <button
           type="button"
           data-testid="local-model-add-button"
-          onClick={startCreating}
+          onClick={() => runDiscardableAction({ kind: 'create' })}
           className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
         >
           <Plus className="h-3.5 w-3.5" />
@@ -674,7 +827,7 @@ function LocalModelSettingsSection({
                 <button
                   type="button"
                   data-testid="local-model-cancel-edit-button"
-                  onClick={resetForm}
+                  onClick={() => runDiscardableAction({ kind: 'reset' })}
                   className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -761,7 +914,7 @@ function LocalModelSettingsSection({
                 <button
                   type="button"
                   data-testid={`local-model-edit-${model.id}`}
-                  onClick={() => startEditing(model)}
+                  onClick={() => runDiscardableAction({ kind: 'edit', model })}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-muted hover:text-text-primary"
                   aria-label={t('workbench.local_model_edit_action', '编辑')}
                   title={t('workbench.local_model_edit_action', '编辑')}
@@ -771,20 +924,11 @@ function LocalModelSettingsSection({
                 <button
                   type="button"
                   data-testid={`local-model-delete-${model.id}`}
-                  onClick={() => {
-                    setError(null)
-                    try {
-                      deleteLocalModelConfig(model.id)
-                      if (editingId === model.id) resetForm()
-                    } catch (deleteError) {
-                      setError(
-                        getErrorMessage(
-                          deleteError,
-                          t('workbench.local_model_delete_failed', '删除模型失败')
-                        )
-                      )
-                    }
-                  }}
+                  onClick={() =>
+                    editingId === model.id && formDirty
+                      ? runDiscardableAction({ kind: 'delete', model })
+                      : deleteModel(model)
+                  }
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-red-500/10 hover:text-red-500"
                   aria-label={t('workbench.local_model_delete_action', '删除')}
                   title={t('workbench.local_model_delete_action', '删除')}
@@ -801,6 +945,12 @@ function LocalModelSettingsSection({
           )}
         </div>
       </div>
+      {pendingDiscardAction && (
+        <LocalModelDiscardChangesDialog
+          onCancel={cancelDiscardChanges}
+          onConfirm={confirmDiscardChanges}
+        />
+      )}
     </section>
   )
 }

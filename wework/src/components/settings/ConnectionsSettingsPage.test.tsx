@@ -179,6 +179,7 @@ describe('ConnectionsSettingsPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -453,6 +454,35 @@ describe('ConnectionsSettingsPage', () => {
         value: originalFetch,
       })
     }
+  })
+
+  test('prompts before discarding an unsaved local model form', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await screen.findByTestId('model-settings-page')
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+
+    expect(screen.getByTestId('local-model-discard-changes-dialog')).toHaveTextContent(
+      '放弃未保存的模型配置？'
+    )
+    expect(screen.getByTestId('local-model-url-input')).toHaveValue('http://localhost:11434/v1')
+
+    await userEvent.click(screen.getByTestId('local-model-discard-changes-cancel-button'))
+
+    expect(screen.queryByTestId('local-model-discard-changes-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('local-model-url-input')).toHaveValue('http://localhost:11434/v1')
+
+    await userEvent.click(screen.getByTestId('local-model-add-button'))
+    await userEvent.click(screen.getByTestId('local-model-discard-changes-confirm-button'))
+
+    expect(screen.queryByTestId('local-model-discard-changes-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('local-model-url-input')).toHaveValue('')
   })
 
   test('keeps cloud auth sync controls unavailable when cloud is disconnected', async () => {
