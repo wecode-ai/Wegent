@@ -66,6 +66,7 @@ import type {
 } from '@/features/workbench/workbenchContextTypes'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import {
   getRuntimeChatSidebarTaskItems,
   getNextRuntimeSidebarTaskVisibleLimit,
@@ -2271,6 +2272,9 @@ export function DesktopSidebar({
           )}
           style={{ width: sidebarWidth }}
         >
+          {usesOverlayTitlebar && (
+            <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
+          )}
           {usesOverlayTitlebar && onToggleSidebar && (
             <div
               data-testid="desktop-sidebar-chrome-controls"
