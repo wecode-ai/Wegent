@@ -34,8 +34,8 @@ use super::{
     },
     codex_notifications::codex_notification,
     codex_rollout::{
-        append_rollout_turns_from_offset, rollout_turns, thread_with_rollout_running_status,
-        thread_with_rollout_turns, thread_with_turns,
+        append_rollout_turns_from_offset, rollout_context_usage, rollout_turns,
+        thread_with_rollout_running_status, thread_with_rollout_turns, thread_with_turns,
     },
     events::{emit_response_event, CodexNotificationEventMapper},
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
@@ -636,6 +636,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(cached_transcript_response(
                 link,
                 messages,
+                None,
                 limit,
                 before_cursor.as_deref(),
                 after_cursor.as_deref(),
@@ -658,15 +659,16 @@ impl RuntimeWorkRpcHandler {
                 message_count: 0,
                 running: false,
             });
-            return Ok(transcript_response(
-                &local_task_id,
+            return Ok(transcript_response(TranscriptResponseInput {
+                local_task_id,
                 workspace_path,
                 runtime,
-                Vec::new(),
+                messages: Vec::new(),
+                context_usage: None,
                 limit,
-                before_cursor.as_deref(),
-                after_cursor.as_deref(),
-            ));
+                before_cursor,
+                after_cursor,
+            }));
         };
 
         if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
@@ -697,15 +699,16 @@ impl RuntimeWorkRpcHandler {
                 message_count: messages.len(),
                 running,
             });
-            return Ok(transcript_response(
-                &local_task_id,
-                cached.workspace_path,
-                cached.runtime,
+            return Ok(transcript_response(TranscriptResponseInput {
+                local_task_id,
+                workspace_path: cached.workspace_path,
+                runtime: cached.runtime,
                 messages,
+                context_usage: cached.context_usage,
                 limit,
-                before_cursor.as_deref(),
-                after_cursor.as_deref(),
-            ));
+                before_cursor,
+                after_cursor,
+            }));
         }
 
         let mut source = "thread_read";
@@ -741,6 +744,7 @@ impl RuntimeWorkRpcHandler {
                     &workspace_path,
                 ) {
                     let messages = updated.messages.clone();
+                    let context_usage = updated.context_usage.clone();
                     let running = updated.running;
                     self.transcript_cache.insert(thread_id.clone(), updated);
                     log_runtime_transcript_finished(RuntimeTranscriptLog {
@@ -756,20 +760,22 @@ impl RuntimeWorkRpcHandler {
                         message_count: messages.len(),
                         running,
                     });
-                    return Ok(transcript_response(
-                        &local_task_id,
+                    return Ok(transcript_response(TranscriptResponseInput {
+                        local_task_id,
                         workspace_path,
-                        "codex".to_owned(),
+                        runtime: "codex".to_owned(),
                         messages,
+                        context_usage,
                         limit,
-                        before_cursor.as_deref(),
-                        after_cursor.as_deref(),
-                    ));
+                        before_cursor,
+                        after_cursor,
+                    }));
                 }
             }
         }
 
         let transcript_thread = codex_thread_state(&thread);
+        let context_usage = transcript_context_usage(&transcript_thread);
         let transcript_messages = transcript_messages(&transcript_thread, &self.device_id);
         let messages = local_link
             .as_ref()
@@ -791,6 +797,7 @@ impl RuntimeWorkRpcHandler {
                 running,
                 transcript_source_signature(&thread),
             )
+            .with_context_usage(context_usage.clone())
             .with_rollout_turns(rollout_turns(&transcript_thread)),
         );
         log_runtime_transcript_finished(RuntimeTranscriptLog {
@@ -807,15 +814,16 @@ impl RuntimeWorkRpcHandler {
             running,
         });
 
-        Ok(transcript_response(
-            &local_task_id,
+        Ok(transcript_response(TranscriptResponseInput {
+            local_task_id,
             workspace_path,
-            "codex".to_owned(),
+            runtime: "codex".to_owned(),
             messages,
+            context_usage,
             limit,
-            before_cursor.as_deref(),
-            after_cursor.as_deref(),
-        ))
+            before_cursor,
+            after_cursor,
+        }))
     }
 
     async fn archive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -2555,6 +2563,7 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(thread) = self.cached_codex_thread_for_transcript(thread_id) {
             let transcript_thread = codex_thread_state(&thread);
+            let context_usage = transcript_context_usage(&transcript_thread);
             let messages = transcript_messages(&transcript_thread, &self.device_id);
             let workspace_path = string_field(&thread, "cwd").unwrap_or_default();
             self.transcript_cache.insert(
@@ -2566,6 +2575,7 @@ impl RuntimeWorkRpcHandler {
                     messages.iter().any(runtime_message_running),
                     transcript_source_signature(&thread),
                 )
+                .with_context_usage(context_usage)
                 .with_rollout_turns(rollout_turns(&transcript_thread)),
             );
             return messages;
@@ -2581,6 +2591,7 @@ impl RuntimeWorkRpcHandler {
             Ok(response) => {
                 let thread = response.get("thread").unwrap_or(&response);
                 let transcript_thread = codex_thread_state(thread);
+                let context_usage = transcript_context_usage(&transcript_thread);
                 let messages = transcript_messages(&transcript_thread, &self.device_id);
                 let workspace_path = string_field(thread, "cwd").unwrap_or_default();
                 self.transcript_cache.insert(
@@ -2592,6 +2603,7 @@ impl RuntimeWorkRpcHandler {
                         messages.iter().any(runtime_message_running),
                         transcript_source_signature(thread),
                     )
+                    .with_context_usage(context_usage)
                     .with_rollout_turns(rollout_turns(&transcript_thread)),
                 );
                 messages
@@ -2630,6 +2642,8 @@ impl RuntimeWorkRpcHandler {
         }
         let turns = cached.rollout_turns?;
         let append = append_rollout_turns_from_offset(thread, turns, previous_signature.len())?;
+        let updated_thread = thread_with_turns(thread, append.turns.clone());
+        let context_usage = transcript_context_usage(&updated_thread).or(cached.context_usage);
         let messages = local_link
             .map(|link| {
                 merge_cached_messages(
@@ -2661,6 +2675,7 @@ impl RuntimeWorkRpcHandler {
                 running,
                 Some(current_signature),
             )
+            .with_context_usage(context_usage)
             .with_rollout_turns(Some(append.turns)),
         )
     }
@@ -3341,38 +3356,59 @@ fn byte_index_for_char(text: &str, char_index: usize) -> usize {
 fn cached_transcript_response(
     link: &RuntimeTaskLink,
     messages: Vec<Value>,
+    context_usage: Option<Value>,
     limit: Option<usize>,
     before_cursor: Option<&str>,
     after_cursor: Option<&str>,
 ) -> Value {
-    transcript_response(
-        &link.local_task_id,
-        link.workspace_path.clone(),
-        link.runtime.clone(),
+    transcript_response(TranscriptResponseInput {
+        local_task_id: link.local_task_id.clone(),
+        workspace_path: link.workspace_path.clone(),
+        runtime: link.runtime.clone(),
         messages,
+        context_usage,
         limit,
-        before_cursor,
-        after_cursor,
-    )
+        before_cursor: before_cursor.map(ToOwned::to_owned),
+        after_cursor: after_cursor.map(ToOwned::to_owned),
+    })
 }
 
-fn transcript_response(
-    local_task_id: &str,
+struct TranscriptResponseInput {
+    local_task_id: String,
     workspace_path: String,
     runtime: String,
     messages: Vec<Value>,
+    context_usage: Option<Value>,
     limit: Option<usize>,
-    before_cursor: Option<&str>,
-    after_cursor: Option<&str>,
-) -> Value {
+    before_cursor: Option<String>,
+    after_cursor: Option<String>,
+}
+
+fn transcript_response(input: TranscriptResponseInput) -> Value {
+    let TranscriptResponseInput {
+        local_task_id,
+        workspace_path,
+        runtime,
+        messages,
+        context_usage,
+        limit,
+        before_cursor,
+        after_cursor,
+    } = input;
     let turn_navigation = transcript_turn_navigation(&messages);
-    let page = transcript_page(messages, limit, before_cursor, after_cursor);
+    let page = transcript_page(
+        messages,
+        limit,
+        before_cursor.as_deref(),
+        after_cursor.as_deref(),
+    );
     json!({
         "success": true,
         "taskId": local_task_id,
         "workspacePath": workspace_path,
         "runtime": runtime,
         "messages": page.messages,
+        "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
         "rangeStart": page.range_start,
         "rangeEnd": page.range_end,
@@ -3387,6 +3423,10 @@ fn transcript_response(
             .map(Value::String)
             .unwrap_or(Value::Null),
     })
+}
+
+fn transcript_context_usage(thread: &Value) -> Option<Value> {
+    rollout_context_usage(thread)
 }
 
 fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {

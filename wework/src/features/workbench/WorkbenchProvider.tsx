@@ -4,6 +4,7 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { getActiveWorkbenchDeviceId } from '@/lib/workbench-device'
 import type {
   LocalDeviceSkill,
@@ -367,16 +368,7 @@ export function WorkbenchProvider({
         ),
         attachmentCount: attachmentSelection.attachments.length,
         contextUsagePercent: currentContextUsage
-          ? Math.round(
-              Math.min(
-                100,
-                Math.max(
-                  0,
-                  (currentContextUsage.total.totalTokens / currentContextUsage.modelContextWindow) *
-                    100
-                )
-              )
-            )
+          ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
           : undefined,
       },
     })
@@ -662,7 +654,19 @@ export function WorkbenchProvider({
   const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
   const stableSearchRuntimeWork = useStableEvent(runtimeTasks.searchRuntimeWork)
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
-    runtimeTasks.loadRuntimeTranscriptForPane
+    async (
+      address: RuntimeTaskAddress,
+      options?: Parameters<typeof runtimeTasks.loadRuntimeTranscriptForPane>[1]
+    ) => {
+      const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, options)
+      if (transcript.contextUsage) {
+        setContextUsageByRuntimeTask(current => ({
+          ...current,
+          [getRuntimeTaskRouteKey(address)]: transcript.contextUsage!,
+        }))
+      }
+      return transcript
+    }
   )
   const stableSubscribeRuntimeTaskStream = useStableEvent(
     (
