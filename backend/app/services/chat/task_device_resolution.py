@@ -270,10 +270,14 @@ def _extract_project_device_id(
         return None
 
     execution = project.config.get("execution")
-    if isinstance(execution, dict) and execution.get("targetType") == "local":
-        device_id = _clean_string(execution.get("deviceId"))
-        if device_id:
-            return device_id
+    if isinstance(execution, dict):
+        target_type = execution.get("targetType")
+        if target_type in {
+            DeviceType.LOCAL.value,
+            DeviceType.CLOUD.value,
+            DeviceType.REMOTE.value,
+        }:
+            return _clean_string(execution.get("deviceId"))
 
     return _clean_string(project.config.get("device_id"))
 

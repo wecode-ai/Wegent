@@ -39,8 +39,15 @@ import type { SubscriptionExecutionTargetType } from '@/types/subscription'
 import type { CompatibleProvider } from '@/utils/modelCompatibility'
 import { getSubscriptionTeamDisplayName } from './team-selection'
 
-const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
-  [...devices].sort((left, right) => {
+type SubscriptionDeviceType = Extract<DeviceInfo['device_type'], SubscriptionExecutionTargetType>
+type SubscriptionDeviceInfo = DeviceInfo & { device_type: SubscriptionDeviceType }
+
+function isSubscriptionDevice(device: DeviceInfo): device is SubscriptionDeviceInfo {
+  return device.device_type === 'local' || device.device_type === 'cloud'
+}
+
+const sortDevicesForSelection = (devices: DeviceInfo[]): SubscriptionDeviceInfo[] =>
+  devices.filter(isSubscriptionDevice).sort((left, right) => {
     if (left.device_type !== right.device_type) {
       return left.device_type === 'local' ? -1 : 1
     }
@@ -49,11 +56,6 @@ const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
     }
     return left.name.localeCompare(right.name)
   })
-
-const getPreferredDevice = (devices: DeviceInfo[]): DeviceInfo | null => {
-  const sortedDevices = sortDevicesForSelection(devices)
-  return sortedDevices[0] || null
-}
 
 export function SendAreaSection({
   executionTarget,
@@ -157,7 +159,10 @@ export function SendAreaSection({
     [setTeamId]
   )
 
-  const selectableDevices = sortDevicesForSelection(availableDevices)
+  const selectableDevices = useMemo(
+    () => sortDevicesForSelection(availableDevices),
+    [availableDevices]
+  )
   const hasSelectableDevices = selectableDevices.length > 0
 
   const handleExecutionTargetTypeChange = useCallback(
@@ -167,7 +172,7 @@ export function SendAreaSection({
         return
       }
 
-      const preferredDevice = getPreferredDevice(availableDevices)
+      const preferredDevice = selectableDevices[0] || null
       if (!preferredDevice) {
         setExecutionTarget({ type: 'local' })
         return
@@ -178,12 +183,12 @@ export function SendAreaSection({
         device_id: preferredDevice.device_id,
       })
     },
-    [availableDevices, setExecutionTarget]
+    [selectableDevices, setExecutionTarget]
   )
 
   const handleExecutionTargetDeviceChange = useCallback(
     (deviceId: string) => {
-      const selectedDevice = availableDevices.find(device => device.device_id === deviceId)
+      const selectedDevice = selectableDevices.find(device => device.device_id === deviceId)
       if (!selectedDevice) return
 
       setExecutionTarget({
@@ -191,7 +196,7 @@ export function SendAreaSection({
         device_id: selectedDevice.device_id,
       })
     },
-    [availableDevices, setExecutionTarget]
+    [selectableDevices, setExecutionTarget]
   )
 
   // Filter models based on search and compatibility
