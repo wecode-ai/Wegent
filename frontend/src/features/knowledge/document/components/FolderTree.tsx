@@ -599,8 +599,17 @@ export function FolderTree({
     () => findFolderPathIds(folders, activeFolderId).map(id => `folder:${id}`),
     [folders, activeFolderId]
   )
+  const resultDocumentFolderPaths = useMemo(() => {
+    const paths = new Set<string>()
+    for (const document of documents) {
+      for (const id of findFolderPathIds(folders, document.folder_id)) {
+        paths.add(`folder:${id}`)
+      }
+    }
+    return Array.from(paths)
+  }, [folders, documents])
 
-  // Default: expand root-level folders only; active folder paths are expanded separately.
+  // Default: expand root-level folders only; active/result paths are expanded separately.
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -623,6 +632,17 @@ export function FolderTree({
       return next
     })
   }, [activeFolderPaths])
+
+  useEffect(() => {
+    if (resultDocumentFolderPaths.length === 0) return
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      for (const path of resultDocumentFolderPaths) {
+        next.add(path)
+      }
+      return next
+    })
+  }, [resultDocumentFolderPaths])
 
   const handleToggleFolder = (path: string) => {
     setExpandedFolders(prev => {

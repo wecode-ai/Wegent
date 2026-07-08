@@ -26,33 +26,50 @@ jest.mock('@/apis/knowledge', () => ({
 
 const mockListDocuments = listDocuments as jest.MockedFunction<typeof listDocuments>
 
-function createListResponse(id: number, name: string) {
+function createDocument(id: number, name: string, overrides = {}) {
   return {
-    items: [
-      {
-        id,
-        kind_id: 1,
-        attachment_id: null,
-        name,
-        file_extension: 'txt',
-        file_size: 128,
-        status: 'enabled' as const,
-        user_id: 1,
-        is_active: true,
-        index_status: 'success' as const,
-        index_generation: 1,
-        source_type: 'file' as const,
-        source_config: {},
-        folder_id: 0,
-        created_at: '2026-01-01T00:00:00Z',
-        updated_at: '2026-01-01T00:00:00Z',
-      },
-    ],
-    total: 1,
-    returned_count: 1,
-    limit: 50,
+    id,
+    kind_id: 1,
+    attachment_id: null,
+    name,
+    file_extension: 'txt',
+    file_size: 128,
+    status: 'enabled' as const,
+    user_id: 1,
+    is_active: true,
+    index_status: 'success' as const,
+    index_generation: 1,
+    source_type: 'file' as const,
+    source_config: {},
+    folder_id: 0,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+function createListResponse(id: number, name: string) {
+  return createListResponseFromItems([createDocument(id, name)])
+}
+
+function createListResponseFromItems(
+  items: Array<ReturnType<typeof createDocument>>,
+  overrides: Partial<{
+    total: number
+    returned_count: number
+    limit: number
+    offset: number
+    has_more: boolean
+  }> = {}
+) {
+  return {
+    items,
+    total: items.length,
+    returned_count: items.length,
+    limit: 500,
     offset: 0,
     has_more: false,
+    ...overrides,
   }
 }
 
@@ -77,7 +94,17 @@ describe('useDocuments query parameters', () => {
     })
   })
 
-  it('passes folder, search, sort, and pagination parameters to listDocuments', async () => {
+  it('passes folder, search, sort, and pagination parameters in server fallback mode', async () => {
+    mockListDocuments
+      .mockResolvedValueOnce(
+        createListResponseFromItems([], {
+          total: 2001,
+          returned_count: 0,
+          has_more: true,
+        })
+      )
+      .mockResolvedValueOnce(createListResponse(1, 'result.txt'))
+
     renderHook(() =>
       useDocuments({
         knowledgeBaseId: 1,
@@ -92,19 +119,27 @@ describe('useDocuments query parameters', () => {
 
     await waitFor(() => {
       expect(mockListDocuments).toHaveBeenCalledWith(1, {
+        limit: 500,
+        offset: 0,
+      })
+      expect(mockListDocuments).toHaveBeenCalledWith(1, {
         folder_id: 12,
         include_subfolders: true,
         keyword: 'yearly report',
         sort_by: 'name',
         sort_order: 'asc',
-        limit: 50,
+        limit: 100,
         offset: 0,
       })
     })
   })
 
-  it('debounces keyword changes before refetching', async () => {
-    const { rerender } = renderHook(
+  it('debounces keyword changes before applying local snapshot filtering', async () => {
+    mockListDocuments.mockResolvedValue(
+      createListResponseFromItems([createDocument(1, 'alpha.txt'), createDocument(2, 'abc.txt')])
+    )
+
+    const { result, rerender } = renderHook(
       ({ keyword }) =>
         useDocuments({
           knowledgeBaseId: 1,
@@ -125,21 +160,24 @@ describe('useDocuments query parameters', () => {
     expect(mockListDocuments).not.toHaveBeenCalled()
 
     await waitFor(() => {
-      expect(mockListDocuments).toHaveBeenCalledWith(1, {
-        folder_id: undefined,
-        include_subfolders: false,
-        keyword: 'abc',
-        sort_by: 'createdAt',
-        sort_order: 'desc',
-        limit: 50,
-        offset: 0,
-      })
+      expect(result.current.documents.map(doc => doc.name)).toEqual(['abc.txt'])
     })
+    expect(mockListDocuments).not.toHaveBeenCalled()
   })
 
   it('ignores stale responses after query changes', async () => {
     const requestsByKeyword = new Map<string, Array<ReturnType<typeof deferredResponse>>>()
     mockListDocuments.mockImplementation((_knowledgeBaseId, params) => {
+      if (!params?.keyword) {
+        return Promise.resolve(
+          createListResponseFromItems([], {
+            total: 2001,
+            returned_count: 0,
+            has_more: true,
+          })
+        )
+      }
+
       const keyword = params?.keyword ?? ''
       const request = deferredResponse(
         keyword === 'new' ? 2 : 1,
@@ -182,5 +220,24 @@ describe('useDocuments query parameters', () => {
     })
 
     expect(result.current.documents.map(doc => doc.name)).toEqual(['new.txt'])
+  })
+
+  it('uses the same fixed id-desc tie-break as the server in local mode', async () => {
+    mockListDocuments.mockResolvedValue(
+      createListResponseFromItems([createDocument(1, 'same.txt'), createDocument(2, 'same.txt')])
+    )
+
+    const { result } = renderHook(() =>
+      useDocuments({
+        knowledgeBaseId: 1,
+        paginationEnabled: true,
+        sortBy: 'name',
+        sortOrder: 'asc',
+      })
+    )
+
+    await waitFor(() => {
+      expect(result.current.documents.map(doc => doc.id)).toEqual([2, 1])
+    })
   })
 })

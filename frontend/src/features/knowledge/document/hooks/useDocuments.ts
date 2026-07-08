@@ -82,11 +82,11 @@ function compareDocuments(
     result = Number(leftValue) - Number(rightValue)
   }
 
-  if (result === 0) {
-    result = left.id - right.id
+  if (result !== 0) {
+    return sortOrder === 'asc' ? result : -result
   }
 
-  return sortOrder === 'asc' ? result : -result
+  return right.id - left.id
 }
 
 function applyLocalQuery(

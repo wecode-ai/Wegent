@@ -134,6 +134,41 @@ describe('FolderTree query/result separation', () => {
     expect(screen.getByText('child-doc.txt')).toBeInTheDocument()
   })
 
+  it('expands current result document paths even when nested folders default collapsed', () => {
+    const folder = createFolder({
+      total_document_count: 1,
+      children: [
+        createFolder({
+          id: 2,
+          parent_id: 1,
+          name: 'Child',
+          document_count: 0,
+          direct_document_count: 0,
+          total_document_count: 1,
+          children: [
+            createFolder({
+              id: 3,
+              parent_id: 2,
+              name: 'Grandchild',
+              document_count: 1,
+              direct_document_count: 1,
+              total_document_count: 1,
+            }),
+          ],
+        }),
+      ],
+    })
+
+    render(
+      <FolderTree
+        folders={[folder]}
+        documents={[createDocument({ id: 11, name: 'nested-result.txt', folder_id: 3 })]}
+      />
+    )
+
+    expect(screen.getByText('nested-result.txt')).toBeInTheDocument()
+  })
+
   it('keeps slash-containing document names as plain file names', () => {
     render(
       <FolderTree folders={[]} documents={[createDocument({ id: 12, name: 'legacy/path.txt' })]} />
