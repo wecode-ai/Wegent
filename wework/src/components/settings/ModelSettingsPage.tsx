@@ -24,11 +24,15 @@ import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloud
 import type { CodexOfficialModelList } from '@/features/model-settings/codexOfficialModels'
 import { testLocalModelConnection } from '@/features/model-settings/localModelConnectionTest'
 import {
+  buildLocalModelRequestUrl,
   deleteLocalModelConfig,
+  DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   listLocalModelConfigs,
   LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
   normalizeLocalModelBaseUrl,
+  normalizeLocalModelRequestPath,
   saveLocalModelConfig,
+  splitLocalModelRequestUrl,
   type LocalModelConfig,
   type LocalModelWebSearchMode,
 } from '@/features/model-settings/localModelSettings'
@@ -176,7 +180,9 @@ interface LocalModelFormState {
   group: string
   modelId: string
   baseUrl: string
+  requestPath: string
   apiKey: string
+  contextWindow: string
   webSearchMode: LocalModelWebSearchMode
   imageGenerationEnabled: boolean
   enabled: boolean
@@ -203,11 +209,20 @@ const EMPTY_LOCAL_MODEL_FORM: LocalModelFormState = {
   group: '',
   modelId: '',
   baseUrl: '',
+  requestPath: DEFAULT_LOCAL_MODEL_REQUEST_PATH,
   apiKey: '',
+  contextWindow: '',
   webSearchMode: 'disabled',
   imageGenerationEnabled: false,
   enabled: true,
 }
+
+const LOCAL_MODEL_FIELD_CLASS =
+  'h-9 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary disabled:cursor-not-allowed disabled:bg-surface disabled:text-text-muted'
+const LOCAL_MODEL_COMPOUND_INPUT_CLASS =
+  'h-9 rounded-md border border-border bg-background focus-within:border-primary'
+const LOCAL_MODEL_SEGMENT_INPUT_CLASS =
+  'min-w-0 bg-transparent px-3 text-sm text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:bg-surface disabled:text-text-muted'
 
 const LOCAL_MODEL_WEB_SEARCH_OPTIONS: Array<{
   value: LocalModelWebSearchMode
@@ -262,10 +277,10 @@ function localModelImageGenerationLabel(
   )
 }
 
-function localModelResponsesUrl(baseUrl: string): string | null {
+function localModelResponsesUrl(baseUrl: string, requestPath: string): string | null {
   if (!baseUrl.trim()) return null
   try {
-    return `${normalizeLocalModelBaseUrl(baseUrl)}/responses`
+    return buildLocalModelRequestUrl(baseUrl, requestPath)
   } catch {
     return null
   }
@@ -281,7 +296,11 @@ function isLocalModelFormDirty(
       form.group.trim() !== '' ||
       form.modelId.trim() !== '' ||
       form.baseUrl.trim() !== '' ||
+      form.requestPath !== DEFAULT_LOCAL_MODEL_REQUEST_PATH ||
       form.apiKey.trim() !== '' ||
+      form.contextWindow.trim() !== '' ||
+      form.webSearchMode !== 'disabled' ||
+      form.imageGenerationEnabled ||
       !form.enabled
     )
   }
@@ -291,7 +310,11 @@ function isLocalModelFormDirty(
     form.group !== (editingModel.group ?? '') ||
     form.modelId !== editingModel.modelId ||
     form.baseUrl !== editingModel.baseUrl ||
+    form.requestPath !== (editingModel.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH) ||
     form.apiKey.trim() !== '' ||
+    form.contextWindow !== (editingModel.contextWindow?.toString() ?? '') ||
+    form.webSearchMode !== (editingModel.webSearchMode ?? 'disabled') ||
+    form.imageGenerationEnabled !== (editingModel.imageGenerationEnabled === true) ||
     form.enabled !== editingModel.enabled
   )
 }
@@ -571,7 +594,10 @@ function LocalModelSettingsSection({
     () => models.find(model => model.id === editingId) ?? null,
     [editingId, models]
   )
-  const testRequestUrl = useMemo(() => localModelResponsesUrl(form.baseUrl), [form.baseUrl])
+  const testRequestUrl = useMemo(
+    () => localModelResponsesUrl(form.baseUrl, form.requestPath),
+    [form.baseUrl, form.requestPath]
+  )
   const formDirty = useMemo(
     () => formVisible && isLocalModelFormDirty(form, editingModel),
     [editingModel, form, formVisible]
@@ -601,7 +627,9 @@ function LocalModelSettingsSection({
       group: model.group ?? '',
       modelId: model.modelId,
       baseUrl: model.baseUrl,
+      requestPath: model.requestPath ?? DEFAULT_LOCAL_MODEL_REQUEST_PATH,
       apiKey: '',
+      contextWindow: model.contextWindow?.toString() ?? '',
       webSearchMode: model.webSearchMode ?? 'disabled',
       imageGenerationEnabled: model.imageGenerationEnabled === true,
       enabled: model.enabled,
@@ -651,6 +679,31 @@ function LocalModelSettingsSection({
     setTestResult(null)
   }
 
+  const normalizeBaseUrlInput = () => {
+    if (!form.baseUrl.trim()) return
+    try {
+      const splitUrl = splitLocalModelRequestUrl(form.baseUrl, form.requestPath)
+      updateForm({
+        baseUrl: normalizeLocalModelBaseUrl(splitUrl.baseUrl),
+        requestPath: normalizeLocalModelRequestPath(splitUrl.requestPath),
+      })
+    } catch {
+      // Keep invalid input visible; submit/test will show the validation message.
+    }
+  }
+
+  const handleBaseUrlPaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = event.clipboardData.getData('text')
+    const splitUrl = splitLocalModelRequestUrl(text, form.requestPath)
+    if (splitUrl.baseUrl === text) return
+    event.preventDefault()
+    updateForm(splitUrl)
+  }
+
+  const normalizeRequestPathInput = () => {
+    updateForm({ requestPath: normalizeLocalModelRequestPath(form.requestPath) })
+  }
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setError(null)
@@ -661,7 +714,9 @@ function LocalModelSettingsSection({
         group: form.group,
         modelId: form.modelId,
         baseUrl: form.baseUrl,
+        requestPath: form.requestPath,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
+        contextWindow: form.contextWindow,
         webSearchMode: form.webSearchMode,
         imageGenerationEnabled: form.imageGenerationEnabled,
         enabled: form.enabled,
@@ -681,7 +736,9 @@ function LocalModelSettingsSection({
         group: editingModel.group,
         modelId: editingModel.modelId,
         baseUrl: editingModel.baseUrl,
+        requestPath: editingModel.requestPath,
         apiKey: null,
+        contextWindow: editingModel.contextWindow,
         webSearchMode: editingModel.webSearchMode,
         imageGenerationEnabled: editingModel.imageGenerationEnabled,
         enabled: editingModel.enabled,
@@ -704,6 +761,7 @@ function LocalModelSettingsSection({
     try {
       await testLocalModelConnection({
         baseUrl: form.baseUrl,
+        requestPath: form.requestPath,
         modelId: form.modelId,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
       })
@@ -774,16 +832,37 @@ function LocalModelSettingsSection({
             onSubmit={handleSubmit}
             className="grid gap-3 rounded-lg border border-border bg-background p-5"
           >
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+            <div className="grid items-start gap-3 sm:grid-cols-2">
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
                 {t('workbench.local_model_url_label', '模型 URL')}
-                <input
-                  data-testid="local-model-url-input"
-                  value={form.baseUrl}
-                  onChange={event => updateForm({ baseUrl: event.target.value })}
-                  placeholder="http://localhost:11434/v1"
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
-                />
+                <div
+                  className={`${LOCAL_MODEL_COMPOUND_INPUT_CLASS} grid grid-cols-[minmax(0,1fr)_7rem]`}
+                >
+                  <input
+                    data-testid="local-model-url-input"
+                    value={form.baseUrl}
+                    onChange={event => updateForm({ baseUrl: event.target.value })}
+                    onPaste={handleBaseUrlPaste}
+                    onBlur={normalizeBaseUrlInput}
+                    placeholder="https://api.example.com/v1"
+                    className={LOCAL_MODEL_SEGMENT_INPUT_CLASS}
+                  />
+                  <div className="grid min-w-0 grid-cols-[1px_minmax(0,1fr)]">
+                    <span className="my-1.5 w-px bg-border" />
+                    <input
+                      aria-label={t('workbench.local_model_request_path_label', '请求路径')}
+                      data-testid="local-model-request-path-input"
+                      value={form.requestPath}
+                      onChange={event => updateForm({ requestPath: event.target.value })}
+                      onBlur={normalizeRequestPathInput}
+                      placeholder={t(
+                        'workbench.local_model_request_path_placeholder',
+                        '/responses'
+                      )}
+                      className={LOCAL_MODEL_SEGMENT_INPUT_CLASS}
+                    />
+                  </div>
+                </div>
                 <span
                   data-testid="local-model-request-url"
                   className="break-all font-mono text-[11px] font-normal leading-5 text-text-muted"
@@ -795,18 +874,18 @@ function LocalModelSettingsSection({
                       })
                     : t(
                         'workbench.local_model_request_url_empty',
-                        '请求地址会在模型 URL 后追加 /responses'
+                        '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
                       )}
                 </span>
               </label>
-              <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
                 {t('workbench.local_model_id_label', '模型 ID')}
                 <input
                   data-testid="local-model-id-input"
                   value={form.modelId}
                   onChange={event => updateForm({ modelId: event.target.value })}
                   placeholder="gpt-oss:20b"
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  className={LOCAL_MODEL_FIELD_CLASS}
                 />
               </label>
             </div>
@@ -818,7 +897,7 @@ function LocalModelSettingsSection({
                   value={form.displayName}
                   onChange={event => updateForm({ displayName: event.target.value })}
                   placeholder="Ollama GPT"
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  className={LOCAL_MODEL_FIELD_CLASS}
                 />
               </label>
               <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
@@ -828,12 +907,12 @@ function LocalModelSettingsSection({
                   value={form.group}
                   onChange={event => updateForm({ group: event.target.value })}
                   placeholder={t('workbench.local_model_group_placeholder', '例如：本地推理')}
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  className={LOCAL_MODEL_FIELD_CLASS}
                 />
               </label>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="grid gap-1.5 text-xs font-medium text-text-secondary">
+            <div className="grid items-start gap-3 sm:grid-cols-2">
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
                 {t('workbench.local_model_api_key_label', 'API Key')}
                 <input
                   data-testid="local-model-api-key-input"
@@ -845,11 +924,31 @@ function LocalModelSettingsSection({
                       : t('workbench.local_model_api_key_placeholder', '可选')
                   }
                   type="password"
-                  className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary outline-none focus:border-primary"
+                  className={LOCAL_MODEL_FIELD_CLASS}
                 />
               </label>
+              <label className="grid content-start gap-1.5 text-xs font-medium text-text-secondary">
+                {t('workbench.local_model_context_window_label', 'Context window')}
+                <input
+                  data-testid="local-model-context-window-input"
+                  value={form.contextWindow}
+                  onChange={event => updateForm({ contextWindow: event.target.value })}
+                  placeholder={t('workbench.local_model_context_window_placeholder', 'Optional')}
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  className={LOCAL_MODEL_FIELD_CLASS}
+                />
+                <span className="text-[11px] font-normal leading-5 text-text-muted">
+                  {t(
+                    'workbench.local_model_context_window_hint',
+                    'Optional. Used to show remaining context and handle long conversations.'
+                  )}
+                </span>
+              </label>
             </div>
-            <div className="grid gap-3 rounded-lg border border-border bg-surface p-3">
+            <div className="grid gap-3 border-t border-border pt-3">
               <div>
                 <div className="text-xs font-semibold text-text-primary">
                   {t('workbench.local_model_codex_features_title')}
@@ -869,7 +968,7 @@ function LocalModelSettingsSection({
                         webSearchMode: event.target.value as LocalModelWebSearchMode,
                       })
                     }
-                    className="h-9 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary"
+                    className={LOCAL_MODEL_FIELD_CLASS}
                   >
                     {LOCAL_MODEL_WEB_SEARCH_OPTIONS.map(option => (
                       <option key={option.value} value={option.value}>
@@ -888,7 +987,7 @@ function LocalModelSettingsSection({
                         imageGenerationEnabled: event.target.value === 'enabled',
                       })
                     }
-                    className="h-9 rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-primary"
+                    className={LOCAL_MODEL_FIELD_CLASS}
                   >
                     {LOCAL_MODEL_IMAGE_GENERATION_OPTIONS.map(option => (
                       <option key={option.value} value={option.value}>
@@ -1017,6 +1116,14 @@ function LocalModelSettingsSection({
                   {model.group && (
                     <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
                       {model.group}
+                    </span>
+                  )}
+                  {model.contextWindow && (
+                    <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">
+                      {t('workbench.local_model_context_window_badge', {
+                        defaultValue: 'Context: {{tokens}} tokens',
+                        tokens: model.contextWindow.toLocaleString(),
+                      })}
                     </span>
                   )}
                   <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-muted">

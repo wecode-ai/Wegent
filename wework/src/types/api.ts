@@ -814,6 +814,7 @@ export interface RuntimeTaskCreateResponse {
   taskId: string
   workspacePath: string
   runtime: RuntimeName
+  runtimeHandle?: Record<string, unknown> | null
   error?: string | null
 }
 

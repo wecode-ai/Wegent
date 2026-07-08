@@ -265,7 +265,13 @@ export function useRuntimeTaskReminders({
         storedUnreadTaskKeys,
         currentRuntimeTaskVisible: windowFocused,
       }),
-    [currentRuntimeTask, runningTaskKeysStorageKey, runtimeWork, storedUnreadTaskKeys, windowFocused]
+    [
+      currentRuntimeTask,
+      runningTaskKeysStorageKey,
+      runtimeWork,
+      storedUnreadTaskKeys,
+      windowFocused,
+    ]
   )
 
   useEffect(() => {
