@@ -952,9 +952,7 @@ class TestKBRefIdBasedLookup:
                                     with patch(
                                         "app.services.knowledge.task_knowledge_base_service.KnowledgeService"
                                     ) as mock_ks:
-                                        mock_ks.get_active_document_count.return_value = (
-                                            5
-                                        )
+                                        mock_ks.get_document_count.return_value = 5
 
                                         service.bind_knowledge_base(
                                             db=mock_db,

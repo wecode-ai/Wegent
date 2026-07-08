@@ -1829,8 +1829,7 @@ function InternalDocumentNode({
             <button
               type="button"
               className={cn(
-                'flex h-6 w-6 items-center justify-center rounded border border-border text-text-muted hover:border-primary/60 hover:bg-primary/10 hover:text-primary',
-                folderSelected ? 'border-primary bg-primary/10 text-primary' : '',
+                'flex h-11 w-11 items-center justify-center rounded text-text-muted hover:text-primary',
                 inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
               )}
               disabled={inheritedSelected}
@@ -1843,7 +1842,14 @@ function InternalDocumentNode({
               data-testid={`knowledge-picker-folder-scope-${node.folderId}`}
               aria-label={node.name}
             >
-              {folderSelected ? <Check className="h-3.5 w-3.5" /> : null}
+              <span
+                className={cn(
+                  'flex h-6 w-6 items-center justify-center rounded border border-border hover:border-primary/60 hover:bg-primary/10',
+                  folderSelected ? 'border-primary bg-primary/10 text-primary' : ''
+                )}
+              >
+                {folderSelected ? <Check className="h-3.5 w-3.5" /> : null}
+              </span>
             </button>
           </span>
         </div>

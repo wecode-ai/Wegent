@@ -11,6 +11,7 @@ import pytest
 
 from app.models.kind import Kind
 from app.models.knowledge import KnowledgeDocument
+from app.models.task import TaskResource
 from app.schemas.knowledge import (
     DocumentSourceType,
     KnowledgeBaseCreate,
@@ -19,6 +20,7 @@ from app.schemas.knowledge import (
     KnowledgeFolderUpdate,
 )
 from app.services.context import context_service
+from app.services.knowledge import TaskKnowledgeBaseService
 from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
@@ -119,6 +121,88 @@ class TestKnowledgeServiceDefaultViewSemantics:
 
         assert updated is not None
         assert updated.json["spec"]["kbType"] == "notebook"
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDocumentCountSemantics:
+    def test_chat_grouped_and_bound_counts_include_inactive_documents(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="chat-count-kb"),
+        )
+        test_db.add_all(
+            [
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=0,
+                    attachment_id=0,
+                    name="indexed.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=True,
+                    source_type="file",
+                ),
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=0,
+                    attachment_id=0,
+                    name="pending.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=False,
+                    source_type="file",
+                ),
+            ]
+        )
+        task = TaskResource(
+            user_id=test_user.id,
+            kind="Task",
+            name="chat-count-task",
+            namespace="default",
+            json={
+                "kind": "Task",
+                "metadata": {"name": "chat-count-task", "namespace": "default"},
+                "spec": {
+                    "knowledgeBaseRefs": [
+                        {
+                            "id": knowledge_base_id,
+                            "name": "chat-count-kb",
+                            "boundBy": test_user.user_name,
+                            "boundAt": "2026-07-09T00:00:00Z",
+                        }
+                    ]
+                },
+            },
+            is_active=TaskResource.STATE_ACTIVE,
+        )
+        test_db.add(task)
+        test_db.commit()
+        test_db.refresh(task)
+
+        all_grouped = KnowledgeService.get_all_knowledge_bases_grouped(
+            test_db, test_user.id
+        )
+        grouped_kb = next(
+            item
+            for item in all_grouped.personal.created_by_me
+            if item.id == knowledge_base_id
+        )
+        assert grouped_kb.document_count == 2
+
+        with patch(
+            "app.services.knowledge.task_knowledge_base_service.task_member_service"
+        ) as mock_member_service:
+            mock_member_service.is_member.return_value = True
+            bound = TaskKnowledgeBaseService().get_bound_knowledge_bases(
+                test_db, task.id, test_user.id
+            )
+
+        assert bound[0].document_count == 2
 
 
 @pytest.mark.unit
