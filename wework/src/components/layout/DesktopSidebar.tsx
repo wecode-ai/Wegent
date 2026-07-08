@@ -154,8 +154,13 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onOpenSettings: (options?: { autoOpenAddCloudDeviceDialog?: boolean }) => void
+  onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
+}
+
+interface OpenSettingsOptions {
+  autoOpenAddCloudDeviceDialog?: boolean
+  settingsPage?: 'connections'
 }
 
 type ProjectCreateMenuPosition = {
@@ -582,6 +587,24 @@ function getDeviceNetworkLabel(device?: DeviceInfo): string | null {
   return getDisplayableNetworkHost(device?.client_ip)
 }
 
+function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
+  return Boolean(
+    device?.runtime_routes?.some(
+      route => route.kind === 'cloud-relay' || route.kind === 'remote-relay'
+    )
+  )
+}
+
+function getDeviceRouteLabel(deviceState: SidebarDeviceState): string {
+  return getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+}
+
+function getDeviceRouteTitle(deviceState: SidebarDeviceState): string {
+  const routes = deviceState.device?.runtime_routes
+  if (!routes?.length) return getDeviceRouteLabel(deviceState)
+  return routes.map(route => `${route.kind}: ${route.device_id}`).join('\n')
+}
+
 function getDisplayableNetworkHost(value?: string | null): string | null {
   if (!value) return null
   const host = extractNetworkHost(value.trim())
@@ -628,14 +651,20 @@ function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefin
 function shouldShowRuntimeProject(runtimeProjectWork: RuntimeProjectWork): boolean {
   const workspaces = runtimeProjectWork.deviceWorkspaces
   if (workspaces.length === 0) return true
-  return workspaces.some(workspace => workspace.workspaceSource !== 'remote')
+  return workspaces.some(
+    workspace => workspace.workspaceSource !== 'remote' || workspace.tasks.length > 0
+  )
 }
 
 function shouldShowProjectDeviceStatus(
   deviceState: SidebarDeviceState | null,
   devices: DeviceInfo[]
 ): deviceState is SidebarDeviceState {
-  if (!deviceState || devices.length <= 1) return false
+  if (!deviceState) return false
+  if (hasCloudRuntimeRoute(deviceState.device) && deviceState.device?.device_type !== 'local') {
+    return true
+  }
+  if (devices.length <= 1) return false
   return Boolean(
     deviceState.device && (isCloudDevice(deviceState.device) || isRemoteDevice(deviceState.device))
   )
@@ -1061,13 +1090,14 @@ function ProjectDeviceInlineStatus({
   testId: string
   className?: string
 }) {
-  const label = getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+  const label = getDeviceRouteLabel(deviceState)
+  const title = getDeviceRouteTitle(deviceState)
   const online = deviceState.status === 'online'
 
   return (
     <span
       data-testid={testId}
-      title={label}
+      title={title}
       aria-label={label}
       className={cn(
         'ml-auto flex min-w-0 shrink-0 items-center gap-2 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]',
@@ -1624,7 +1654,7 @@ function ProjectItem({
     <div data-testid="project-item" className="space-y-0.5">
       <div
         data-testid={`project-row-${project.id}`}
-        className="group/project relative flex h-8 min-w-0 items-center gap-1 rounded-md pl-2.5 pr-[58px] text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+        className="group/project relative flex h-8 min-w-0 items-center gap-1 rounded-md pl-2.5 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
       >
         <button
           type="button"
@@ -1634,7 +1664,10 @@ function ProjectItem({
             onSelectProject?.(project.id)
           }}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          className={cn(
+            'flex min-w-0 flex-1 items-center gap-2.5 text-left',
+            showProjectDeviceStatus ? 'pr-[132px]' : 'pr-[58px]'
+          )}
         >
           <span className="flex h-4 w-4 shrink-0 items-center justify-center">
             <ProjectFolderIcon
@@ -1668,14 +1701,14 @@ function ProjectItem({
               )}
             />
           </span>
-          {showProjectDeviceStatus && (
-            <ProjectDeviceInlineStatus
-              deviceState={projectDeviceState}
-              testId={`project-device-status-${project.id}`}
-              className="ml-auto justify-end text-right group-hover/project:invisible group-focus-within/project:invisible"
-            />
-          )}
         </button>
+        {showProjectDeviceStatus && (
+          <ProjectDeviceInlineStatus
+            deviceState={projectDeviceState}
+            testId={`project-device-status-${project.id}`}
+            className="pointer-events-none absolute right-2 top-1/2 max-w-[124px] -translate-y-1/2 justify-end text-right group-hover/project:invisible group-focus-within/project:invisible"
+          />
+        )}
         <div className="pointer-events-none absolute right-1 top-1/2 z-[70] flex w-[58px] shrink-0 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity group-hover/project:pointer-events-auto group-hover/project:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
           <ActionMenu
             ariaLabel={t('workbench.project_actions', '项目操作')}
@@ -2343,7 +2376,7 @@ export function DesktopSidebar({
               <CloudConnectionSidebarButton
                 devices={devices}
                 cloudWorkStatus={cloudWorkStatus}
-                onOpenSettings={() => onOpenSettings()}
+                onOpenSettings={() => onOpenSettings({ settingsPage: 'connections' })}
                 onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
                 onAddDevice={() => {
                   setStandaloneRemoteDialogIntent('add-device')

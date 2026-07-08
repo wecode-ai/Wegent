@@ -9,8 +9,14 @@ import { AssistantMarkdown } from './AssistantMarkdown'
 
 interface AssistantPlanCardProps {
   content: string
-  onOpenPlan?: (content: string) => void
+  onOpenPlan?: () => void
   isStreaming?: boolean
+}
+
+export interface AssistantPlanOpenRequest {
+  blockId: string
+  subtaskId: string
+  content: string
 }
 
 export function AssistantPlanCard({
@@ -33,7 +39,7 @@ export function AssistantPlanCard({
   }
 
   const openPlan = () => {
-    onOpenPlan?.(content)
+    onOpenPlan?.()
   }
 
   const handleCardClick = (event: ReactMouseEvent<HTMLElement>) => {

@@ -121,6 +121,7 @@ where
     fn registration_payload(&self) -> Value {
         json!({
             "device_id": self.config.device_id,
+            "runtime_instance_id": self.config.runtime_instance_id,
             "name": self.config.device_name,
             "device_type": self.config.device_type,
             "bind_shell": self.config.bind_shell,

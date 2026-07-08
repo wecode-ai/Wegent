@@ -5,7 +5,7 @@ import { Streamdown } from 'streamdown'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { TurnFileChangeItem, TurnFileChangesSummary } from '@/types/api'
 import type { ProcessingBlock, ToolBlock } from '@/types/workbench'
-import { AssistantPlanCard } from '../AssistantPlanCard'
+import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
 import { MarkdownCodeBlock } from '../MarkdownCodeBlock'
 import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import { isWebSearchToolName } from './toolBlockActivity'
@@ -30,7 +30,7 @@ interface ToolBlockItemProps {
   forceExpanded?: boolean
   stateKey?: string
   onOpenWorkspaceFile?: (path: string) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
 }
 
 export function ToolBlockItem({
@@ -121,17 +121,21 @@ function PlanBlockItem({
   onOpenAssistantPlan,
 }: {
   block: Extract<ProcessingBlock, { type: 'plan' }>
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
 }) {
   if (!block.content.trim()) return null
 
   const isStreaming = block.status !== 'done' && block.status !== 'error'
+  const openPlan = () => {
+    onOpenAssistantPlan?.({
+      blockId: block.id,
+      subtaskId: String(block.subtaskId),
+      content: block.content,
+    })
+  }
+
   return (
-    <AssistantPlanCard
-      content={block.content}
-      isStreaming={isStreaming}
-      onOpenPlan={onOpenAssistantPlan}
-    />
+    <AssistantPlanCard content={block.content} isStreaming={isStreaming} onOpenPlan={openPlan} />
   )
 }
 

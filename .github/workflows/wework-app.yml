@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.version.outputs.release_tag }}
+      release_sha: ${{ steps.version-files.outputs.release_sha }}
       version: ${{ steps.version.outputs.value }}
       publish_release: ${{ steps.version.outputs.publish_release }}
 
@@ -95,6 +96,96 @@ jobs:
             echo "publish_release=$publish_release"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Commit Wework version files
+        id: version-files
+        shell: bash
+        env:
+          PUBLISH_RELEASE: ${{ steps.version.outputs.publish_release }}
+          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+
+          sync_version_files() {
+            python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["RELEASE_VERSION"]
+
+          package_path = Path("wework/package.json")
+          package_data = json.loads(package_path.read_text(encoding="utf-8"))
+          package_data["version"] = version
+          package_path.write_text(
+              json.dumps(package_data, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          tauri_config_path = Path("wework/src-tauri/tauri.conf.json")
+          tauri_config = json.loads(tauri_config_path.read_text(encoding="utf-8"))
+          tauri_config["version"] = version
+          tauri_config_path.write_text(
+              json.dumps(tauri_config, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          cargo_toml_path = Path("wework/src-tauri/Cargo.toml")
+          cargo_toml = cargo_toml_path.read_text(encoding="utf-8")
+          cargo_toml = re.sub(
+              r'(?m)^version = "[^"]+"',
+              f'version = "{version}"',
+              cargo_toml,
+              count=1,
+          )
+          cargo_toml_path.write_text(cargo_toml, encoding="utf-8")
+
+          cargo_lock_path = Path("wework/src-tauri/Cargo.lock")
+          cargo_lock = cargo_lock_path.read_text(encoding="utf-8")
+          cargo_lock = re.sub(
+              r'(?ms)(\[\[package\]\]\nname = "app"\nversion = ")[^"]+(")',
+              rf'\g<1>{version}\2',
+              cargo_lock,
+              count=1,
+          )
+          cargo_lock_path.write_text(cargo_lock, encoding="utf-8")
+          PY
+          }
+
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            sync_version_files
+            if ! git diff --quiet -- wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock; then
+              echo "Error: tag release version files do not match ${RELEASE_VERSION}. Update the files before creating the tag." >&2
+              git diff -- wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock >&2
+              exit 1
+            fi
+            echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${PUBLISH_RELEASE}" != "true" ]]; then
+            echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${GITHUB_REF_TYPE:-}" != "branch" ]]; then
+            echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          sync_version_files
+          if git diff --quiet -- wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock; then
+            echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock
+          git commit -m "chore(wework): bump app version to ${RELEASE_VERSION}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Create or update GitHub Release
         if: steps.version.outputs.publish_release == 'true'
         shell: bash
@@ -102,6 +193,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
@@ -111,9 +203,9 @@ jobs:
           previous_tag="$(git tag -l 'wework-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | awk -v current="$RELEASE_TAG" '$0 != current { print; exit }')"
 
           if [ -n "$previous_tag" ]; then
-            log_range="${previous_tag}..${GITHUB_SHA}"
+            log_range="${previous_tag}..${RELEASE_SHA}"
           else
-            log_range="$GITHUB_SHA"
+            log_range="$RELEASE_SHA"
           fi
 
           git log --no-merges --pretty=format:'- %s (%h)' "$log_range" -- wework/ executor/ > "$generated_notes"
@@ -146,7 +238,7 @@ jobs:
               --notes-file "$release_notes"
           else
             gh release create "$RELEASE_TAG" \
-              --target "$GITHUB_SHA" \
+              --target "$RELEASE_SHA" \
               --title "$release_title" \
               --notes-file "$release_notes" \
               --draft
@@ -170,6 +262,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_sha }}
 
       - name: Install Rosetta 2
         if: matrix.arch == 'x64'
@@ -224,6 +318,57 @@ jobs:
         env:
           WEWORK_CODEX_TARGET: ${{ matrix.rust_target }}
         run: pnpm run prepare:codex
+
+      - name: Sync Wework version files
+        working-directory: wework
+        env:
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["RELEASE_VERSION"]
+
+          package_path = Path("package.json")
+          package_data = json.loads(package_path.read_text(encoding="utf-8"))
+          package_data["version"] = version
+          package_path.write_text(
+              json.dumps(package_data, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          tauri_config_path = Path("src-tauri/tauri.conf.json")
+          tauri_config = json.loads(tauri_config_path.read_text(encoding="utf-8"))
+          tauri_config["version"] = version
+          tauri_config_path.write_text(
+              json.dumps(tauri_config, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          cargo_toml_path = Path("src-tauri/Cargo.toml")
+          cargo_toml = cargo_toml_path.read_text(encoding="utf-8")
+          cargo_toml = re.sub(
+              r'(?m)^version = "[^"]+"',
+              f'version = "{version}"',
+              cargo_toml,
+              count=1,
+          )
+          cargo_toml_path.write_text(cargo_toml, encoding="utf-8")
+
+          cargo_lock_path = Path("src-tauri/Cargo.lock")
+          cargo_lock = cargo_lock_path.read_text(encoding="utf-8")
+          cargo_lock = re.sub(
+              r'(?ms)(\[\[package\]\]\nname = "app"\nversion = ")[^"]+(")',
+              rf'\g<1>{version}\2',
+              cargo_lock,
+              count=1,
+          )
+          cargo_lock_path.write_text(cargo_lock, encoding="utf-8")
+          PY
 
       - name: Build Wework app bundle
         working-directory: wework

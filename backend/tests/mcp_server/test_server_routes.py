@@ -335,6 +335,10 @@ def test_external_knowledge_mcp_auth_accepts_bearer_api_key(
             "streamable_http_app",
             return_value=fake_streamable_app,
         ),
+        patch(
+            "app.mcp_server.server._external_auth_handler",
+            _default_external_auth_handler,
+        ),
         patch("app.db.session.SessionLocal", return_value=NonClosingSession(test_db)),
     ):
         app = _build_external_knowledge_mcp_app()

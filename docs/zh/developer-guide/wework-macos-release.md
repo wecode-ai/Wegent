@@ -117,6 +117,10 @@ workflow 分别上传这些 Release assets：
 
 从 GitHub Release assets 下载时，下载链接本身就是 `.dmg` 文件，不会被 Actions artifact 额外套一层 `.zip`。手动触发 workflow 且未填写版本号时，release tag 会自动基于最新的 `wework-vX.Y.Z` tag 增加 patch 版本。
 
+正式发布时，workflow 会在构建前把 `wework/package.json`、`wework/src-tauri/tauri.conf.json`、`wework/src-tauri/Cargo.toml` 和 `wework/src-tauri/Cargo.lock` 同步到本次 release version，并直接提交回触发 workflow 的 `main` 分支。后续 macOS 构建和 GitHub Release 都会使用这个版本提交，确保关于页版本、Tauri 包版本和源码版本一致。
+
+手动触发但未勾选正式发布时只生成测试 artifacts，不会提交版本文件。通过 `wework-vX.Y.Z` tag 触发发布时，tag 已经指向固定提交，workflow 不会改写源码；如果 tag 指向的版本文件和 tag 版本不一致，发布会失败，需要先更新版本文件并重新打 tag。
+
 ## 无 Apple Developer 账号的 CI DMG
 
 GitHub workflow 会对 `.app` 执行 ad-hoc codesign，但不会做 Apple notarization，因此首次打开仍会触发 Gatekeeper。这个模式适合内部测试和开发者分发，不应标记为正式已公证发布包。

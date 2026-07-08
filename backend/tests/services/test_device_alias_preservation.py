@@ -58,6 +58,22 @@ def test_upsert_device_crd_preserves_existing_custom_alias(test_db: Session, tes
     assert updated.json["spec"]["deviceType"] == DeviceType.LOCAL.value
 
 
+def test_upsert_device_crd_stores_runtime_instance_id(test_db: Session, test_user):
+    """Device registration should persist the stable runtime installation ID."""
+    updated = device_service.upsert_device_crd(
+        test_db,
+        test_user.id,
+        "route-device",
+        "MacBook Route",
+        device_type=DeviceType.LOCAL.value,
+        bind_shell="claudecode",
+        runtime_instance_id="runtime-stable",
+    )
+
+    assert updated.json["spec"]["deviceId"] == "route-device"
+    assert updated.json["spec"]["runtimeInstanceId"] == "runtime-stable"
+
+
 def test_upsert_app_device_uses_app_type_without_becoming_default(
     test_db: Session,
     test_user,

@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import type { CSSProperties } from 'react'
 import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
+import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -77,6 +78,7 @@ import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
@@ -107,6 +109,12 @@ const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
 const BLANK_BROWSER_MIGRATION_TTL_MS = 2 * 60 * 1000
 
+interface SelectedAssistantPlan {
+  blockId: string
+  subtaskId: string
+  fallbackContent: string
+}
+
 interface PendingBlankBrowserMigration {
   sourcePaneKey: string
   browserLabel: string
@@ -117,6 +125,25 @@ interface PendingBlankBrowserMigration {
 }
 
 let latestBlankBrowserMigration: PendingBlankBrowserMigration | null = null
+
+function findSelectedAssistantPlanContent(
+  messages: WorkbenchMessage[],
+  selectedPlan: SelectedAssistantPlan | null
+): string | null {
+  if (!selectedPlan) return null
+
+  for (const message of messages) {
+    const planBlock = message.blocks?.find(
+      block =>
+        block.type === 'plan' &&
+        block.id === selectedPlan.blockId &&
+        String(block.subtaskId) === selectedPlan.subtaskId
+    )
+    if (planBlock?.type === 'plan') return planBlock.content
+  }
+
+  return null
+}
 
 function consumeLatestBlankBrowserMigration(): PendingBlankBrowserMigration | null {
   if (!latestBlankBrowserMigration) return null
@@ -321,7 +348,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] = useState<
     (EmbeddedBrowserOpenRequest & { id: number }) | null
   >(null)
-  const [rightPanelPlanContent, setRightPanelPlanContent] = useState<string | null>(null)
+  const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
+    null
+  )
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
@@ -537,6 +566,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     paneMessages,
     paneSession.answeredRequestUserInputIds
   )
+  const selectedAssistantPlanContent = useMemo(
+    () => findSelectedAssistantPlanContent(paneMessages, selectedAssistantPlan),
+    [paneMessages, selectedAssistantPlan]
+  )
+  const rightPanelPlanContent =
+    selectedAssistantPlanContent ?? selectedAssistantPlan?.fallbackContent ?? null
   const paneQueuedMessages = paneSession.queuedMessages
   const paneGuidanceMessages = paneSession.guidanceMessages
   const paneIsResponseStreaming = paneSession.status.isAssistantStreaming
@@ -641,11 +676,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }
   }, [embeddedBrowserLabel, openRightPanelTab])
   const openAssistantPlan = useCallback(
-    (content: string) => {
-      setRightPanelPlanContent(content)
+    (request: AssistantPlanOpenRequest) => {
+      setSelectedAssistantPlan({
+        blockId: request.blockId,
+        subtaskId: request.subtaskId,
+        fallbackContent: request.content,
+      })
       openRightPanelTab('plan')
     },
-    [openRightPanelTab, setRightPanelPlanContent]
+    [openRightPanelTab, setSelectedAssistantPlan]
   )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
@@ -1093,7 +1132,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     setHasPreviousTurnReview(false)
     setRightPanelView('launcher')
     setRightPanelTabs([])
-    setRightPanelPlanContent(null)
+    setSelectedAssistantPlan(null)
     setReviewState({
       loading: false,
       diff: '',

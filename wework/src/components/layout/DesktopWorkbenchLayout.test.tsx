@@ -1295,6 +1295,109 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('运行相关前端测试')
   })
 
+  test('keeps the right workspace plan panel synced with the opened streaming plan block', async () => {
+    const initialMessages: WorkbenchMessage[] = [
+      {
+        id: 'assistant-plan-block',
+        role: 'assistant',
+        content: '',
+        status: 'streaming',
+        createdAt: '2026-06-30T00:00:01.000Z',
+        blocks: [
+          {
+            id: 'plan-1',
+            subtaskId: '1',
+            type: 'plan',
+            content: '# Wegent 体验计划\n\n## Summary\n- 正在生成第一步。',
+            status: 'streaming',
+            createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+          },
+        ],
+      },
+    ]
+    const { rerender } = render(
+      <DesktopWorkbenchLayout {...baseProps} messages={initialMessages} />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-plan-expand-button'))
+
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('正在生成第一步')
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          {
+            ...initialMessages[0],
+            blocks: [
+              {
+                ...initialMessages[0].blocks![0],
+                content:
+                  '# Wegent 体验计划\n\n## Summary\n- 正在生成第一步。\n- 已流式补充第二步。',
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('已流式补充第二步')
+  })
+
+  test('does not replace the opened right workspace plan when a newer plan block appears', async () => {
+    const openedPlanMessage: WorkbenchMessage = {
+      id: 'assistant-plan-block',
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      createdAt: '2026-06-30T00:00:01.000Z',
+      blocks: [
+        {
+          id: 'plan-1',
+          subtaskId: '1',
+          type: 'plan',
+          content: '# 已打开的计划\n\n- 保持当前内容。',
+          status: 'done',
+          createdAt: Date.parse('2026-06-30T00:00:01.000Z'),
+        },
+      ],
+    }
+    const { rerender } = render(
+      <DesktopWorkbenchLayout {...baseProps} messages={[openedPlanMessage]} />
+    )
+
+    await userEvent.click(screen.getByTestId('assistant-plan-expand-button'))
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        messages={[
+          openedPlanMessage,
+          {
+            id: 'assistant-newer-plan-block',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            createdAt: '2026-06-30T00:01:01.000Z',
+            blocks: [
+              {
+                id: 'plan-2',
+                subtaskId: '2',
+                type: 'plan',
+                content: '# 新生成的计划\n\n- 不应抢占右侧面板。',
+                status: 'streaming',
+                createdAt: Date.parse('2026-06-30T00:01:01.000Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('workspace-plan-panel')).toHaveTextContent('已打开的计划')
+    expect(screen.getByTestId('workspace-plan-panel')).not.toHaveTextContent('新生成的计划')
+  })
+
   test('renders project-specific empty prompt after selecting a project', () => {
     render(
       <DesktopWorkbenchLayout
@@ -2707,6 +2810,56 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('启动脚本')
     expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
     expect(onUpgradeDevice).not.toHaveBeenCalled()
+  })
+
+  test('remote project dialog excludes remote routes that belong to the local runtime', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'remote-device',
+              name: 'Remote Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'remote',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+              runtime_instance_id: 'runtime-local',
+              runtime_routes: [
+                {
+                  kind: 'app-ipc',
+                  device_id: 'app-device',
+                  runtime_device_id: 'app-device',
+                  device_type: 'app',
+                  name: 'Local Executor',
+                  status: 'online',
+                },
+                {
+                  kind: 'remote-relay',
+                  device_id: 'remote-device',
+                  runtime_device_id: 'remote-device',
+                  device_type: 'remote',
+                  name: 'Remote Device',
+                  status: 'online',
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
+    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
+    expect(screen.queryByText('Remote Device')).not.toBeInTheDocument()
   })
 
   test('closes the project create menu on outside pointer down', async () => {
