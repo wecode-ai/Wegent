@@ -634,13 +634,17 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('assistant-plan-copy-success')).toHaveTextContent('已复制')
     expect(onOpenAssistantPlan).not.toHaveBeenCalled()
     await user.click(planCard)
-    expect(onOpenAssistantPlan).toHaveBeenCalledWith(
-      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
-    )
+    expect(onOpenAssistantPlan).toHaveBeenCalledWith({
+      blockId: 'plan-1',
+      subtaskId: '11',
+      content: expect.stringContaining('Wegent 代码质量与前端一致性巡检计划'),
+    })
     await user.click(screen.getByTestId('assistant-plan-expand-button'))
-    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith(
-      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
-    )
+    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith({
+      blockId: 'plan-1',
+      subtaskId: '11',
+      content: expect.stringContaining('Wegent 代码质量与前端一致性巡检计划'),
+    })
     expect(onOpenAssistantPlan).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
   })
