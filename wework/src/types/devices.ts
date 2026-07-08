@@ -19,7 +19,9 @@ export interface DeviceInfo {
   error?: string | null
   client_ip?: string | null
   runtime_transfer_host?: string | null
+  runtime_instance_id?: string | null
   app_device_id?: string | null
+  socket_device_id?: string | null
   cloud_config?: {
     sandboxId?: string
     imageId?: string

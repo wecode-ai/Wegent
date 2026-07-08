@@ -170,7 +170,7 @@ export function createInMemoryExecutorRegistry(
       throw new Error(`executor-not-found:${deviceId}`)
     }
     if (entry.status === 'offline') {
-      throw new Error(`executor-unavailable:${deviceId}`)
+      throw new Error(`executor-offline:${deviceId}`)
     }
     return entry
   }

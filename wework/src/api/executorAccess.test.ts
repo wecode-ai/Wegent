@@ -137,6 +137,20 @@ describe('executor access layer', () => {
     expect(deviceApi.getHomeDirectory).not.toHaveBeenCalled()
   })
 
+  test('normalizes offline devices into executor-offline errors', async () => {
+    const { deviceApi, runtimeWorkApi } = createApis([createDevice({ status: 'offline' })])
+    const client = createExecutorClientFromApis({
+      transportKind: 'backend-relay',
+      deviceApi,
+      runtimeWorkApi,
+    })
+
+    await expect(client.commands.getHomeDirectory('device-1')).rejects.toThrow(
+      'executor-offline:device-1'
+    )
+    expect(deviceApi.getHomeDirectory).not.toHaveBeenCalled()
+  })
+
   test('passes aggregate runtime work calls to the runtime transport', async () => {
     const { runtimeWorkApi, deviceApi } = createApis()
     const client = createExecutorClientFromApis({

@@ -644,11 +644,28 @@ export function useWorkbenchRuntimeMessaging({
         }
         return address
       } catch (error) {
-        dispatch({ type: 'runtime_task_optimistic_removed', address: optimisticAddress })
-        if (runtimeTasks.isCurrentRuntimeTask(optimisticAddress)) {
-          runtimeTasks.clearCurrentRuntimeTaskView()
+        const message = error instanceof Error ? error.message : '发送失败'
+        if (optimisticWorkspace && optimisticWorkspacePath && !options?.ephemeral) {
+          dispatch({
+            type: 'runtime_task_optimistic_upserted',
+            project: runtimeProject,
+            workspace: optimisticWorkspace,
+            task: buildOptimisticRuntimeTask({
+              taskId: optimisticAddress.taskId,
+              workspacePath: optimisticWorkspacePath,
+              title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
+              runtime,
+              status: 'failed',
+              error: message,
+            }),
+          })
+        } else {
+          dispatch({ type: 'runtime_task_optimistic_removed', address: optimisticAddress })
+          if (runtimeTasks.isCurrentRuntimeTask(optimisticAddress)) {
+            runtimeTasks.clearCurrentRuntimeTaskView()
+          }
         }
-        reportError(error instanceof Error ? error.message : '发送失败', options)
+        reportError(message, options)
         return false
       }
     },
@@ -1124,12 +1141,16 @@ function buildOptimisticRuntimeTask({
   workspacePath,
   title,
   runtime,
+  status = 'creating',
+  error,
   modelSelection,
 }: {
   taskId: string
   workspacePath: string
   title: string
   runtime: RuntimeTaskSummary['runtime']
+  status?: 'creating' | 'failed'
+  error?: string | null
   modelSelection?: ModelSelectionConfig | null
 }): RuntimeTaskSummary {
   const now = new Date().toISOString()
@@ -1141,8 +1162,10 @@ function buildOptimisticRuntimeTask({
     runtime,
     createdAt: now,
     updatedAt: now,
-    running: true,
-    status: 'creating',
+    running: status === 'creating',
+    status,
+    optimistic: true,
+    ...(error ? { error } : {}),
     ...(modelSelection ? { modelSelection } : {}),
   }
 }

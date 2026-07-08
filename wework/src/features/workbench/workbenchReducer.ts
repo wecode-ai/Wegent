@@ -309,7 +309,7 @@ function mergeRuntimeTasks(
 }
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
-  return task.status === 'creating'
+  return task.status === 'creating' || (task.optimistic === true && task.status === 'failed')
 }
 
 function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {

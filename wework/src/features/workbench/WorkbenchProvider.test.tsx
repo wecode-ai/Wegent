@@ -579,6 +579,33 @@ function ProjectSendProbe() {
           .map(projectWork => projectWork.project.name)
           .join('|') ?? ''}
       </span>
+      <span data-testid="runtime-task-titles">
+        {workbench.state.runtimeWork?.projects
+          .flatMap(projectWork =>
+            projectWork.deviceWorkspaces.flatMap(workspace =>
+              workspace.tasks.map(task => task.title)
+            )
+          )
+          .join('|') ?? ''}
+      </span>
+      <span data-testid="runtime-task-statuses">
+        {workbench.state.runtimeWork?.projects
+          .flatMap(projectWork =>
+            projectWork.deviceWorkspaces.flatMap(workspace =>
+              workspace.tasks.map(task => task.status ?? 'none')
+            )
+          )
+          .join('|') ?? ''}
+      </span>
+      <span data-testid="runtime-task-errors">
+        {workbench.state.runtimeWork?.projects
+          .flatMap(projectWork =>
+            projectWork.deviceWorkspaces.flatMap(workspace =>
+              workspace.tasks.map(task => task.error ?? '')
+            )
+          )
+          .join('|') ?? ''}
+      </span>
       <span data-testid="project-attachment-count">{workbench.projectChat.attachments.length}</span>
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
       <span data-testid="pane-session-error">{paneSession.error ?? ''}</span>
@@ -2022,6 +2049,69 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       taskId: request.taskId,
     })
+  })
+
+  test('keeps a failed runtime task record when project task creation is rejected', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: false,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'claude_code',
+        error: 'executor-not-found:device-1',
+      })),
+      getRuntimeTranscript: vi.fn(async (address: RuntimeTranscriptRequest) => ({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'claude_code',
+        messages: [],
+      })),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        `device-1:${request.taskId}`
+      )
+    )
+    expect(screen.getByTestId('runtime-task-titles')).toHaveTextContent('修复 CI')
+    expect(screen.getByTestId('runtime-task-statuses')).toHaveTextContent('failed')
+    expect(screen.getByTestId('runtime-task-errors')).toHaveTextContent(
+      'executor-not-found:device-1'
+    )
   })
 
   test('keeps new runtime task model selection for context usage window resolution', async () => {
