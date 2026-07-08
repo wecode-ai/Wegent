@@ -48,6 +48,20 @@ Packaged release builds of Wework must keep one active app paired with one local
 
 Debug builds do not enable this single-instance or cleanup policy. Local development may run multiple Wework debug instances at the same time, each with its own `app-runtime/wework-.../app-ipc.sock` socket. Release cleanup must also inspect each candidate executor process environment and terminate only executors using the release fixed socket, so it does not kill executors owned by debug instances.
 
+## Local CLI Entry
+
+On macOS, the Wework desktop app installs a user-level `wework` launcher at `~/.local/bin/wework` during startup. Wework generates and owns this file instead of symlinking it to build output or app resources, so debug target cleanup, release app updates, and bundle path changes do not leave a broken command. If that path already exists and is not a Wework-managed launcher, Wework leaves it untouched and writes an explicit warning to the app log.
+
+Users can run:
+
+```bash
+wework
+wework .
+wework /path/to/project
+```
+
+`wework` and `wework .` resolve the current directory to an absolute path and ask Wework to open it as a local workspace. Release builds forward the request to the existing window through the macOS app single-instance path; debug builds still allow multiple instances, so the CLI starts the current debug executable with `--open-workspace <path>`.
+
 ## Model Naming
 
 The frontend merge layer must avoid name collisions between local Codex, user-configured local models, and cloud-synced Codex models. The UI uses unique names:
