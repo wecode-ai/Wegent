@@ -880,6 +880,29 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def get_document_counts(
+        db: Session,
+        knowledge_base_ids: list[int],
+    ) -> dict[int, int]:
+        """Get total document counts for multiple knowledge bases in one query."""
+        from sqlalchemy import func
+
+        if not knowledge_base_ids:
+            return {}
+
+        results = (
+            db.query(
+                KnowledgeDocument.kind_id,
+                func.count(KnowledgeDocument.id).label("count"),
+            )
+            .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
+            .group_by(KnowledgeDocument.kind_id)
+            .all()
+        )
+
+        return {kb_id: count for kb_id, count in results}
+
+    @staticmethod
     def _update_document_count_cache(
         db: Session,
         knowledge_base_id: int,
@@ -2020,7 +2043,7 @@ class KnowledgeService:
 
         # Batch fetch document counts for all KBs to avoid N+1 queries
         all_kb_ids = [kb.id for kb in created_kbs] + [kb.id for kb in shared_kbs]
-        document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
+        document_counts = KnowledgeService.get_document_counts(db, all_kb_ids)
 
         # Build response lists using batched counts
         created_by_me = []
@@ -2290,7 +2313,7 @@ class KnowledgeService:
                 + [kb.id for kb in remaining_shared_group_kbs]
             )
         )
-        document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
+        document_counts = KnowledgeService.get_document_counts(db, all_kb_ids)
 
         owner_user_ids: set[int] = set()
         for kb in personal_created:

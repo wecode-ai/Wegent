@@ -576,7 +576,7 @@ class TaskKnowledgeBaseService:
             kb_spec = kb.json.get("spec", {})
             display_name = kb_spec.get("name", kb_name)
             description = kb_spec.get("description")
-            document_count = KnowledgeService.get_active_document_count(db, kb.id)
+            document_count = KnowledgeService.get_document_count(db, kb.id)
 
             result.append(
                 BoundKnowledgeBaseDetail(
@@ -749,7 +749,7 @@ class TaskKnowledgeBaseService:
             namespace=kb_namespace,
             display_name=kb_spec.get("name", kb_name),
             description=kb_spec.get("description"),
-            document_count=KnowledgeService.get_active_document_count(db, kb.id),
+            document_count=KnowledgeService.get_document_count(db, kb.id),
             bound_by=user_name,
             bound_at=new_ref.boundAt,
         )
