@@ -1142,10 +1142,14 @@ async fn archive_workspace(
     })
     .map_err(archive_error_to_http)?;
 
+    let size_bytes = archive.bytes.len() as u64;
+    let session_file_included = archive.session_file_included;
+    let git_included = archive.git_included;
+
     reqwest::Client::new()
         .put(&request.upload_url)
         .header(header::CONTENT_TYPE.as_str(), "application/gzip")
-        .body(archive.bytes.clone())
+        .body(archive.bytes)
         .send()
         .await
         .map_err(|error| HttpError {
@@ -1160,9 +1164,9 @@ async fn archive_workspace(
 
     Ok(Json(ArchiveResponse {
         task_id: request.task_id,
-        size_bytes: archive.bytes.len() as u64,
-        session_file_included: archive.session_file_included,
-        git_included: archive.git_included,
+        size_bytes,
+        session_file_included,
+        git_included,
     }))
 }
 
@@ -1979,7 +1983,7 @@ fn parse_envd_timestamp(value: &str) -> Option<SystemTime> {
 }
 
 fn default_archive_max_size_mb() -> u32 {
-    500
+    2048
 }
 
 fn default_runtime_type() -> String {
