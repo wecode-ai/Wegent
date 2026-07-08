@@ -726,9 +726,13 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
 pub async fn serve_local_backend_sidecar(config: DeviceConfig) -> Result<(), String> {
     let backend_config = LocalBackendConfig::from_device_config(config);
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
+    let runtime_instance_id = backend_config.runtime_instance_id.clone();
     let runner = LocalBackendRunner::new(backend_config, SocketIoTransport::default());
 
-    let ipc_task = tokio::spawn(async move { serve_app_ipc_sidecar(app_ipc_device_id).await });
+    let ipc_task =
+        tokio::spawn(
+            async move { serve_app_ipc_sidecar(app_ipc_device_id, runtime_instance_id).await },
+        );
     let backend_task = tokio::spawn(async move { runner.run_forever().await });
 
     tokio::select! {
@@ -810,6 +814,7 @@ mod tests {
             backend_url: "https://backend.example.com".to_string(),
             auth_token: "token".to_string(),
             device_id: device_id.to_string(),
+            runtime_instance_id: "runtime-1".to_string(),
             device_name: "Cloud Device".to_string(),
             device_type: "remote".to_string(),
             app_device_id: String::new(),

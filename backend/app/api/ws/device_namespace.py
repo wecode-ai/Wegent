@@ -222,6 +222,7 @@ def _register_device(
     device_type: Optional[str] = None,
     bind_shell: Optional[str] = None,
     runtime_transfer_host: Optional[str] = None,
+    runtime_instance_id: Optional[str] = None,
     app_device_id: Optional[str] = None,
 ) -> tuple[bool, Optional[str], Optional[str]]:
     """
@@ -235,6 +236,7 @@ def _register_device(
         device_type: Device type ('local', 'app', 'cloud', or 'remote')
         bind_shell: Shell runtime binding ('claudecode' or 'openclaw')
         runtime_transfer_host: Host peers should use for direct transfers
+        runtime_instance_id: Stable runtime installation ID shared by all routes
         app_device_id: Desktop app IPC device ID for app registrations
 
     Returns (success, persisted_display_name, error_message).
@@ -250,6 +252,7 @@ def _register_device(
                 device_type=device_type,
                 bind_shell=bind_shell,
                 runtime_transfer_host=runtime_transfer_host,
+                runtime_instance_id=runtime_instance_id,
                 app_device_id=app_device_id,
             )
             persisted_display_name = (
@@ -300,7 +303,10 @@ def _update_device_status(user_id: int, device_id: str, status: str) -> None:
 
 
 def _match_cloud_device_sync(
-    user_id: int, client_ip: str, executor_device_id: str
+    user_id: int,
+    client_ip: str,
+    executor_device_id: str,
+    runtime_instance_id: Optional[str] = None,
 ) -> Optional[tuple[str, bool, Optional[dict]]]:
     """
     Synchronous helper to match cloud device by device_id.
@@ -311,7 +317,10 @@ def _match_cloud_device_sync(
         - needs_migration: True if legacy device needs migration
         - device_data: Dict with device info for migration (device_id, etc.)
     """
+    import copy
+
     from sqlalchemy import and_
+    from sqlalchemy.orm.attributes import flag_modified
 
     from app.models.kind import Kind
     from app.schemas.device import DeviceType
@@ -349,6 +358,15 @@ def _match_cloud_device_sync(
             # New logic: verify server-generated device_id matches
             if server_device_id:
                 if server_device_id == executor_device_id:
+                    if runtime_instance_id:
+                        device_json = copy.deepcopy(device.json)
+                        device_json.setdefault("spec", {})[
+                            "runtimeInstanceId"
+                        ] = runtime_instance_id
+                        device.json = device_json
+                        flag_modified(device, "json")
+                        db.add(device)
+                        db.commit()
                     logger.info(
                         f"[Device WS] Cloud device matched by device_id: "
                         f"sandbox_id={sandbox_id}, "
@@ -386,6 +404,7 @@ def _update_cloud_device_id_sync(
     device_db_id: int,
     executor_device_id: str,
     sandbox_id: str,
+    runtime_instance_id: Optional[str] = None,
 ) -> str:
     """
     Synchronous helper to update cloud device ID in CRD for backward compatibility.
@@ -417,6 +436,8 @@ def _update_cloud_device_id_sync(
         old_device_id = device.name
         device_json["metadata"]["name"] = executor_device_id
         device_json["spec"]["deviceId"] = executor_device_id
+        if runtime_instance_id:
+            device_json["spec"]["runtimeInstanceId"] = runtime_instance_id
 
         # Update cloudConfig with deviceId for future matching
         if "cloudConfig" in device_json["spec"]:
@@ -753,7 +774,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
         )
 
     async def _match_cloud_device(
-        self, user_id: int, client_ip: str, executor_device_id: str
+        self,
+        user_id: int,
+        client_ip: str,
+        executor_device_id: str,
+        runtime_instance_id: Optional[str] = None,
     ) -> Optional[str]:
         """Match cloud device by verifying server-generated device_id.
 
@@ -775,7 +800,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
         try:
             # Run database query in executor to avoid blocking event loop
             result = await run_sync_in_executor(
-                _match_cloud_device_sync, user_id, client_ip, executor_device_id
+                _match_cloud_device_sync,
+                user_id,
+                client_ip,
+                executor_device_id,
+                runtime_instance_id,
             )
 
             if result is None:
@@ -791,6 +820,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     device_data["device_id"],
                     executor_device_id,
                     sandbox_id,
+                    runtime_instance_id,
                 )
 
             return sandbox_id
@@ -1055,7 +1085,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         is_cloud_device = False
         if payload.device_type == DeviceType.CLOUD and client_ip:
             cloud_device_id = await self._match_cloud_device(
-                user_id, client_ip, payload.device_id
+                user_id, client_ip, payload.device_id, payload.runtime_instance_id
             )
             if cloud_device_id:
                 is_cloud_device = True
@@ -1081,6 +1111,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
                     payload.device_type.value,
                     payload.bind_shell.value,
                     runtime_transfer_host,
+                    payload.runtime_instance_id,
                     payload.app_device_id,
                 )
                 if not success:

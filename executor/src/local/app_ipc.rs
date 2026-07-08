@@ -529,6 +529,7 @@ enum PostProcessor {
 #[derive(Clone)]
 pub struct AppIpcServer {
     device_id: String,
+    runtime_instance_id: Option<String>,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
     command_handler: Arc<dyn DeviceCommandHandler>,
     event_tx: broadcast::Sender<Value>,
@@ -539,6 +540,7 @@ impl Default for AppIpcServer {
         let (event_tx, _) = broadcast::channel(512);
         Self {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
+            runtime_instance_id: None,
             runtime_work_handler: None,
             command_handler: Arc::new(CommandHandler),
             event_tx,
@@ -558,6 +560,13 @@ impl AppIpcServer {
         } else {
             device_id
         };
+        self
+    }
+
+    pub fn with_runtime_instance_id(mut self, runtime_instance_id: impl Into<String>) -> Self {
+        self.runtime_instance_id = Some(runtime_instance_id.into())
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
         self
     }
 
@@ -665,14 +674,15 @@ impl AppIpcServer {
     }
 
     pub fn ready_event(&self) -> Value {
-        self.event_message(
-            "executor.ready",
-            json!({
-                "device_id": self.device_id,
-                "ready": true,
-                "version": get_version(),
-            }),
-        )
+        let mut payload = json!({
+            "device_id": self.device_id,
+            "ready": true,
+            "version": get_version(),
+        });
+        if let Some(runtime_instance_id) = &self.runtime_instance_id {
+            payload["runtime_instance_id"] = Value::String(runtime_instance_id.clone());
+        }
+        self.event_message("executor.ready", payload)
     }
 
     #[cfg(unix)]
@@ -991,9 +1001,13 @@ pub fn app_ipc_socket_path() -> PathBuf {
     expand_home(&home).join(DEFAULT_SOCKET_NAME)
 }
 
-pub async fn serve_app_ipc_sidecar(device_id: String) -> Result<(), String> {
+pub async fn serve_app_ipc_sidecar(
+    device_id: String,
+    runtime_instance_id: String,
+) -> Result<(), String> {
     let server = AppIpcServer::new()
         .with_device_id(normalize_device_id(device_id))
+        .with_runtime_instance_id(runtime_instance_id)
         .with_local_runtime_work_handler(resolve_codex_binary());
     server.serve_forever(app_ipc_socket_path()).await
 }

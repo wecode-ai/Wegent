@@ -154,7 +154,7 @@ async fn serve_socket_sidecar(
     if plan.backend_enabled {
         serve_local_backend_sidecar(config).await
     } else {
-        serve_app_ipc_sidecar(plan.device_id).await
+        serve_app_ipc_sidecar(plan.device_id, config.runtime_instance_id).await
     }
 }
 
