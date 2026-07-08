@@ -1214,6 +1214,9 @@ function ChatAreaContent({
           type: 'knowledge_base',
           document_count: context.document_count ?? undefined,
           document_ids: context.document_ids ?? undefined,
+          folder_ids: context.folder_ids ?? undefined,
+          folder_names: context.folder_names ?? undefined,
+          include_subfolders: context.include_subfolders ?? undefined,
           scope_restricted: context.scope_restricted ?? undefined,
         }
       } else if (context.context_type === 'table') {
@@ -1443,6 +1446,9 @@ function ChatAreaContent({
             type: 'knowledge_base',
             document_count: ctx.document_count ?? undefined,
             document_ids: ctx.document_ids ?? undefined,
+            folder_ids: ctx.folder_ids ?? undefined,
+            folder_names: ctx.folder_names ?? undefined,
+            include_subfolders: ctx.include_subfolders ?? undefined,
             scope_restricted: ctx.scope_restricted ?? undefined,
           })
         } else if (ctx.context_type === 'table') {

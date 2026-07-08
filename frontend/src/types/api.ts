@@ -675,6 +675,9 @@ export interface SubtaskContextBrief {
   knowledge_id?: number | null
   document_count?: number | null
   document_ids?: number[] | null
+  folder_ids?: number[] | null
+  folder_names?: string[] | null
+  include_subfolders?: boolean | null
   scope_restricted?: boolean | null
   // Table fields (from type_data)
   document_id?: number | null

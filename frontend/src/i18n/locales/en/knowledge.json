@@ -44,6 +44,8 @@
     "selectWholeKb": "Select KB",
     "selected": "Selected",
     "selectedDocuments": "{{count}} documents selected",
+    "selectedFolders": "{{count}} folders selected, including subfolders",
+    "selectedScope": "{{folderCount}} folders + {{documentCount}} documents selected",
     "externalDocumentBrowseOnly": "This source currently supports whole-knowledge-base selection only. Documents can be browsed and previewed.",
     "externalSelectionLimit": "{{source}} supports up to {{count}} selected knowledge bases.",
     "previewUnavailable": "Preview URL is unavailable"

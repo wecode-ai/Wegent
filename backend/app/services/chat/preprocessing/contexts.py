@@ -27,6 +27,7 @@ import app.stores.tasks as task_stores
 from app.models.knowledge import KnowledgeDocument
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.services.context import context_service
+from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.rag.sources import ExternalRefValidationError
 from shared.models.db import ContextStatus as DBContextStatus
 from shared.models.knowledge import (
@@ -669,6 +670,8 @@ def _sync_kb_contexts_to_task(
         )
         scope_restricted = bool(type_data.get("scope_restricted", False))
         document_ids = _normalize_document_ids(type_data.get("document_ids", []))
+        folder_ids = _normalize_folder_ids(type_data.get("folder_ids", []))
+        include_subfolders = bool(type_data.get("include_subfolders", True))
 
         try:
             if scope_restricted:
@@ -677,6 +680,8 @@ def _sync_kb_contexts_to_task(
                     task=task,
                     knowledge_id=knowledge_id,
                     document_ids=document_ids,
+                    folder_ids=folder_ids,
+                    include_subfolders=include_subfolders,
                     user_id=user_id,
                     user_name=user_name,
                 )
@@ -910,12 +915,17 @@ def _prepare_contexts_for_creation(
                 knowledge_id = kb_data.get("knowledge_id")
                 kb_name = kb_data.get("name", f"Knowledge Base {knowledge_id}")
                 document_count = kb_data.get("document_count")
-                # Get document_ids if user referenced specific documents.
+                # Get scoped selectors if user referenced specific documents/folders.
                 # Explicit scope_restricted=True with an empty list means an
                 # intentionally empty scope, not unrestricted full-KB access.
                 document_ids = kb_data.get("document_ids") or []
+                folder_ids = kb_data.get("folder_ids") or []
+                folder_names = kb_data.get("folder_names") or []
+                include_subfolders = bool(kb_data.get("include_subfolders", True))
                 explicit_scope_restricted = bool(kb_data.get("scope_restricted"))
-                scope_restricted = explicit_scope_restricted or bool(document_ids)
+                scope_restricted = (
+                    explicit_scope_restricted or bool(document_ids) or bool(folder_ids)
+                )
 
                 # Build type_data
                 type_data_dict = {
@@ -926,6 +936,11 @@ def _prepare_contexts_for_creation(
                 # Preserve explicit empty scoped ranges as document_ids=[].
                 if scope_restricted:
                     type_data_dict["document_ids"] = document_ids
+                    if folder_ids:
+                        type_data_dict["folder_ids"] = folder_ids
+                        type_data_dict["include_subfolders"] = include_subfolders
+                    if folder_names:
+                        type_data_dict["folder_names"] = folder_names
 
                 # Create SubtaskContext object (not yet committed)
                 kb_context = SubtaskContext(
@@ -1458,7 +1473,11 @@ def _prepare_kb_tools_from_contexts(
     if subtask_kb_ids:
         # Use subtask-level KBs only (user's explicit selection takes precedence)
         knowledge_base_ids = subtask_kb_ids
-        knowledge_base_scopes = _build_scopes_from_kb_contexts(kb_contexts)
+        knowledge_base_scopes = _build_scopes_from_kb_contexts(
+            kb_contexts,
+            db=db,
+            user_id=user_id,
+        )
         logger.info(
             f"[_prepare_kb_tools_from_contexts] Using {len(knowledge_base_ids)} "
             f"subtask-level knowledge bases (priority 1, strict mode): {knowledge_base_ids}"
@@ -1598,6 +1617,8 @@ def _prepare_kb_tools_from_contexts(
 
 def _build_scopes_from_kb_contexts(
     kb_contexts: List[SubtaskContext],
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None,
 ) -> List[KnowledgeBaseScope]:
     """Build per-KB scopes from subtask KB context type_data."""
     scopes: List[KnowledgeBaseScope] = []
@@ -1607,14 +1628,38 @@ def _build_scopes_from_kb_contexts(
             continue
         type_data = context.type_data if isinstance(context.type_data, dict) else {}
         document_ids = _normalize_document_ids(type_data.get("document_ids", []))
+        folder_ids = _normalize_folder_ids(type_data.get("folder_ids", []))
+        include_subfolders = bool(type_data.get("include_subfolders", True))
         scope_restricted = bool(type_data.get("scope_restricted", False))
-        if document_ids and "scope_restricted" not in type_data:
+        if (document_ids or folder_ids) and "scope_restricted" not in type_data:
             scope_restricted = True
+        resolved_document_ids = document_ids
+        if scope_restricted and (document_ids or folder_ids):
+            if db is None or user_id is None:
+                raise ValueError(
+                    "db and user_id are required to resolve knowledge scope"
+                )
+            try:
+                resolved_document_ids = (
+                    KnowledgeFolderService.resolve_document_ids_for_scope(
+                        db,
+                        knowledge_base_id=knowledge_id,
+                        user_id=user_id,
+                        folder_ids=folder_ids or None,
+                        document_ids=document_ids or None,
+                        include_subfolders=include_subfolders,
+                    )
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
         scopes.append(
             KnowledgeBaseScope(
                 knowledge_base_id=knowledge_id,
                 scope_restricted=scope_restricted,
-                document_ids=document_ids if scope_restricted else [],
+                document_ids=resolved_document_ids if scope_restricted else [],
             )
         )
     return scopes
@@ -1637,6 +1682,27 @@ def _normalize_document_ids(raw_doc_ids: Any) -> List[int]:
             continue
         if normalized not in seen_doc_ids:
             seen_doc_ids.add(normalized)
+            normalized_ids.append(normalized)
+    return normalized_ids
+
+
+def _normalize_folder_ids(raw_folder_ids: Any) -> List[int]:
+    """Normalize folder IDs, skipping invalid values while preserving order."""
+    if not isinstance(raw_folder_ids, list):
+        return []
+    normalized_ids: List[int] = []
+    seen_folder_ids: set[int] = set()
+    for folder_id in raw_folder_ids:
+        try:
+            normalized = int(folder_id)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[_prepare_kb_tools_from_contexts] Ignore invalid folder_id=%s",
+                folder_id,
+            )
+            continue
+        if normalized not in seen_folder_ids:
+            seen_folder_ids.add(normalized)
             normalized_ids.append(normalized)
     return normalized_ids
 

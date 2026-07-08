@@ -185,6 +185,41 @@ class TestPrepareContextsForCreation:
         assert scopes[0].scope_restricted is True
         assert scopes[0].document_ids == []
 
+    def test_folder_scope_is_preserved_for_backend_resolution(self):
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_contexts_for_creation,
+        )
+
+        context_item = SimpleNamespace(
+            type="knowledge_base",
+            data={
+                "knowledge_id": 10,
+                "name": "Folder Scope",
+                "scope_restricted": True,
+                "folder_ids": [5],
+                "folder_names": ["Specs"],
+                "include_subfolders": True,
+            },
+        )
+
+        kb_contexts, _, _, external_contexts = _prepare_contexts_for_creation(
+            contexts=[context_item],
+            subtask_id=100,
+            user_id=1,
+        )
+
+        assert external_contexts == []
+        assert len(kb_contexts) == 1
+        assert kb_contexts[0].type_data == {
+            "knowledge_id": 10,
+            "document_count": None,
+            "scope_restricted": True,
+            "document_ids": [],
+            "folder_ids": [5],
+            "include_subfolders": True,
+            "folder_names": ["Specs"],
+        }
+
 
 @pytest.mark.unit
 class TestSyncSubtaskKBToTask:
@@ -506,27 +541,31 @@ class TestKBPriorityLogic:
         }
 
         with patch(
-            "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
-        ) as mock_get_bound:
-            mock_get_bound.return_value = []
-
+            "app.services.chat.preprocessing.contexts.KnowledgeFolderService.resolve_document_ids_for_scope",
+            return_value=[101, 102],
+        ):
             with patch(
-                "chat_shell.tools.builtin.ScopedKnowledgeBaseTool"
-            ) as mock_scoped_tool:
-                mock_scoped_tool.return_value = Mock()
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids"
+            ) as mock_get_bound:
+                mock_get_bound.return_value = []
 
                 with patch(
-                    "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
-                    return_value=("full", ""),
-                ):
-                    kb_result = _prepare_kb_tools_from_contexts(
-                        kb_contexts=[kb_context],
-                        user_id=1,
-                        db=mock_db,
-                        base_system_prompt="Base prompt",
-                        task_id=100,
-                        user_subtask_id=1,
-                    )
+                    "chat_shell.tools.builtin.ScopedKnowledgeBaseTool"
+                ) as mock_scoped_tool:
+                    mock_scoped_tool.return_value = Mock()
+
+                    with patch(
+                        "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                        return_value=("full", ""),
+                    ):
+                        kb_result = _prepare_kb_tools_from_contexts(
+                            kb_contexts=[kb_context],
+                            user_id=1,
+                            db=mock_db,
+                            base_system_prompt="Base prompt",
+                            task_id=100,
+                            user_subtask_id=1,
+                        )
 
         mock_scoped_tool.assert_called_once()
         call_kwargs = mock_scoped_tool.call_args.kwargs
@@ -534,6 +573,60 @@ class TestKBPriorityLogic:
         assert call_kwargs["document_ids"] == []
         assert len(call_kwargs["knowledge_base_scopes"]) == 1
         scope = call_kwargs["knowledge_base_scopes"][0]
+        assert scope.knowledge_base_id == 10
+        assert scope.scope_restricted is True
+        assert scope.document_ids == [101, 102]
+        assert kb_result.document_ids == []
+
+    def test_folder_scope_resolves_to_document_ids(self, mock_db):
+        """Folder scope should be validated and resolved before reaching RAG."""
+        from app.services.chat.preprocessing.contexts import (
+            _prepare_kb_tools_from_contexts,
+        )
+
+        kb_context = Mock(spec=SubtaskContext)
+        kb_context.knowledge_id = 10
+        kb_context.type_data = {
+            "scope_restricted": True,
+            "folder_ids": [5],
+            "document_ids": [101],
+            "include_subfolders": True,
+        }
+
+        with patch(
+            "app.services.chat.preprocessing.contexts.KnowledgeFolderService.resolve_document_ids_for_scope",
+            return_value=[101, 102],
+        ) as mock_resolve:
+            with patch(
+                "app.services.chat.preprocessing.contexts._get_bound_knowledge_base_ids",
+                return_value=[],
+            ):
+                with patch(
+                    "chat_shell.tools.builtin.ScopedKnowledgeBaseTool"
+                ) as mock_scoped_tool:
+                    mock_scoped_tool.return_value = Mock()
+                    with patch(
+                        "app.services.chat.preprocessing.contexts._get_user_kb_tool_access_mode",
+                        return_value=("full", ""),
+                    ):
+                        kb_result = _prepare_kb_tools_from_contexts(
+                            kb_contexts=[kb_context],
+                            user_id=1,
+                            db=mock_db,
+                            base_system_prompt="Base prompt",
+                            task_id=100,
+                            user_subtask_id=1,
+                        )
+
+        mock_resolve.assert_called_once_with(
+            mock_db,
+            knowledge_base_id=10,
+            user_id=1,
+            folder_ids=[5],
+            document_ids=[101],
+            include_subfolders=True,
+        )
+        scope = mock_scoped_tool.call_args.kwargs["knowledge_base_scopes"][0]
         assert scope.knowledge_base_id == 10
         assert scope.scope_restricted is True
         assert scope.document_ids == [101, 102]
@@ -998,6 +1091,95 @@ class TestKBRefIdBasedLookup:
         assert scope_refs[0]["scopeRestricted"] is True
         assert scope_refs[0]["explicitDocumentIds"] == [3, 4]
 
+    def test_sync_scoped_kb_preserves_folder_ids(
+        self, service, mock_db, mock_knowledge_base
+    ):
+        """Folder-scoped subtask selections are persisted as task scope refs."""
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+        mock_task.json = {
+            "spec": {
+                "title": "Test Task",
+                "knowledgeBaseRefs": [],
+                "knowledgeBaseScopes": [],
+            }
+        }
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_knowledge_base
+
+        with patch.object(service, "can_access_knowledge_base", return_value=True):
+            with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"):
+                result = service.sync_subtask_kb_scope_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    document_ids=[],
+                    folder_ids=[5, "6", 5],
+                    include_subfolders=True,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert result is True
+        scope_refs = mock_task.json["spec"]["knowledgeBaseScopes"]
+        assert len(scope_refs) == 1
+        assert scope_refs[0]["id"] == 10
+        assert scope_refs[0]["scopeRestricted"] is True
+        assert scope_refs[0]["folderIds"] == [5, 6]
+        assert scope_refs[0]["explicitDocumentIds"] == []
+        assert scope_refs[0]["includeSubfolders"] is True
+
+    def test_sync_scoped_kb_merges_folder_and_document_ids(
+        self, service, mock_db, mock_knowledge_base
+    ):
+        """Mixed folder/document selections keep both task-level scope selectors."""
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+        mock_task.json = {
+            "spec": {
+                "title": "Test Task",
+                "knowledgeBaseRefs": [],
+                "knowledgeBaseScopes": [
+                    {
+                        "id": 10,
+                        "name": "Test KB",
+                        "namespace": "default",
+                        "scopeRestricted": True,
+                        "folderIds": [5],
+                        "explicitDocumentIds": [3],
+                        "includeSubfolders": True,
+                    }
+                ],
+            }
+        }
+
+        mock_query = MagicMock()
+        mock_db.query.return_value = mock_query
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_knowledge_base
+
+        with patch.object(service, "can_access_knowledge_base", return_value=True):
+            with patch("app.stores.tasks.sqlalchemy_task_store.flag_modified"):
+                result = service.sync_subtask_kb_scope_to_task(
+                    db=mock_db,
+                    task=mock_task,
+                    knowledge_id=10,
+                    document_ids=[4, 3],
+                    folder_ids=[6, 5],
+                    include_subfolders=True,
+                    user_id=1,
+                    user_name="testuser",
+                )
+
+        assert result is True
+        scope_ref = mock_task.json["spec"]["knowledgeBaseScopes"][0]
+        assert scope_ref["folderIds"] == [5, 6]
+        assert scope_ref["explicitDocumentIds"] == [3, 4]
+        assert scope_ref["includeSubfolders"] is True
+
     def test_sync_whole_kb_removes_existing_scoped_ref(
         self, service, mock_db, mock_knowledge_base
     ):
@@ -1381,3 +1563,44 @@ class TestContextsIdBasedLookup:
                 )
 
         assert "Sync skipped for KB 10 on task 100" in caplog.text
+
+    def test_sync_kb_contexts_passes_folder_scope_to_task_service(self, mock_db):
+        """Outer context sync preserves folder scope selectors for task inheritance."""
+        from app.services.chat.preprocessing.contexts import _sync_kb_contexts_to_task
+
+        mock_task = Mock(spec=TaskResource)
+        mock_task.id = 100
+
+        kb_context = Mock(spec=SubtaskContext)
+        kb_context.type_data = {
+            "knowledge_id": 10,
+            "scope_restricted": True,
+            "document_ids": [3],
+            "folder_ids": [5],
+            "include_subfolders": True,
+        }
+
+        with patch(
+            "app.services.knowledge.TaskKnowledgeBaseService"
+        ) as mock_service_cls:
+            mock_service = mock_service_cls.return_value
+            mock_service.sync_subtask_kb_scope_to_task.return_value = True
+
+            _sync_kb_contexts_to_task(
+                db=mock_db,
+                kb_contexts=[kb_context],
+                task=mock_task,
+                user_id=1,
+                user_name="testuser",
+            )
+
+        mock_service.sync_subtask_kb_scope_to_task.assert_called_once_with(
+            db=mock_db,
+            task=mock_task,
+            knowledge_id=10,
+            document_ids=[3],
+            folder_ids=[5],
+            include_subfolders=True,
+            user_id=1,
+            user_name="testuser",
+        )
