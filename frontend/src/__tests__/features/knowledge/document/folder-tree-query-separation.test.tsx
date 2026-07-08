@@ -91,6 +91,24 @@ describe('FolderTree query/result separation', () => {
     expect(onSelectDocument).not.toHaveBeenCalled()
   })
 
+  it('renders documents under their API folder nodes', () => {
+    render(
+      <FolderTree
+        folders={[createFolder()]}
+        documents={[
+          createDocument({ id: 11, name: 'inside-folder.txt', folder_id: 1 }),
+          createDocument({ id: 12, name: 'root.txt', folder_id: 0 }),
+        ]}
+      />
+    )
+
+    const folderRow = screen.getByRole('button', { name: /Reports/ })
+    const folderContainer = folderRow.parentElement
+
+    expect(folderContainer).toHaveTextContent('inside-folder.txt')
+    expect(folderContainer).not.toHaveTextContent('root.txt')
+  })
+
   it('keeps slash-containing document names as plain file names', () => {
     render(
       <FolderTree folders={[]} documents={[createDocument({ id: 12, name: 'legacy/path.txt' })]} />

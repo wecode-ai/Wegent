@@ -80,20 +80,30 @@ interface FolderTreeProps {
 export type SortField = 'name' | 'size' | 'createdAt' | 'updatedAt'
 export type SortOrder = 'asc' | 'desc'
 
-/**
- * Convert API folder nodes to navigation nodes recursively.
- * Documents are intentionally not attached to folders here. The document list is
- * the current query result, while folders are the stable structure layer.
- */
-function convertFolderToNode(folder: KnowledgeFolder): FolderNode {
-  const childFolderNodes = folder.children.map(convertFolderToNode)
+function toDocumentNode(doc: KnowledgeDocument): DocumentNode {
+  return {
+    type: 'document',
+    displayName: doc.name,
+    document: doc,
+  }
+}
+
+/** Convert API folder nodes to visible nodes and attach current query results by folder_id. */
+function convertFolderToNode(
+  folder: KnowledgeFolder,
+  documentsByFolderId: Map<number, KnowledgeDocument[]>
+): FolderNode {
+  const childFolderNodes = folder.children.map(child =>
+    convertFolderToNode(child, documentsByFolderId)
+  )
+  const directDocumentNodes = (documentsByFolderId.get(folder.id) ?? []).map(toDocumentNode)
 
   return {
     type: 'api-folder',
     id: folder.id,
     name: folder.name,
     path: `folder:${folder.id}`,
-    children: childFolderNodes,
+    children: [...childFolderNodes, ...directDocumentNodes],
     documentCount: folder.total_document_count ?? folder.document_count,
     created_at: folder.created_at,
     updated_at: folder.updated_at,
@@ -105,14 +115,28 @@ function convertFolderToNode(folder: KnowledgeFolder): FolderNode {
  * Legacy "/" splitting is intentionally not used; "/" remains part of the file name.
  */
 function buildMergedTree(folders: KnowledgeFolder[], documents: KnowledgeDocument[]): TreeNode[] {
-  return [
-    ...folders.map(convertFolderToNode),
-    ...documents.map(doc => ({
-      type: 'document' as const,
-      displayName: doc.name,
-      document: doc,
-    })),
-  ]
+  const documentsByFolderId = new Map<number, KnowledgeDocument[]>()
+  for (const doc of documents) {
+    const folderId = doc.folder_id ?? 0
+    documentsByFolderId.set(folderId, [...(documentsByFolderId.get(folderId) ?? []), doc])
+  }
+
+  const folderNodes = folders.map(folder => convertFolderToNode(folder, documentsByFolderId))
+  const knownFolderIds = new Set<number>()
+  const collectFolderIds = (items: KnowledgeFolder[]) => {
+    for (const folder of items) {
+      knownFolderIds.add(folder.id)
+      collectFolderIds(folder.children)
+    }
+  }
+  collectFolderIds(folders)
+
+  const rootDocuments = (documentsByFolderId.get(0) ?? []).map(toDocumentNode)
+  const orphanDocuments = documents
+    .filter(doc => doc.folder_id !== 0 && !knownFolderIds.has(doc.folder_id))
+    .map(toDocumentNode)
+
+  return [...folderNodes, ...rootDocuments, ...orphanDocuments]
 }
 
 /** Generate a stable key for a tree node based on its type */
