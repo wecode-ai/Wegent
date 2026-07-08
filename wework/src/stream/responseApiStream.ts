@@ -403,6 +403,8 @@ function emitBlockUpdated(
     status?: ChatBlock['status'] | 'running'
     toolInput?: Record<string, unknown>
     toolOutput?: unknown
+    toolOutputDelta?: string
+    toolOutputTruncated?: boolean
     content?: string
     fileChanges?: ChatBlock['fileChanges']
   }
@@ -488,6 +490,8 @@ function emitResponseBlockUpdated(
   const updates = recordField(data, 'updates')
   const toolInput = parseRecord(updates.toolInput ?? updates.tool_input)
   const fileChanges = parseRecord(updates.fileChanges ?? updates.file_changes)
+  const toolOutputDelta = updates.toolOutputDelta ?? updates.tool_output_delta
+  const toolOutputTruncated = updates.toolOutputTruncated ?? updates.tool_output_truncated
   emitBlockUpdated(
     handlers,
     'response.block.updated',
@@ -497,6 +501,12 @@ function emitResponseBlockUpdated(
       ...(typeof updates.content === 'string' && { content: updates.content }),
       ...(typeof (updates.toolOutput ?? updates.tool_output) !== 'undefined' && {
         toolOutput: updates.toolOutput ?? updates.tool_output,
+      }),
+      ...(typeof toolOutputDelta === 'string' && {
+        toolOutputDelta,
+      }),
+      ...(typeof toolOutputTruncated === 'boolean' && {
+        toolOutputTruncated,
       }),
       ...(toolInput && { toolInput }),
       ...(fileChanges && { fileChanges: fileChanges as unknown as ChatBlock['fileChanges'] }),
