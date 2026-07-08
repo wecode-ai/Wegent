@@ -73,6 +73,7 @@ import {
   type CodexOfficialModel,
 } from '@/features/model-settings/codexOfficialModels'
 import {
+  buildLocalModelRequestUrl,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
@@ -191,6 +192,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     config: {
       protocol: OPENAI_RESPONSES_PROTOCOL,
       apiFormat: RESPONSES_API_FORMAT,
+      ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
       ui: {
         family,
         ...(group ? { familyLabel: group } : {}),
@@ -586,16 +588,19 @@ function localRuntimeModelConfig(
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
     }
+    const requestUrl = buildLocalModelRequestUrl(localModel.baseUrl, localModel.requestPath)
     return {
       model: 'openai',
       model_id: localModel.modelId,
       api_format: RESPONSES_API_FORMAT,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
+      responses_url: requestUrl,
       api_key: localModel.apiKey || 'dummy',
       model_provider: providerIdFromLocalConfig(localModel),
       provider_name: localModel.displayName,
       display_name: localModel.displayName,
+      ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
       codex_responses_compat_proxy: true,
@@ -1588,6 +1593,9 @@ function createRuntimeWorkApi(
         stringValue(responseRecord.task_id) ??
         stringValue(executionRequest.task_id) ??
         createRuntimeExecutionIds(data)[0]
+      const runtimeHandle = recordValue(
+        responseRecord.runtimeHandle ?? responseRecord.runtime_handle
+      )
       return {
         ...response,
         accepted: response.accepted ?? true,
@@ -1595,6 +1603,7 @@ function createRuntimeWorkApi(
         taskId,
         workspacePath: response.workspacePath ?? workspacePath,
         runtime: response.runtime ?? data.runtime,
+        ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
       }
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {

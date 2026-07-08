@@ -1,12 +1,13 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { shouldUseTauriFetch } from '@/api/http'
-import { normalizeLocalModelBaseUrl, normalizeLocalModelId } from './localModelSettings'
+import { buildLocalModelRequestUrl, normalizeLocalModelId } from './localModelSettings'
 
 const DEFAULT_TEST_TIMEOUT_MS = 15_000
 const DUMMY_API_KEY = 'dummy'
 
 export interface TestLocalModelConnectionInput {
   baseUrl: string
+  requestPath?: string | null
   modelId: string
   apiKey?: string | null
 }
@@ -45,7 +46,7 @@ export async function testLocalModelConnection(
   input: TestLocalModelConnectionInput,
   options: TestLocalModelConnectionOptions = {}
 ): Promise<TestLocalModelConnectionResult> {
-  const baseUrl = normalizeLocalModelBaseUrl(input.baseUrl)
+  const requestUrl = buildLocalModelRequestUrl(input.baseUrl, input.requestPath)
   const modelId = normalizeLocalModelId(input.modelId)
   const apiKey = input.apiKey?.trim() || DUMMY_API_KEY
   const fetcher = options.fetcher ?? defaultFetcher()
@@ -56,7 +57,7 @@ export async function testLocalModelConnection(
   )
 
   try {
-    const response = await fetcher(`${baseUrl}/responses`, {
+    const response = await fetcher(requestUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

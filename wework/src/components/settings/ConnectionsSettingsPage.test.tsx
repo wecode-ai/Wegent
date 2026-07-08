@@ -440,9 +440,13 @@ describe('ConnectionsSettingsPage', () => {
       await screen.findByTestId('model-settings-page')
       await userEvent.click(screen.getByTestId('local-model-add-button'))
       expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
-        '请求地址会在模型 URL 后追加 /responses'
+        '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
       )
-      await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+      const urlInput = screen.getByTestId('local-model-url-input')
+      urlInput.focus()
+      await userEvent.paste('http://localhost:11434/v1/responses')
+      expect(screen.getByTestId('local-model-url-input')).toHaveValue('http://localhost:11434/v1')
+      expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/responses')
       expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
         '请求地址：http://localhost:11434/v1/responses'
       )

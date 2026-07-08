@@ -2187,6 +2187,9 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     if let Some(image_generation) = codex_image_generation_enabled(model_config) {
         overrides.push(format!("features.image_generation={image_generation}"));
     }
+    if let Some(context_window) = codex_model_context_window(model_config) {
+        overrides.push(format!("model_context_window={context_window}"));
+    }
     overrides
 }
 
@@ -2209,6 +2212,15 @@ fn codex_image_generation_enabled(model_config: &Value) -> Option<bool> {
         .or_else(|| bool_value(model_config.get("imageGenerationEnabled")))
 }
 
+fn codex_model_context_window(model_config: &Value) -> Option<i64> {
+    model_config
+        .get("model_context_window")
+        .or_else(|| model_config.get("context_window"))
+        .or_else(|| model_config.get("contextWindow"))
+        .and_then(value_i64)
+        .filter(|value| *value > 0)
+}
+
 fn codex_provider_base_url(model_config: &Value, base_url: &str, api_key: &str) -> String {
     let normalized_base_url = base_url.trim_end_matches('/').to_owned();
     let wire_api = wire_api(model_config);
@@ -2221,6 +2233,8 @@ fn codex_provider_base_url(model_config: &Value, base_url: &str, api_key: &str) 
 
     let token = register_codex_responses_proxy(CodexResponsesProxyUpstream {
         base_url: normalized_base_url,
+        responses_url: non_empty_config(model_config, "responses_url")
+            .or_else(|| non_empty_config(model_config, "responsesUrl")),
         api_key: api_key.to_owned(),
         default_headers: parse_header_map(model_config.get("default_headers")),
     });
@@ -3642,6 +3656,7 @@ mod tests {
                 "model_id": "gpt-5.5-codex",
                 "web_search": "disabled",
                 "image_generation": false,
+                "model_context_window": 128000,
             }),
             ..ExecutionRequest::default()
         };
@@ -3655,6 +3670,7 @@ mod tests {
 
         assert_eq!(config.get("web_search"), Some(&json!("disabled")));
         assert_eq!(config.get("features.image_generation"), Some(&json!(false)));
+        assert_eq!(config.get("model_context_window"), Some(&json!(128000)));
     }
 
     #[test]

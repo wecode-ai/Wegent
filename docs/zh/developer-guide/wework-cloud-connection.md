@@ -68,11 +68,16 @@ cloud:runtime:codex-gpt-5.5
 
 - 显示名。
 - 模型 ID。
-- OpenAI Responses 兼容模型 URL。
+- OpenAI Responses 兼容模型基础 URL 和请求路径。默认请求路径是 `/responses`，特殊服务商可使用自己的请求路径。
 - 可选 API Key。
+- 可选上下文窗口大小。
 - 启用状态和更新时间。
 
 API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` bearer token，用于支持无鉴权的本地 OpenAI-compatible 服务。本地模型配置和内置本机 Codex 模型都会以 `UnifiedModel(type: "runtime")` 进入现有模型选择器。
+
+上下文窗口大小只接受正整数。前端保存后会进入本地模型的 `config.model_context_window`，本地 IPC 创建 Codex 任务时继续写入 `model_config.model_context_window`，executor 再转为 Codex 启动配置中的 `model_context_window` 覆盖项。Wework 的背景信息窗口也必须使用当前任务自己的 `modelSelection` 解析对应模型配置，避免 Codex 对未知模型使用默认模型目录上限时把用户配置的窗口显示成默认值。
+
+新建 runtime task 时，模型选择必须作为任务状态的一部分写入 `runtimeHandle.modelSelection`，并同时保存在 optimistic task summary 中。`runtime.tasks.create` 响应也要返回同一个 runtime handle。这样在任务列表刷新尚未带回新任务、但流式上下文统计已经到达时，前端仍然能从当前任务地址读取确定的模型选择，而不是从全局“当前选中模型”推断。
 
 ## 本机认证状态
 
