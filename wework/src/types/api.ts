@@ -118,6 +118,7 @@ export interface DeviceInfo {
   client_ip?: string | null
   runtime_transfer_host?: string | null
   app_device_id?: string | null
+  socket_device_id?: string | null
 }
 
 export interface DeviceRunningTask {

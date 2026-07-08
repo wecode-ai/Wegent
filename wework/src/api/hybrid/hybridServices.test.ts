@@ -328,6 +328,15 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListDevices).not.toHaveBeenCalled()
   })
 
+  it('returns remembered cloud devices on the primary device list after background sync', async () => {
+    const services = createServices()
+
+    await services.cloudBackgroundApi?.listDevices?.()
+    const devices = await services.deviceApi.listDevices()
+
+    expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+  })
+
   it('does not wait for cloud device or runtime-work reads on the primary path', async () => {
     mocks.cloudListDevices.mockReturnValue(new Promise(() => undefined))
     mocks.cloudListRuntimeWork.mockReturnValue(new Promise(() => undefined))
@@ -383,6 +392,26 @@ describe('createHybridWorkbenchServices', () => {
     const devices = await services.cloudBackgroundApi?.listDevices?.()
 
     expect(devices?.map(device => device.device_id)).toEqual(['cloud-device'])
+  })
+
+  it('does not request runtime work from offline cloud devices', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        name: 'Cloud Executor',
+        status: 'offline',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+
+    const services = createServices()
+    const runtimeWork = await services.cloudBackgroundApi?.listRuntimeWork?.()
+
+    expect(runtimeWork).toEqual({ projects: [], chats: [], totalTasks: 0 })
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
   })
 
   it('removes current app registration work from background runtime work', async () => {
@@ -477,6 +506,37 @@ describe('createHybridWorkbenchServices', () => {
       'runtime.tasks.create',
       expect.objectContaining({ deviceId: 'cloud-device', message: 'cloud' }),
       'cloud-device'
+    )
+  })
+
+  it('routes cloud runtime IPC through socket_device_id when provided', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        socket_device_id: 'socket-device',
+        name: 'Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+
+    await services.cloudBackgroundApi?.listDevices?.()
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'cloud-device',
+      workspacePath: '/tmp/cloud',
+      teamId: 1,
+      runtime: 'codex',
+      message: 'cloud',
+    })
+
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({ deviceId: 'cloud-device' }),
+      'socket-device'
     )
   })
 

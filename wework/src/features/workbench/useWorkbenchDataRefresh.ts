@@ -1,20 +1,21 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse, User } from '@/types/api'
 import type { DockerRemoteDeviceCommandResponse } from '@/types/devices'
-import type { CloudWorkCheckKey, CloudWorkStatus, WorkbenchState } from '@/types/workbench'
+import type { CloudRuntimeState, CloudWorkCheckKey, WorkbenchState } from '@/types/workbench'
 import {
-  EMPTY_CLOUD_WORK_STATUS,
+  EMPTY_CLOUD_RUNTIME_STATE,
   EMPTY_RUNTIME_WORK,
-  finishCloudWorkCheck,
-  mergeDeviceLists,
-  mergeRuntimeWorkLists,
+  finishCloudRuntimeSync,
   nowMs,
   readCachedDeviceList,
   resolveDeviceListWithCache,
-  startCloudWorkSync,
+  selectCloudWorkStatus,
+  selectRuntimeWorkView,
+  selectVisibleDevices,
+  startCloudRuntimeSync,
   timedWorkbenchBootstrapRequest,
 } from './workbenchCloudStatus'
 import type { WorkbenchAction } from './workbenchReducer'
@@ -36,14 +37,25 @@ export function useWorkbenchDataRefresh({
   executorClient,
   services,
 }: UseWorkbenchDataRefreshOptions) {
-  const [cloudWorkStatus, setCloudWorkStatus] = useState<CloudWorkStatus>(EMPTY_CLOUD_WORK_STATUS)
+  const [cloudRuntimeState, setCloudRuntimeState] =
+    useState<CloudRuntimeState>(EMPTY_CLOUD_RUNTIME_STATE)
+  const cloudRuntimeStateRef = useRef<CloudRuntimeState>(EMPTY_CLOUD_RUNTIME_STATE)
+  const cloudWorkStatus = useMemo(
+    () => selectCloudWorkStatus(cloudRuntimeState),
+    [cloudRuntimeState]
+  )
+
+  const updateCloudRuntimeState = useCallback((next: CloudRuntimeState) => {
+    cloudRuntimeStateRef.current = next
+    setCloudRuntimeState(next)
+  }, [])
 
   /* eslint-disable react-hooks/set-state-in-effect -- Cloud work status mirrors service availability and must reset when the service is removed. */
   useEffect(() => {
     if (!services.cloudBackgroundApi) {
-      setCloudWorkStatus(EMPTY_CLOUD_WORK_STATUS)
+      updateCloudRuntimeState(EMPTY_CLOUD_RUNTIME_STATE)
     }
-  }, [services.cloudBackgroundApi])
+  }, [services.cloudBackgroundApi, updateCloudRuntimeState])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const refreshCloudBackgroundData = useCallback(
@@ -53,6 +65,7 @@ export function useWorkbenchDataRefresh({
       options?: {
         projects: ProjectWithTasks[]
         standaloneDeviceId: string | null
+        trigger?: 'bootstrap' | 'manual-refresh' | 'device-event'
         isCancelled?: () => boolean
       }
     ) => {
@@ -64,58 +77,37 @@ export function useWorkbenchDataRefresh({
 
       if (activeChecks.length === 0) return
 
-      setCloudWorkStatus(startCloudWorkSync(activeChecks))
+      const startedState = startCloudRuntimeSync(
+        cloudRuntimeStateRef.current,
+        options?.trigger ?? 'manual-refresh',
+        activeChecks
+      )
+      updateCloudRuntimeState(startedState)
+      const revision = startedState.inFlightRevision
 
-      if (backgroundApi?.listTeams) {
-        void timedWorkbenchBootstrapRequest('cloudTeams', backgroundApi.listTeams()).then(
-          result => {
-            if (options?.isCancelled?.()) return
-            setCloudWorkStatus(current =>
-              finishCloudWorkCheck(current, 'teams', '云端团队', result)
-            )
-          }
-        )
-      }
-
-      const [devicesResult, runtimeWorkResult] = await Promise.all([
+      const [teamsResult, devicesResult, runtimeWorkResult] = await Promise.all([
+        backgroundApi?.listTeams
+          ? timedWorkbenchBootstrapRequest('cloudTeams', backgroundApi.listTeams())
+          : Promise.resolve(undefined),
         backgroundApi?.listDevices
           ? timedWorkbenchBootstrapRequest('cloudDevices', backgroundApi.listDevices())
-          : Promise.resolve({ status: 'fulfilled', value: [] } as PromiseFulfilledResult<
-              DeviceInfo[]
-            >),
+          : Promise.resolve(undefined),
         backgroundApi?.listRuntimeWork
           ? timedWorkbenchBootstrapRequest('cloudRuntimeWork', backgroundApi.listRuntimeWork())
-          : Promise.resolve({
-              status: 'fulfilled',
-              value: EMPTY_RUNTIME_WORK,
-            } as PromiseFulfilledResult<RuntimeWorkListResponse>),
+          : Promise.resolve(undefined),
       ])
 
-      if (options?.isCancelled?.()) return
+      if (options?.isCancelled?.() || revision == null) return
 
-      if (backgroundApi?.listDevices) {
-        setCloudWorkStatus(current =>
-          finishCloudWorkCheck(current, 'devices', '云端设备', devicesResult, {
-            isEmpty: value => Array.isArray(value) && value.length === 0,
-          })
-        )
-      }
-      if (backgroundApi?.listRuntimeWork) {
-        setCloudWorkStatus(current =>
-          finishCloudWorkCheck(current, 'runtimeWork', '云端任务列表', runtimeWorkResult)
-        )
-      }
+      const nextCloudState = finishCloudRuntimeSync(cloudRuntimeStateRef.current, revision, {
+        teams: teamsResult,
+        devices: devicesResult,
+        runtimeWork: runtimeWorkResult,
+      })
+      updateCloudRuntimeState(nextCloudState)
 
-      const devices = resolveDeviceListWithCache(
-        mergeDeviceLists(
-          baseDevices,
-          devicesResult.status === 'fulfilled' ? devicesResult.value : []
-        )
-      )
-      const runtimeWork =
-        runtimeWorkResult.status === 'fulfilled'
-          ? mergeRuntimeWorkLists(baseRuntimeWork, runtimeWorkResult.value)
-          : baseRuntimeWork
+      const devices = resolveDeviceListWithCache(selectVisibleDevices(baseDevices, nextCloudState))
+      const runtimeWork = selectRuntimeWorkView(baseRuntimeWork, nextCloudState)
 
       dispatch({
         type: 'lists_refreshed',
@@ -128,7 +120,7 @@ export function useWorkbenchDataRefresh({
         ),
       })
     },
-    [dispatch, services.cloudBackgroundApi]
+    [dispatch, services.cloudBackgroundApi, updateCloudRuntimeState]
   )
 
   useEffect(() => {
@@ -185,6 +177,7 @@ export function useWorkbenchDataRefresh({
         void refreshCloudBackgroundData(devices, runtimeWork, {
           projects: [],
           standaloneDeviceId,
+          trigger: 'bootstrap',
           isCancelled: () => cancelled,
         }).catch(() => undefined)
       })
@@ -228,6 +221,7 @@ export function useWorkbenchDataRefresh({
     void refreshCloudBackgroundData(devices, runtimeWork, {
       projects: state.projects,
       standaloneDeviceId: state.standaloneDeviceId,
+      trigger: 'manual-refresh',
     }).catch(() => undefined)
   }, [
     dispatch,
@@ -268,6 +262,7 @@ export function useWorkbenchDataRefresh({
       void refreshCloudBackgroundData(devices, state.runtimeWork ?? EMPTY_RUNTIME_WORK, {
         projects: state.projects,
         standaloneDeviceId: state.standaloneDeviceId,
+        trigger: 'manual-refresh',
       }).catch(() => undefined)
     },
     [
