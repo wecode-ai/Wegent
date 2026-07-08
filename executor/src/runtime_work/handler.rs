@@ -339,6 +339,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
+            "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.archived_conversations.list" => {
@@ -391,6 +392,12 @@ impl RuntimeWorkRpcHandler {
 
     async fn get_codex_stream_debug(&self) -> Result<Value, AppIpcError> {
         Ok(json!({ "enabled": codex_stream_debug_enabled() }))
+    }
+
+    async fn restart_codex_app_server(&self) -> Result<Value, AppIpcError> {
+        self.codex_app_server.restart().await;
+        self.thread_list_cache.invalidate();
+        Ok(json!({ "restarted": true }))
     }
 
     async fn set_codex_stream_debug(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -4688,6 +4695,21 @@ mod tests {
         assert!(codex_stream_debug_enabled());
 
         set_codex_stream_debug_enabled(false);
+    }
+
+    #[tokio::test]
+    async fn codex_app_server_restart_rpc_returns_success() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.app_server.restart",
+                "payload": {}
+            }))
+            .await
+            .expect("restart should return success");
+
+        assert_eq!(result["restarted"], true);
     }
 
     #[tokio::test]

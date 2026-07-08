@@ -30,7 +30,7 @@ Settings are grouped by capability:
 - Default features: local Codex, local model configs, local executor, local workspaces, and local conversations.
 - After connecting cloud: server models, cloud devices, cloud Codex `auth.json` sync, proxy, and remote device management.
 
-"Model Settings" is the shared entry for local models and Codex `auth.json`. Local model configs are always available; cloud Codex auth sync, upload, import, and proxy switches must use the cloud connection. When disconnected, the page only shows local auth status and cloud feature guidance and does not write local state to the server.
+"Models" is the shared entry for local models and Codex `auth.json`. Local model configs are always available; cloud Codex auth sync, upload, import, and proxy switches must use the cloud connection. When disconnected, the page only shows local auth status and cloud feature guidance and does not write local state to the server.
 
 ## Service Merge
 
@@ -79,6 +79,17 @@ The context window size only accepts positive integers. After the frontend saves
 
 When creating a runtime task, the selected model must be stored as part of task state in `runtimeHandle.modelSelection` and also copied into the optimistic task summary. The `runtime.tasks.create` response must return the same runtime handle. This keeps the model selection available even when the runtime work list refresh has not returned the new task yet but stream context-usage events have already arrived, without inferring from the global currently selected model.
 
+## Proxy Configuration Boundaries
+
+The Proxy page manages local device proxy and cloud device proxy separately. These settings do not reuse each other:
+
+- Local device proxy is stored in Wework local browser storage and only affects new Codex tasks created by the current Wework App through the local executor. It is not written to Backend, is not synced to cloud devices, and does not modify system proxy or user shell environment.
+- Cloud device proxy is stored in cloud account configuration and only affects Codex tasks on cloud executors. Local devices do not use that URL.
+
+Saving a local device proxy does not immediately interrupt running Codex tasks. The UI asks the user to restart Codex manually. After confirmation, Wework restarts only the persistent Codex app-server maintained by the current App's local executor; it does not terminate other Codex processes on the machine. The new Codex app-server receives proxy-related environment variables, and later new chats use that proxy.
+
+Codex Responses-compatible models may be routed through the executor's built-in `codex responses proxy` before reaching the upstream model service. That proxy must also use the same local device proxy; otherwise model requests would bypass the Codex app-server process environment. Logs record only whether a proxy is configured and do not print the proxy URL.
+
 ## Local Auth Status
 
 Local Codex `auth.json` status is read through the executor's read-only `runtime_auth_status` command. The command only returns:
@@ -89,7 +100,7 @@ Local Codex `auth.json` status is read through the executor's read-only `runtime
 - File size.
 - SHA-256 digest.
 
-It never returns plaintext contents. Wework also does not upload the local auth file by default. Auth contents enter encrypted server storage and device sync only after the user explicitly uploads the file or imports it from an online device on the cloud-connected "Model Settings" page.
+It never returns plaintext contents. Wework also does not upload the local auth file by default. Auth contents enter encrypted server storage and device sync only after the user explicitly uploads the file or imports it from an online device on the cloud-connected "Models" page.
 
 Wework's remaining-usage display also follows the local Codex account. The frontend first reads the local `auth.json` status; if no Codex account exists, the menu and tray show none. When a local account exists, the frontend reads the Codex app-server `account/rateLimits/read` snapshot through the local executor command `runtime.codex.rate_limits.read` and displays the remaining percentages for the 5-hour and 7-day windows. The desktop system tray refreshes these two values every 60 seconds, shows only usage percentages, does not upload auth contents, and does not substitute Backend Claude quota.
 
