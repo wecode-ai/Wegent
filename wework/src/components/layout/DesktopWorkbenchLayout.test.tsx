@@ -3336,7 +3336,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('settings-nav-general')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]'
     )
-    expect(screen.queryByRole('heading', { name: '云端设置' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '云端连接' })).not.toBeInTheDocument()
     expect(screen.queryByText('连接这台设备')).not.toBeInTheDocument()
     expect(screen.queryByText('链接这台设备')).not.toBeInTheDocument()
     expect(screen.queryByText('控制其他设备')).not.toBeInTheDocument()
@@ -3349,7 +3349,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByText('可连接这台设备的云设备')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('settings-nav-connections'))
 
-    expect(await screen.findByRole('heading', { name: '云端设置' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '云端连接' })).toBeInTheDocument()
     expect(screen.getByText('已连接云端')).toBeInTheDocument()
     expect(screen.getByText('在线')).toBeInTheDocument()
     expect(screen.queryByText('Online')).not.toBeInTheDocument()

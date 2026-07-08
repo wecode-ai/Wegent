@@ -95,7 +95,7 @@ const settingsNavItems: SettingsNavItem[] = [
     key: 'connections',
     icon: Globe2,
     label: 'settings_nav_connections',
-    fallback: '云端设置',
+    fallback: '云端连接',
   },
   {
     key: 'appearance',
@@ -107,7 +107,7 @@ const settingsNavItems: SettingsNavItem[] = [
     key: 'model-settings',
     icon: UserRound,
     label: 'settings_nav_model_settings',
-    fallback: '模型设置',
+    fallback: '模型',
     category: 'personal',
   },
   {
@@ -121,7 +121,7 @@ const settingsNavItems: SettingsNavItem[] = [
     key: 'keyboard-shortcuts',
     icon: Keyboard,
     label: 'settings_nav_keyboard_shortcuts',
-    fallback: '键盘快捷键',
+    fallback: '快捷键',
     category: 'personal',
   },
   {
@@ -1203,7 +1203,7 @@ function ConnectionsDeviceSettingsPage({
       <>
         <div className="mx-auto w-full max-w-[760px]">
           <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.connections_title', '云端设置')}
+            {t('workbench.connections_title', '云端连接')}
           </h1>
 
           <section className="mt-6 rounded-lg border border-border bg-background p-5">
@@ -1266,7 +1266,7 @@ function ConnectionsDeviceSettingsPage({
     <>
       <div className="mx-auto w-full max-w-[760px]">
         <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-          {t('workbench.connections_title', '云端设置')}
+          {t('workbench.connections_title', '云端连接')}
         </h1>
 
         <section

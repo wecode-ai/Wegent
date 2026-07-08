@@ -79,6 +79,7 @@ import {
   localModelName,
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createLocalChatStream } from './localChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
@@ -634,10 +635,36 @@ function localRuntimeModelConfig(
   }
 }
 
+function applyLocalProxyConfig(modelConfig: Record<string, unknown>): Record<string, unknown> {
+  const proxyUrl = getLocalProxyUrl().trim()
+  if (!proxyUrl) return modelConfig
+
+  const runtimeConfig = {
+    ...((modelConfig.runtime_config as Record<string, unknown> | undefined) ?? {}),
+  }
+  const codexRuntimeConfig = {
+    ...((runtimeConfig.codex as Record<string, unknown> | undefined) ?? {}),
+    use_proxy: true,
+    proxy_configured: true,
+  }
+
+  return {
+    ...modelConfig,
+    proxy: {
+      url: proxyUrl,
+    },
+    runtime_config: {
+      ...runtimeConfig,
+      codex: codexRuntimeConfig,
+    },
+  }
+}
+
 function applyRuntimeModelOptions(
   modelConfig: Record<string, unknown>,
   modelOptions?: Record<string, string>
 ): Record<string, unknown> {
+  modelConfig = applyLocalProxyConfig(modelConfig)
   const reasoning = runtimeReasoning(modelOptions)
   if (reasoning) modelConfig.reasoning = reasoning
   const serviceTier = runtimeServiceTier(modelOptions)

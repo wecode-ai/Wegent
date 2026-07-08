@@ -207,6 +207,7 @@ pub struct CodexResponsesProxyUpstream {
     pub base_url: String,
     pub api_key: String,
     pub default_headers: Vec<(String, String)>,
+    pub proxy_url: Option<String>,
 }
 
 pub fn register_codex_responses_proxy(upstream: CodexResponsesProxyUpstream) -> String {
@@ -256,6 +257,7 @@ async fn codex_responses_proxy(
             ("request_id", request_id.clone()),
             ("token", token.clone()),
             ("upstream", codex_responses_proxy_log_target(&upstream_url)),
+            ("proxy_configured", upstream.proxy_url.is_some().to_string()),
             ("body_bytes", body.len().to_string()),
             (
                 "accept",
@@ -267,7 +269,7 @@ async fn codex_responses_proxy(
             ),
         ],
     );
-    let client = reqwest::Client::new();
+    let client = codex_responses_proxy_client(upstream.proxy_url.as_deref())?;
     let mut request = client
         .post(upstream_url)
         .bearer_auth(upstream.api_key)
@@ -335,6 +337,22 @@ async fn codex_responses_proxy(
             .insert(header::CONTENT_TYPE, content_type);
     }
     Ok(response)
+}
+
+fn codex_responses_proxy_client(proxy_url: Option<&str>) -> Result<reqwest::Client, HttpError> {
+    let Some(proxy_url) = proxy_url.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(reqwest::Client::new());
+    };
+    reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(proxy_url).map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Invalid Codex responses proxy URL: {error}"),
+        })?)
+        .build()
+        .map_err(|error| HttpError {
+            status: StatusCode::BAD_GATEWAY,
+            detail: format!("Failed to configure Codex responses proxy client: {error}"),
+        })
 }
 
 fn next_codex_responses_proxy_request_id() -> String {
@@ -2253,6 +2271,13 @@ mod tests {
             value["response"]["usage"]["output_tokens_details"]["reasoning_tokens"],
             json!(0)
         );
+    }
+
+    #[test]
+    fn codex_responses_proxy_client_rejects_invalid_proxy_url() {
+        let result = codex_responses_proxy_client(Some("not a proxy url"));
+
+        assert!(result.is_err());
     }
 
     #[test]

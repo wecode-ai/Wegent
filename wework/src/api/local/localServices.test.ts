@@ -5,6 +5,7 @@ import {
   clearLocalModelConfigs,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 
 describe('createLocalAppServices', () => {
   beforeEach(() => {
@@ -1028,6 +1029,42 @@ describe('createLocalAppServices', () => {
     expect(createPayload.executionRequest.model_config).not.toHaveProperty('api_key')
     expect(sendPayload.executionRequest.model_config).toEqual(
       createPayload.executionRequest.model_config
+    )
+  })
+
+  test('adds configured local proxy to local runtime execution requests', async () => {
+    saveLocalProxyUrl('http://127.0.0.1:7890')
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'gpt-5.5',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const modelConfig = createPayload.executionRequest.model_config
+
+    expect(modelConfig.proxy).toEqual({ url: 'http://127.0.0.1:7890' })
+    expect(modelConfig.runtime_config.codex).toEqual(
+      expect.objectContaining({
+        use_user_config: true,
+        configured: true,
+        use_proxy: true,
+        proxy_configured: true,
+      })
     )
   })
 

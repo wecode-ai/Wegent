@@ -197,7 +197,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           >
             <UserRound className="h-5 w-5 shrink-0 text-text-secondary" />
             <span className="min-w-0 flex-1 truncate">
-              {t('workbench.settings_nav_model_settings', '模型设置')}
+              {t('workbench.settings_nav_model_settings', '模型')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>
@@ -223,7 +223,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
             <ArrowLeft className="h-6 w-6" />
           </button>
           <h1 className="text-lg font-semibold">
-            {t('workbench.settings_nav_model_settings', '模型设置')}
+            {t('workbench.settings_nav_model_settings', '模型')}
           </h1>
           <div className="h-11 min-w-[44px]" />
         </header>
