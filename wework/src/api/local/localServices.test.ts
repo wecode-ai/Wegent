@@ -541,6 +541,12 @@ describe('createLocalAppServices', () => {
             accepted: true,
             taskId: 'task-1',
             runtime: 'codex',
+            runtimeHandle: {
+              modelSelection: {
+                modelName: 'local-model:mimo',
+                modelType: 'runtime',
+              },
+            },
           }
         }
         return {}
@@ -574,6 +580,12 @@ describe('createLocalAppServices', () => {
       /^\/Users\/me\/\.wegent-executor\/workspace\/worktrees\/runtime-\d+\/project$/
     )
     expect(response?.workspacePath).toBe(worktreePath)
+    expect(response?.runtimeHandle).toEqual({
+      modelSelection: {
+        modelName: 'local-model:mimo',
+        modelType: 'runtime',
+      },
+    })
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'git_is_worktree',
@@ -882,6 +894,7 @@ describe('createLocalAppServices', () => {
       displayName: 'Ollama GPT',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
+      contextWindow: 128000,
     })
     saveLocalModelConfig({
       id: 'lmstudio',
@@ -891,6 +904,13 @@ describe('createLocalAppServices', () => {
       apiKey: 'real-key',
       webSearchMode: 'cached',
       imageGenerationEnabled: true,
+    })
+    saveLocalModelConfig({
+      id: 'custom',
+      displayName: 'Custom Gateway',
+      modelId: 'custom-model',
+      baseUrl: 'http://localhost:9876/api',
+      requestPath: '/respond',
     })
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -927,6 +947,15 @@ describe('createLocalAppServices', () => {
       message: 'secure continue',
       modelId: 'local-model:lmstudio',
     })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'custom continue',
+      modelId: 'local-model:custom',
+    })
 
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
@@ -937,6 +966,7 @@ describe('createLocalAppServices', () => {
     const createModelConfig = createPayload.executionRequest.model_config
     const continueModelConfig = sendPayloads[0].executionRequest.model_config
     const keyedModelConfig = sendPayloads[1].executionRequest.model_config
+    const customModelConfig = sendPayloads[2].executionRequest.model_config
 
     expect(continueModelConfig).toEqual(createModelConfig)
     expect(createModelConfig).toEqual(
@@ -946,7 +976,9 @@ describe('createLocalAppServices', () => {
         api_format: 'responses',
         protocol: 'openai-responses',
         base_url: 'http://localhost:11434/v1',
+        responses_url: 'http://localhost:11434/v1/responses',
         api_key: 'dummy',
+        model_context_window: 128000,
         web_search: 'disabled',
         image_generation: false,
         codex_responses_compat_proxy: true,
@@ -965,6 +997,14 @@ describe('createLocalAppServices', () => {
         api_key: 'real-key',
         web_search: 'cached',
         image_generation: true,
+        codex_responses_compat_proxy: true,
+      })
+    )
+    expect(customModelConfig).toEqual(
+      expect.objectContaining({
+        model_id: 'custom-model',
+        base_url: 'http://localhost:9876/api',
+        responses_url: 'http://localhost:9876/api/respond',
         codex_responses_compat_proxy: true,
       })
     )

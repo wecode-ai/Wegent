@@ -68,6 +68,7 @@ import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
+import { AboutSettingsPage } from './AboutSettingsPage'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -102,6 +103,12 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Palette,
     label: 'settings_nav_appearance',
     fallback: '外观',
+  },
+  {
+    key: 'about',
+    icon: Info,
+    label: 'settings_nav_about',
+    fallback: '关于',
   },
   {
     key: 'model-settings',
@@ -1502,6 +1509,8 @@ export function ConnectionsSettingsPage({
           <GeneralSettingsPage />
         ) : activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
+        ) : activeNav === 'about' ? (
+          <AboutSettingsPage />
         ) : activeNav === 'model-settings' ? (
           <ModelSettingsPage onOpenCloudSettings={openCloudSettings} />
         ) : activeNav === 'proxy' ? (

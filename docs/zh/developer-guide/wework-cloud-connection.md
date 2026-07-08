@@ -68,11 +68,16 @@ cloud:runtime:codex-gpt-5.5
 
 - 显示名。
 - 模型 ID。
-- OpenAI Responses 兼容模型 URL。
+- OpenAI Responses 兼容模型基础 URL 和请求路径。默认请求路径是 `/responses`，特殊服务商可使用自己的请求路径。
 - 可选 API Key。
+- 可选上下文窗口大小。
 - 启用状态和更新时间。
 
 API Key 留空时，本地 runtime 会向 Codex provider 配置传入 `dummy` bearer token，用于支持无鉴权的本地 OpenAI-compatible 服务。本地模型配置和内置本机 Codex 模型都会以 `UnifiedModel(type: "runtime")` 进入现有模型选择器。
+
+上下文窗口大小只接受正整数。前端保存后会进入本地模型的 `config.model_context_window`，本地 IPC 创建 Codex 任务时继续写入 `model_config.model_context_window`，executor 再转为 Codex 启动配置中的 `model_context_window` 覆盖项。Wework 的背景信息窗口也必须使用当前任务自己的 `modelSelection` 解析对应模型配置，避免 Codex 对未知模型使用默认模型目录上限时把用户配置的窗口显示成默认值。
+
+新建 runtime task 时，模型选择必须作为任务状态的一部分写入 `runtimeHandle.modelSelection`，并同时保存在 optimistic task summary 中。`runtime.tasks.create` 响应也要返回同一个 runtime handle。这样在任务列表刷新尚未带回新任务、但流式上下文统计已经到达时，前端仍然能从当前任务地址读取确定的模型选择，而不是从全局“当前选中模型”推断。
 
 ## 代理配置边界
 
@@ -95,7 +100,7 @@ Codex Responses 兼容模型可能通过 executor 内置的 `codex responses pro
 - 文件大小。
 - SHA-256 摘要。
 
-它不会返回明文内容。Wework 也不会默认上传本机认证文件。只有用户在已连接云端的“模型设置”页面显式上传或从在线设备导入后，认证内容才进入服务端加密存储和设备同步流程。
+它不会返回明文内容。Wework 也不会默认上传本机认证文件。只有用户在已连接云端的“模型”页面显式上传或从在线设备导入后，认证内容才进入服务端加密存储和设备同步流程。
 
 Wework 的剩余额度展示也以本机 Codex 账号为准。前端先读取本机 `auth.json` 状态；如果没有 Codex 账号，则菜单和托盘显示“无”。如果本机已有账号，前端通过本地 executor 的 `runtime.codex.rate_limits.read` 命令读取 Codex app-server 的 `account/rateLimits/read` 快照，并展示 5 小时和 7 天窗口的剩余百分比。桌面系统托盘每 60 秒刷新一次这两个数值，只显示额度百分比，不上传认证内容，也不使用 Backend 的 Claude 额度作为替代。
 

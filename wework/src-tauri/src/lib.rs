@@ -54,6 +54,14 @@ const TRAY_USAGE_ICON_LEFT_PADDING: u32 = 0;
 #[cfg(desktop)]
 const TRAY_USAGE_ICON_TEXT_GAP: u32 = 2;
 #[cfg(desktop)]
+const TRAY_STATUS_METER_WIDTH: u32 = 7;
+#[cfg(desktop)]
+const TRAY_STATUS_METER_GAP: u32 = 6;
+#[cfg(desktop)]
+const TRAY_STATUS_METER_TEXT_GAP_OFFSET: u32 = 2;
+#[cfg(desktop)]
+const TRAY_USAGE_TEXT_LEFT_EXTRA_GAP: u32 = 2;
+#[cfg(desktop)]
 const TRAY_USAGE_ICON_SCALE: u32 = 2;
 #[cfg(desktop)]
 const TRAY_USAGE_GLYPH_WIDTH: u32 = 3;
@@ -235,6 +243,14 @@ struct AppPreferences {
     close_to_tray_hint_seen: bool,
     #[serde(default = "default_language_preference")]
     language: String,
+    #[serde(default)]
+    task_completion_notifications_enabled: bool,
+    #[serde(default = "default_true")]
+    tray_unread_enabled: bool,
+    #[serde(default = "default_true")]
+    tray_running_enabled: bool,
+    #[serde(default = "default_true")]
+    tray_usage_enabled: bool,
 }
 
 #[cfg(desktop)]
@@ -255,6 +271,10 @@ impl Default for AppPreferences {
             show_main_window_on_launch: true,
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
+            task_completion_notifications_enabled: false,
+            tray_unread_enabled: true,
+            tray_running_enabled: true,
+            tray_usage_enabled: true,
         }
     }
 }
@@ -267,6 +287,10 @@ struct AppPreferencesPatch {
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
+    task_completion_notifications_enabled: Option<bool>,
+    tray_unread_enabled: Option<bool>,
+    tray_running_enabled: Option<bool>,
+    tray_usage_enabled: Option<bool>,
 }
 
 #[cfg(desktop)]
@@ -346,6 +370,18 @@ fn update_app_preferences(
     if let Some(value) = patch.language {
         preferences.language = value;
     }
+    if let Some(value) = patch.task_completion_notifications_enabled {
+        preferences.task_completion_notifications_enabled = value;
+    }
+    if let Some(value) = patch.tray_unread_enabled {
+        preferences.tray_unread_enabled = value;
+    }
+    if let Some(value) = patch.tray_running_enabled {
+        preferences.tray_running_enabled = value;
+    }
+    if let Some(value) = patch.tray_usage_enabled {
+        preferences.tray_usage_enabled = value;
+    }
     write_app_preferences_impl(&app, &preferences)?;
     Ok(preferences)
 }
@@ -358,6 +394,10 @@ struct AppPreferences {
     show_main_window_on_launch: bool,
     close_to_tray_hint_seen: bool,
     language: String,
+    task_completion_notifications_enabled: bool,
+    tray_unread_enabled: bool,
+    tray_running_enabled: bool,
+    tray_usage_enabled: bool,
 }
 
 #[cfg(not(desktop))]
@@ -368,6 +408,10 @@ struct AppPreferencesPatch {
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
+    task_completion_notifications_enabled: Option<bool>,
+    tray_unread_enabled: Option<bool>,
+    tray_running_enabled: Option<bool>,
+    tray_usage_enabled: Option<bool>,
 }
 
 #[cfg(not(desktop))]
@@ -378,6 +422,10 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         show_main_window_on_launch: true,
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
+        task_completion_notifications_enabled: false,
+        tray_unread_enabled: true,
+        tray_running_enabled: true,
+        tray_usage_enabled: true,
     })
 }
 
@@ -392,6 +440,12 @@ fn update_app_preferences(
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
         language: patch.language.unwrap_or_else(|| "zh-CN".to_string()),
+        task_completion_notifications_enabled: patch
+            .task_completion_notifications_enabled
+            .unwrap_or(false),
+        tray_unread_enabled: patch.tray_unread_enabled.unwrap_or(true),
+        tray_running_enabled: patch.tray_running_enabled.unwrap_or(true),
+        tray_usage_enabled: patch.tray_usage_enabled.unwrap_or(true),
     })
 }
 
@@ -1470,6 +1524,13 @@ struct TrayMenuStatePayload {
     usage_tooltip: Option<String>,
     running: Vec<TrayMenuTaskItem>,
     running_more: Vec<TrayMenuTaskItem>,
+    unread: Vec<TrayMenuTaskItem>,
+    unread_more: Vec<TrayMenuTaskItem>,
+    running_count: usize,
+    #[serde(default)]
+    show_running_status: bool,
+    #[serde(default)]
+    unread_count: usize,
     pinned: Vec<TrayMenuTaskItem>,
     pinned_more: Vec<TrayMenuTaskItem>,
     recent: Vec<TrayMenuTaskItem>,
@@ -1485,6 +1546,11 @@ impl TrayMenuStatePayload {
             usage_tooltip: None,
             running: Vec::new(),
             running_more: Vec::new(),
+            unread: Vec::new(),
+            unread_more: Vec::new(),
+            running_count: 0,
+            show_running_status: false,
+            unread_count: 0,
             pinned: Vec::new(),
             pinned_more: Vec::new(),
             recent: Vec::new(),
@@ -1514,6 +1580,7 @@ impl TrayLanguage {
         match self {
             Self::ZhCn => TrayMenuLabels {
                 running: "运行中",
+                unread_completed: "未读完成",
                 pinned: "置顶",
                 tasks: "任务",
                 untitled_task: "未命名任务",
@@ -1526,6 +1593,7 @@ impl TrayLanguage {
             },
             Self::En => TrayMenuLabels {
                 running: "Running",
+                unread_completed: "Unread Completed",
                 pinned: "Pinned",
                 tasks: "Tasks",
                 untitled_task: "Untitled Task",
@@ -1543,6 +1611,7 @@ impl TrayLanguage {
 #[cfg(desktop)]
 struct TrayMenuLabels {
     running: &'static str,
+    unread_completed: &'static str,
     pinned: &'static str,
     tasks: &'static str,
     untitled_task: &'static str,
@@ -1562,6 +1631,17 @@ fn build_system_tray_menu<M: Manager<tauri::Wry>>(
     let labels = TrayLanguage::from_language(&state.language).labels();
     let mut builder = MenuBuilder::new(manager);
 
+    builder = append_tray_task_section(
+        builder,
+        manager,
+        labels.unread_completed,
+        labels.untitled_task,
+        "",
+        labels.more,
+        &state.unread,
+        &state.unread_more,
+        false,
+    )?;
     builder = append_tray_task_section(
         builder,
         manager,
@@ -1674,6 +1754,7 @@ fn tray_usage_glyph(character: char) -> Option<[u8; 5]> {
         '8' => Some([0b111, 0b101, 0b111, 0b101, 0b111]),
         '9' => Some([0b111, 0b101, 0b111, 0b001, 0b111]),
         '%' => Some([0b101, 0b001, 0b010, 0b100, 0b101]),
+        '+' => Some([0b000, 0b010, 0b111, 0b010, 0b000]),
         '-' => Some([0b000, 0b000, 0b111, 0b000, 0b000]),
         'd' | 'D' => Some([0b001, 0b001, 0b111, 0b101, 0b111]),
         'h' | 'H' => Some([0b100, 0b100, 0b111, 0b101, 0b101]),
@@ -1734,9 +1815,229 @@ fn draw_tray_usage_text(buffer: &mut [u8], width: u32, x: u32, y: u32, line: &st
 }
 
 #[cfg(desktop)]
+fn set_tray_pixel(buffer: &mut [u8], width: u32, height: u32, x: i32, y: i32, rgba: [u8; 4]) {
+    if x < 0 || y < 0 || x as u32 >= width || y as u32 >= height {
+        return;
+    }
+    let offset = ((y as u32 * width + x as u32) * 4) as usize;
+    if offset + 3 < buffer.len() {
+        buffer[offset] = rgba[0];
+        buffer[offset + 1] = rgba[1];
+        buffer[offset + 2] = rgba[2];
+        buffer[offset + 3] = rgba[3];
+    }
+}
+
+fn scaled_tray_text_width(text: &str, numerator: u32, denominator: u32) -> u32 {
+    let glyph_count = text.chars().count() as u32;
+    if glyph_count == 0 {
+        return 0;
+    }
+    let source_width =
+        glyph_count * TRAY_USAGE_GLYPH_WIDTH + glyph_count.saturating_sub(1) * TRAY_USAGE_GLYPH_GAP;
+    (source_width * numerator).div_ceil(denominator)
+}
+
+#[cfg(desktop)]
+fn draw_tray_text_scaled(
+    buffer: &mut [u8],
+    width: u32,
+    height: u32,
+    x: u32,
+    y: u32,
+    text: &str,
+    scale: (u32, u32),
+    rgba: [u8; 4],
+) {
+    let (numerator, denominator) = scale;
+    let mut source_cursor_x = 0;
+    for character in text.chars() {
+        if let Some(glyph) = tray_usage_glyph(character) {
+            for (row_index, row) in glyph.iter().enumerate() {
+                for column in 0..TRAY_USAGE_GLYPH_WIDTH {
+                    if row & (1 << (TRAY_USAGE_GLYPH_WIDTH - column - 1)) == 0 {
+                        continue;
+                    }
+                    let source_x = source_cursor_x + column;
+                    let source_y = row_index as u32;
+                    let target_x_start = x + source_x * numerator / denominator;
+                    let target_x_end = x + ((source_x + 1) * numerator).div_ceil(denominator);
+                    let target_y_start = y + source_y * numerator / denominator;
+                    let target_y_end = y + ((source_y + 1) * numerator).div_ceil(denominator);
+                    for target_y in target_y_start..target_y_end {
+                        for target_x in target_x_start..target_x_end {
+                            set_tray_pixel(
+                                buffer,
+                                width,
+                                height,
+                                target_x as i32,
+                                target_y as i32,
+                                rgba,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        source_cursor_x += TRAY_USAGE_GLYPH_WIDTH + TRAY_USAGE_GLYPH_GAP;
+    }
+}
+
+#[cfg(desktop)]
+fn draw_tray_running_meter(
+    buffer: &mut [u8],
+    width: u32,
+    height: u32,
+    x: u32,
+    running_count: usize,
+) {
+    let meter_height = 22_u32.min(height);
+    if meter_height < 10 {
+        return;
+    }
+    let y = (height - meter_height) / 2;
+    let border = [255, 255, 255, 120];
+    for dy in 0..meter_height {
+        for dx in 0..TRAY_STATUS_METER_WIDTH {
+            let edge =
+                dx == 0 || dx == TRAY_STATUS_METER_WIDTH - 1 || dy == 0 || dy == meter_height - 1;
+            if edge {
+                set_tray_pixel(
+                    buffer,
+                    width,
+                    height,
+                    (x + dx) as i32,
+                    (y + dy) as i32,
+                    border,
+                );
+            }
+        }
+    }
+
+    let segment_count = running_count.min(4);
+    let fill = [255, 255, 255, 235];
+    for index in 0..segment_count {
+        let segment_y = y + meter_height - 4 - index as u32 * 4;
+        for dy in 0..3 {
+            for dx in 0..3 {
+                set_tray_pixel(
+                    buffer,
+                    width,
+                    height,
+                    (x + 2 + dx) as i32,
+                    (segment_y + dy) as i32,
+                    fill,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(desktop)]
+fn draw_tray_unread_badge(
+    buffer: &mut [u8],
+    width: u32,
+    height: u32,
+    icon_size: u32,
+    icon_y: u32,
+    unread_count: usize,
+) {
+    if unread_count == 0 || icon_size < 10 {
+        return;
+    }
+
+    let green = [13, 148, 136, 255];
+    let outline_x = 0_i32;
+    let outline_y = icon_y as i32;
+    let outline_size = icon_size as i32;
+    for offset in 0..2 {
+        for x in outline_x - offset..outline_x + outline_size + offset {
+            set_tray_pixel(buffer, width, height, x, outline_y - offset, green);
+            set_tray_pixel(
+                buffer,
+                width,
+                height,
+                x,
+                outline_y + outline_size - 1 + offset,
+                green,
+            );
+        }
+        for y in outline_y - offset..outline_y + outline_size + offset {
+            set_tray_pixel(buffer, width, height, outline_x - offset, y, green);
+            set_tray_pixel(
+                buffer,
+                width,
+                height,
+                outline_x + outline_size - 1 + offset,
+                y,
+                green,
+            );
+        }
+    }
+
+    let text = if unread_count > 9 {
+        "+".to_string()
+    } else {
+        unread_count.to_string()
+    };
+    let badge_width = if text.len() > 1 { 14_u32 } else { 12_u32 };
+    let badge_height = 10_u32;
+    let badge_x = icon_size.saturating_sub(badge_width);
+    let badge_y = icon_y + icon_size.saturating_sub(badge_height);
+    for dy in 0..badge_height {
+        for dx in 0..badge_width {
+            let radius = badge_height as i32 / 2;
+            let left_cap_center_x = radius - 1;
+            let right_cap_center_x = badge_width as i32 - radius;
+            let center_y = radius - 1;
+            let pixel_x = dx as i32;
+            let pixel_y = dy as i32;
+            let inside_rect = pixel_x >= left_cap_center_x && pixel_x <= right_cap_center_x;
+            let inside_left = {
+                let x = pixel_x - left_cap_center_x;
+                let y = pixel_y - center_y;
+                x * x + y * y <= radius * radius
+            };
+            let inside_right = {
+                let x = pixel_x - right_cap_center_x;
+                let y = pixel_y - center_y;
+                x * x + y * y <= radius * radius
+            };
+            if !inside_rect && !inside_left && !inside_right {
+                continue;
+            }
+            set_tray_pixel(
+                buffer,
+                width,
+                height,
+                (badge_x + dx) as i32,
+                (badge_y + dy) as i32,
+                green,
+            );
+        }
+    }
+    let text_width = scaled_tray_text_width(&text, 3, 2);
+    let text_x = badge_x + (badge_width.saturating_sub(text_width)) / 2;
+    let text_y = badge_y + 1;
+    draw_tray_text_scaled(
+        buffer,
+        width,
+        height,
+        text_x,
+        text_y,
+        &text,
+        (3, 2),
+        [255, 255, 255, 255],
+    );
+}
+
+#[cfg(desktop)]
 fn tray_usage_icon(
     title: &str,
     base_icon: Option<&tauri::image::Image<'_>>,
+    running_count: usize,
+    show_running_status: bool,
+    unread_count: usize,
 ) -> Option<tauri::image::Image<'static>> {
     let lines = title
         .lines()
@@ -1758,16 +2059,28 @@ fn tray_usage_icon(
     let base_icon_size = base_icon
         .map(|icon| icon.width().min(icon.height()).min(TRAY_USAGE_ICON_HEIGHT))
         .unwrap_or(0);
-    let base_icon_width = if base_icon_size > 0 {
-        base_icon_size + TRAY_USAGE_ICON_TEXT_GAP
+    let status_meter_width = if base_icon_size > 0 && show_running_status {
+        TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP - TRAY_STATUS_METER_TEXT_GAP_OFFSET
     } else {
         0
     };
-    let width = base_icon_width + text_width + TRAY_USAGE_ICON_LEFT_PADDING;
+    let hidden_meter_gap = if base_icon_size > 0 && !show_running_status {
+        TRAY_STATUS_METER_TEXT_GAP_OFFSET
+    } else {
+        0
+    };
+    let text_x =
+        base_icon_size
+            + status_meter_width
+            + TRAY_USAGE_ICON_TEXT_GAP
+            + hidden_meter_gap
+            + TRAY_USAGE_TEXT_LEFT_EXTRA_GAP;
+    let width = text_x + text_width + TRAY_USAGE_ICON_LEFT_PADDING;
     let height = TRAY_USAGE_ICON_HEIGHT.max(text_height);
     let mut buffer = vec![0; (width * height * 4) as usize];
     let first_y = (height - text_height) / 2;
     let second_y = first_y + TRAY_USAGE_GLYPH_HEIGHT * TRAY_USAGE_ICON_SCALE + TRAY_USAGE_LINE_GAP;
+    let mut icon_y = 0;
 
     if let Some(icon) = base_icon {
         let source_width = icon.width();
@@ -1777,6 +2090,7 @@ fn tray_usage_icon(
             let source_x = (source_width - source_size) / 2;
             let source_y = (source_height - source_size) / 2;
             let target_y = (height - base_icon_size) / 2;
+            icon_y = target_y;
             let rgba = icon.rgba();
             for y in 0..base_icon_size {
                 for x in 0..base_icon_size {
@@ -1792,13 +2106,83 @@ fn tray_usage_icon(
             }
         }
     }
-
-    for (line_index, line) in lines.iter().enumerate() {
-        let x = base_icon_width + TRAY_USAGE_ICON_LEFT_PADDING;
-        let y = if line_index == 0 { first_y } else { second_y };
-        draw_tray_usage_text(&mut buffer, width, x, y, line);
+    if base_icon_size > 0 {
+        draw_tray_unread_badge(
+            &mut buffer,
+            width,
+            height,
+            base_icon_size,
+            icon_y,
+            unread_count,
+        );
+        if show_running_status {
+            draw_tray_running_meter(
+                &mut buffer,
+                width,
+                height,
+                base_icon_size + TRAY_STATUS_METER_GAP / 2 + 1,
+                running_count,
+            );
+        }
     }
 
+    for (line_index, line) in lines.iter().enumerate() {
+        let y = if line_index == 0 { first_y } else { second_y };
+        draw_tray_usage_text(&mut buffer, width, text_x, y, line);
+    }
+
+    Some(tauri::image::Image::new_owned(buffer, width, height))
+}
+
+#[cfg(desktop)]
+fn tray_status_icon(
+    base_icon: Option<&tauri::image::Image<'_>>,
+    running_count: usize,
+    show_running_status: bool,
+    unread_count: usize,
+) -> Option<tauri::image::Image<'static>> {
+    let base_icon = base_icon?;
+    let icon_size = base_icon
+        .width()
+        .min(base_icon.height())
+        .min(TRAY_USAGE_ICON_HEIGHT);
+    let meter_width = if show_running_status {
+        TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP
+    } else {
+        0
+    };
+    let width = icon_size + meter_width;
+    let height = TRAY_USAGE_ICON_HEIGHT.max(icon_size);
+    let mut buffer = vec![0; (width * height * 4) as usize];
+    let source_width = base_icon.width();
+    let source_height = base_icon.height();
+    let source_size = source_width.min(source_height);
+    let source_x = (source_width - source_size) / 2;
+    let source_y = (source_height - source_size) / 2;
+    let icon_y = (height - icon_size) / 2;
+    let rgba = base_icon.rgba();
+    for y in 0..icon_size {
+        for x in 0..icon_size {
+            let sample_x = source_x + x * source_size / icon_size;
+            let sample_y = source_y + y * source_size / icon_size;
+            let source_offset = ((sample_y * source_width + sample_x) * 4) as usize;
+            let target_offset = (((icon_y + y) * width + x) * 4) as usize;
+            if source_offset + 3 < rgba.len() && target_offset + 3 < buffer.len() {
+                buffer[target_offset..target_offset + 4]
+                    .copy_from_slice(&rgba[source_offset..source_offset + 4]);
+            }
+        }
+    }
+    draw_tray_unread_badge(&mut buffer, width, height, icon_size, icon_y, unread_count);
+    if show_running_status {
+        draw_tray_running_meter(
+            &mut buffer,
+            width,
+            height,
+            icon_size + TRAY_STATUS_METER_GAP / 2 + 1,
+            running_count,
+        );
+    }
     Some(tauri::image::Image::new_owned(buffer, width, height))
 }
 
@@ -1865,7 +2249,23 @@ fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Re
     let icon_update = state
         .usage_title
         .as_deref()
-        .and_then(|title| tray_usage_icon(title, app.default_window_icon()))
+        .and_then(|title| {
+            tray_usage_icon(
+                title,
+                app.default_window_icon(),
+                state.running_count,
+                state.show_running_status,
+                state.unread_count,
+            )
+        })
+        .or_else(|| {
+            tray_status_icon(
+                app.default_window_icon(),
+                state.running_count,
+                state.show_running_status,
+                state.unread_count,
+            )
+        })
         .map(|icon| tray.set_icon(Some(icon)));
     match icon_update {
         Some(Ok(())) => {
@@ -2013,6 +2413,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init());
 
     #[cfg(all(desktop, not(debug_assertions)))]

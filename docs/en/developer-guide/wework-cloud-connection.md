@@ -68,11 +68,16 @@ Local model configs are stored in local browser storage. They are not written to
 
 - Display name.
 - Model ID.
-- OpenAI Responses-compatible model URL.
+- OpenAI Responses-compatible base URL and request path. The default request path is `/responses`; custom providers can use their own path.
 - Optional API Key.
+- Optional context window size.
 - Enabled state and update time.
 
 When API Key is blank, local runtime sends a `dummy` bearer token to the Codex provider config so no-auth local OpenAI-compatible services can run. Local model configs and the built-in local Codex model enter the existing model selector as `UnifiedModel(type: "runtime")`.
+
+The context window size only accepts positive integers. After the frontend saves it, the value is exposed as `config.model_context_window` on the local model. Local IPC writes it into `model_config.model_context_window` when creating a Codex task, and executor forwards it as the Codex launch override `model_context_window`. The Wework background-context indicator must also resolve the model config from the current task's own `modelSelection`, so Codex's default catalog cap for unknown models does not make the UI display the default window instead of the user-configured value.
+
+When creating a runtime task, the selected model must be stored as part of task state in `runtimeHandle.modelSelection` and also copied into the optimistic task summary. The `runtime.tasks.create` response must return the same runtime handle. This keeps the model selection available even when the runtime work list refresh has not returned the new task yet but stream context-usage events have already arrived, without inferring from the global currently selected model.
 
 ## Proxy Configuration Boundaries
 
@@ -95,7 +100,7 @@ Local Codex `auth.json` status is read through the executor's read-only `runtime
 - File size.
 - SHA-256 digest.
 
-It never returns plaintext contents. Wework also does not upload the local auth file by default. Auth contents enter encrypted server storage and device sync only after the user explicitly uploads the file or imports it from an online device on the cloud-connected "Model Settings" page.
+It never returns plaintext contents. Wework also does not upload the local auth file by default. Auth contents enter encrypted server storage and device sync only after the user explicitly uploads the file or imports it from an online device on the cloud-connected "Models" page.
 
 Wework's remaining-usage display also follows the local Codex account. The frontend first reads the local `auth.json` status; if no Codex account exists, the menu and tray show none. When a local account exists, the frontend reads the Codex app-server `account/rateLimits/read` snapshot through the local executor command `runtime.codex.rate_limits.read` and displays the remaining percentages for the 5-hour and 7-day windows. The desktop system tray refreshes these two values every 60 seconds, shows only usage percentages, does not upload auth contents, and does not substitute Backend Claude quota.
 

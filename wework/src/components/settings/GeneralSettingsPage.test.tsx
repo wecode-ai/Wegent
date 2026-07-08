@@ -1,13 +1,18 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { GeneralSettingsPage } from './GeneralSettingsPage'
 import type { AppPreferences } from '@/tauri/appPreferences'
+import { GeneralSettingsPage } from './GeneralSettingsPage'
 
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
+  taskCompletionNotificationsEnabled: false,
+  trayUnreadEnabled: true,
+  trayRunningEnabled: true,
+  trayUsageEnabled: true,
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
@@ -27,6 +32,10 @@ vi.mock('@/tauri/appPreferences', () => ({
     showMainWindowOnLaunch: true,
     closeToTrayHintSeen: false,
     language: 'zh-CN',
+    taskCompletionNotificationsEnabled: false,
+    trayUnreadEnabled: true,
+    trayRunningEnabled: true,
+    trayUsageEnabled: true,
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
@@ -104,5 +113,34 @@ describe('GeneralSettingsPage', () => {
     expect(zhButton).toHaveAttribute('aria-pressed', 'true')
     expect(zhButton.className).toContain('bg-text-primary')
     expect(applyLanguagePreferenceMock).not.toHaveBeenCalled()
+  })
+
+  test('shows system tray toggles and saves each tray display preference separately', async () => {
+    render(<GeneralSettingsPage />)
+
+    expect(
+      await screen.findByText('workbench.general_settings_system_tray_title')
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('general-task-completion-notifications-toggle')).not.toBeChecked()
+    expect(screen.getByTestId('general-tray-unread-toggle')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('general-tray-running-toggle')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByTestId('general-tray-usage-toggle')).toHaveAttribute('aria-pressed', 'true')
+
+    await userEvent.click(screen.getByTestId('general-task-completion-notifications-toggle'))
+    await userEvent.click(screen.getByTestId('general-tray-unread-toggle'))
+    await userEvent.click(screen.getByTestId('general-tray-running-toggle'))
+    await userEvent.click(screen.getByTestId('general-tray-usage-toggle'))
+
+    await waitFor(() => {
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({
+        taskCompletionNotificationsEnabled: true,
+      })
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUnreadEnabled: false })
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayRunningEnabled: false })
+      expect(updateAppPreferencesMock).toHaveBeenCalledWith({ trayUsageEnabled: false })
+    })
   })
 })

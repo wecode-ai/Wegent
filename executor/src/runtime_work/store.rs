@@ -4,7 +4,7 @@
 
 use std::{
     cmp::Reverse,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -30,6 +30,7 @@ struct RuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, RuntimeTaskLink>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
+    deleted_archived_task_ids: HashSet<String>,
 }
 
 impl RuntimeWorkStore {
@@ -66,6 +67,22 @@ impl RuntimeWorkStore {
             .tasks
             .into_values()
             .find(|link| link.thread_id.as_deref() == Some(thread_id))
+    }
+
+    pub fn is_deleted_archived_task_id(&self, task_id: &str) -> bool {
+        self.read_index_snapshot()
+            .deleted_archived_task_ids
+            .contains(task_id)
+    }
+
+    pub fn mark_deleted_archived_task_ids(&self, task_ids: impl IntoIterator<Item = String>) {
+        let Some(mut index) = self.index.lock().ok() else {
+            return;
+        };
+        for task_id in task_ids {
+            index.deleted_archived_task_ids.insert(task_id);
+        }
+        self.write_index(&index);
     }
 
     pub fn upsert_task(&self, link: RuntimeTaskLink) {
@@ -150,6 +167,7 @@ impl RuntimeWorkStore {
             version: INDEX_VERSION,
             tasks: index.tasks.clone(),
             workspaces: index.workspaces.clone(),
+            deleted_archived_task_ids: index.deleted_archived_task_ids.clone(),
         });
         if let Ok(payload) = payload {
             let temp_path = temporary_index_path(&self.index_path);
@@ -201,6 +219,7 @@ fn empty_index() -> RuntimeWorkIndex {
         version: INDEX_VERSION,
         tasks: HashMap::new(),
         workspaces: HashMap::new(),
+        deleted_archived_task_ids: HashSet::new(),
     }
 }
 
