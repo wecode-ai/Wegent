@@ -697,7 +697,7 @@
     "general_settings_background_disabled_description": "Closing the main window exits the app and interrupts running tasks.",
     "general_settings_system_tray_title": "System tray",
     "general_settings_task_completion_notifications": "Send a system notification when a task completes",
-    "general_settings_task_completion_notifications_description": "Show a system notification for completed background tasks and keep an unread reminder in the task list.",
+    "general_settings_task_completion_notifications_description": "Send an operating system notification through the system notification plugin when a background task completes.",
     "general_settings_tray_display_content": "Tray display content",
     "general_settings_tray_display_content_description": "Choose which statuses appear in the tray icon and menu.",
     "general_settings_tray_unread": "Unread tasks",
