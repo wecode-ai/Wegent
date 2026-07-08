@@ -7,6 +7,11 @@ on:
         description: "Optional Wework version override, for example 0.1.0 or v0.1.0. If empty, auto-increment from latest wework-vX.Y.Z tag"
         type: string
         required: false
+      publish_release:
+        description: "Create the formal GitHub Release. Leave disabled to build test artifacts only."
+        type: boolean
+        required: false
+        default: false
   push:
     tags:
       - "wework-v*"
@@ -20,11 +25,12 @@ permissions:
 
 jobs:
   prepare-release:
-    name: Prepare release
+    name: Prepare build
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.version.outputs.release_tag }}
       version: ${{ steps.version.outputs.value }}
+      publish_release: ${{ steps.version.outputs.publish_release }}
 
     steps:
       - name: Checkout code
@@ -37,6 +43,7 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
+          PUBLISH_RELEASE: ${{ github.event_name == 'push' || github.event.inputs.publish_release == 'true' }}
         run: |
           set -euo pipefail
 
@@ -71,16 +78,25 @@ jobs:
             fi
           fi
 
+          publish_release="${PUBLISH_RELEASE:-false}"
+          if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
+            publish_release="true"
+          fi
+
           if [[ "${GITHUB_REF:-}" == refs/tags/wework-v* ]]; then
             release_tag="$GITHUB_REF_NAME"
           else
             release_tag="wework-v$version"
           fi
 
-          echo "value=$version" >> "$GITHUB_OUTPUT"
-          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "value=$version"
+            echo "release_tag=$release_tag"
+            echo "publish_release=$publish_release"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create or update GitHub Release
+        if: steps.version.outputs.publish_release == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -344,6 +360,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload macOS assets to GitHub Release
+        if: needs.prepare-release.outputs.publish_release == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -362,9 +379,21 @@ jobs:
             echo "- Direct DMG and updater downloads are available from: $release_url"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Upload macOS test artifacts
+        if: needs.prepare-release.outputs.publish_release != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-${{ needs.prepare-release.outputs.version }}-macos-${{ matrix.arch }}
+          path: |
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.archive_path }}
+            ${{ steps.package.outputs.signature_path }}
+          if-no-files-found: error
+
   publish-updater-manifest:
     name: Publish updater manifest
     runs-on: ubuntu-latest
+    if: needs.prepare-release.outputs.publish_release == 'true'
     needs:
       - prepare-release
       - build-macos
@@ -438,6 +467,7 @@ jobs:
   publish-release:
     name: Publish release
     runs-on: ubuntu-latest
+    if: needs.prepare-release.outputs.publish_release == 'true'
     needs:
       - prepare-release
       - build-macos

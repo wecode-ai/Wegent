@@ -107,7 +107,8 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 "functioncalloutput"
                 | "customtoolcalloutput"
                 | "toolsearchoutput"
-                | "execcommandend" => {
+                | "execcommandend"
+                | "mcptoolcallend" => {
                     merge_tool_output(&mut assistant.blocks, &item, created_at);
                 }
                 "filechange" => {
@@ -1383,10 +1384,12 @@ fn tool_name(item: &Value) -> String {
         "dynamictoolcall" => {
             string_field(item, "tool").unwrap_or_else(|| "dynamic_tool".to_owned())
         }
-        "mcptoolcall" | "mcpcall" => {
-            let server = string_field(item, "server");
+        "mcptoolcall" | "mcpcall" | "mcptoolcallbegin" | "mcptoolcallend" => {
+            let server =
+                string_field(item, "server").or_else(|| mcp_invocation_field(item, "server"));
             let tool = string_field(item, "tool")
                 .or_else(|| string_field(item, "name"))
+                .or_else(|| mcp_invocation_field(item, "tool"))
                 .unwrap_or_else(|| "mcp_tool".to_owned());
             server
                 .map(|server| format!("{server}.{tool}"))
@@ -1415,9 +1418,13 @@ fn tool_input(item: &Value) -> Value {
         "dynamictoolcall" | "toolsearchcall" => {
             item.get("arguments").cloned().unwrap_or(Value::Null)
         }
-        "mcptoolcall" | "mcpcall" => item
+        "mcptoolcall" | "mcpcall" | "mcptoolcallbegin" | "mcptoolcallend" => item
             .get("arguments")
             .or_else(|| item.get("input"))
+            .or_else(|| {
+                item.get("invocation")
+                    .and_then(|invocation| invocation.get("arguments"))
+            })
             .cloned()
             .unwrap_or(Value::Null),
         "websearch" => json!({"query": string_field(item, "query").unwrap_or_default()}),
@@ -1486,12 +1493,7 @@ fn tool_output(item: &Value) -> Value {
             .map(output_content_items_text)
             .map(Value::String)
             .unwrap_or_else(|| item.get("result").cloned().unwrap_or(Value::Null)),
-        "mcptoolcall" | "mcpcall" => item
-            .get("error")
-            .and_then(|error| string_field(error, "message"))
-            .map(Value::String)
-            .or_else(|| item.get("result").cloned())
-            .unwrap_or(Value::Null),
+        "mcptoolcall" | "mcpcall" | "mcptoolcallend" => mcp_tool_output(item),
         "imagegeneration" => string_field(item, "savedPath")
             .or_else(|| string_field(item, "saved_path"))
             .or_else(|| raw_string_field(item, "result"))
@@ -1525,6 +1527,38 @@ fn default_tool_output(item: &Value) -> Value {
         .unwrap_or(Value::Null)
 }
 
+fn mcp_invocation_field(item: &Value, key: &str) -> Option<String> {
+    item.get("invocation")
+        .and_then(|invocation| string_field(invocation, key))
+}
+
+fn mcp_tool_output(item: &Value) -> Value {
+    if let Some(message) = item
+        .get("error")
+        .and_then(|error| string_field(error, "message"))
+    {
+        return Value::String(message);
+    }
+
+    let Some(result) = item.get("result") else {
+        return Value::Null;
+    };
+
+    if let Some(message) = result
+        .get("Err")
+        .or_else(|| result.get("err"))
+        .and_then(Value::as_str)
+    {
+        return Value::String(message.to_owned());
+    }
+
+    result
+        .get("Ok")
+        .or_else(|| result.get("ok"))
+        .cloned()
+        .unwrap_or_else(|| result.clone())
+}
+
 fn output_payload_text(item: &Value) -> Option<String> {
     let output = item.get("output")?;
     output
@@ -1553,6 +1587,9 @@ fn output_content_items_text(value: &Value) -> String {
 
 fn tool_status(item: &Value) -> String {
     let item_type = item_type(item);
+    if let Some(status) = mcp_tool_status(item, &item_type) {
+        return status;
+    }
     let status = string_field(item, "status").unwrap_or_else(|| {
         if is_codex_tool_output_item_type(&item_type)
             || is_likely_codex_tool_output_item_type(&item_type)
@@ -1574,7 +1611,7 @@ fn tool_status(item: &Value) -> String {
         || status.eq_ignore_ascii_case("failure")
         || status.eq_ignore_ascii_case("error")
         || bool_field(item, "success").is_some_and(|success| !success)
-        || item.get("error").is_some()
+        || has_error_value(item)
     {
         "error".to_owned()
     } else if status.eq_ignore_ascii_case("completed")
@@ -1587,6 +1624,47 @@ fn tool_status(item: &Value) -> String {
     } else {
         "pending".to_owned()
     }
+}
+
+fn mcp_tool_status(item: &Value, item_type: &str) -> Option<String> {
+    if !matches!(item_type, "mcptoolcall" | "mcpcall" | "mcptoolcallend") {
+        return None;
+    }
+
+    if has_error_value(item) {
+        return Some("error".to_owned());
+    }
+
+    let result = item.get("result")?;
+    if result.get("Err").or_else(|| result.get("err")).is_some() {
+        return Some("error".to_owned());
+    }
+
+    let ok_result = result
+        .get("Ok")
+        .or_else(|| result.get("ok"))
+        .unwrap_or(result);
+    if ok_result
+        .get("isError")
+        .or_else(|| ok_result.get("is_error"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Some("error".to_owned());
+    }
+
+    Some("done".to_owned())
+}
+
+fn has_error_value(item: &Value) -> bool {
+    item.get("error").is_some_and(|error| match error {
+        Value::Null => false,
+        Value::String(message) => !message.trim().is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(fields) => !fields.is_empty(),
+        Value::Bool(value) => *value,
+        Value::Number(_) => true,
+    })
 }
 
 fn command_exit_code(item: &Value) -> Option<i64> {
@@ -2266,6 +2344,119 @@ mod tests {
         assert_eq!(messages[1]["blocks"][2]["tool_input"]["cmd"], "rg runtime");
         assert_eq!(messages[1]["blocks"][2]["tool_output"], "runtime.rs");
         assert_eq!(messages[1]["blocks"][2]["status"], "done");
+    }
+
+    #[test]
+    fn transcript_marks_successful_legacy_mcp_tool_call_end_as_done() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "response_item",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "type": "function_call",
+                                "id": "fc-1",
+                                "name": "ask",
+                                "namespace": "askhuman",
+                                "arguments": "{\"message\":\"Confirm?\"}",
+                                "call_id": "call-ask"
+                            }
+                        },
+                        {
+                            "type": "event_msg",
+                            "timestamp": 1_780_000_002,
+                            "payload": {
+                                "type": "mcp_tool_call_end",
+                                "call_id": "call-ask",
+                                "invocation": {
+                                    "server": "askhuman",
+                                    "tool": "ask",
+                                    "arguments": {"message": "Confirm?"}
+                                },
+                                "result": {
+                                    "Ok": {
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": "{\"answers\":[{\"question_index\":0,\"user_input\":\"done\"}]}"
+                                            }
+                                        ],
+                                        "structuredContent": {
+                                            "answers": [
+                                                {"question_index": 0, "user_input": "done"}
+                                            ]
+                                        },
+                                        "isError": false
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "ask");
+        assert_eq!(block["tool_output"]["isError"], false);
+        assert_eq!(block["status"], "done");
+    }
+
+    #[test]
+    fn transcript_marks_completed_mcp_tool_call_with_null_error_as_done() {
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "event_msg",
+                            "timestamp": 1_780_000_001,
+                            "payload": {
+                                "type": "mcpToolCall",
+                                "id": "call-mcp",
+                                "server": "codex",
+                                "tool": "list_mcp_resources",
+                                "arguments": {},
+                                "status": "completed",
+                                "error": null,
+                                "result": {
+                                    "_meta": null,
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": "{\"resources\":[]}"
+                                        }
+                                    ],
+                                    "structuredContent": null
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["type"], "tool");
+        assert_eq!(block["tool_name"], "codex.list_mcp_resources");
+        assert_eq!(block["status"], "done");
     }
 
     #[test]

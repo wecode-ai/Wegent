@@ -814,6 +814,7 @@ export interface RuntimeTaskCreateResponse {
   taskId: string
   workspacePath: string
   runtime: RuntimeName
+  runtimeHandle?: Record<string, unknown> | null
   error?: string | null
 }
 
@@ -1621,6 +1622,8 @@ export interface ChatBlockUpdatedPayload {
   blockId: string
   content?: string
   toolOutput?: unknown
+  toolOutputDelta?: string
+  toolOutputTruncated?: boolean
   toolInput?: Record<string, unknown>
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'

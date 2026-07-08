@@ -339,6 +339,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
+            "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.archived_conversations.list" => {
@@ -391,6 +392,12 @@ impl RuntimeWorkRpcHandler {
 
     async fn get_codex_stream_debug(&self) -> Result<Value, AppIpcError> {
         Ok(json!({ "enabled": codex_stream_debug_enabled() }))
+    }
+
+    async fn restart_codex_app_server(&self) -> Result<Value, AppIpcError> {
+        self.codex_app_server.restart().await;
+        self.thread_list_cache.invalidate();
+        Ok(json!({ "restarted": true }))
     }
 
     async fn set_codex_stream_debug(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1215,6 +1222,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
+        let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
         let mut side_source = side_source_thread(&payload);
@@ -1241,6 +1249,7 @@ impl RuntimeWorkRpcHandler {
             "taskId": local_task_id,
             "workspacePath": workspace_path,
             "runtime": "codex",
+            "runtimeHandle": runtime_handle,
         }))
     }
 
@@ -4689,6 +4698,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn codex_app_server_restart_rpc_returns_success() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.app_server.restart",
+                "payload": {}
+            }))
+            .await
+            .expect("restart should return success");
+
+        assert_eq!(result["restarted"], true);
+    }
+
+    #[tokio::test]
     async fn transcript_without_runtime_link_returns_empty_local_transcript() {
         let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
@@ -4792,7 +4816,7 @@ mod tests {
         let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
         handler.store = RuntimeWorkStore::new(index_path.clone());
 
-        handler
+        let response = handler
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.create",
                 "payload": {
@@ -4809,6 +4833,16 @@ mod tests {
             }))
             .await
             .expect("runtime task should be created");
+        assert_eq!(
+            response["runtimeHandle"]["modelSelection"],
+            json!({
+                "modelName": "local-model:mimo",
+                "modelType": "runtime",
+                "options": {
+                    "collaborationMode": "plan"
+                }
+            })
+        );
 
         let link = handler
             .local_task_link("local-task-1")
