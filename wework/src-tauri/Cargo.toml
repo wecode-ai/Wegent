@@ -28,6 +28,7 @@ libc = "0.2"
 ctrlc = { version = "3.4", features = ["termination"] }
 tauri = { version = "2.11.2", features = ["protocol-asset", "tray-icon", "unstable"] }
 tauri-plugin-log = "2"
+tauri-plugin-notification = "2.3.3"
 tauri-plugin-http = "2"
 tauri-plugin-opener = "2"
 portable-pty = "0.8"

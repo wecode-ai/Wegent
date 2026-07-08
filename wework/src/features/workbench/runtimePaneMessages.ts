@@ -38,6 +38,10 @@ export function createRuntimeTaskStreamHandlers(
   handlers: RuntimeTaskStreamHandlers
 ): ChatStreamHandlers {
   return {
+    scope: {
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+    },
     onChatStart: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const identity = runtimeStreamTaskSubtaskIdentity(payload)

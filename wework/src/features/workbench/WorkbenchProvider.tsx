@@ -4,6 +4,7 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { getActiveWorkbenchDeviceId } from '@/lib/workbench-device'
 import type {
   LocalDeviceSkill,
@@ -27,6 +28,7 @@ import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
+import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import type {
   WorkbenchContextValue,
@@ -42,7 +44,6 @@ import {
 import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
 import {
   findSelectableProject,
-  findProjectDeviceWorkspace,
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
@@ -153,6 +154,11 @@ export function WorkbenchProvider({
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
   )
+  const runtimeTaskReminders = useRuntimeTaskReminders({
+    userId: user.id,
+    runtimeWork: state.runtimeWork,
+    currentRuntimeTask: state.currentRuntimeTask,
+  })
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[getRuntimeTaskRouteKey(state.currentRuntimeTask)]
     : undefined
@@ -181,35 +187,10 @@ export function WorkbenchProvider({
       standaloneDeviceId: state.standaloneDeviceId,
     })
   const activeDeviceIdRef = useRef(activeDeviceId)
-  const activeAttachmentWorkspacePath = useMemo(() => {
-    if (state.currentRuntimeTask?.workspacePath) return state.currentRuntimeTask.workspacePath
-    const selectedProjectWorkspace = findProjectDeviceWorkspace(
-      state.runtimeWork,
-      activeProject?.id,
-      state.selectedDeviceWorkspaceId
-    )
-    return (
-      selectedProjectWorkspace?.workspacePath ??
-      state.standaloneWorkspacePath ??
-      activeProject?.config?.workspace?.localPath ??
-      null
-    )
-  }, [
-    activeProject,
-    state.currentRuntimeTask?.workspacePath,
-    state.runtimeWork,
-    state.selectedDeviceWorkspaceId,
-    state.standaloneWorkspacePath,
-  ])
-  const activeAttachmentWorkspacePathRef = useRef(activeAttachmentWorkspacePath)
 
   useEffect(() => {
     activeDeviceIdRef.current = activeDeviceId
   }, [activeDeviceId])
-
-  useEffect(() => {
-    activeAttachmentWorkspacePathRef.current = activeAttachmentWorkspacePath
-  }, [activeAttachmentWorkspacePath])
 
   useEffect(() => {
     const socketClient = resolvedServices.socketClient
@@ -363,9 +344,7 @@ export function WorkbenchProvider({
   const uploadWorkbenchAttachment = useMemo(() => {
     if (!resolvedServices.attachmentApi?.uploadAttachment) return undefined
     return (file: File, onProgress?: (progress: number) => void) =>
-      resolvedServices.attachmentApi!.uploadAttachment(file, onProgress, {
-        workspacePath: activeAttachmentWorkspacePathRef.current,
-      })
+      resolvedServices.attachmentApi!.uploadAttachment(file, onProgress)
   }, [resolvedServices.attachmentApi])
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: uploadWorkbenchAttachment,
@@ -395,16 +374,7 @@ export function WorkbenchProvider({
         ),
         attachmentCount: attachmentSelection.attachments.length,
         contextUsagePercent: currentContextUsage
-          ? Math.round(
-              Math.min(
-                100,
-                Math.max(
-                  0,
-                  (currentContextUsage.total.totalTokens / currentContextUsage.modelContextWindow) *
-                    100
-                )
-              )
-            )
+          ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
           : undefined,
       },
     })
@@ -690,7 +660,19 @@ export function WorkbenchProvider({
   const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
   const stableSearchRuntimeWork = useStableEvent(runtimeTasks.searchRuntimeWork)
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
-    runtimeTasks.loadRuntimeTranscriptForPane
+    async (
+      address: RuntimeTaskAddress,
+      options?: Parameters<typeof runtimeTasks.loadRuntimeTranscriptForPane>[1]
+    ) => {
+      const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, options)
+      if (transcript.contextUsage) {
+        setContextUsageByRuntimeTask(current => ({
+          ...current,
+          [getRuntimeTaskRouteKey(address)]: transcript.contextUsage!,
+        }))
+      }
+      return transcript
+    }
   )
   const stableSubscribeRuntimeTaskStream = useStableEvent(
     (
@@ -936,6 +918,7 @@ export function WorkbenchProvider({
     isStartupReady,
     workspaceFileApi,
     currentRuntimeTaskRunning,
+    runtimeTaskReminders,
     cloudWorkStatus,
     upgradingDevices,
     projectExecutionMode,
@@ -1009,6 +992,7 @@ export function WorkbenchProvider({
       state: paneState,
       isStartupReady,
       workspaceFileApi,
+      runtimeTaskReminders,
       projectChat: paneProjectChatValue,
       upgradingDevices,
       projectExecutionMode,
@@ -1082,6 +1066,7 @@ export function WorkbenchProvider({
       paneState,
       projectExecutionMode,
       projectWorktreeBranch,
+      runtimeTaskReminders,
       stableArchiveChatConversations,
       stableArchiveProjectConversations,
       stableArchiveProjectsConversations,

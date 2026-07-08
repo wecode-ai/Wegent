@@ -236,6 +236,7 @@ export type RuntimeName = 'codex' | 'claude_code' | 'claude' | string
 export interface RuntimeTaskAddress {
   deviceId: string
   taskId: string
+  threadId?: string | null
   workspacePath?: string | null
   runtimeHandle?: Record<string, unknown> | null
 }
@@ -453,6 +454,7 @@ export interface RuntimeTranscriptResponse {
   runtime: RuntimeName
   title?: string | null
   messages: NormalizedRuntimeMessage[]
+  contextUsage?: RuntimeContextUsage | null
   turnNavigation?: RuntimeTurnNavigationItem[]
   rangeStart?: number | null
   rangeEnd?: number | null
@@ -691,12 +693,14 @@ export interface ArchivedConversationsListRequest {
 export interface ArchivedConversationItem {
   id: string
   taskId: string
+  threadId?: string | null
   title: string
   projectId?: number | null
   projectKey?: string | null
   projectName?: string | null
   workspacePath: string
   workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
+  runtimeHandle?: Record<string, unknown> | null
   deviceId: string
   deviceName?: string | null
   deviceAddress?: string | null
@@ -733,8 +737,41 @@ export interface RuntimeArchivedConversationBulkResponse {
   requestedCount: number
   acceptedCount: number
   deletedCount?: number | null
+  cleanup?: RuntimeArchivedConversationCleanupTaskResult | null
   results: Record<string, unknown>[]
   error?: string | null
+}
+
+export interface RuntimeArchivedConversationCleanupTarget {
+  kind: string
+  path: string
+  exists: boolean
+  bytes: number
+  status: 'preview' | 'cleaned' | 'missing' | 'failed' | string
+  error?: string | null
+}
+
+export interface RuntimeArchivedConversationCleanupTaskResult {
+  taskId: string
+  workspacePath: string
+  targetCount: number
+  cleanableCount: number
+  skippedCount: number
+  errorCount: number
+  bytes: number
+  items: RuntimeArchivedConversationCleanupTarget[]
+}
+
+export interface RuntimeArchivedConversationCleanupResponse {
+  success: boolean
+  deleted: boolean
+  taskCount: number
+  targetCount: number
+  cleanableCount: number
+  skippedCount: number
+  errorCount: number
+  bytes: number
+  results: RuntimeArchivedConversationCleanupTaskResult[]
 }
 
 export interface RuntimeTaskRenameRequest {

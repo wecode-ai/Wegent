@@ -156,6 +156,104 @@ describe('buildTrayMenuTaskGroups', () => {
     expect(groups.recent).toHaveLength(1)
   })
 
+  test('builds unread task group and status counts from reminders', () => {
+    const work = runtimeWork({
+      projects: [
+        {
+          project: {
+            key: 'project-1',
+            id: 1,
+            name: 'Project 1',
+          },
+          deviceWorkspaces: [
+            workspace({
+              tasks: [
+                task({
+                  taskId: 'unread',
+                  title: 'Unread task',
+                  updatedAt: '2026-01-04T00:00:00Z',
+                }),
+                task({
+                  taskId: 'running',
+                  title: 'Running task',
+                  updatedAt: '2026-01-05T00:00:00Z',
+                  running: true,
+                }),
+              ],
+            }),
+          ],
+          totalTasks: 2,
+        },
+      ],
+      totalTasks: 2,
+    })
+
+    const groups = buildTrayMenuTaskGroups(work, {
+      reminders: {
+        unreadTaskKeys: new Set(['device-a\0unread']),
+        unreadCount: 1,
+        hasRunningTasks: true,
+      },
+    })
+
+    expect(groups.unread.map(item => item.title)).toEqual(['Unread task'])
+    expect(groups.unreadCount).toBe(1)
+    expect(groups.hasRunningTasks).toBe(true)
+    expect(groups.showRunningStatus).toBe(true)
+    expect(groups.runningCount).toBe(1)
+  })
+
+  test('hides unread and running task groups when tray status switches are off', () => {
+    const work = runtimeWork({
+      projects: [
+        {
+          project: {
+            key: 'project-1',
+            id: 1,
+            name: 'Project 1',
+          },
+          deviceWorkspaces: [
+            workspace({
+              tasks: [
+                task({
+                  taskId: 'unread',
+                  title: 'Unread task',
+                  updatedAt: '2026-01-04T00:00:00Z',
+                }),
+                task({
+                  taskId: 'running',
+                  title: 'Running task',
+                  updatedAt: '2026-01-05T00:00:00Z',
+                  running: true,
+                }),
+              ],
+            }),
+          ],
+          totalTasks: 2,
+        },
+      ],
+      totalTasks: 2,
+    })
+
+    const groups = buildTrayMenuTaskGroups(work, {
+      reminders: {
+        unreadTaskKeys: new Set(['device-a\0unread']),
+        unreadCount: 1,
+        hasRunningTasks: true,
+      },
+      showUnread: false,
+      showRunning: false,
+    })
+
+    expect(groups.unread).toEqual([])
+    expect(groups.unreadCount).toBe(0)
+    expect(groups.running).toEqual([])
+    expect(groups.runningCount).toBe(0)
+    expect(groups.hasRunningTasks).toBe(false)
+    expect(groups.showRunningStatus).toBe(false)
+    expect(groups.recent.map(item => item.title)).toEqual(['Running task', 'Unread task'])
+  })
+
   test('limits pinned tasks to three and reports more pinned tasks', () => {
     const groups = buildTrayMenuTaskGroups(
       runtimeWork({

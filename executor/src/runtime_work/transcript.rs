@@ -362,11 +362,25 @@ pub(crate) fn completed_workbench_block_from_notification(
 ) -> Option<Value> {
     let block =
         workbench_block_from_notification(params, turn_id, device_id, workspace_path, None)?;
-    block
+    if is_completed_workbench_block(&block) {
+        Some(block)
+    } else {
+        None
+    }
+}
+
+fn is_completed_workbench_block(block: &Value) -> bool {
+    if block
         .get("type")
         .and_then(Value::as_str)
         .is_some_and(|block_type| block_type == "file_changes")
-        .then_some(block)
+    {
+        return true;
+    }
+    block
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .is_some_and(|tool_name| tool_name == "context_compaction")
 }
 
 pub(crate) fn file_changes_block_from_patch_updated(
@@ -1938,6 +1952,28 @@ fn workspace_relative_path(path: &str, workspace_path: &str) -> String {
 }
 
 fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
+    if looks_like_unified_diff(diff) {
+        return prefixed_diff_stats(diff);
+    }
+
+    let line_count = diff.lines().count() as i64;
+    match change_type {
+        "created" => (line_count, 0),
+        "deleted" => (0, line_count),
+        _ => prefixed_diff_stats(diff),
+    }
+}
+
+fn looks_like_unified_diff(diff: &str) -> bool {
+    diff.lines().any(|line| {
+        line.starts_with("@@ ")
+            || line.starts_with("diff --git ")
+            || line.starts_with("+++ ")
+            || line.starts_with("--- ")
+    })
+}
+
+fn prefixed_diff_stats(diff: &str) -> (i64, i64) {
     let additions = diff
         .lines()
         .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
@@ -1946,15 +1982,7 @@ fn diff_stats(diff: &str, change_type: &str) -> (i64, i64) {
         .lines()
         .filter(|line| line.starts_with('-') && !line.starts_with("---"))
         .count() as i64;
-    if additions > 0 || deletions > 0 {
-        return (additions, deletions);
-    }
-    let line_count = diff.lines().count() as i64;
-    match change_type {
-        "created" => (line_count, 0),
-        "deleted" => (0, line_count),
-        _ => (0, 0),
-    }
+    (additions, deletions)
 }
 
 fn combined_diff_from_file_change_item(item: &Value, workspace_path: &str) -> Option<String> {
@@ -2095,6 +2123,27 @@ fn memory_citation(item: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn created_plain_content_counts_lines_as_additions() {
+        let content = "# CPU System Report\n\n- CPU: Apple M1 Max\n- Thermal status: normal\n";
+
+        assert_eq!(diff_stats(content, "created"), (4, 0));
+    }
+
+    #[test]
+    fn unified_diff_counts_prefixed_lines() {
+        let diff = "@@ -1,2 +1,2 @@\n-old\n+new\n context\n";
+
+        assert_eq!(diff_stats(diff, "modified"), (1, 1));
+    }
+
+    #[test]
+    fn modified_plain_patch_counts_prefixed_lines() {
+        let diff = "-old\n+new\n context\n";
+
+        assert_eq!(diff_stats(diff, "modified"), (1, 1));
+    }
 
     #[test]
     fn transcript_unwraps_codex_response_item_and_event_msg_items() {

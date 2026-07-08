@@ -1,4 +1,9 @@
 import { invoke } from '@tauri-apps/api/core'
+import { requestLocalExecutor } from '@/tauri/localExecutor'
+import {
+  isLocalChatStreamDebugEnabled,
+  setLocalChatStreamDebugEnabled,
+} from '@/api/local/localChatStream'
 import {
   clearWorkbenchDebugLogs,
   getWorkbenchDebugSnapshot,
@@ -16,6 +21,8 @@ const DEBUG_PANEL_ID = 'wework-debug-panel'
 const DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 const INSPECTOR_COMMAND = 'open_main_webview_devtools'
 const OPEN_LOG_DIRECTORY_COMMAND = 'open_app_log_directory'
+const CODEX_STREAM_DEBUG_GET_METHOD = 'runtime.codex.stream_debug.get'
+const CODEX_STREAM_DEBUG_SET_METHOD = 'runtime.codex.stream_debug.set'
 
 interface DeveloperCommand {
   id: string
@@ -23,6 +30,13 @@ interface DeveloperCommand {
   description: string
   run: () => void | Promise<void>
 }
+
+interface CodexStreamDebugState {
+  enabled: boolean
+}
+
+let codexStreamDebugEnabled: boolean | null = null
+let codexStreamDebugLoad: Promise<void> | null = null
 
 export function installDeveloperCommandMenu() {
   window.addEventListener(
@@ -61,25 +75,7 @@ function openDeveloperCommandMenu() {
 
   const list = document.createElement('div')
   list.className = 'max-h-[60vh] overflow-y-auto p-2'
-
-  getDeveloperCommands().forEach((command, index) => {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className =
-      'flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors hover:bg-muted focus:bg-muted focus:outline-none'
-    button.dataset.commandId = command.id
-    button.dataset.testid = `developer-command-${command.id}`
-    button.innerHTML = `<span class="text-sm font-medium">${escapeHtml(command.label)}</span><span class="mt-0.5 text-xs text-text-muted">${escapeHtml(command.description)}</span>`
-    button.addEventListener('click', () => {
-      closeDeveloperCommandMenu()
-      void command.run()
-    })
-    list.appendChild(button)
-
-    if (index === 0) {
-      window.setTimeout(() => button.focus(), 0)
-    }
-  })
+  renderDeveloperCommandList(list)
 
   dialog.append(header, list)
   overlay.appendChild(dialog)
@@ -89,6 +85,10 @@ function openDeveloperCommandMenu() {
     if (event.target === overlay) closeDeveloperCommandMenu()
   })
   overlay.addEventListener('keydown', handleMenuKeyDown)
+
+  void refreshCodexStreamDebugStatus(() => {
+    if (document.getElementById(MENU_ID)) renderDeveloperCommandList(list)
+  })
 }
 
 function closeDeveloperCommandMenu() {
@@ -114,8 +114,32 @@ function handleMenuKeyDown(event: KeyboardEvent) {
   buttons[nextIndex]?.focus()
 }
 
+function renderDeveloperCommandList(list: HTMLElement) {
+  list.innerHTML = ''
+  getDeveloperCommands().forEach((command, index) => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className =
+      'flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors hover:bg-muted focus:bg-muted focus:outline-none'
+    button.dataset.commandId = command.id
+    button.dataset.testid = `developer-command-${command.id}`
+    button.innerHTML = `<span class="text-sm font-medium">${escapeHtml(command.label)}</span><span class="mt-0.5 text-xs text-text-muted">${escapeHtml(command.description)}</span>`
+    button.addEventListener('click', () => {
+      closeDeveloperCommandMenu()
+      void command.run()
+    })
+    list.appendChild(button)
+
+    if (index === 0) {
+      window.setTimeout(() => button.focus(), 0)
+    }
+  })
+}
+
 function getDeveloperCommands(): DeveloperCommand[] {
   const diagnosticsEnabled = isPerformanceDiagnosticsEnabled()
+  const streamDebugKnown = codexStreamDebugEnabled !== null
+  const streamLogsEnabled = isLocalChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false)
   return [
     {
       id: 'open-debug-panel',
@@ -139,6 +163,18 @@ function getDeveloperCommands(): DeveloperCommand[] {
         setPerformanceDiagnosticsEnabled(!diagnosticsEnabled)
         window.location.reload()
       },
+    },
+    {
+      id: 'toggle-stream-logs',
+      label: streamDebugKnown
+        ? streamLogsEnabled
+          ? 'Disable Stream Logs'
+          : 'Enable Stream Logs'
+        : 'Toggle Stream Logs',
+      description: streamDebugKnown
+        ? `Frontend stream logs and Codex executor stream logs are currently ${streamLogsEnabled ? 'enabled' : 'disabled'}.`
+        : 'Read and toggle frontend stream logs plus Codex executor stream logs.',
+      run: toggleCodexStreamDebug,
     },
     {
       id: 'print-performance-snapshot',
@@ -182,6 +218,53 @@ function getDeveloperCommands(): DeveloperCommand[] {
       },
     },
   ]
+}
+
+async function refreshCodexStreamDebugStatus(onLoaded?: () => void) {
+  if (!isTauriRuntime()) return
+  if (!codexStreamDebugLoad) {
+    codexStreamDebugLoad = requestLocalExecutor<CodexStreamDebugState>(
+      CODEX_STREAM_DEBUG_GET_METHOD
+    )
+      .then(state => {
+        codexStreamDebugEnabled = state.enabled
+      })
+      .catch(error => {
+        console.warn('[Wework dev] Failed to read Codex stream log state', error)
+      })
+      .finally(() => {
+        codexStreamDebugLoad = null
+      })
+  }
+
+  await codexStreamDebugLoad
+  onLoaded?.()
+}
+
+async function toggleCodexStreamDebug() {
+  if (!isTauriRuntime()) {
+    setLocalChatStreamDebugEnabled(!isLocalChatStreamDebugEnabled())
+    console.info(
+      `[Wework dev] Frontend stream logs ${isLocalChatStreamDebugEnabled() ? 'enabled' : 'disabled'}.`
+    )
+    return
+  }
+
+  if (codexStreamDebugEnabled === null) {
+    await refreshCodexStreamDebugStatus()
+  }
+  const enabled = !(isLocalChatStreamDebugEnabled() || (codexStreamDebugEnabled ?? false))
+  setLocalChatStreamDebugEnabled(enabled)
+  try {
+    const state = await requestLocalExecutor<CodexStreamDebugState>(CODEX_STREAM_DEBUG_SET_METHOD, {
+      enabled,
+    })
+    codexStreamDebugEnabled = state.enabled
+    console.info(`[Wework dev] Stream logs ${state.enabled ? 'enabled' : 'disabled'}.`)
+  } catch (error) {
+    setLocalChatStreamDebugEnabled(!enabled)
+    console.error('[Wework dev] Failed to toggle Codex stream logs', error)
+  }
 }
 
 function openDebugPanel() {

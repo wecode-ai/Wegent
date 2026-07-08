@@ -27,6 +27,7 @@
   },
   "plan_card": {
     "title": "计划",
+    "generating": "正在生成",
     "download": "下载计划",
     "copy": "复制计划",
     "copy_success": "已复制",

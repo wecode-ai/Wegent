@@ -786,7 +786,7 @@ async fn app_runtime_deletes_archived_codex_threads_through_app_server() {
     assert_eq!(deleted["deleted"], true);
     assert_eq!(deleted["taskId"], "thread-1");
 
-    let calls = read_json_lines(&log_path);
+    let calls = wait_for_codex_method(&log_path, "thread/delete").await;
     assert!(calls.iter().any(|call| call["method"] == "thread/delete"));
 }
 
@@ -1352,6 +1352,17 @@ fn read_json_lines(path: &Path) -> Vec<Value> {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect()
+}
+
+async fn wait_for_codex_method(path: &Path, method: &str) -> Vec<Value> {
+    for _ in 0..50 {
+        let calls = read_json_lines(path);
+        if calls.iter().any(|call| call["method"] == method) {
+            return calls;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("codex app-server method was not called: {method}");
 }
 
 async fn wait_for_persisted_mapping(handler: &RuntimeWorkRpcHandler) -> Value {

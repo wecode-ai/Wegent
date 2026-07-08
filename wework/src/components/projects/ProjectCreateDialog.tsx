@@ -552,7 +552,7 @@ function ProjectCreateDialogContent({
           <p className="mt-5 text-sm leading-5 text-[#606368]">
             {t('workbench.project_no_available_devices_hint', '创建项目需要一台可用设备。')}
             <a
-              href="/settings"
+              href="/settings/connections"
               data-testid="open-cloud-device-settings-link"
               onClick={event => {
                 event.preventDefault()
