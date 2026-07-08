@@ -180,6 +180,7 @@ interface FolderRowProps {
   /** Folder selection props */
   canSelectFolders?: boolean
   folderChecked?: boolean | 'indeterminate'
+  folderSelectionDisabled?: boolean
   onFolderCheck?: (checked: boolean) => void
   active?: boolean
   onActivate?: (folderId: number) => void
@@ -197,6 +198,7 @@ function FolderRow({
   canManageFolders,
   canSelectFolders,
   folderChecked,
+  folderSelectionDisabled,
   onFolderCheck,
   active,
   onActivate,
@@ -246,12 +248,12 @@ function FolderRow({
   const folderCheckbox = canSelectFolders ? (
     <Checkbox
       checked={folderChecked}
-      disabled={node.documentCount === 0}
+      disabled={folderSelectionDisabled || node.documentCount === 0}
       onCheckedChange={checked => {
         onFolderCheck?.(checked === true)
       }}
       onClick={e => e.stopPropagation()}
-      className="data-[state=checked]:bg-primary data-[state=checked]:border-primary flex-shrink-0"
+      className="data-[state=checked]:bg-primary data-[state=checked]:border-primary flex-shrink-0 disabled:opacity-60"
       data-testid={`folder-checkbox-${node.id}`}
     />
   ) : null
@@ -393,6 +395,7 @@ interface FolderTreeNodeProps {
   // Folder selection props
   canSelectFolders?: boolean
   selectedFolderIds?: Set<number>
+  coveredBySelectedAncestorFolder?: boolean
   onSelectFolder?: (folderId: number, selected: boolean) => void
   activeFolderId?: number
   onActivateFolder?: (folderId: number) => void
@@ -426,6 +429,7 @@ function FolderTreeNode({
   showActionsColumn,
   canSelectFolders,
   selectedFolderIds,
+  coveredBySelectedAncestorFolder = false,
   onSelectFolder,
   activeFolderId,
   onActivateFolder,
@@ -501,7 +505,10 @@ function FolderTreeNode({
 
   // Folder node
   const isExpanded = expandedFolders.has(node.path)
-  const folderChecked = selectedFolderIds?.has(node.id) ?? false
+  const directlySelectedFolder = selectedFolderIds?.has(node.id) ?? false
+  const folderChecked = coveredBySelectedAncestorFolder || directlySelectedFolder
+  const folderSelectionDisabled = coveredBySelectedAncestorFolder
+  const childCoveredBySelectedFolder = coveredBySelectedAncestorFolder || directlySelectedFolder
 
   return (
     <div>
@@ -517,6 +524,7 @@ function FolderTreeNode({
         canManageFolders={canManageFolders}
         canSelectFolders={canSelectFolders}
         folderChecked={folderChecked}
+        folderSelectionDisabled={folderSelectionDisabled}
         onFolderCheck={handleFolderCheck}
         active={activeFolderId === node.id}
         onActivate={onActivateFolder}
@@ -552,6 +560,7 @@ function FolderTreeNode({
               nameColumnWidth={nameColumnWidth}
               canSelectFolders={canSelectFolders}
               selectedFolderIds={selectedFolderIds}
+              coveredBySelectedAncestorFolder={childCoveredBySelectedFolder}
               onSelectFolder={onSelectFolder}
               activeFolderId={activeFolderId}
               onActivateFolder={onActivateFolder}

@@ -117,6 +117,40 @@ describe('FolderTree query/result separation', () => {
     expect(onSelectDocument).not.toHaveBeenCalled()
   })
 
+  it('marks child folders covered by a selected parent folder as included and disabled', () => {
+    const onSelectFolder = jest.fn()
+    const folder = createFolder({
+      children: [
+        createFolder({
+          id: 2,
+          parent_id: 1,
+          name: 'Child',
+          document_count: 1,
+          direct_document_count: 1,
+          total_document_count: 1,
+        }),
+      ],
+    })
+
+    render(
+      <FolderTree
+        folders={[folder]}
+        documents={[createDocument({ id: 11, folder_id: 2 })]}
+        canSelectFolders={true}
+        selectedFolderIds={new Set([1])}
+        onSelectFolder={onSelectFolder}
+      />
+    )
+
+    const childCheckbox = screen.getByTestId('folder-checkbox-2')
+    expect(childCheckbox).toBeChecked()
+    expect(childCheckbox).toBeDisabled()
+
+    fireEvent.click(childCheckbox)
+
+    expect(onSelectFolder).not.toHaveBeenCalledWith(2, true)
+  })
+
   it('renders documents under their API folder nodes', () => {
     render(
       <FolderTree
