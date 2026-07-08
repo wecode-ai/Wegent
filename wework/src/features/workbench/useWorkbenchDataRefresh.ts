@@ -107,7 +107,7 @@ export function useWorkbenchDataRefresh({
       updateCloudRuntimeState(nextCloudState)
 
       const devices = resolveDeviceListWithCache(selectVisibleDevices(baseDevices, nextCloudState))
-      const runtimeWork = selectRuntimeWorkView(baseRuntimeWork, nextCloudState)
+      const runtimeWork = selectRuntimeWorkView(baseRuntimeWork, nextCloudState, devices)
 
       dispatch({
         type: 'lists_refreshed',

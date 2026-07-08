@@ -5,15 +5,13 @@ import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   canUseForProjectCreation,
+  canUseForRemoteProjectCreation,
   isCloudDevice,
   isClaudeCodeDevice,
   isRemoteDevice,
 } from '@/lib/device-capabilities'
 import type { DeviceInfo } from '@/types/api'
-import type {
-  DockerRemoteDeviceCommandResponse,
-  RemoteDeviceStartupCommand,
-} from '@/types/devices'
+import type { DockerRemoteDeviceCommandResponse, RemoteDeviceStartupCommand } from '@/types/devices'
 import { DeviceFolderPicker } from './DeviceFolderPicker'
 import { joinPath } from './device-folder-path'
 
@@ -67,7 +65,9 @@ function getUsableStandaloneDevices(
   const isTargetDevice = mode === 'remote' ? isRemoteProjectDevice : isLocalDevice
   return devices
     .filter(device => isClaudeCodeDevice(device) && isTargetDevice(device))
-    .filter(canUseForProjectCreation)
+    .filter(device =>
+      mode === 'remote' ? canUseForRemoteProjectCreation(device) : canUseForProjectCreation(device)
+    )
     .sort((left, right) => {
       const leftLabel =
         mode === 'remote' ? getRemoteDeviceLabel(left) : getStandaloneDeviceLabel(left)
@@ -298,8 +298,9 @@ export function StandaloneFolderProjectDialog({
   onRefreshDevices?: () => Promise<void>
 }) {
   const { t } = useTranslation('common')
-  const [startupCommand, setStartupCommand] =
-    useState<DockerRemoteDeviceCommandResponse | null>(null)
+  const [startupCommand, setStartupCommand] = useState<DockerRemoteDeviceCommandResponse | null>(
+    null
+  )
   const [startupCommandError, setStartupCommandError] = useState<string | null>(null)
   const [startupCommandCopied, setStartupCommandCopied] = useState(false)
   const [activeStartupCommandKind, setActiveStartupCommandKind] = useState<string>('docker')
@@ -342,13 +343,13 @@ export function StandaloneFolderProjectDialog({
             '在要接入的云主机或宿主机上运行连接脚本，启动后回到这里刷新设备。'
           )
         : remoteIntent === 'cloud-work'
-        ? showStartupCommand
-          ? t(
-              'workbench.cloud_work_connect_desc',
-              '还没有可用云端设备。先在云主机或另一台电脑上运行下面的连接脚本。'
-            )
-          : t('workbench.cloud_work_desc', '选择这台云端设备要处理的项目目录。')
-        : t('workbench.add_remote_project_desc', '选择已连接的远程主机，并选择此项目的文件夹。')
+          ? showStartupCommand
+            ? t(
+                'workbench.cloud_work_connect_desc',
+                '还没有可用云端设备。先在云主机或另一台电脑上运行下面的连接脚本。'
+              )
+            : t('workbench.cloud_work_desc', '选择这台云端设备要处理的项目目录。')
+          : t('workbench.add_remote_project_desc', '选择已连接的远程主机，并选择此项目的文件夹。')
       : t('workbench.use_existing_folder_desc', '选择本地设备上的一个文件夹。')
   const startupCommandLoading = showStartupCommand && !startupCommand && !startupCommandError
   const startupCommands = useMemo(

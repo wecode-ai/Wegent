@@ -1,5 +1,5 @@
 import {
-  canUseForProjectCreation,
+  canUseForRemoteProjectCreation,
   filterClaudeCodeDevices,
   isAppDevice,
   isCloudDevice,
@@ -86,6 +86,10 @@ export interface DeviceResolver {
   listProjectCreatableDevices: () => DeviceInfo[]
   resolve: (deviceId: string) => DeviceRoute | null
   requireOnline: (deviceId: string) => DeviceRoute
+}
+
+export interface RuntimeWorkMergeContext {
+  devices?: DeviceInfo[]
 }
 
 function cloneChecks(
@@ -297,17 +301,18 @@ export function selectProjectCreatableDevices(
   localDevices: DeviceInfo[],
   cloudState: CloudRuntimeState
 ): DeviceInfo[] {
-  return selectVisibleDevices(localDevices, cloudState).filter(
-    device => (isCloudDevice(device) || isRemoteDevice(device)) && canUseForProjectCreation(device)
-  )
+  return selectVisibleDevices(localDevices, cloudState).filter(canUseForRemoteProjectCreation)
 }
 
 export function selectRuntimeWorkView(
   localRuntimeWork: RuntimeWorkListResponse,
-  cloudState: CloudRuntimeState
+  cloudState: CloudRuntimeState,
+  visibleDevices?: DeviceInfo[]
 ): RuntimeWorkListResponse {
   const snapshot = selectCloudRuntimeSnapshot(cloudState)
-  return snapshot ? mergeRuntimeWorkLists(localRuntimeWork, snapshot.runtimeWork) : localRuntimeWork
+  return snapshot
+    ? mergeRuntimeWorkLists(localRuntimeWork, snapshot.runtimeWork, { devices: visibleDevices })
+    : localRuntimeWork
 }
 
 export function createDeviceResolver(input: {
@@ -330,11 +335,7 @@ export function createDeviceResolver(input: {
 
   return {
     listVisibleDevices: () => visibleDevices,
-    listProjectCreatableDevices: () =>
-      visibleDevices.filter(
-        device =>
-          (isCloudDevice(device) || isRemoteDevice(device)) && canUseForProjectCreation(device)
-      ),
+    listProjectCreatableDevices: () => visibleDevices.filter(canUseForRemoteProjectCreation),
     resolve: deviceId => routes.get(deviceId) ?? null,
     requireOnline: deviceId => {
       const route = routes.get(deviceId)
@@ -539,18 +540,30 @@ function mergeRuntimeRoutes(
 
 function runtimeRoutePriority(kind: DeviceRuntimeRouteKind): number {
   if (kind === 'local-ipc') return 0
+  if (kind === 'app-ipc') return 0
   if (kind === 'cloud-relay') return 1
-  if (kind === 'remote-relay') return 2
-  return 3
+  return 2
 }
 
 export function mergeRuntimeWorkLists(
   primaryWork: RuntimeWorkListResponse,
-  secondaryWork: RuntimeWorkListResponse
+  secondaryWork: RuntimeWorkListResponse,
+  context: RuntimeWorkMergeContext = {}
 ): RuntimeWorkListResponse {
   const taskOwners = new Map<string, string>()
-  const projects = mergeRuntimeProjects(primaryWork.projects, secondaryWork.projects, taskOwners)
-  const chats = mergeRuntimeWorkspaces(primaryWork.chats, secondaryWork.chats, taskOwners)
+  const canonicalizer = createRuntimeWorkDeviceCanonicalizer(context.devices ?? [])
+  const projects = mergeRuntimeProjects(
+    primaryWork.projects,
+    secondaryWork.projects,
+    taskOwners,
+    canonicalizer
+  )
+  const chats = mergeRuntimeWorkspaces(
+    primaryWork.chats,
+    secondaryWork.chats,
+    taskOwners,
+    canonicalizer
+  )
   const totalTasks =
     projects.reduce((total, project) => total + countWorkspaceTasks(project.deviceWorkspaces), 0) +
     countWorkspaceTasks(chats)
@@ -565,44 +578,50 @@ export function mergeRuntimeWorkLists(
 function mergeRuntimeProjects(
   primaryProjects: RuntimeProjectWork[],
   secondaryProjects: RuntimeProjectWork[],
-  taskOwners: Map<string, string>
+  taskOwners: Map<string, string>,
+  canonicalizer: RuntimeWorkDeviceCanonicalizer
 ): RuntimeProjectWork[] {
   const projects = new Map<string, RuntimeProjectWork>()
 
-  primaryProjects.forEach(project => {
-    projects.set(runtimeProjectKey(project), {
+  const upsertProject = (project: RuntimeProjectWork) => {
+    const normalizedProject: RuntimeProjectWork = {
       ...project,
-      deviceWorkspaces: mergeRuntimeWorkspaces([], project.deviceWorkspaces, taskOwners),
-    })
-  })
+      deviceWorkspaces: mergeRuntimeWorkspaces(
+        [],
+        project.deviceWorkspaces,
+        taskOwners,
+        canonicalizer
+      ),
+    }
+    normalizedProject.totalTasks = countWorkspaceTasks(normalizedProject.deviceWorkspaces)
 
-  secondaryProjects.forEach(project => {
-    const key = runtimeProjectKey(project)
+    const key = runtimeProjectKey(normalizedProject)
     const existing = projects.get(key)
     if (!existing) {
-      projects.set(key, {
-        ...project,
-        deviceWorkspaces: mergeRuntimeWorkspaces([], project.deviceWorkspaces, taskOwners),
-      })
+      projects.set(key, normalizedProject)
       return
     }
 
     const deviceWorkspaces = mergeRuntimeWorkspaces(
       existing.deviceWorkspaces,
-      project.deviceWorkspaces,
-      taskOwners
+      normalizedProject.deviceWorkspaces,
+      taskOwners,
+      canonicalizer
     )
     projects.set(key, {
       ...existing,
-      ...project,
+      ...normalizedProject,
       project: {
+        ...normalizedProject.project,
         ...existing.project,
-        ...project.project,
       },
       deviceWorkspaces,
       totalTasks: countWorkspaceTasks(deviceWorkspaces),
     })
-  })
+  }
+
+  primaryProjects.forEach(upsertProject)
+  secondaryProjects.forEach(upsertProject)
 
   return Array.from(projects.values())
 }
@@ -610,7 +629,8 @@ function mergeRuntimeProjects(
 function mergeRuntimeWorkspaces(
   primaryWorkspaces: RuntimeDeviceWorkspace[],
   secondaryWorkspaces: RuntimeDeviceWorkspace[],
-  taskOwners: Map<string, string>
+  taskOwners: Map<string, string>,
+  canonicalizer: RuntimeWorkDeviceCanonicalizer
 ): RuntimeDeviceWorkspace[] {
   const workspaces = new Map<
     string,
@@ -618,23 +638,25 @@ function mergeRuntimeWorkspaces(
   >()
 
   const upsertWorkspace = (workspace: RuntimeDeviceWorkspace) => {
-    const key = runtimeWorkspaceKey(workspace)
+    const canonicalWorkspace = canonicalizeRuntimeWorkspace(workspace, canonicalizer)
+    const key = runtimeWorkspaceKey(canonicalWorkspace)
     const existingEntry = workspaces.get(key)
     const existing = existingEntry?.workspace
     const tasks = mergeRuntimeTasks(
       existing?.tasks ?? [],
-      workspace.tasks,
-      workspace,
+      canonicalWorkspace.tasks,
+      canonicalWorkspace,
       key,
       taskOwners
     )
     workspaces.set(key, {
       workspace: {
-        ...(existing ?? workspace),
-        ...workspace,
+        ...canonicalWorkspace,
+        ...(existing ?? {}),
+        available: (existing?.available ?? false) || canonicalWorkspace.available,
         tasks,
       },
-      inputTaskCount: (existingEntry?.inputTaskCount ?? 0) + workspace.tasks.length,
+      inputTaskCount: (existingEntry?.inputTaskCount ?? 0) + canonicalWorkspace.tasks.length,
     })
   }
 
@@ -653,6 +675,56 @@ function shouldKeepRuntimeWorkspace(
   if (workspace.tasks.length > 0) return true
   if (inputTaskCount > 0) return false
   return workspace.mapped === true || workspace.projectId != null || workspace.id != null
+}
+
+interface RuntimeWorkDeviceCanonicalizer {
+  resolve: (deviceId: string) => DeviceInfo | null
+}
+
+function createRuntimeWorkDeviceCanonicalizer(
+  devices: DeviceInfo[]
+): RuntimeWorkDeviceCanonicalizer {
+  const aliases = new Map<string, DeviceInfo>()
+
+  devices.forEach(device => {
+    runtimeIdentityCandidates(device).forEach(alias => {
+      if (!aliases.has(alias)) aliases.set(alias, device)
+    })
+    device.runtime_routes?.forEach(route => {
+      ;[route.device_id, route.runtime_device_id]
+        .map(value => value.trim())
+        .filter(Boolean)
+        .forEach(alias => {
+          if (!aliases.has(alias)) aliases.set(alias, device)
+        })
+    })
+  })
+
+  return {
+    resolve(deviceId: string) {
+      return aliases.get(deviceId.trim()) ?? null
+    },
+  }
+}
+
+function canonicalizeRuntimeWorkspace(
+  workspace: RuntimeDeviceWorkspace,
+  canonicalizer: RuntimeWorkDeviceCanonicalizer
+): RuntimeDeviceWorkspace {
+  const device = canonicalizer.resolve(workspace.deviceId)
+  if (!device) return workspace
+
+  return {
+    ...workspace,
+    deviceId: device.device_id,
+    deviceName: device.name ?? workspace.deviceName,
+    deviceStatus: device.status ?? workspace.deviceStatus,
+    available: workspace.available || isRuntimeWorkspaceDeviceAvailable(device),
+  }
+}
+
+function isRuntimeWorkspaceDeviceAvailable(device: DeviceInfo): boolean {
+  return device.status === 'online' || device.status === 'busy'
 }
 
 function mergeRuntimeTasks(
@@ -680,12 +752,15 @@ function mergeRuntimeTasks(
 
 function runtimeProjectKey(project: RuntimeProjectWork): string {
   if (project.project.id != null) return `id:${project.project.id}`
+  const workspaceKeys = project.deviceWorkspaces.map(runtimeWorkspaceKey).sort()
+  if (workspaceKeys.length > 0) return `workspace:${workspaceKeys.join('\u0001')}`
   return `key:${project.project.key}`
 }
 
 function runtimeWorkspaceKey(workspace: RuntimeDeviceWorkspace): string {
+  const ownerKey = workspace.id != null ? `mapping:${workspace.id}` : `device:${workspace.deviceId}`
   return [
-    workspace.deviceId,
+    ownerKey,
     workspace.workspacePath,
     workspace.workspaceKind ?? '',
     workspace.projectId ?? '',

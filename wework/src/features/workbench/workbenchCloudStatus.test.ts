@@ -4,6 +4,7 @@ import {
   EMPTY_CLOUD_RUNTIME_STATE,
   finishCloudRuntimeSync,
   mergeRuntimeWorkLists,
+  selectProjectCreatableDevices,
   selectRuntimeWorkView,
   selectVisibleDevices,
   startCloudRuntimeSync,
@@ -225,6 +226,45 @@ describe('cloud runtime sync state', () => {
     ])
   })
 
+  test('excludes remote routes that resolve to the local runtime from remote project creation', () => {
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: {
+        status: 'fulfilled',
+        value: [
+          device({
+            device_id: 'remote-device',
+            name: 'Remote route',
+            device_type: 'remote',
+            runtime_instance_id: 'runtime-local',
+          }),
+        ],
+      },
+    })
+
+    const localDevices = [
+      device({
+        device_id: 'app-device',
+        name: 'Local Executor',
+        device_type: 'app',
+        runtime_instance_id: 'runtime-local',
+      }),
+    ]
+    const visibleDevices = selectVisibleDevices(localDevices, ready)
+
+    expect(visibleDevices).toHaveLength(1)
+    expect(visibleDevices[0]).toMatchObject({
+      device_id: 'app-device',
+      device_type: 'app',
+      runtime_instance_id: 'runtime-local',
+    })
+    expect(visibleDevices[0].runtime_routes?.map(route => route.kind)).toEqual([
+      'app-ipc',
+      'remote-relay',
+    ])
+    expect(selectProjectCreatableDevices(localDevices, ready)).toEqual([])
+  })
+
   test('drops stale revisions that complete after a newer sync starts', () => {
     const first = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
     const second = startCloudRuntimeSync(first, 'manual-refresh', ['devices'])
@@ -246,5 +286,170 @@ describe('cloud runtime sync state', () => {
 
     expect(once.totalTasks).toBe(1)
     expect(twice.totalTasks).toBe(1)
+  })
+
+  test('canonicalizes cloud runtime workspaces to the local route for the same runtime', () => {
+    const localDevice = device({
+      device_id: 'local-device',
+      name: 'Local Executor',
+      device_type: 'local',
+    })
+    const cloudDevice = device({
+      device_id: 'cloud-device',
+      app_device_id: 'local-device',
+      device_type: 'cloud',
+    })
+    const localWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 7, name: 'Repo' },
+          deviceWorkspaces: [workspace('local-device', [])],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const cloudWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 7, name: 'Repo' },
+          deviceWorkspaces: [workspace('cloud-device', [{ taskId: 'task-cloud' }])],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', [
+      'devices',
+      'runtimeWork',
+    ])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: { status: 'fulfilled', value: [cloudDevice] },
+      runtimeWork: { status: 'fulfilled', value: cloudWork },
+    })
+
+    const visibleDevices = selectVisibleDevices([localDevice], ready)
+    const runtimeView = selectRuntimeWorkView(localWork, ready, visibleDevices)
+
+    expect(runtimeView.projects).toHaveLength(1)
+    expect(runtimeView.projects[0].deviceWorkspaces).toEqual([
+      expect.objectContaining({
+        deviceId: 'local-device',
+        deviceName: 'Local Executor',
+        workspacePath: '/workspace/repo',
+        tasks: [
+          expect.objectContaining({
+            taskId: 'task-cloud',
+          }),
+        ],
+      }),
+    ])
+    expect(runtimeView.totalTasks).toBe(1)
+  })
+
+  test('merges duplicate route workspaces that share a device workspace mapping id', () => {
+    const localWorkspace = {
+      ...workspace('local-device', []),
+      id: 101,
+      deviceName: 'Local Executor',
+    }
+    const cloudWorkspace = {
+      ...workspace('cloud-device', [{ taskId: 'task-cloud' }]),
+      id: 101,
+      deviceName: 'hongyu9-remote',
+    }
+    const merged = mergeRuntimeWorkLists(
+      {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [localWorkspace],
+            totalTasks: 0,
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+      {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [cloudWorkspace],
+            totalTasks: 1,
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      }
+    )
+
+    expect(merged.projects[0].deviceWorkspaces).toEqual([
+      expect.objectContaining({
+        id: 101,
+        deviceId: 'local-device',
+        deviceName: 'Local Executor',
+        workspacePath: '/workspace/repo',
+        tasks: [expect.objectContaining({ taskId: 'task-cloud' })],
+      }),
+    ])
+  })
+
+  test('merges runtime projects with different route keys when their canonical workspace matches', () => {
+    const localDevice = device({
+      device_id: 'local-device',
+      name: 'Local Executor',
+      device_type: 'local',
+    })
+    const cloudDevice = device({
+      device_id: 'cloud-device',
+      app_device_id: 'local-device',
+      device_type: 'cloud',
+    })
+    const localWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'local:/workspace/repo', name: 'Repo' },
+          deviceWorkspaces: [workspace('local-device', [])],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const cloudWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'cloud:/workspace/repo', name: 'Repo' },
+          deviceWorkspaces: [workspace('cloud-device', [{ taskId: 'task-cloud' }])],
+          totalTasks: 1,
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', [
+      'devices',
+      'runtimeWork',
+    ])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: { status: 'fulfilled', value: [cloudDevice] },
+      runtimeWork: { status: 'fulfilled', value: cloudWork },
+    })
+
+    const visibleDevices = selectVisibleDevices([localDevice], ready)
+    const runtimeView = selectRuntimeWorkView(localWork, ready, visibleDevices)
+
+    expect(runtimeView.projects).toHaveLength(1)
+    expect(runtimeView.projects[0].project.key).toBe('local:/workspace/repo')
+    expect(runtimeView.projects[0].deviceWorkspaces).toHaveLength(1)
+    expect(runtimeView.projects[0].deviceWorkspaces[0]).toMatchObject({
+      deviceId: 'local-device',
+      workspacePath: '/workspace/repo',
+    })
+    expect(runtimeView.projects[0].deviceWorkspaces[0].tasks.map(task => task.taskId)).toEqual([
+      'task-cloud',
+    ])
   })
 })

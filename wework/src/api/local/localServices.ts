@@ -255,6 +255,7 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     status: online ? ('online' as const) : ('offline' as const),
     is_default: true,
     device_type: 'local' as const,
+    runtime_instance_id: status.runtimeInstanceId ?? null,
     capabilities: ['runtime-work', 'device-commands'],
     slot_used: 0,
     slot_max: 5,
@@ -1288,6 +1289,22 @@ function adaptRuntimeWorkListResponse(
   const projects: RuntimeWorkListResponse['projects'] = []
   const chats: RuntimeWorkListResponse['chats'] = []
   let totalTasks = 0
+  const localWorkspaceLabels = new Set<string>()
+  for (const rawWorkspace of workspaces) {
+    const workspace = recordValue(rawWorkspace)
+    const workspacePath =
+      stringValue(workspace.workspacePath) ??
+      stringValue(workspace.workspace_path) ??
+      stringValue(workspace.projectWorkspacePath) ??
+      stringValue(workspace.project_workspace_path) ??
+      stringValue(workspace.cwd) ??
+      stringValue(workspace.path)
+    if (!workspacePath) continue
+    const workspaceSource =
+      stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
+    if (workspaceSource && workspaceSource !== 'local') continue
+    localWorkspaceLabels.add(workspaceLabel(workspacePath, workspace.label))
+  }
 
   for (const rawWorkspace of workspaces) {
     const workspace = recordValue(rawWorkspace)
@@ -1317,6 +1334,11 @@ function adaptRuntimeWorkListResponse(
     const workspaceKind = workspaceKindFromWorkspace ?? (hasChatTask ? 'chat' : 'workspace')
     const worktreeId = stringValue(workspace.worktreeId) ?? stringValue(workspace.worktree_id)
     const label = workspaceLabel(workspacePath, workspace.label)
+    const workspaceSource =
+      stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
+    if (rawTasks.length === 0 && workspaceSource === 'remote' && localWorkspaceLabels.has(label)) {
+      continue
+    }
     const deviceWorkspace: RuntimeDeviceWorkspace = {
       id: null,
       projectId: null,
@@ -1328,8 +1350,7 @@ function adaptRuntimeWorkListResponse(
       workspaceKind,
       worktreeId,
       label,
-      workspaceSource:
-        stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source),
+      workspaceSource,
       remoteHostId: stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id),
       mapped: true,
       tasks,

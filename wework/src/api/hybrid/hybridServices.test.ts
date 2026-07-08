@@ -444,6 +444,39 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
   })
 
+  it('does not request background runtime work from another route on the same runtime instance', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'local-device',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'app',
+        bind_shell: 'claudecode',
+        runtime_instance_id: 'runtime-shared',
+      },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'remote-device',
+        name: 'Remote Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'remote',
+        bind_shell: 'claudecode',
+        runtime_instance_id: 'runtime-shared',
+      },
+    ])
+
+    const services = createServices()
+    const runtimeWork = await services.cloudBackgroundApi?.listRuntimeWork?.()
+
+    expect(runtimeWork).toEqual({ projects: [], chats: [], totalTasks: 0 })
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
   it('removes current app registration work from background runtime work', async () => {
     mocks.cloudRuntimeIpcRequest.mockResolvedValue({
       projects: [

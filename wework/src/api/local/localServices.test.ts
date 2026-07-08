@@ -1370,6 +1370,50 @@ describe('createLocalAppServices', () => {
     )
   })
 
+  test('drops empty remote workspace shells when a local workspace has the same label', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: [
+        {
+          workspacePath: '/Users/me',
+          label: 'me',
+          workspaceSource: 'local',
+          tasks: [
+            {
+              taskId: 'task-1',
+              workspacePath: '/Users/me',
+              title: 'Local task',
+              runtime: 'codex',
+            },
+          ],
+        },
+        {
+          workspacePath: '/home/me',
+          label: 'me',
+          workspaceSource: 'remote',
+          remoteHostId: 'remote-ssh-codex-managed:host',
+          tasks: [],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.listRuntimeWork()
+
+    expect(response?.projects.map(project => project.project.key)).toEqual(['local:/Users/me'])
+    expect(response?.projects[0].deviceWorkspaces).toHaveLength(1)
+    expect(response?.projects[0].deviceWorkspaces[0]).toEqual(
+      expect.objectContaining({
+        workspacePath: '/Users/me',
+        workspaceSource: 'local',
+      })
+    )
+  })
+
   test('routes workspace file APIs through local executor commands', async () => {
     const request = vi
       .fn()

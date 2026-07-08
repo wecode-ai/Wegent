@@ -589,9 +589,6 @@ function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
 }
 
 function getDeviceRouteLabel(deviceState: SidebarDeviceState): string {
-  if (hasCloudRuntimeRoute(deviceState.device) && deviceState.device?.device_type === 'local') {
-    return '本机 · 云端'
-  }
   return getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
 }
 
@@ -655,7 +652,9 @@ function shouldShowProjectDeviceStatus(
   devices: DeviceInfo[]
 ): deviceState is SidebarDeviceState {
   if (!deviceState) return false
-  if (hasCloudRuntimeRoute(deviceState.device)) return true
+  if (hasCloudRuntimeRoute(deviceState.device) && deviceState.device?.device_type !== 'local') {
+    return true
+  }
   if (devices.length <= 1) return false
   return Boolean(
     deviceState.device && (isCloudDevice(deviceState.device) || isRemoteDevice(deviceState.device))

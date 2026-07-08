@@ -310,10 +310,16 @@ export function createHybridWorkbenchServices(
   })
   const cloudRuntimeApis = new Map<string, NonNullable<WorkbenchServices['runtimeWorkApi']>>()
   const localDeviceIds = new Set<string>([LOCAL_DEVICE_ID])
+  const localRuntimeInstanceIds = new Set<string>()
   let rememberedCloudDevices: DeviceInfo[] = []
 
   const rememberLocalDevices = (devices: DeviceInfo[]) => {
-    devices.forEach(device => localDeviceIds.add(device.device_id))
+    devices.forEach(device => {
+      localDeviceIds.add(device.device_id)
+      if (device.runtime_instance_id) {
+        localRuntimeInstanceIds.add(device.runtime_instance_id)
+      }
+    })
   }
   const rememberCloudDevices = (devices: DeviceInfo[]) => {
     rememberedCloudDevices = mergeDeviceLists(rememberedCloudDevices, devices)
@@ -378,8 +384,13 @@ export function createHybridWorkbenchServices(
     return work
   }
   const listCloudRuntimeWork = async () => {
+    await listLocalDevices()
     const devices = await listCloudDevices()
-    const runtimeDevices = devices.filter(isUsableDevice)
+    const runtimeDevices = devices.filter(
+      device =>
+        isUsableDevice(device) &&
+        !(device.runtime_instance_id && localRuntimeInstanceIds.has(device.runtime_instance_id))
+    )
     const results = await Promise.allSettled(
       runtimeDevices.map(device => cloudRuntimeApi(device.device_id).listRuntimeWork())
     )

@@ -2709,6 +2709,56 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onUpgradeDevice).not.toHaveBeenCalled()
   })
 
+  test('remote project dialog excludes remote routes that belong to the local runtime', async () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'remote-device',
+              name: 'Remote Device',
+              status: 'online',
+              is_default: false,
+              device_type: 'remote',
+              bind_shell: 'claudecode',
+              executor_version: '1.8.5',
+              runtime_instance_id: 'runtime-local',
+              runtime_routes: [
+                {
+                  kind: 'app-ipc',
+                  device_id: 'app-device',
+                  runtime_device_id: 'app-device',
+                  device_type: 'app',
+                  name: 'Local Executor',
+                  status: 'online',
+                },
+                {
+                  kind: 'remote-relay',
+                  device_id: 'remote-device',
+                  runtime_device_id: 'remote-device',
+                  device_type: 'remote',
+                  name: 'Remote Device',
+                  status: 'online',
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+
+    expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('standalone-folder-no-device')).toHaveTextContent('连接一台云端设备')
+    expect(screen.queryByTestId('standalone-remote-device-select')).not.toBeInTheDocument()
+    expect(screen.queryByText('Remote Device')).not.toBeInTheDocument()
+  })
+
   test('closes the project create menu on outside pointer down', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
