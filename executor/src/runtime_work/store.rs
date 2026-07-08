@@ -4,18 +4,21 @@
 
 use std::{
     cmp::Reverse,
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     env, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 
 use super::response::{RuntimeTaskLink, RuntimeWorkspaceLink};
 
 const INDEX_VERSION: u64 = 1;
+const DELETED_ARCHIVED_TASK_ID_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1_000;
+const DELETED_ARCHIVED_TASK_ID_MAX_COUNT: usize = 2_000;
 
 #[derive(Clone)]
 pub(crate) struct RuntimeWorkStore {
@@ -30,7 +33,8 @@ struct RuntimeWorkIndex {
     version: u64,
     tasks: HashMap<String, RuntimeTaskLink>,
     workspaces: HashMap<String, RuntimeWorkspaceLink>,
-    deleted_archived_task_ids: HashSet<String>,
+    #[serde(default, deserialize_with = "deserialize_deleted_archived_task_ids")]
+    deleted_archived_task_ids: HashMap<String, i64>,
 }
 
 impl RuntimeWorkStore {
@@ -72,16 +76,20 @@ impl RuntimeWorkStore {
     pub fn is_deleted_archived_task_id(&self, task_id: &str) -> bool {
         self.read_index_snapshot()
             .deleted_archived_task_ids
-            .contains(task_id)
+            .contains_key(task_id)
     }
 
     pub fn mark_deleted_archived_task_ids(&self, task_ids: impl IntoIterator<Item = String>) {
         let Some(mut index) = self.index.lock().ok() else {
             return;
         };
+        let now_ms = current_time_ms();
         for task_id in task_ids {
-            index.deleted_archived_task_ids.insert(task_id);
+            if !task_id.trim().is_empty() {
+                index.deleted_archived_task_ids.insert(task_id, now_ms);
+            }
         }
+        prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, now_ms);
         self.write_index(&index);
     }
 
@@ -163,11 +171,14 @@ impl RuntimeWorkStore {
         if let Some(parent) = self.index_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
+        let now_ms = current_time_ms();
+        let mut deleted_archived_task_ids = index.deleted_archived_task_ids.clone();
+        prune_deleted_archived_task_ids(&mut deleted_archived_task_ids, now_ms);
         let payload = serde_json::to_vec(&RuntimeWorkIndex {
             version: INDEX_VERSION,
             tasks: index.tasks.clone(),
             workspaces: index.workspaces.clone(),
-            deleted_archived_task_ids: index.deleted_archived_task_ids.clone(),
+            deleted_archived_task_ids,
         });
         if let Ok(payload) = payload {
             let temp_path = temporary_index_path(&self.index_path);
@@ -181,6 +192,11 @@ impl RuntimeWorkStore {
 
     fn read_index_snapshot(&self) -> RuntimeWorkIndex {
         let mut disk_index = read_index_from_path(&self.index_path);
+        let before_deleted_count = disk_index.deleted_archived_task_ids.len();
+        prune_deleted_archived_task_ids(
+            &mut disk_index.deleted_archived_task_ids,
+            current_time_ms(),
+        );
         let dirty_task_ids = self
             .throttled_writes
             .lock()
@@ -196,6 +212,9 @@ impl RuntimeWorkStore {
             }
         }
         *memory_index = disk_index.clone();
+        if disk_index.deleted_archived_task_ids.len() != before_deleted_count {
+            self.write_index(&disk_index);
+        }
         disk_index
     }
 }
@@ -219,8 +238,56 @@ fn empty_index() -> RuntimeWorkIndex {
         version: INDEX_VERSION,
         tasks: HashMap::new(),
         workspaces: HashMap::new(),
-        deleted_archived_task_ids: HashSet::new(),
+        deleted_archived_task_ids: HashMap::new(),
     }
+}
+
+fn deserialize_deleted_archived_task_ids<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, i64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    let now_ms = current_time_ms();
+    let mut ids = match value {
+        Value::Array(items) => items
+            .into_iter()
+            .filter_map(|item| item.as_str().map(|id| (id.to_owned(), now_ms)))
+            .collect::<HashMap<_, _>>(),
+        Value::Object(entries) => entries
+            .into_iter()
+            .filter_map(|(id, value)| timestamp_from_value(&value).map(|timestamp| (id, timestamp)))
+            .collect::<HashMap<_, _>>(),
+        _ => HashMap::new(),
+    };
+    prune_deleted_archived_task_ids(&mut ids, now_ms);
+    Ok(ids)
+}
+
+fn timestamp_from_value(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+}
+
+fn prune_deleted_archived_task_ids(ids: &mut HashMap<String, i64>, now_ms: i64) {
+    ids.retain(|id, deleted_at| {
+        !id.trim().is_empty()
+            && *deleted_at > 0
+            && now_ms.saturating_sub(*deleted_at) <= DELETED_ARCHIVED_TASK_ID_TTL_MS
+    });
+    if ids.len() <= DELETED_ARCHIVED_TASK_ID_MAX_COUNT {
+        return;
+    }
+
+    let mut newest = ids
+        .iter()
+        .map(|(id, deleted_at)| (id.clone(), *deleted_at))
+        .collect::<Vec<_>>();
+    newest.sort_by_key(|(_, deleted_at)| Reverse(*deleted_at));
+    newest.truncate(DELETED_ARCHIVED_TASK_ID_MAX_COUNT);
+    *ids = newest.into_iter().collect();
 }
 
 fn temporary_index_path(index_path: &Path) -> PathBuf {
