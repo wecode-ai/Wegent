@@ -286,6 +286,9 @@ importers:
       micromark-util-combine-extensions:
         specifier: 2.0.1
         version: 2.0.1
+      msw:
+        specifier: ^2.10.5
+        version: 2.14.6(@types/node@22.19.21)(typescript@5.9.3)
       next:
         specifier: ^15.1.9
         version: 15.5.19(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.60.0)(babel-plugin-macros@3.1.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -419,9 +422,6 @@ importers:
       lint-staged:
         specifier: ^15.2.11
         version: 15.5.2
-      msw:
-        specifier: ^2.10.5
-        version: 2.14.6(@types/node@22.19.21)(typescript@5.9.3)
       nyc:
         specifier: ^17.1.0
         version: 17.1.0
