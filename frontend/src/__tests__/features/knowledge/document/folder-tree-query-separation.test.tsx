@@ -91,6 +91,32 @@ describe('FolderTree query/result separation', () => {
     expect(onSelectDocument).not.toHaveBeenCalled()
   })
 
+  it('marks folder-covered documents as included and prevents duplicate document selection', () => {
+    const onSelectDocument = jest.fn()
+    const document = createDocument({ id: 11, folder_id: 1 })
+
+    render(
+      <FolderTree
+        folders={[createFolder()]}
+        documents={[document]}
+        canSelectFolders={true}
+        selectedFolderIds={new Set([1])}
+        selectedIds={new Set()}
+        includedInFolderScope={doc => doc.folder_id === 1}
+        onSelect={onSelectDocument}
+        canSelect={() => true}
+      />
+    )
+
+    const documentCheckbox = screen.getAllByRole('checkbox')[1]
+    expect(documentCheckbox).toBeChecked()
+    expect(documentCheckbox).toBeDisabled()
+
+    fireEvent.click(documentCheckbox)
+
+    expect(onSelectDocument).not.toHaveBeenCalled()
+  })
+
   it('renders documents under their API folder nodes', () => {
     render(
       <FolderTree

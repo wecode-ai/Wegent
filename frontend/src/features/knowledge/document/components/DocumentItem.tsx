@@ -44,6 +44,7 @@ interface DocumentItemProps {
   canSelect?: boolean
   showBorder?: boolean
   selected?: boolean
+  includedInFolderScope?: boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   /** Compact mode for sidebar display - uses card layout */
   compact?: boolean
@@ -84,6 +85,7 @@ export function DocumentItem({
   canSelect = canManage,
   showBorder = true,
   selected = false,
+  includedInFolderScope = false,
   onSelect,
   compact = false,
   isRefreshing = false,
@@ -116,7 +118,11 @@ export function DocumentItem({
   // Check if the document has been modified since creation
   const isUnmodified = document.updated_at === document.created_at
 
+  const checkboxChecked = selected || includedInFolderScope
+  const checkboxDisabled = includedInFolderScope
+
   const handleCheckboxChange = (checked: boolean) => {
+    if (checkboxDisabled) return
     onSelect?.(document, checked)
   }
 
@@ -247,12 +253,13 @@ export function DocumentItem({
         onClick={handleRowClick}
       >
         {/* Checkbox for batch selection */}
-        {canSelect && (
+        {(canSelect || includedInFolderScope) && (
           <div className="flex-shrink-0" onClick={handleCheckboxClick}>
             <Checkbox
-              checked={selected}
+              checked={checkboxChecked}
+              disabled={checkboxDisabled}
               onCheckedChange={handleCheckboxChange}
-              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary h-3.5 w-3.5"
+              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary h-3.5 w-3.5 disabled:opacity-60"
             />
           </div>
         )}
@@ -451,11 +458,12 @@ export function DocumentItem({
       {/* Checkbox for batch selection */}
       {showSelectionColumn && (
         <div onClick={handleCheckboxClick}>
-          {canSelect && (
+          {(canSelect || includedInFolderScope) && (
             <Checkbox
-              checked={selected}
+              checked={checkboxChecked}
+              disabled={checkboxDisabled}
               onCheckedChange={handleCheckboxChange}
-              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary disabled:opacity-60"
             />
           )}
         </div>

@@ -32,6 +32,7 @@ import type {
 import { toast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
+import { formatSelectionSummary } from '../utils/selection-summary'
 
 const DEFAULT_PAGE_SIZE = 100
 const SEARCH_DEBOUNCE_MS = 300
@@ -519,10 +520,12 @@ export function useDocuments(options: UseDocumentsOptions) {
       try {
         const result = await transferDocuments(currentKbId, data)
         toast({
-          description: t('document.document.batch.transferSuccess', {
-            docCount: result.transferred_document_count,
-            folderCount: result.transferred_folder_count,
-          }),
+          description: formatSelectionSummary(
+            t,
+            'transferSuccess',
+            result.transferred_document_count,
+            result.transferred_folder_count
+          ),
         })
         resetLocalSnapshot()
         await fetchDocuments()

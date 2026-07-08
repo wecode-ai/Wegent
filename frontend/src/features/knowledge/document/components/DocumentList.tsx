@@ -69,6 +69,7 @@ import {
   shouldShowSummaryContent,
   shouldShowRetryButton,
 } from '../utils/summarySelectors'
+import { formatSelectionSummary } from '../utils/selection-summary'
 
 /**
  * Find a document by name across all pages of a knowledge base.
@@ -537,6 +538,22 @@ export function DocumentList({
     Boolean(onSelectionChange) || (canManageAllDocuments && canManageDocument(document))
 
   const folderSelectionBlocksDocumentBatchActions = selectedFolderIds.size > 0
+  const selectedFolderScopeIds = useMemo(() => {
+    const scopeIds = new Set<number>()
+    selectedFolderIds.forEach(folderId => {
+      collectFolderAndDescendantIds(folders, folderId).forEach(id => scopeIds.add(id))
+    })
+    return scopeIds
+  }, [folders, selectedFolderIds])
+
+  const isDocumentIncludedInFolderScope = useCallback(
+    (doc: KnowledgeDocument) => {
+      const folderId = doc.folder_id ?? 0
+      return folderId > 0 && selectedFolderScopeIds.has(folderId)
+    },
+    [selectedFolderScopeIds]
+  )
+
   const documentBatchActionsDisabled = shouldDisableDocumentBatchActions({
     selectedDocumentCount: selectedIds.size,
     selectedFolderCount: selectedFolderIds.size,
@@ -685,6 +702,10 @@ export function DocumentList({
   }
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
+    if (selected && isDocumentIncludedInFolderScope(doc)) {
+      return
+    }
+
     setSelectedIds(prev => {
       const newSet = new Set(prev)
       if (selected) {
@@ -714,14 +735,27 @@ export function DocumentList({
       setSelectedFolderIds(prev => {
         const newSet = new Set(prev)
         if (selected) {
+          affectedFolderIds.forEach(id => newSet.delete(id))
           newSet.add(folderId)
         } else {
           affectedFolderIds.forEach(id => newSet.delete(id))
         }
         return newSet
       })
+      if (selected) {
+        setSelectedIds(prev => {
+          const newSet = new Set(prev)
+          documents.forEach(doc => {
+            const docFolderId = doc.folder_id ?? 0
+            if (docFolderId > 0 && affectedFolderIds.has(docFolderId)) {
+              newSet.delete(doc.id)
+            }
+          })
+          return newSet
+        })
+      }
     },
-    [folders]
+    [documents, folders]
   )
 
   const handleSelectAll = (checked: boolean) => {
@@ -1221,12 +1255,7 @@ export function DocumentList({
                 className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
               >
                 <span className="text-sm text-text-primary">
-                  {selectedFolderIds.size > 0
-                    ? t('document.document.batch.selectedWithFolders', {
-                        docCount: selectedIds.size,
-                        folderCount: selectedFolderIds.size,
-                      })
-                    : t('document.document.batch.selected', { count: selectedIds.size })}
+                  {formatSelectionSummary(t, 'selected', selectedIds.size, selectedFolderIds.size)}
                 </span>
                 <div className="flex-1" />
                 <TooltipProvider>
@@ -1335,6 +1364,7 @@ export function DocumentList({
                 canManage={canManageDocument}
                 canSelect={canSelectDocument}
                 selectedIds={selectedIds}
+                includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
                 onCreateFolder={canUpload ? handleCreateFolder : undefined}
@@ -1457,6 +1487,7 @@ export function DocumentList({
                   canManage={canManageDocument}
                   canSelect={doc => canSelectDocument(doc) && canManageAllDocuments}
                   selectedIds={selectedIds}
+                  includedInFolderScope={isDocumentIncludedInFolderScope}
                   onSelect={canManageAllDocuments ? handleSelectDoc : undefined}
                   ragConfigured={ragConfigured}
                   nameColumnWidth={nameColumnWidth ?? undefined}

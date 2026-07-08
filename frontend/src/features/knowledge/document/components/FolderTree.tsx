@@ -57,6 +57,7 @@ interface FolderTreeProps {
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
   selectedIds?: Set<number>
+  includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
   nameColumnWidth?: number
@@ -384,6 +385,7 @@ interface FolderTreeNodeProps {
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
   selected?: (docId: number) => boolean
+  includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
   nameColumnWidth?: number
@@ -417,6 +419,7 @@ function FolderTreeNode({
   canManage,
   canSelect,
   selected,
+  includedInFolderScope,
   onSelect,
   ragConfigured,
   nameColumnWidth,
@@ -440,6 +443,7 @@ function FolderTreeNode({
   if (node.type === 'document') {
     const doc = node.document
     const docWithDisplayName = { ...doc, name: node.displayName }
+    const includedByFolder = includedInFolderScope?.(doc) ?? false
 
     if (compact) {
       return (
@@ -458,6 +462,7 @@ function FolderTreeNode({
             canSelect={canSelect?.(doc) ?? false}
             showBorder={false}
             selected={selected?.(doc.id) ?? false}
+            includedInFolderScope={includedByFolder}
             onSelect={onSelect}
             compact={true}
             ragConfigured={ragConfigured}
@@ -484,6 +489,7 @@ function FolderTreeNode({
         canSelect={canSelect?.(doc) ?? false}
         showBorder={true}
         selected={selected?.(doc.id) ?? false}
+        includedInFolderScope={includedByFolder}
         onSelect={onSelect}
         compact={false}
         ragConfigured={ragConfigured}
@@ -540,6 +546,7 @@ function FolderTreeNode({
               canManage={canManage}
               canSelect={canSelect}
               selected={selected}
+              includedInFolderScope={includedInFolderScope}
               onSelect={onSelect}
               ragConfigured={ragConfigured}
               nameColumnWidth={nameColumnWidth}
@@ -575,6 +582,7 @@ export function FolderTree({
   canManage,
   canSelect,
   selectedIds,
+  includedInFolderScope,
   onSelect,
   ragConfigured,
   nameColumnWidth,
@@ -682,6 +690,7 @@ export function FolderTree({
             canManage={canManage}
             canSelect={canSelect}
             selected={id => selectedIds?.has(id) ?? false}
+            includedInFolderScope={includedInFolderScope}
             onSelect={onSelect}
             ragConfigured={ragConfigured}
             showActionsColumn={showActionsColumn}
@@ -720,6 +729,7 @@ export function FolderTree({
       canManage={canManage}
       canSelect={canSelect}
       selected={id => selectedIds?.has(id) ?? false}
+      includedInFolderScope={includedInFolderScope}
       onSelect={onSelect}
       ragConfigured={ragConfigured}
       nameColumnWidth={nameColumnWidth}
