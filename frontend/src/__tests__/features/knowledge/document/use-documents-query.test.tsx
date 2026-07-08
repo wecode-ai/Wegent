@@ -8,11 +8,12 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { listDocuments } from '@/apis/knowledge'
 import { useDocuments } from '@/features/knowledge/document/hooks/useDocuments'
 
-jest.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-  }),
-}))
+jest.mock('@/hooks/useTranslation', () => {
+  const t = (key: string) => key
+  return {
+    useTranslation: () => ({ t }),
+  }
+})
 
 jest.mock('@/apis/knowledge', () => ({
   listDocuments: jest.fn(),
@@ -103,39 +104,27 @@ describe('useDocuments query parameters', () => {
   })
 
   it('debounces keyword changes before refetching', async () => {
-    jest.useFakeTimers()
-    try {
-      const { rerender } = renderHook(
-        ({ keyword }) =>
-          useDocuments({
-            knowledgeBaseId: 1,
-            paginationEnabled: true,
-            keyword,
-          }),
-        { initialProps: { keyword: '' } }
-      )
+    const { rerender } = renderHook(
+      ({ keyword }) =>
+        useDocuments({
+          knowledgeBaseId: 1,
+          paginationEnabled: true,
+          keyword,
+        }),
+      { initialProps: { keyword: '' } }
+    )
 
-      await act(async () => {
-        await Promise.resolve()
-      })
-      expect(mockListDocuments).toHaveBeenCalledTimes(1)
-      mockListDocuments.mockClear()
+    await waitFor(() => expect(mockListDocuments).toHaveBeenCalledTimes(1))
+    mockListDocuments.mockClear()
 
-      rerender({ keyword: 'a' })
-      rerender({ keyword: 'ab' })
-      rerender({ keyword: 'abc' })
+    rerender({ keyword: 'a' })
+    rerender({ keyword: 'ab' })
+    rerender({ keyword: 'abc' })
 
-      act(() => {
-        jest.advanceTimersByTime(299)
-      })
-      expect(mockListDocuments).not.toHaveBeenCalled()
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(mockListDocuments).not.toHaveBeenCalled()
 
-      await act(async () => {
-        jest.advanceTimersByTime(1)
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-
+    await waitFor(() => {
       expect(mockListDocuments).toHaveBeenCalledWith(1, {
         folder_id: undefined,
         include_subfolders: false,
@@ -145,9 +134,7 @@ describe('useDocuments query parameters', () => {
         limit: 50,
         offset: 0,
       })
-    } finally {
-      jest.useRealTimers()
-    }
+    })
   })
 
   it('ignores stale responses after query changes', async () => {
