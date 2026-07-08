@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Callable
 
-from sqlalchemy import func, tuple_
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -385,9 +385,21 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             return []
 
         legacy_ids, shard_ids_by_model = self._split_task_ids_by_model(workspace_ids)
-        workspaces = super().list_active_workspaces_by_ids(
+        legacy_workspaces = super().list_active_workspaces_by_ids(
             db, workspace_ids=legacy_ids, owner_user_id=owner_user_id
         )
+        legacy_workspaces = self._exclude_migrated_legacy_index_rows(
+            db, legacy_workspaces
+        )
+        migrated_legacy_workspaces = [
+            workspace
+            for workspace in self._list_migrated_legacy_tasks_by_ids(
+                db, task_ids=legacy_ids, owner_user_id=owner_user_id
+            )
+            if workspace.kind == "Workspace"
+            and workspace.is_active == TaskResource.STATE_ACTIVE
+        ]
+        workspaces = [*migrated_legacy_workspaces, *legacy_workspaces]
         for model, shard_ids in shard_ids_by_model.items():
             query = db.query(model).filter(
                 model.id.in_(shard_ids),
@@ -398,7 +410,9 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
                 query, model, owner_user_id=owner_user_id
             )
             workspaces.extend(query.all())
-        return self._order_by_input_ids(workspaces, workspace_ids)
+        return self._order_by_input_ids(
+            self._deduplicate_tasks_by_id(workspaces), workspace_ids
+        )
 
     def list_by_ids(
         self,
@@ -411,16 +425,21 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             return []
 
         legacy_ids, shard_ids_by_model = self._split_task_ids_by_model(task_ids)
-        tasks = super().list_by_ids(
+        legacy_tasks = super().list_by_ids(
             db, task_ids=legacy_ids, owner_user_id=owner_user_id
         )
+        legacy_tasks = self._exclude_migrated_legacy_index_rows(db, legacy_tasks)
+        migrated_legacy_tasks = self._list_migrated_legacy_tasks_by_ids(
+            db, task_ids=legacy_ids, owner_user_id=owner_user_id
+        )
+        tasks = [*migrated_legacy_tasks, *legacy_tasks]
         for model, shard_ids in shard_ids_by_model.items():
             query = db.query(model).filter(model.id.in_(shard_ids))
             query = self._filter_model_owner_user_id(
                 query, model, owner_user_id=owner_user_id
             )
             tasks.extend(query.all())
-        return tasks
+        return self._deduplicate_tasks_by_id(tasks)
 
     def list_recent_group_chat_tasks(
         self,
@@ -428,10 +447,13 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         *,
         since: datetime,
     ) -> list[TaskResource]:
-        tasks = super().list_recent_group_chat_tasks(db, since=since)
+        legacy_tasks = self._exclude_migrated_legacy_index_rows(
+            db, super().list_recent_group_chat_tasks(db, since=since)
+        )
+        shard_tasks: list[TaskResource] = []
         for uid in range(SHARD_COUNT):
             model = task_model_for_user(uid)
-            shard_tasks = (
+            model_tasks = (
                 db.query(model)
                 .filter(
                     model.kind == "Task",
@@ -440,15 +462,16 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
                 )
                 .all()
             )
-            tasks.extend(task for task in shard_tasks if self._is_group_chat_task(task))
-        return tasks
+            shard_tasks.extend(
+                task for task in model_tasks if self._is_group_chat_task(task)
+            )
+        return self._deduplicate_tasks_by_id([*shard_tasks, *legacy_tasks])
 
     def list_active_workspaces_by_user(
         self, db: Session, *, user_id: int
     ) -> list[TaskResource]:
-        workspaces = super().list_active_workspaces_by_user(db, user_id=user_id)
         model = task_model_for_user(user_id)
-        workspaces.extend(
+        shard_workspaces = (
             db.query(model)
             .filter(
                 model.user_id == user_id,
@@ -457,7 +480,10 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             )
             .all()
         )
-        return workspaces
+        legacy_workspaces = self._exclude_migrated_legacy_index_rows(
+            db, super().list_active_workspaces_by_user(db, user_id=user_id)
+        )
+        return self._deduplicate_tasks_by_id([*shard_workspaces, *legacy_workspaces])
 
     def list_regular_active_tasks(
         self,
@@ -484,7 +510,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
                 order_by_updated_at_desc=order_by_updated_at_desc,
             )
 
-        tasks = super().list_regular_active_tasks(
+        legacy_tasks = super().list_regular_active_tasks(
             db,
             user_id=user_id,
             user_ids=user_ids,
@@ -494,6 +520,8 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             order_by_id_desc=False,
             order_by_updated_at_desc=False,
         )
+        legacy_tasks = self._exclude_migrated_legacy_index_rows(db, legacy_tasks)
+        shard_tasks: list[TaskResource] = []
         for model, model_user_ids in self._owner_user_ids_by_model(
             shard_user_ids
         ).items():
@@ -505,8 +533,9 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
                 client_origin=client_origin,
                 exclude_system_namespace=exclude_system_namespace,
             )
-            tasks.extend(query.all())
+            shard_tasks.extend(query.all())
 
+        tasks = self._deduplicate_tasks_by_id([*shard_tasks, *legacy_tasks])
         tasks = self._order_tasks(
             tasks,
             order_by_id_desc=order_by_id_desc,
@@ -525,13 +554,6 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         namespace: str,
         name: str | None = None,
     ) -> list[TaskResource]:
-        resources = super().list_kind_resources(
-            db,
-            kind=kind,
-            user_id=user_id,
-            namespace=namespace,
-            name=name,
-        )
         model = task_model_for_user(user_id)
         query = db.query(model).filter(
             model.kind == kind,
@@ -542,8 +564,18 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             query = query.filter(model.user_id == user_id)
         if name:
             query = query.filter(model.name == name)
-        resources.extend(query.all())
-        return resources
+        shard_resources = query.all()
+        legacy_resources = super().list_kind_resources(
+            db,
+            kind=kind,
+            user_id=user_id,
+            namespace=namespace,
+            name=name,
+        )
+        legacy_resources = self._exclude_migrated_legacy_index_rows(
+            db, legacy_resources
+        )
+        return self._deduplicate_tasks_by_id([*shard_resources, *legacy_resources])
 
     def get_kind_resource(
         self,
@@ -576,13 +608,28 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             return []
 
         legacy_ids, shard_ids_by_model = self._split_task_ids_by_model(task_ids)
-        tasks = super().list_owned_tasks_by_ids_and_states(
+        legacy_tasks = super().list_owned_tasks_by_ids_and_states(
             db,
             task_ids=legacy_ids,
             user_id=user_id,
             states=states,
             client_origin=client_origin,
         )
+        legacy_tasks = self._exclude_migrated_legacy_index_rows(db, legacy_tasks)
+        migrated_legacy_tasks = [
+            task
+            for task in self._list_migrated_legacy_tasks_by_ids(
+                db, task_ids=legacy_ids, owner_user_id=user_id
+            )
+            if task.kind == "Task" and task.is_active in states
+        ]
+        if client_origin:
+            migrated_legacy_tasks = [
+                task
+                for task in migrated_legacy_tasks
+                if task.client_origin == client_origin
+            ]
+        tasks = [*migrated_legacy_tasks, *legacy_tasks]
         for model, shard_ids in shard_ids_by_model.items():
             query = db.query(model).filter(
                 model.id.in_(shard_ids),
@@ -593,7 +640,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             if client_origin:
                 query = query.filter(model.client_origin == client_origin)
             tasks.extend(query.all())
-        return self._order_by_input_ids(tasks, task_ids)
+        return self._order_by_input_ids(self._deduplicate_tasks_by_id(tasks), task_ids)
 
     def list_workspaces_by_refs(
         self, db: Session, *, refs: Sequence
@@ -624,21 +671,21 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         limit: int = 100,
         client_origin: str | None = None,
     ) -> tuple[list[TaskResource], int]:
-        tasks = self._archived_tasks_query(
+        legacy_tasks = self._archived_tasks_query(
             db,
             TaskResource,
             user_id=user_id,
             client_origin=client_origin,
         ).all()
+        legacy_tasks = self._exclude_migrated_legacy_index_rows(db, legacy_tasks)
         model = task_model_for_user(user_id)
-        tasks.extend(
-            self._archived_tasks_query(
-                db,
-                model,
-                user_id=user_id,
-                client_origin=client_origin,
-            ).all()
-        )
+        shard_tasks = self._archived_tasks_query(
+            db,
+            model,
+            user_id=user_id,
+            client_origin=client_origin,
+        ).all()
+        tasks = self._deduplicate_tasks_by_id([*shard_tasks, *legacy_tasks])
         tasks.sort(key=lambda task: task.updated_at, reverse=True)
         total = len(tasks)
         return tasks[skip : skip + limit], total
@@ -652,7 +699,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         project_id: int | None = None,
         client_origin: str | None = None,
     ) -> list[TaskResource]:
-        tasks = self._archivable_active_tasks_query(
+        legacy_tasks = self._archivable_active_tasks_query(
             db,
             TaskResource,
             user_id=user_id,
@@ -660,18 +707,17 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             project_id=project_id,
             client_origin=client_origin,
         ).all()
+        legacy_tasks = self._exclude_migrated_legacy_index_rows(db, legacy_tasks)
         model = task_model_for_user(user_id)
-        tasks.extend(
-            self._archivable_active_tasks_query(
-                db,
-                model,
-                user_id=user_id,
-                scope=scope,
-                project_id=project_id,
-                client_origin=client_origin,
-            ).all()
-        )
-        return tasks
+        shard_tasks = self._archivable_active_tasks_query(
+            db,
+            model,
+            user_id=user_id,
+            scope=scope,
+            project_id=project_id,
+            client_origin=client_origin,
+        ).all()
+        return self._deduplicate_tasks_by_id([*shard_tasks, *legacy_tasks])
 
     def count_active_project_tasks(
         self,
@@ -681,24 +727,21 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         owner_user_id: int | None = None,
         client_origin: str | None = None,
     ) -> int:
-        legacy_count = super().count_active_project_tasks(
-            db,
-            project_id=project_id,
-            owner_user_id=owner_user_id,
-            client_origin=client_origin,
-        )
         if owner_user_id is None:
-            return legacy_count
-
-        model = task_model_for_user(owner_user_id)
-        query = db.query(func.count(model.id)).filter(
-            model.project_id == project_id,
-            model.user_id == owner_user_id,
-            model.is_active == TaskResource.STATE_ACTIVE,
+            return super().count_active_project_tasks(
+                db,
+                project_id=project_id,
+                owner_user_id=owner_user_id,
+                client_origin=client_origin,
+            )
+        return len(
+            self.list_active_project_tasks(
+                db,
+                project_id=project_id,
+                owner_user_id=owner_user_id,
+                client_origin=client_origin,
+            )
         )
-        if client_origin:
-            query = query.filter(model.client_origin == client_origin)
-        return legacy_count + int(query.scalar() or 0)
 
     def list_active_project_tasks(
         self,
@@ -708,14 +751,15 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         owner_user_id: int | None = None,
         client_origin: str | None = None,
     ) -> list[TaskResource]:
-        tasks = super().list_active_project_tasks(
+        legacy_tasks = super().list_active_project_tasks(
             db,
             project_id=project_id,
             owner_user_id=owner_user_id,
             client_origin=client_origin,
         )
+        legacy_tasks = self._exclude_migrated_legacy_index_rows(db, legacy_tasks)
         if owner_user_id is None:
-            return tasks
+            return legacy_tasks
 
         model = task_model_for_user(owner_user_id)
         query = db.query(model).filter(
@@ -726,7 +770,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         )
         if client_origin:
             query = query.filter(model.client_origin == client_origin)
-        tasks.extend(query.all())
+        tasks = self._deduplicate_tasks_by_id([*query.all(), *legacy_tasks])
         return sorted(tasks, key=lambda task: task.updated_at, reverse=True)
 
     def get_active_project_task(
@@ -773,11 +817,14 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         user_id: int,
         client_origin: str | None = None,
     ) -> list[int]:
-        task_ids = super().list_archived_task_ids(
+        legacy_tasks = self._archived_tasks_query(
             db,
+            TaskResource,
             user_id=user_id,
             client_origin=client_origin,
-        )
+        ).all()
+        legacy_tasks = self._exclude_migrated_legacy_index_rows(db, legacy_tasks)
+        legacy_task_ids = [task.id for task in legacy_tasks]
         model = task_model_for_user(user_id)
         query = db.query(model.id).filter(
             model.user_id == user_id,
@@ -787,8 +834,8 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         )
         if client_origin:
             query = query.filter(model.client_origin == client_origin)
-        task_ids.extend(row[0] for row in query.all())
-        return task_ids
+        shard_task_ids = [row[0] for row in query.all()]
+        return self._deduplicate_task_ids([*shard_task_ids, *legacy_task_ids])
 
     def clear_project_for_owned_tasks(
         self,
@@ -1251,8 +1298,86 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         owner_user_id: int | None = None,
     ) -> type | None:
         if not is_new_task_id(task_id):
-            return TaskResource
+            return (
+                self._migrated_legacy_task_model(
+                    db, task_id=task_id, owner_user_id=owner_user_id
+                )
+                or TaskResource
+            )
         return task_model_for_task_id(task_id)
+
+    def _migrated_legacy_task_model(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int | None = None,
+    ) -> type | None:
+        owner_user_id_from_index = self._legacy_task_owner_user_id(
+            db, task_id=task_id, owner_user_id=owner_user_id
+        )
+        if owner_user_id_from_index is None:
+            return None
+
+        model = task_model_for_user(owner_user_id_from_index)
+        exists = db.query(model.id).filter(model.id == task_id).first() is not None
+        return model if exists else None
+
+    def _legacy_task_owner_user_id(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int | None = None,
+    ) -> int | None:
+        query = db.query(TaskResource.user_id).filter(TaskResource.id == task_id)
+        if owner_user_id is not None:
+            query = query.filter(TaskResource.user_id == owner_user_id)
+        row = query.first()
+        return int(row[0]) if row is not None else None
+
+    def _list_migrated_legacy_tasks_by_ids(
+        self,
+        db: Session,
+        *,
+        task_ids: Sequence[int],
+        owner_user_id: int | None = None,
+    ) -> list[TaskResource]:
+        if not task_ids:
+            return []
+
+        query = db.query(TaskResource.id, TaskResource.user_id).filter(
+            TaskResource.id.in_(task_ids)
+        )
+        if owner_user_id is not None:
+            query = query.filter(TaskResource.user_id == owner_user_id)
+
+        ids_by_model: dict[type, list[int]] = defaultdict(list)
+        for task_id, user_id in query.all():
+            ids_by_model[task_model_for_user(int(user_id))].append(int(task_id))
+
+        tasks: list[TaskResource] = []
+        for model, model_task_ids in ids_by_model.items():
+            tasks.extend(db.query(model).filter(model.id.in_(model_task_ids)).all())
+        return tasks
+
+    def _exclude_migrated_legacy_index_rows(
+        self, db: Session, legacy_rows: Sequence[TaskResource]
+    ) -> list[TaskResource]:
+        if not legacy_rows:
+            return []
+
+        ids_by_model: dict[type, list[int]] = defaultdict(list)
+        for row in legacy_rows:
+            ids_by_model[task_model_for_user(int(row.user_id))].append(int(row.id))
+
+        migrated_ids: set[int] = set()
+        for model, task_ids in ids_by_model.items():
+            migrated_ids.update(
+                row[0]
+                for row in db.query(model.id).filter(model.id.in_(task_ids)).all()
+            )
+        return [row for row in legacy_rows if row.id not in migrated_ids]
 
     def _split_task_ids_by_model(
         self, task_ids: Sequence[int]
@@ -1378,7 +1503,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         client_origin: str | None = None,
         project_id: int | None = None,
     ) -> list[TaskResource]:
-        tasks = self._owned_active_task_query(
+        legacy_tasks = self._owned_active_task_query(
             db,
             TaskResource,
             user_id=user_id,
@@ -1387,19 +1512,18 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             client_origin=client_origin,
             project_id=project_id,
         ).all()
+        legacy_tasks = self._exclude_migrated_legacy_index_rows(db, legacy_tasks)
         model = task_model_for_user(user_id)
-        tasks.extend(
-            self._owned_active_task_query(
-                db,
-                model,
-                user_id=user_id,
-                exclude_system_namespace=exclude_system_namespace,
-                is_group_chat=is_group_chat,
-                client_origin=client_origin,
-                project_id=project_id,
-            ).all()
-        )
-        return tasks
+        shard_tasks = self._owned_active_task_query(
+            db,
+            model,
+            user_id=user_id,
+            exclude_system_namespace=exclude_system_namespace,
+            is_group_chat=is_group_chat,
+            client_origin=client_origin,
+            project_id=project_id,
+        ).all()
+        return self._deduplicate_tasks_by_id([*shard_tasks, *legacy_tasks])
 
     def _owned_active_task_page_and_total(
         self,
@@ -1448,17 +1572,25 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
 
         legacy_total = self._count_query_rows(legacy_query)
         shard_total = self._count_query_rows(shard_query)
+        duplicate_total = self._count_migrated_legacy_index_rows(
+            db=db,
+            shard_model=shard_model,
+            legacy_query=legacy_query,
+            legacy_model=TaskResource,
+        )
 
         legacy_rows = self._ordered_limited_rows(
-            legacy_query, TaskResource, limit=page_limit
+            legacy_query, TaskResource, limit=page_limit + duplicate_total
         )
+        legacy_rows = self._exclude_migrated_legacy_index_rows(db, legacy_rows)
         shard_rows = self._ordered_limited_rows(
             shard_query, shard_model, limit=page_limit
         )
 
-        ordered_rows = self._order_tasks_by_created_at_desc([*legacy_rows, *shard_rows])
+        rows = self._deduplicate_tasks_by_id([*shard_rows, *legacy_rows])
+        ordered_rows = self._order_tasks_by_created_at_desc(rows)
         page_rows = ordered_rows[skip : skip + limit]
-        return page_rows, legacy_total + shard_total
+        return page_rows, legacy_total + shard_total - duplicate_total
 
     def _candidate_scanned_owned_active_task_page_and_total(
         self,
@@ -1526,6 +1658,25 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
 
     def _count_query_rows(self, query) -> int:
         return int(query.order_by(None).with_entities(func.count()).scalar() or 0)
+
+    def _count_migrated_legacy_index_rows(
+        self,
+        *,
+        db: Session,
+        shard_model: type,
+        legacy_query,
+        legacy_model: type,
+    ) -> int:
+        legacy_ids = (
+            legacy_query.order_by(None).with_entities(legacy_model.id).subquery()
+        )
+        return int(
+            db.query(shard_model.id)
+            .filter(shard_model.id.in_(select(legacy_ids.c.id)))
+            .with_entities(func.count())
+            .scalar()
+            or 0
+        )
 
     def _ordered_limited_rows(self, query, model: type, *, limit: int) -> list:
         return (
@@ -1604,6 +1755,16 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             tasks_by_id.setdefault(task.id, task)
         return list(tasks_by_id.values())
 
+    def _deduplicate_task_ids(self, task_ids: Sequence[int]) -> list[int]:
+        seen: set[int] = set()
+        unique_task_ids: list[int] = []
+        for task_id in task_ids:
+            if task_id in seen:
+                continue
+            seen.add(task_id)
+            unique_task_ids.append(task_id)
+        return unique_task_ids
+
     def _order_tasks_by_created_at_desc(
         self, tasks: Sequence[TaskResource]
     ) -> list[TaskResource]:
@@ -1621,7 +1782,9 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
     def _order_by_input_ids(
         self, tasks: Sequence[TaskResource], input_ids: Sequence[int]
     ) -> list[TaskResource]:
-        tasks_by_id = {task.id: task for task in tasks}
+        tasks_by_id: dict[int, TaskResource] = {}
+        for task in tasks:
+            tasks_by_id.setdefault(task.id, task)
         return [tasks_by_id[task_id] for task_id in input_ids if task_id in tasks_by_id]
 
     def _order_workspaces_by_refs(
