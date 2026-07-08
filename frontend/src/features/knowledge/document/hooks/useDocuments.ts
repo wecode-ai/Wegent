@@ -34,6 +34,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 
 const DEFAULT_PAGE_SIZE = 50
+const SEARCH_DEBOUNCE_MS = 300
 
 interface UseDocumentsOptions {
   knowledgeBaseId: number | null
@@ -63,6 +64,7 @@ export function useDocuments(options: UseDocumentsOptions) {
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [debouncedKeyword, setDebouncedKeyword] = useState(keyword)
 
   // Pagination state (only meaningful when paginationEnabled=true)
   const [page, setPage] = useState(1)
@@ -81,7 +83,7 @@ export function useDocuments(options: UseDocumentsOptions) {
   const queryRef = useRef({
     folderId,
     includeSubfolders,
-    keyword,
+    keyword: debouncedKeyword,
     sortBy,
     sortOrder,
   })
@@ -103,11 +105,19 @@ export function useDocuments(options: UseDocumentsOptions) {
     queryRef.current = {
       folderId,
       includeSubfolders,
-      keyword,
+      keyword: debouncedKeyword,
       sortBy,
       sortOrder,
     }
-  }, [folderId, includeSubfolders, keyword, sortBy, sortOrder])
+  }, [folderId, includeSubfolders, debouncedKeyword, sortBy, sortOrder])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedKeyword(keyword)
+    }, SEARCH_DEBOUNCE_MS)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [keyword])
 
   const fetchDocuments = useCallback(
     async (targetPage?: number, targetPageSize?: number) => {
@@ -361,7 +371,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     knowledgeBaseId,
     folderId,
     includeSubfolders,
-    keyword,
+    debouncedKeyword,
     sortBy,
     sortOrder,
     fetchDocuments,

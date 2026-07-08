@@ -269,6 +269,14 @@ function FolderRow({
       }`}
       style={{ paddingLeft: `${16 + indent}px` }}
       onClick={() => onActivate?.(node.id)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onActivate?.(node.id)
+        }
+      }}
     >
       {folderCheckbox}
       {expanded ? (

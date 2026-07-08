@@ -1226,7 +1226,7 @@ class KnowledgeService:
                 if folder is None:
                     raise ValueError("Folder not found in this knowledge base")
 
-            if include_subfolders and folder_id > 0:
+            if include_subfolders:
                 folder_rows = (
                     db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
                     .filter(KnowledgeFolder.kind_id == knowledge_base_id)

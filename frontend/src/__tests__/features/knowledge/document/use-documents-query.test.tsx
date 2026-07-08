@@ -102,6 +102,51 @@ describe('useDocuments query parameters', () => {
     })
   })
 
+  it('debounces keyword changes before refetching', async () => {
+    jest.useFakeTimers()
+    try {
+      const { rerender } = renderHook(
+        ({ keyword }) =>
+          useDocuments({
+            knowledgeBaseId: 1,
+            paginationEnabled: true,
+            keyword,
+          }),
+        { initialProps: { keyword: '' } }
+      )
+
+      await waitFor(() => expect(mockListDocuments).toHaveBeenCalledTimes(1))
+      mockListDocuments.mockClear()
+
+      rerender({ keyword: 'a' })
+      rerender({ keyword: 'ab' })
+      rerender({ keyword: 'abc' })
+
+      act(() => {
+        jest.advanceTimersByTime(299)
+      })
+      expect(mockListDocuments).not.toHaveBeenCalled()
+
+      act(() => {
+        jest.advanceTimersByTime(1)
+      })
+
+      await waitFor(() => {
+        expect(mockListDocuments).toHaveBeenCalledWith(1, {
+          folder_id: undefined,
+          include_subfolders: false,
+          keyword: 'abc',
+          sort_by: 'createdAt',
+          sort_order: 'desc',
+          limit: 50,
+          offset: 0,
+        })
+      })
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it('ignores stale responses after query changes', async () => {
     const requestsByKeyword = new Map<string, Array<ReturnType<typeof deferredResponse>>>()
     mockListDocuments.mockImplementation((_knowledgeBaseId, params) => {

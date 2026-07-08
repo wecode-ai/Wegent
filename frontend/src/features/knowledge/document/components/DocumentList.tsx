@@ -1124,6 +1124,7 @@ export function DocumentList({
             size="sm"
             onClick={() => setActiveFolderId(undefined)}
             className="max-w-[220px]"
+            data-testid="active-folder-clear"
           >
             <span className="truncate">{activeFolderName}</span>
             <X className="w-3.5 h-3.5 ml-1 flex-shrink-0" />

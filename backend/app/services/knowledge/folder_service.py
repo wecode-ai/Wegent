@@ -338,6 +338,9 @@ class KnowledgeFolderService:
         doc_count = KnowledgeFolderService._count_folder_docs(
             db, folder.id, folder.kind_id
         )
+        total_doc_count = KnowledgeFolderService._count_folder_subtree_docs(
+            db, folder.id, folder.kind_id
+        )
 
         return KnowledgeFolderResponse(
             id=folder.id,
@@ -347,7 +350,7 @@ class KnowledgeFolderService:
             children=[],
             document_count=doc_count,
             direct_document_count=doc_count,
-            total_document_count=doc_count,
+            total_document_count=total_doc_count,
             created_at=folder.created_at,
             updated_at=folder.updated_at,
         )
@@ -812,6 +815,36 @@ class KnowledgeFolderService:
             .filter(
                 KnowledgeDocument.kind_id == kind_id,
                 KnowledgeDocument.folder_id == folder_id,
+            )
+            .scalar()
+        ) or 0
+
+    @staticmethod
+    def _count_folder_subtree_docs(db: Session, folder_id: int, kind_id: int) -> int:
+        """Count documents in a folder and all descendant folders."""
+        folder_rows = (
+            db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
+            .filter(KnowledgeFolder.kind_id == kind_id)
+            .all()
+        )
+        children_by_parent: dict[int, list[int]] = defaultdict(list)
+        for child_id, parent_id in folder_rows:
+            children_by_parent[parent_id].append(child_id)
+
+        folder_ids: set[int] = set()
+        stack = [folder_id]
+        while stack:
+            current_id = stack.pop()
+            if current_id in folder_ids:
+                continue
+            folder_ids.add(current_id)
+            stack.extend(children_by_parent.get(current_id, []))
+
+        return (
+            db.query(func.count(KnowledgeDocument.id))
+            .filter(
+                KnowledgeDocument.kind_id == kind_id,
+                KnowledgeDocument.folder_id.in_(folder_ids),
             )
             .scalar()
         ) or 0

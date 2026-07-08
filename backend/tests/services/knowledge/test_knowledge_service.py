@@ -15,8 +15,11 @@ from app.schemas.knowledge import (
     DocumentSourceType,
     KnowledgeBaseCreate,
     KnowledgeDocumentCreate,
+    KnowledgeFolderCreate,
+    KnowledgeFolderUpdate,
 )
 from app.services.context import context_service
+from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.knowledge_service import (
     KnowledgeService,
     _run_async_in_new_loop,
@@ -116,6 +119,124 @@ class TestKnowledgeServiceDefaultViewSemantics:
 
         assert updated is not None
         assert updated.json["spec"]["kbType"] == "notebook"
+
+
+@pytest.mark.unit
+class TestKnowledgeServiceDocumentFolderQueries:
+    def test_root_folder_with_subfolders_includes_all_descendants(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="root-subtree-documents"),
+        )
+        parent = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="parent", parent_id=0),
+        )
+        child = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="child", parent_id=parent.id),
+        )
+        root_doc = KnowledgeDocument(
+            kind_id=knowledge_base_id,
+            folder_id=0,
+            attachment_id=0,
+            name="root.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        child_doc = KnowledgeDocument(
+            kind_id=knowledge_base_id,
+            folder_id=child.id,
+            attachment_id=0,
+            name="child.md",
+            file_extension="md",
+            file_size=10,
+            user_id=test_user.id,
+            is_active=True,
+            source_type="file",
+        )
+        test_db.add_all([root_doc, child_doc])
+        test_db.commit()
+
+        documents, total = KnowledgeService.list_documents_paginated(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            folder_id=0,
+            include_subfolders=True,
+        )
+
+        assert total == 2
+        assert {doc.name for doc in documents} == {"root.md", "child.md"}
+
+    def test_update_folder_returns_subtree_total_document_count(
+        self, test_db, test_user
+    ) -> None:
+        knowledge_base_id = KnowledgeService.create_knowledge_base(
+            db=test_db,
+            user_id=test_user.id,
+            data=KnowledgeBaseCreate(name="folder-update-subtree-count"),
+        )
+        parent = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="parent", parent_id=0),
+        )
+        child = KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            test_user.id,
+            KnowledgeFolderCreate(name="child", parent_id=parent.id),
+        )
+        test_db.add_all(
+            [
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=parent.id,
+                    attachment_id=0,
+                    name="parent.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=True,
+                    source_type="file",
+                ),
+                KnowledgeDocument(
+                    kind_id=knowledge_base_id,
+                    folder_id=child.id,
+                    attachment_id=0,
+                    name="child.md",
+                    file_extension="md",
+                    file_size=10,
+                    user_id=test_user.id,
+                    is_active=True,
+                    source_type="file",
+                ),
+            ]
+        )
+        test_db.commit()
+
+        updated = KnowledgeFolderService.update_folder(
+            test_db,
+            parent.id,
+            test_user.id,
+            KnowledgeFolderUpdate(name="renamed-parent"),
+            knowledge_base_id=knowledge_base_id,
+        )
+
+        assert updated.direct_document_count == 1
+        assert updated.total_document_count == 2
 
 
 @pytest.mark.unit

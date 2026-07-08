@@ -99,6 +99,26 @@ describe('FolderTree query/result separation', () => {
     expect(screen.getByText('legacy/path.txt')).toBeInTheDocument()
     expect(screen.queryByText('document.folder.docCount:1')).not.toBeInTheDocument()
   })
+
+  it('activates table-mode folder rows from the keyboard', () => {
+    const onActivateFolder = jest.fn()
+
+    render(
+      <FolderTree
+        folders={[createFolder()]}
+        documents={[]}
+        compact={false}
+        onActivateFolder={onActivateFolder}
+      />
+    )
+
+    const row = screen.getByRole('button', { name: /Reports/ })
+    fireEvent.keyDown(row, { key: 'Enter' })
+    fireEvent.keyDown(row, { key: ' ' })
+
+    expect(onActivateFolder).toHaveBeenCalledTimes(2)
+    expect(onActivateFolder).toHaveBeenCalledWith(1)
+  })
 })
 
 describe('DocumentItem table grid', () => {

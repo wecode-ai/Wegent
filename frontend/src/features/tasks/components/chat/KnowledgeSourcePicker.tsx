@@ -1829,7 +1829,7 @@ function InternalDocumentNode({
             <button
               type="button"
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded border border-border text-text-muted hover:bg-primary/10 hover:text-primary',
+                'flex h-11 w-11 items-center justify-center rounded border border-border text-text-muted hover:bg-primary/10 hover:text-primary',
                 folderSelected ? 'border-primary text-primary' : '',
                 inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
               )}
