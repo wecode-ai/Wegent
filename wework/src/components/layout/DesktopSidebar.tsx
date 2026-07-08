@@ -646,7 +646,9 @@ function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefin
 function shouldShowRuntimeProject(runtimeProjectWork: RuntimeProjectWork): boolean {
   const workspaces = runtimeProjectWork.deviceWorkspaces
   if (workspaces.length === 0) return true
-  return workspaces.some(workspace => workspace.workspaceSource !== 'remote')
+  return workspaces.some(
+    workspace => workspace.workspaceSource !== 'remote' || workspace.tasks.length > 0
+  )
 }
 
 function shouldShowProjectDeviceStatus(

@@ -172,7 +172,10 @@ export function useWorkbenchDataRefresh({
         const runtimeWork =
           runtimeWorkResult.status === 'fulfilled' ? runtimeWorkResult.value : EMPTY_RUNTIME_WORK
         if (runtimeWorkResult.status === 'fulfilled') {
-          dispatch({ type: 'runtime_work_refreshed', runtimeWork })
+          dispatch({
+            type: 'runtime_work_refreshed',
+            runtimeWork: selectRuntimeWorkView(runtimeWork, cloudRuntimeStateRef.current, devices),
+          })
         }
         void refreshCloudBackgroundData(devices, runtimeWork, {
           projects: [],
@@ -210,15 +213,21 @@ export function useWorkbenchDataRefresh({
       executorClient.runtime.listRuntimeWork().catch(() => undefined),
     ])
     const devices = resolveDeviceListWithCache(devicesResult)
-    const runtimeWork = runtimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
+    const visibleDevices = resolveDeviceListWithCache(
+      selectVisibleDevices(devices, cloudRuntimeStateRef.current)
+    )
+    const localRuntimeWork = runtimeWorkResult ?? state.runtimeWork ?? EMPTY_RUNTIME_WORK
+    const runtimeWork = runtimeWorkResult
+      ? selectRuntimeWorkView(localRuntimeWork, cloudRuntimeStateRef.current, visibleDevices)
+      : localRuntimeWork
     dispatch({
       type: 'lists_refreshed',
       projects: state.projects,
-      devices,
+      devices: visibleDevices,
       runtimeWork,
-      standaloneDeviceId: getPreferredStandaloneDeviceId(devices, state.standaloneDeviceId),
+      standaloneDeviceId: getPreferredStandaloneDeviceId(visibleDevices, state.standaloneDeviceId),
     })
-    void refreshCloudBackgroundData(devices, runtimeWork, {
+    void refreshCloudBackgroundData(devices, localRuntimeWork, {
       projects: state.projects,
       standaloneDeviceId: state.standaloneDeviceId,
       trigger: 'manual-refresh',
