@@ -373,6 +373,19 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('appearance-mode-system')).toBeInTheDocument()
   })
 
+  test('opens about settings from desktop settings navigation', async () => {
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-about'))
+
+    expect(screen.getByTestId('about-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('about-check-update-button')).toBeInTheDocument()
+    expect(screen.getByTestId('about-link-github')).toBeInTheDocument()
+    expect(screen.getByTestId('about-link-discord')).toBeInTheDocument()
+  })
+
   test('opens model settings under personal group without manual device sync', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
 
