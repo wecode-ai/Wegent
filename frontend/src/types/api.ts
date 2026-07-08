@@ -833,8 +833,8 @@ export type {
 } from './knowledge'
 
 // Project Types
-export type ProjectExecutionTargetType = 'local' | 'cloud'
-export type ProjectWorkspaceSource = 'git' | 'local_path'
+export type ProjectExecutionTargetType = 'local' | 'cloud' | 'remote'
+export type ProjectWorkspaceSource = 'git' | 'local_path' | 'device_path'
 
 export interface ProjectWorkspaceRef {
   name: string
@@ -856,6 +856,7 @@ export interface ProjectWorkspaceConfig {
   source: ProjectWorkspaceSource
   localPath?: string | null
   checkoutPath?: string | null
+  devicePath?: string | null
   workspaceRef?: ProjectWorkspaceRef | null
 }
 

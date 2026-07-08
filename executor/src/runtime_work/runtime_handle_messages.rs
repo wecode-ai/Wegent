@@ -1303,6 +1303,163 @@ mod tests {
     }
 
     #[test]
+    fn cache_codex_notification_marks_successful_legacy_mcp_end_as_done() {
+        let index_path = temp_index_path("legacy-mcp-success-cache");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "id": "fc-1",
+                    "name": "ask",
+                    "namespace": "askhuman",
+                    "arguments": "{\"message\":\"Confirm?\"}",
+                    "call_id": "call-ask"
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "mcp_tool_call_end",
+                    "call_id": "call-ask",
+                    "invocation": {
+                        "server": "askhuman",
+                        "tool": "ask",
+                        "arguments": {"message": "Confirm?"}
+                    },
+                    "result": {
+                        "Ok": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "{\"answers\":[{\"question_index\":0,\"user_input\":\"done\"}]}"
+                                }
+                            ],
+                            "structuredContent": {
+                                "answers": [
+                                    {"question_index": 0, "user_input": "done"}
+                                ]
+                            },
+                            "isError": false
+                        }
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["tool_name"], "ask");
+        assert_eq!(block["tool_output"]["isError"], false);
+        assert_eq!(block["status"], "done");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_codex_notification_marks_completed_mcp_with_null_error_as_done() {
+        let index_path = temp_index_path("mcp-null-error-success-cache");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": "call-mcp",
+                        "server": "codex",
+                        "tool": "list_mcp_resources",
+                        "arguments": {},
+                        "status": "inProgress",
+                        "error": null,
+                        "result": null
+                    }
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": "call-mcp",
+                        "server": "codex",
+                        "tool": "list_mcp_resources",
+                        "arguments": {},
+                        "status": "completed",
+                        "error": null,
+                        "result": {
+                            "_meta": null,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "{\"resources\":[]}"
+                                }
+                            ],
+                            "structuredContent": null
+                        }
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["tool_name"], "codex.list_mcp_resources");
+        assert_eq!(block["status"], "done");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
     fn cache_codex_notification_preserves_context_compaction_as_tool_block() {
         let index_path = temp_index_path("context-compaction-cache");
         let store = RuntimeWorkStore::new(index_path.clone());

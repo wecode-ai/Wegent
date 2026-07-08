@@ -101,7 +101,7 @@ LOCAL_DEVICE_COMMANDS='{"repo_status":"git status","repo_files":{"command":"ls -
 
 ### 工作区文件命令根目录
 
-`workspace_tree` 和 `workspace_read_text_file` 会拒绝任何不在允许工作区根目录内的路径。Backend 在每次请求时按用户和设备推导允许的根目录（绝不信任客户端传入的 `WEGENT_WORKSPACE_ROOTS`），来源有两类：workspace `source` 为 `local_path` 的 WeWork 项目，以及运行时 `DeviceWorkspace` 映射。后者让运行时本地任务即使没有指向该目录的 `local_path` 项目，也能浏览和预览自己工作区内的文件。
+`workspace_tree` 和 `workspace_read_text_file` 会拒绝任何不在允许工作区根目录内的路径。Backend 在每次请求时按用户和设备推导允许的根目录（绝不信任客户端传入的 `WEGENT_WORKSPACE_ROOTS`），来源有两类：workspace `source` 为 `local_path` 或 `device_path` 的 WeWork 项目，以及运行时 `DeviceWorkspace` 映射。`local_path` 表示用户本机 local executor 上的目录；`device_path` 表示绑定到具体 cloud 或 remote 设备的沙箱目录。后者让运行时本地任务即使没有指向该目录的项目配置，也能浏览和预览自己工作区内的文件。
 
 ## Executor 行为
 

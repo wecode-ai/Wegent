@@ -746,6 +746,57 @@ async fn app_runtime_archives_and_unarchives_codex_threads_through_app_server() 
 }
 
 #[tokio::test]
+async fn app_runtime_archive_cleans_codex_threads_with_missing_rollout() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-missing-rollout-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-missing-rollout-codex-home");
+    let log_path = temp_path("wegent-app-runtime-missing-rollout-log", "jsonl");
+    let fake_codex = write_fake_codex_missing_rollout_on_archive(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let archived = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.archive",
+            "payload": {
+                "taskId": "thread-1",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("archive cleanup should succeed");
+
+    assert_eq!(archived["success"], true);
+    assert_eq!(archived["accepted"], true);
+    assert_eq!(archived["cleaned"], true);
+    assert_eq!(archived["cleanupReason"], "missing_rollout");
+
+    let listed = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.list",
+            "payload": {}
+        }))
+        .await
+        .expect("runtime task list should succeed");
+    let active_task_ids = listed["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|workspace| workspace["tasks"].as_array().unwrap().iter())
+        .map(|task| task["taskId"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(!active_task_ids.contains(&"thread-1"));
+
+    let calls = read_json_lines(&log_path);
+    assert!(calls.iter().any(|call| call["method"] == "thread/archive"));
+    assert!(calls.iter().any(|call| call["method"] == "thread/delete"));
+}
+
+#[tokio::test]
 async fn app_runtime_deletes_archived_codex_threads_through_app_server() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -1001,6 +1052,45 @@ while IFS= read -r line; do
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-1","status":"inProgress"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"delta":"done","phase":"finalAnswer"}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"turn":{{"id":"turn-1","status":"completed"}}}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display()
+    );
+    fs::write(&path, content).unwrap();
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
+fn write_fake_codex_missing_rollout_on_archive(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-app-runtime-missing-rollout", "sh");
+    let _ = fs::remove_file(log_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Fix CI","preview":"fix ci","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"idle","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/archive"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"error":{{"code":-32000,"message":"no rollout found for thread id thread-1"}}}}'
+      ;;
+    *'"method":"thread/delete"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
       ;;
   esac
 done

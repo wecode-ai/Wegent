@@ -1,9 +1,6 @@
 import i18n from '@/i18n'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
-import type {
-  NormalizedRuntimeMessage,
-  RuntimeTranscriptResponse,
-} from '@/types/api'
+import type { NormalizedRuntimeMessage, RuntimeTranscriptResponse } from '@/types/api'
 import type { RuntimeTaskReminderItem } from './runtimeTaskReminders'
 
 export interface RuntimeTaskNotificationText {
@@ -65,7 +62,9 @@ export function notificationTextFromMessages(
   return null
 }
 
-export function fallbackNotificationText(item: RuntimeTaskReminderItem): RuntimeTaskNotificationText {
+export function fallbackNotificationText(
+  item: RuntimeTaskReminderItem
+): RuntimeTaskNotificationText {
   const taskTitle = truncatePreview(item.task.title) || fallbackNotificationTitle()
   const context = truncatePreview(item.projectName || item.workspace.workspacePath)
 

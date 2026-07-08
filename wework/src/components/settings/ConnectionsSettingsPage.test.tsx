@@ -13,6 +13,7 @@ import {
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import { openExternalUrl } from '@/lib/external-links'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
+import { requestLocalExecutor } from '@/tauri/localExecutor'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -78,6 +79,10 @@ vi.mock('@/lib/local-terminal', () => ({
 
 vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
+}))
+
+vi.mock('@/tauri/localExecutor', () => ({
+  requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
 }))
 
 vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
@@ -324,6 +329,11 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[76px]', 'pt-6', 'mb-1')
     expect(screen.getByTestId('settings-back-button')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('settings-main-titlebar-drag-region')).getByTestId(
+        'macos-titlebar-drag-region'
+      )
+    ).toHaveAttribute('data-tauri-drag-region')
   })
 
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
@@ -371,6 +381,19 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('appearance-mode-system')).toBeInTheDocument()
+  })
+
+  test('opens about settings from desktop settings navigation', async () => {
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(screen.getByTestId('settings-nav-about'))
+
+    expect(screen.getByTestId('about-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('about-check-update-button')).toBeInTheDocument()
+    expect(screen.getByTestId('about-link-github')).toBeInTheDocument()
+    expect(screen.getByTestId('about-link-discord')).toBeInTheDocument()
   })
 
   test('opens model settings under personal group without manual device sync', async () => {
@@ -440,9 +463,13 @@ describe('ConnectionsSettingsPage', () => {
       await screen.findByTestId('model-settings-page')
       await userEvent.click(screen.getByTestId('local-model-add-button'))
       expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
-        '请求地址会在模型 URL 后追加 /responses'
+        '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
       )
-      await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+      const urlInput = screen.getByTestId('local-model-url-input')
+      urlInput.focus()
+      await userEvent.paste('http://localhost:11434/v1/responses')
+      expect(screen.getByTestId('local-model-url-input')).toHaveValue('http://localhost:11434/v1')
+      expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/responses')
       expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
         '请求地址：http://localhost:11434/v1/responses'
       )
@@ -545,7 +572,7 @@ describe('ConnectionsSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('runtime-config-sync-auth-button'))
 
-    expect(screen.getByRole('heading', { name: '云端设置' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '云端连接' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-cloud-connect-button')).toHaveTextContent('连接云端')
     expect(window.location.pathname).toBe('/settings/connections')
   })
@@ -565,8 +592,61 @@ describe('ConnectionsSettingsPage', () => {
     await waitFor(() =>
       expect(userApi.updateProxyConfig).toHaveBeenCalledWith('http://127.0.0.1:7890')
     )
+    expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
+      '本地设备代理'
+    )
+    expect(screen.getByTestId('proxy-config-cloud-device-section')).toHaveTextContent(
+      '云端设备代理'
+    )
     expect(await screen.findByText('http://127.0.0.1:7890')).toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-proxy-toggle')).not.toBeInTheDocument()
+  })
+
+  test('distinguishes local and cloud proxy settings while cloud is disconnected', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithPassword: vi.fn(),
+      setupAdminPassword: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+
+    expect(await screen.findByTestId('proxy-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
+      '本地设备代理'
+    )
+    expect(screen.getByTestId('proxy-config-cloud-required')).toHaveTextContent('云端设备代理')
+    await userEvent.type(
+      screen.getByTestId('local-proxy-config-url-input'),
+      'http://127.0.0.1:7890'
+    )
+    await userEvent.click(screen.getByTestId('local-proxy-config-save-button'))
+
+    expect(requestLocalExecutor).not.toHaveBeenCalled()
+    expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('本地设备代理已保存')
+    const restartCodexButton = screen.getByTestId('local-proxy-config-restart-codex-button')
+    expect(restartCodexButton).toHaveTextContent('重启 Codex')
+    await userEvent.click(restartCodexButton)
+    await waitFor(() =>
+      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart')
+    )
+    expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('Codex 已重启')
+    expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
+      'http://127.0.0.1:7890'
+    )
+    expect(userApi.getProxyConfig).not.toHaveBeenCalled()
+    expect(userApi.updateProxyConfig).not.toHaveBeenCalled()
   })
 
   test('opens worktree settings from the coding settings navigation', async () => {

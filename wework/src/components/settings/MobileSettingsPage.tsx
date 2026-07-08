@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ChevronRight,
   GitBranch,
+  Info,
   Package,
   Palette,
   SlidersHorizontal,
@@ -18,6 +19,7 @@ import { ModelSettingsPage } from './ModelSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
+import { AboutSettingsPage } from './AboutSettingsPage'
 
 interface MobileSettingsPageProps {
   onBack: () => void
@@ -30,6 +32,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
     | 'menu'
     | 'general'
     | 'appearance'
+    | 'about'
     | 'personal'
     | 'model-settings'
     | 'skills'
@@ -110,6 +113,32 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
         </header>
         <div className="mt-6 min-h-0 flex-1 overflow-auto">
           <WorktreesSettingsPage />
+        </div>
+      </main>
+    )
+  }
+
+  if (activePage === 'about') {
+    return (
+      <main
+        data-testid="mobile-about-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-about-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app', '返回')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">{t('workbench.settings_nav_about', '关于')}</h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <AboutSettingsPage />
         </div>
       </main>
     )
@@ -197,7 +226,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           >
             <UserRound className="h-5 w-5 shrink-0 text-text-secondary" />
             <span className="min-w-0 flex-1 truncate">
-              {t('workbench.settings_nav_model_settings', '模型设置')}
+              {t('workbench.settings_nav_model_settings', '模型')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>
@@ -223,7 +252,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
             <ArrowLeft className="h-6 w-6" />
           </button>
           <h1 className="text-lg font-semibold">
-            {t('workbench.settings_nav_model_settings', '模型设置')}
+            {t('workbench.settings_nav_model_settings', '模型')}
           </h1>
           <div className="h-11 min-w-[44px]" />
         </header>
@@ -299,6 +328,18 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           <UserRound className="h-5 w-5 shrink-0 text-text-secondary" />
           <span className="min-w-0 flex-1 truncate">
             {t('workbench.settings_nav_personal', '个人')}
+          </span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+        </button>
+        <button
+          type="button"
+          data-testid="mobile-settings-about-button"
+          onClick={() => setActivePage('about')}
+          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+        >
+          <Info className="h-5 w-5 shrink-0 text-text-secondary" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('workbench.settings_nav_about', '关于')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
         </button>

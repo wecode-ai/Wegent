@@ -10,6 +10,10 @@ import {
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
+import {
+  AppUpdateContext,
+  type AppUpdateContextValue,
+} from '@/features/app-update/app-update-context'
 
 function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -80,11 +84,24 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
 
 function renderSidebar(
   overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {},
-  cloudConnection?: Partial<CloudConnectionContextValue>
+  cloudConnection?: Partial<CloudConnectionContextValue>,
+  appUpdate?: Partial<AppUpdateContextValue>
 ) {
   const props: Parameters<typeof DesktopSidebar>[0] = createSidebarProps(overrides)
 
-  const tree = <DesktopSidebar {...props} />
+  let tree = <DesktopSidebar {...props} />
+  if (appUpdate) {
+    const value: AppUpdateContextValue = {
+      availableUpdate: null,
+      status: 'idle',
+      message: null,
+      error: null,
+      checkNow: vi.fn().mockResolvedValue(null),
+      installUpdate: vi.fn().mockResolvedValue(undefined),
+      ...appUpdate,
+    }
+    tree = <AppUpdateContext.Provider value={value}>{tree}</AppUpdateContext.Provider>
+  }
   if (cloudConnection) {
     const value: CloudConnectionContextValue = {
       ...DISCONNECTED_STATE,
@@ -147,6 +164,52 @@ describe('DesktopSidebar', () => {
       'h-8',
       'w-8',
       'shrink-0'
+    )
+  })
+
+  test('shows an exposed update button in the account row when an app update is available', async () => {
+    const installUpdate = vi.fn().mockResolvedValue(undefined)
+    renderSidebar({}, undefined, {
+      availableUpdate: { currentVersion: '0.1.0', version: '0.1.1' },
+      status: 'available',
+      installUpdate,
+    })
+
+    const button = screen.getByTestId('sidebar-app-update-button')
+    expect(button).toHaveClass('h-8', 'w-8')
+    expect(button).toHaveAttribute('title', '更新到 0.1.1')
+
+    await userEvent.click(button)
+
+    expect(installUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps the account-row update icon visible in debug mode for checking updates', async () => {
+    const checkNow = vi.fn().mockResolvedValue(null)
+    renderSidebar({}, undefined, { availableUpdate: null, checkNow })
+
+    const button = screen.getByTestId('sidebar-app-update-button')
+    expect(button).toHaveAttribute('title', '检查更新')
+
+    await userEvent.click(button)
+
+    expect(checkNow).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows the app update error near the account-row update icon', async () => {
+    renderSidebar({}, undefined, {
+      availableUpdate: null,
+      status: 'error',
+      error: 'updater does not have any endpoints set',
+    })
+
+    const button = screen.getByTestId('sidebar-app-update-button')
+    expect(button).toHaveAttribute('title', 'updater does not have any endpoints set')
+    expect(screen.queryByTestId('sidebar-app-update-error')).not.toBeInTheDocument()
+    await userEvent.hover(button)
+
+    expect(await screen.findByTestId('sidebar-app-update-error')).toHaveTextContent(
+      'updater does not have any endpoints set'
     )
   })
 

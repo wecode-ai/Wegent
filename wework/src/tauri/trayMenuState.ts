@@ -150,11 +150,12 @@ export function buildTrayMenuTaskGroups(
   const { reminders, showUnread = true, showRunning = true } = options
   const items = collectRuntimeTaskItems(runtimeWork)
   const running = showRunning ? items.filter(({ task }) => task.running) : []
-  const unread = showUnread && reminders
-    ? items.filter(({ workspace, task }) =>
-        reminders.unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
-      )
-    : []
+  const unread =
+    showUnread && reminders
+      ? items.filter(({ workspace, task }) =>
+          reminders.unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
+        )
+      : []
   const pinned = items.filter(({ task }) => isPinnedRuntimeTask(task))
   const runningTasks = splitTrayMenuTasks(running)
   const unreadTasks = splitTrayMenuTasks(unread)

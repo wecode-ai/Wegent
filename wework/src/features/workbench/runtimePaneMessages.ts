@@ -194,6 +194,7 @@ export function createRuntimeTaskStreamHandlers(
         hasContent: payload.content !== undefined,
         hasToolInput: payload.toolInput !== undefined,
         hasToolOutput: payload.toolOutput !== undefined,
+        hasToolOutputDelta: payload.toolOutputDelta !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
       })
       handlers.onMessageAction({
@@ -204,6 +205,9 @@ export function createRuntimeTaskStreamHandlers(
           ...(payload.content !== undefined && { content: payload.content }),
           ...(payload.toolInput !== undefined && { toolInput: payload.toolInput }),
           ...(payload.toolOutput !== undefined && { toolOutput: payload.toolOutput }),
+          ...(payload.toolOutputDelta !== undefined && {
+            toolOutputDelta: payload.toolOutputDelta,
+          }),
           ...(payload.fileChanges !== undefined && {
             fileChanges: normalizeTurnFileChanges(payload.fileChanges),
           }),

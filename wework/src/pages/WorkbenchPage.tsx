@@ -19,11 +19,7 @@ export function WorkbenchPage() {
   const isTauri = isTauriRuntime()
   const { state, runtimeTaskReminders } = useWorkbench()
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
-  const {
-    trayUnreadEnabled,
-    trayRunningEnabled,
-    trayUsageEnabled,
-  } = taskReminders.preferences
+  const { trayUnreadEnabled, trayRunningEnabled, trayUsageEnabled } = taskReminders.preferences
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
   const trayMenuTaskGroups = useMemo(
     () =>

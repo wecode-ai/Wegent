@@ -209,6 +209,39 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('emits tool output delta block updates', () => {
+    const onBlockUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      'response.block.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          block_id: 'call-1',
+          updates: {
+            status: 'streaming',
+            tool_output_delta: 'line 1\n',
+            tool_output_truncated: false,
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      blockId: 'call-1',
+      status: 'streaming',
+      toolOutputDelta: 'line 1\n',
+      toolOutputTruncated: false,
+    })
+  })
+
   test('treats command output with non-zero exit code as completed', () => {
     const onBlockUpdated = vi.fn()
 

@@ -23,6 +23,9 @@ use super::{
     util::{extract_text, is_completed_plan_item, item_id, now_ms, raw_string_field, string_field},
 };
 
+const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
+const MAX_TOOL_OUTPUT_BUFFER_BYTES: usize = 512 * 1024;
+
 pub(crate) fn emit_response_event(
     event_tx: &Option<broadcast::Sender<Value>>,
     device_id: &str,
@@ -244,13 +247,7 @@ impl CodexNotificationEventMapper {
                     self.agent_message_phases.forget_item(notification.params);
                     return;
                 }
-                emit_tool_done(
-                    event_tx,
-                    device_id,
-                    local_task_id,
-                    request,
-                    notification.params,
-                );
+                self.emit_tool_done(&emit_context, notification.params);
                 self.agent_message_phases.forget_item(notification.params);
             }
             "subagent/activity" => {
@@ -352,11 +349,13 @@ impl CodexNotificationEventMapper {
                 return;
             }
         };
+        let emitted_delta = limit_tool_output_delta(&mapping.delta);
         let content = self
             .tool_output_deltas
             .entry(mapping.tool_use_id.clone())
             .or_default();
-        content.push_str(&mapping.delta);
+        push_limited_tool_output(content, &emitted_delta);
+        let truncated = emitted_delta.len() < mapping.delta.len();
         emit_response_event(
             emit_context.event_tx,
             emit_context.device_id,
@@ -366,11 +365,27 @@ impl CodexNotificationEventMapper {
             json!({
                 "block_id": mapping.tool_use_id,
                 "updates": {
-                    "tool_output": content.clone(),
+                    "tool_output_delta": emitted_delta,
+                    "tool_output_truncated": truncated,
                     "status": "streaming",
                 }
             }),
         );
+    }
+
+    fn emit_tool_done(&mut self, emit_context: &EventEmitContext<'_>, params: &Value) {
+        if let Some((block_id, mut updates)) = tool_update_from_notification(params) {
+            let had_streamed_output = self.tool_output_deltas.remove(&block_id).is_some();
+            normalize_tool_done_updates(&mut updates, had_streamed_output);
+            emit_response_event(
+                emit_context.event_tx,
+                emit_context.device_id,
+                "response.block.updated",
+                emit_context.local_task_id,
+                emit_context.request,
+                json!({"block_id": block_id, "updates": updates}),
+            );
+        }
     }
 
     fn emit_process_text_delta(
@@ -875,6 +890,49 @@ fn plan_item_text(params: &Value) -> Option<String> {
         .or_else(|| extract_text(params))
 }
 
+fn limit_tool_output_delta(delta: &str) -> String {
+    if delta.len() <= MAX_TOOL_OUTPUT_DELTA_BYTES {
+        return delta.to_owned();
+    }
+
+    truncate_utf8(delta, MAX_TOOL_OUTPUT_DELTA_BYTES)
+}
+
+fn push_limited_tool_output(content: &mut String, delta: &str) {
+    content.push_str(delta);
+    if content.len() <= MAX_TOOL_OUTPUT_BUFFER_BYTES {
+        return;
+    }
+
+    let suffix = truncate_utf8_from_end(content, MAX_TOOL_OUTPUT_BUFFER_BYTES);
+    content.clear();
+    content.push_str(&suffix);
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+
+    let mut boundary = max_bytes;
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    value[..boundary].to_owned()
+}
+
+fn truncate_utf8_from_end(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+
+    let mut boundary = value.len() - max_bytes;
+    while boundary < value.len() && !value.is_char_boundary(boundary) {
+        boundary += 1;
+    }
+    value[boundary..].to_owned()
+}
+
 fn plan_block_id(params: &Value) -> String {
     let item = params.get("item").unwrap_or(params);
     let plan_item_id = string_field(params, "itemId")
@@ -967,23 +1025,28 @@ fn value_identifier(value: &Value) -> Option<String> {
     }
 }
 
-fn emit_tool_done(
-    event_tx: &Option<broadcast::Sender<Value>>,
-    device_id: &str,
-    local_task_id: &str,
-    request: &ExecutionRequest,
-    params: &Value,
-) {
-    if let Some((block_id, updates)) = tool_update_from_notification(params) {
-        emit_response_event(
-            event_tx,
-            device_id,
-            "response.block.updated",
-            local_task_id,
-            request,
-            json!({"block_id": block_id, "updates": updates}),
-        );
+fn normalize_tool_done_updates(updates: &mut Value, had_streamed_output: bool) {
+    let Some(object) = updates.as_object_mut() else {
+        return;
+    };
+
+    if had_streamed_output {
+        object.remove("tool_output");
+        return;
     }
+
+    let Some(output) = object.get("tool_output").and_then(Value::as_str) else {
+        return;
+    };
+    if output.len() <= MAX_TOOL_OUTPUT_DELTA_BYTES {
+        object.insert("tool_output_truncated".to_owned(), Value::Bool(false));
+        return;
+    }
+    object.insert(
+        "tool_output".to_owned(),
+        Value::String(limit_tool_output_delta(output)),
+    );
+    object.insert("tool_output_truncated".to_owned(), Value::Bool(true));
 }
 
 fn emit_subagent_activity(
@@ -2738,7 +2801,14 @@ mod tests {
             .expect("first output delta should update the tool block");
         assert_eq!(first["event"], "response.block.updated");
         assert_eq!(first["payload"]["data"]["block_id"], "call-1");
-        assert_eq!(first["payload"]["data"]["updates"]["tool_output"], "one");
+        assert_eq!(
+            first["payload"]["data"]["updates"]["tool_output_delta"],
+            "one"
+        );
+        assert_eq!(
+            first["payload"]["data"]["updates"]["tool_output_truncated"],
+            false
+        );
         assert_eq!(first["payload"]["data"]["updates"]["status"], "streaming");
 
         let second = event_rx
@@ -2747,10 +2817,53 @@ mod tests {
         assert_eq!(second["event"], "response.block.updated");
         assert_eq!(second["payload"]["data"]["block_id"], "call-1");
         assert_eq!(
-            second["payload"]["data"]["updates"]["tool_output"],
-            "one two"
+            second["payload"]["data"]["updates"]["tool_output_delta"],
+            " two"
+        );
+        assert_eq!(
+            second["payload"]["data"]["updates"]["tool_output_truncated"],
+            false
         );
         assert_eq!(second["payload"]["data"]["updates"]["status"], "streaming");
+    }
+
+    #[test]
+    fn limits_codex_exec_output_delta_event_size() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "exec_command_output_delta",
+                    "call_id": "call-1",
+                    "stream": "stdout",
+                    "chunk": "x".repeat(MAX_TOOL_OUTPUT_DELTA_BYTES + 8)
+                }
+            }),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("large output delta should still update the tool block");
+        let delta = event["payload"]["data"]["updates"]["tool_output_delta"]
+            .as_str()
+            .expect("delta should be a string");
+        assert_eq!(delta.len(), MAX_TOOL_OUTPUT_DELTA_BYTES);
+        assert_eq!(
+            event["payload"]["data"]["updates"]["tool_output_truncated"],
+            true
+        );
     }
 
     #[test]

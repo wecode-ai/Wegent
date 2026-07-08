@@ -153,6 +153,8 @@ POST /api/runtime-work/archived-conversations/cleanup
 
 executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unarchive` 和 `thread/delete` 执行归档、恢复和删除；重命名使用 `thread/name/set`。归档列表响应来自 state DB `threads.archived` 过滤结果并合并 JSON LocalTask 索引，标准化 `id`、`localTaskId`、`threadId`、标题、Project 名称、工作区路径、设备、来源和时间字段，并按 Project 汇总计数。刚执行归档/恢复时，如果 state DB 尚未同步，设备侧 LocalTask 索引中的本地覆盖态会先参与列表，避免 UI 短暂消失。Project 分组必须使用 Project 主目录或 `groupWorkspacePath`，不能把同一 Project 下的不同 worktree 当成不同 Project。
 
+如果 Codex `thread/list` 返回了 state DB 中仍存在但 rollout 文件已经无法定位的脏线程，`thread/archive` 会返回 `no rollout found for thread id ...`。executor 只在这个明确错误下把该项按清理路径处理：调用 Codex `thread/delete` 删除残留线程记录，并在本地写入有 TTL 和数量上限的删除标记，让后续列表不再展示这条不可操作记录；它不会把这类脏线程伪造成已归档会话。
+
 删除归档会话采用两阶段策略。前台 `delete` 和 `delete-bulk` 先在 executor 本地索引写入 tombstone，列表立即隐藏对应项；真正的 Codex `thread/delete`、LocalTask 索引删除、worktree/附件/日志文件清理由 executor 后台单 worker 逐条执行。后台 worker 必须等待当前 app-server `thread/delete` 真正返回后再处理下一条；如果删除变慢，只记录慢操作日志，不能通过客户端 timeout 继续堆叠新的 `thread/delete`，否则会压住 Codex thread store 并让归档列表刷新长期等待。前端批量删除按小批次提交，并把进度保存在页面外状态中，用户离开再进入设置页仍能看到当前删除进度。
 
 `cleanup-preview` 和 `cleanup` 只面向已归档 LocalTask 的残留文件，包括 executor 管理的 Git worktree 目录、LocalTask 记录、会话日志、运行时 handle 中记录的本地附件，以及本机附件草稿路径。清理目标必须从归档项的 `deviceId + workspacePath + localTaskId + threadId/runtimeHandle` 推导并做路径安全校验，只能删除 executor 管理目录、standalone chat 目录或本地附件草稿目录下的文件；普通 Project 根目录、未归档会话、运行中任务和未被前端提交的归档项不能被清理。

@@ -24,6 +24,7 @@ import {
 import type {
   Attachment,
   ChatSendPayload,
+  ModelSelectionConfig,
   ModelOptions,
   ProjectWithTasks,
   RuntimeGuidanceRequest,
@@ -520,11 +521,16 @@ export function useWorkbenchRuntimeMessaging({
         modelType: createRequest.modelType ?? null,
         modelOptions: summarizeModelOptions(createRequest.modelOptions),
       })
+      const createModelSelection = modelSelectionFromCreateRequest(createRequest)
+      const createRuntimeHandle = createModelSelection
+        ? { modelSelection: createModelSelection }
+        : undefined
       const optimisticAddress: RuntimeTaskAddress = {
         deviceId: optimisticDeviceId,
         taskId,
         workspacePath:
           'workspacePath' in runtimeTaskTarget ? runtimeTaskTarget.workspacePath : undefined,
+        ...(createRuntimeHandle ? { runtimeHandle: createRuntimeHandle } : {}),
       }
       modelSelection.setSelectionForScope?.(
         getRuntimeTaskChatScopeKey(optimisticAddress),
@@ -572,6 +578,7 @@ export function useWorkbenchRuntimeMessaging({
           deviceId: response.deviceId || optimisticAddress.deviceId,
           taskId: response.taskId || optimisticAddress.taskId,
           workspacePath: response.workspacePath || optimisticAddress.workspacePath,
+          runtimeHandle: response.runtimeHandle ?? optimisticAddress.runtimeHandle,
           ...(response.taskId || optimisticAddress.taskId
             ? { taskId: response.taskId || optimisticAddress.taskId }
             : {}),
@@ -604,6 +611,7 @@ export function useWorkbenchRuntimeMessaging({
               workspacePath: resolvedWorkspacePath,
               title: createRequest.title ?? buildRuntimeTaskTitle(displayMessage, payload.title),
               runtime,
+              modelSelection: createModelSelection,
             }),
           })
         }
@@ -1135,6 +1143,7 @@ function buildOptimisticRuntimeTask({
   runtime,
   status = 'creating',
   error,
+  modelSelection,
 }: {
   taskId: string
   workspacePath: string
@@ -1142,6 +1151,7 @@ function buildOptimisticRuntimeTask({
   runtime: RuntimeTaskSummary['runtime']
   status?: 'creating' | 'failed'
   error?: string | null
+  modelSelection?: ModelSelectionConfig | null
 }): RuntimeTaskSummary {
   const now = new Date().toISOString()
   return {
@@ -1156,6 +1166,21 @@ function buildOptimisticRuntimeTask({
     status,
     optimistic: true,
     ...(error ? { error } : {}),
+    ...(modelSelection ? { modelSelection } : {}),
+  }
+}
+
+function modelSelectionFromCreateRequest(
+  request: RuntimeTaskCreateRequest
+): ModelSelectionConfig | null {
+  if (!request.modelId) {
+    return null
+  }
+
+  return {
+    modelName: request.modelId,
+    modelType: request.modelType ?? null,
+    options: request.modelOptions ?? {},
   }
 }
 
