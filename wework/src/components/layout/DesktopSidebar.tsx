@@ -4,6 +4,7 @@ import {
   BellOff,
   ChevronDown,
   ChevronRight,
+  Download,
   Edit3,
   FolderPlus,
   Globe2,
@@ -29,6 +30,7 @@ import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
@@ -954,6 +956,99 @@ function GlobalImNotificationBell({
         />
       )}
     </>
+  )
+}
+
+function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => void }) {
+  const { t } = useTranslation('common')
+  const appUpdate = useOptionalAppUpdate()
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const [errorTooltipPosition, setErrorTooltipPosition] = useState<{
+    left: number
+    top: number
+  } | null>(null)
+  const availableUpdate = appUpdate?.availableUpdate ?? null
+  const status = appUpdate?.status ?? 'idle'
+  const error = appUpdate?.error ?? null
+  const busy = status === 'checking' || status === 'installing'
+  const visibleForDebug = import.meta.env.DEV
+
+  const showErrorTooltip = () => {
+    if (!error || !buttonRef.current) return
+    const rect = buttonRef.current.getBoundingClientRect()
+    setErrorTooltipPosition({
+      left: Math.min(rect.right + 8, Math.max(8, window.innerWidth - 268)),
+      top: Math.min(Math.max(8, rect.top + rect.height / 2), window.innerHeight - 8),
+    })
+  }
+
+  if (!appUpdate || (!availableUpdate && !visibleForDebug)) return null
+
+  const title = availableUpdate
+    ? formatSidebarTemplate(
+        t('workbench.app_update_install', {
+          defaultValue: '更新到 {{version}}',
+          version: availableUpdate.version,
+        }),
+        { version: availableUpdate.version }
+      )
+    : t('workbench.app_update_check', '检查更新')
+
+  return (
+    <div
+      className="group/update relative shrink-0"
+      onPointerEnter={showErrorTooltip}
+      onPointerLeave={() => setErrorTooltipPosition(null)}
+      onFocus={showErrorTooltip}
+      onBlur={() => setErrorTooltipPosition(null)}
+    >
+      <button
+        ref={buttonRef}
+        type="button"
+        data-testid="sidebar-app-update-button"
+        disabled={busy}
+        onClick={() => {
+          onBeforeInstall?.()
+          if (availableUpdate) {
+            void appUpdate.installUpdate()
+            return
+          }
+          void appUpdate.checkNow()
+        }}
+        title={error ?? title}
+        aria-label={error ?? title}
+        className={cn(
+          'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-[0_4px_12px_rgba(20,184,166,0.14)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(20,184,166,0.22)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60',
+          error
+            ? 'border-red-400/35 bg-red-500/10 text-red-500 hover:border-red-400/45 hover:bg-red-500/15'
+            : 'border-primary/20 bg-primary/10 text-primary hover:border-primary/30 hover:bg-primary/15'
+        )}
+      >
+        {busy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Download className="sidebar-update-download-icon h-4 w-4" />
+        )}
+        {availableUpdate && (
+          <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar))]" />
+        )}
+        {error && (
+          <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar))]" />
+        )}
+      </button>
+      {error && errorTooltipPosition
+        ? createPortal(
+            <div
+              data-testid="sidebar-app-update-error"
+              style={errorTooltipPosition}
+              className="fixed z-system-popover w-[260px] -translate-y-1/2 rounded-lg border border-red-500/20 bg-popover px-3 py-2 text-xs font-medium leading-5 text-red-500 shadow-[0_12px_28px_rgba(0,0,0,0.18)] [overflow-wrap:anywhere]"
+            >
+              {error}
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
   )
 }
 
@@ -2510,6 +2605,12 @@ export function DesktopSidebar({
                   </span>
                 </span>
               </button>
+              <SidebarAppUpdateButton
+                onBeforeInstall={() => {
+                  setSettingsMenuOpen(false)
+                  setImNotificationMenuOpen(false)
+                }}
+              />
               <GlobalImNotificationBell
                 devices={devices}
                 imNotificationSettings={imNotificationSettings}
