@@ -24,7 +24,7 @@ use tokio::{
 };
 
 use crate::{
-    agents::{runtime_capabilities, task_identity::task_identity_env},
+    agents::runtime_capabilities,
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
@@ -450,13 +450,6 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
-        if state
-            .process
-            .as_ref()
-            .is_some_and(|process| process.env != launch_config.env)
-        {
-            state.process = None;
-        }
         if state.process.is_none() {
             let (process, next_id) =
                 start_persistent_codex_app_server(&self.binary, state.next_id, launch_config)
@@ -513,7 +506,6 @@ type PendingCodexResponse = oneshot::Sender<Result<Value, String>>;
 
 struct CodexAppServerProcess {
     child: Child,
-    env: BTreeMap<String, String>,
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: broadcast::Sender<Value>,
@@ -615,7 +607,6 @@ async fn start_persistent_codex_app_server(
             Ok((
                 CodexAppServerProcess {
                     child,
-                    env: launch_config.env,
                     stdin: Arc::new(Mutex::new(stdin)),
                     pending,
                     notifications,
@@ -2143,13 +2134,11 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
-    let mut env = runtime_proxy_env(&request.model_config);
-    env.extend(task_identity_env(request));
     let mut launch_config = CodexLaunchConfig {
         thread_config,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
-        env,
+        env: runtime_proxy_env(&request.model_config),
         ..CodexLaunchConfig::default()
     };
     launch_config
@@ -3806,6 +3795,43 @@ mod tests {
             launch_config.env.get("ALL_PROXY").map(String::as_str),
             Some("http://127.0.0.1:7890")
         );
+    }
+
+    #[test]
+    fn codex_launch_config_does_not_forward_task_identity() {
+        let request = ExecutionRequest {
+            task_id: "task-525".to_owned(),
+            auth_token: Some("task-jwt".to_owned()),
+            skill_identity_token: Some("skill-jwt".to_owned()),
+            user_name: Some("alice".to_owned()),
+            prompt: Value::String("create a file".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5-codex",
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+        let params = thread_start_params(&request, &launch_config);
+        let config = params
+            .get("config")
+            .and_then(Value::as_object)
+            .expect("thread config should include shell env");
+
+        assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
+        assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
+        assert!(config
+            .get("shell_environment_policy.set.WEGENT_TASK_ID")
+            .is_none());
+        assert!(config
+            .get("shell_environment_policy.set.AUTH_TOKEN")
+            .is_none());
+        assert!(config
+            .get("shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN")
+            .is_none());
+        assert!(config
+            .get("shell_environment_policy.set.WEGENT_SKILL_USER_NAME")
+            .is_none());
     }
 
     #[test]
