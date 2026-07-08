@@ -88,7 +88,7 @@ describe('runtimeTaskReminders', () => {
     expect(snapshot.completedUnreadItems).toEqual([])
   })
 
-  test('marks the currently selected completed task unread when the window is not focused', () => {
+  test('marks the current completed task unread when the window is not focused', () => {
     const completedTask = task({ running: false })
     const taskWorkspace = workspace([completedTask])
     const key = getRuntimeTaskReminderItemKey(taskWorkspace, completedTask)
@@ -105,7 +105,7 @@ describe('runtimeTaskReminders', () => {
     expect(snapshot.completedUnreadItems.map(item => item.key)).toEqual([key])
   })
 
-  test('treats a focused current task as read when it completes', () => {
+  test('treats the focused current task as read when it completes', () => {
     const completedTask = task({ running: false })
     const taskWorkspace = workspace([completedTask])
     const key = getRuntimeTaskReminderItemKey(taskWorkspace, completedTask)
@@ -138,7 +138,23 @@ describe('runtimeTaskReminders', () => {
     expect(snapshot.unreadTaskKeys.has(key)).toBe(false)
   })
 
-  test('prunes unread keys for tasks no longer present', () => {
+  test('keeps stored unread for the current task when the window is not focused', () => {
+    const completedTask = task({ running: false })
+    const taskWorkspace = workspace([completedTask])
+    const key = getRuntimeTaskReminderItemKey(taskWorkspace, completedTask)
+
+    const snapshot = buildRuntimeTaskReminderSnapshot({
+      runtimeWork: runtimeWork([completedTask]),
+      currentRuntimeTask: { deviceId: 'local-device', taskId: 'task-1' },
+      previousRunningTaskKeys: new Set(),
+      storedUnreadTaskKeys: new Set([key]),
+      currentRuntimeTaskVisible: false,
+    })
+
+    expect(snapshot.unreadTaskKeys.has(key)).toBe(true)
+  })
+
+  test('keeps unread keys for tasks that are temporarily missing from runtime work', () => {
     const snapshot = buildRuntimeTaskReminderSnapshot({
       runtimeWork: runtimeWork([]),
       currentRuntimeTask: null,
@@ -146,6 +162,6 @@ describe('runtimeTaskReminders', () => {
       storedUnreadTaskKeys: new Set(['local-device\0archived-task']),
     })
 
-    expect(snapshot.unreadTaskKeys.size).toBe(0)
+    expect(snapshot.unreadTaskKeys).toEqual(new Set(['local-device\0archived-task']))
   })
 })

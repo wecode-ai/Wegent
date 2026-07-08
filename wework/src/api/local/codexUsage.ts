@@ -100,7 +100,10 @@ function isSameLocalDate(a: Date, b: Date): boolean {
   )
 }
 
-export function formatCodexUsageResetTime(resetsAt: number | null, now = new Date()): string | null {
+export function formatCodexUsageResetTime(
+  resetsAt: number | null,
+  now = new Date()
+): string | null {
   if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) {
     return null
   }

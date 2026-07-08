@@ -37,7 +37,7 @@ Default configuration:
 - `VITE_WEWORK_E2E=true`
 - `VITE_WEWORK_RUNTIME_MODE=backend`
 - `VITE_LOGIN_MODE=password`
-- `WEWORK_RESPONSE_API_MOCK_URL=http://127.0.0.1:9998`
+- `WEWORK_RESPONSE_API_MOCK_URL`: `http://127.0.0.1:9998`
 
 Tests do not mock backend APIs. When Backend is not running, the login-page smoke test only verifies that the frontend renders the login entrypoint. Business flows after login must start a real Backend and required services in CI.
 

@@ -14,6 +14,7 @@ import { MessageList } from '@/components/chat/MessageList'
 import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
 import { parseRuntimeTaskRoute } from '@/lib/navigation'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
+import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import {
   CachedWorkbenchPaneStack,
@@ -523,6 +524,10 @@ function ProjectSendProbe() {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
   const imageAttachment = createImageAttachment()
   const localImageAttachment = createLocalImageAttachment()
+  const currentRuntimeTaskSummary = findRuntimeTask(workbench.state.runtimeWork, currentRuntimeTask)
+  const currentModelSelection =
+    currentRuntimeTaskSummary?.modelSelection ??
+    modelSelectionFromRuntimeHandle(currentRuntimeTask?.runtimeHandle)
 
   return (
     <div>
@@ -556,6 +561,18 @@ function ProjectSendProbe() {
       </span>
       <span data-testid="project-collaboration-mode">
         {workbench.projectChat.selectedModelOptions.collaborationMode ?? 'default'}
+      </span>
+      <span data-testid="runtime-context-window">
+        {workbench.projectChat.contextUsage?.modelContextWindow ?? 'none'}
+      </span>
+      <span data-testid="runtime-task-model-selection">
+        {currentModelSelection
+          ? [
+              currentModelSelection.modelName,
+              currentModelSelection.modelType ?? '',
+              currentModelSelection.options?.collaborationMode ?? '',
+            ].join(':')
+          : 'none'}
       </span>
       <span data-testid="runtime-project-order">
         {workbench.state.runtimeWork?.projects
@@ -2005,6 +2022,128 @@ describe('WorkbenchProvider runtime tasks', () => {
       deviceId: 'device-1',
       taskId: request.taskId,
     })
+  })
+
+  test('keeps new runtime task model selection for context usage window resolution', async () => {
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
+    const models: UnifiedModel[] = [
+      {
+        name: 'local-model:mimo',
+        type: 'runtime',
+        provider: 'local',
+        config: {
+          weworkModelKind: 'model-interface',
+          model_context_window: 1_000_000,
+          ui: { family: 'model-interface', controls: ['collaborationMode'] },
+        },
+        runtime: { family: 'openai.openai-responses' },
+      },
+    ]
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Local Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [],
+                },
+              ],
+            },
+          ],
+          totalTasks: 0,
+        })
+      ),
+      createRuntimeTask: vi.fn(async request => ({
+        accepted: true,
+        deviceId: request.deviceId,
+        taskId: request.taskId,
+        workspacePath: request.workspacePath,
+        runtime: 'codex',
+      })),
+      getRuntimeTranscript: vi.fn(async (address: RuntimeTranscriptRequest) => ({
+        taskId: address.taskId,
+        workspacePath: address.workspacePath,
+        runtime: 'codex',
+        messages: [],
+      })),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([createDevice({ device_type: 'local' })]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({ data: models }),
+      },
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('select project')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        `device-1:${request.taskId}`
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-task-model-selection')).toHaveTextContent(
+        'local-model:mimo:runtime:default'
+      )
+    )
+    await waitFor(() => expect(streamHandlers.onChatDone).toBeDefined())
+
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: request.taskId,
+        subtaskId: '102',
+        result: {
+          value: 'done',
+          contextUsage: {
+            total: {
+              totalTokens: 43_300,
+              inputTokens: 43_000,
+              cachedInputTokens: 0,
+              outputTokens: 300,
+              reasoningOutputTokens: 0,
+            },
+            last: {
+              totalTokens: 43_300,
+              inputTokens: 43_000,
+              cachedInputTokens: 0,
+              outputTokens: 300,
+              reasoningOutputTokens: 0,
+            },
+            modelContextWindow: 258_400,
+          },
+        },
+        deviceId: 'device-1',
+      })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-context-window')).toHaveTextContent('1000000')
+    )
   })
 
   test('creates a goal-first runtime task for a new project message', async () => {

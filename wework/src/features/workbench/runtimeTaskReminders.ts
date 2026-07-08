@@ -88,6 +88,26 @@ function writeStoredStringSet(key: string, values: ReadonlySet<string>) {
   window.localStorage.setItem(key, JSON.stringify([...values]))
 }
 
+function debugReminderKey(key: string): string {
+  return key.replace(/\0/g, '::')
+}
+
+function debugReminderKeys(values: ReadonlySet<string>): string[] {
+  return [...values].map(debugReminderKey)
+}
+
+function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  if (left.size !== right.size) return false
+  for (const value of left) {
+    if (!right.has(value)) return false
+  }
+  return true
+}
+
+function logRuntimeTaskReminderState(event: string, payload: Record<string, unknown>) {
+  console.info(`[Wework] Runtime task reminder ${event}`, payload)
+}
+
 export function getRuntimeTaskReminderKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}\0${address.taskId}`
 }
@@ -172,11 +192,10 @@ export function buildRuntimeTaskReminderSnapshot({
   const currentRuntimeTaskKey = currentRuntimeTask
     ? getRuntimeTaskReminderKey(currentRuntimeTask)
     : null
-  const currentTaskKeys = new Set(items.map(item => item.key))
   const runningTaskKeys = new Set(
     items.filter(item => isRuntimeTaskActive(item.task)).map(item => item.key)
   )
-  const unreadTaskKeys = new Set([...storedUnreadTaskKeys].filter(key => currentTaskKeys.has(key)))
+  const unreadTaskKeys = new Set(storedUnreadTaskKeys)
   const completedUnreadItems: RuntimeTaskReminderItem[] = []
   if (currentRuntimeTaskVisible && currentRuntimeTaskKey) {
     unreadTaskKeys.delete(currentRuntimeTaskKey)
@@ -265,11 +284,50 @@ export function useRuntimeTaskReminders({
         storedUnreadTaskKeys,
         currentRuntimeTaskVisible: windowFocused,
       }),
-    [currentRuntimeTask, runningTaskKeysStorageKey, runtimeWork, storedUnreadTaskKeys, windowFocused]
+    [
+      currentRuntimeTask,
+      runningTaskKeysStorageKey,
+      runtimeWork,
+      storedUnreadTaskKeys,
+      windowFocused,
+    ]
   )
 
   useEffect(() => {
     if (!runtimeWork) return
+
+    const previousUnreadTaskKeys = readStoredStringSet(unreadTaskKeysStorageKey)
+    const previousRunningTaskKeys = readStoredStringSet(runningTaskKeysStorageKey)
+    const unreadChanged = !sameStringSet(previousUnreadTaskKeys, snapshot.unreadTaskKeys)
+    const runningChanged = !sameStringSet(previousRunningTaskKeys, snapshot.runningTaskKeys)
+    if (unreadChanged || runningChanged || snapshot.completedUnreadItems.length > 0) {
+      logRuntimeTaskReminderState('persist', {
+        userId,
+        currentRuntimeTask: currentRuntimeTask
+          ? {
+              deviceId: currentRuntimeTask.deviceId,
+              taskId: currentRuntimeTask.taskId,
+              workspacePath: currentRuntimeTask.workspacePath ?? null,
+            }
+          : null,
+        currentRuntimeTaskVisible: windowFocused,
+        taskCompletionNotificationsEnabled: preferences.taskCompletionNotificationsEnabled,
+        previousUnreadTaskKeys: debugReminderKeys(previousUnreadTaskKeys),
+        nextUnreadTaskKeys: debugReminderKeys(snapshot.unreadTaskKeys),
+        previousRunningTaskKeys: debugReminderKeys(previousRunningTaskKeys),
+        nextRunningTaskKeys: debugReminderKeys(snapshot.runningTaskKeys),
+        completedUnreadItems: snapshot.completedUnreadItems.map(item => ({
+          key: debugReminderKey(item.key),
+          taskId: item.task.taskId,
+          title: item.task.title,
+          status: item.task.status ?? null,
+          running: Boolean(item.task.running),
+          deviceId: item.workspace.deviceId,
+          workspacePath: item.workspace.workspacePath,
+          projectName: item.projectName,
+        })),
+      })
+    }
 
     writeStoredStringSet(unreadTaskKeysStorageKey, snapshot.unreadTaskKeys)
     writeStoredStringSet(runningTaskKeysStorageKey, snapshot.runningTaskKeys)
@@ -278,14 +336,23 @@ export function useRuntimeTaskReminders({
     for (const item of snapshot.completedUnreadItems) {
       if (notifiedTaskKeysRef.current.has(item.key)) continue
       notifiedTaskKeysRef.current.add(item.key)
+      logRuntimeTaskReminderState('system-notification-send', {
+        userId,
+        key: debugReminderKey(item.key),
+        taskId: item.task.taskId,
+        title: item.task.title,
+      })
       void getRuntimeTaskNotificationText(item).then(sendRuntimeTaskCompletionNotification)
     }
   }, [
     preferences.taskCompletionNotificationsEnabled,
+    currentRuntimeTask,
     runtimeWork,
     runningTaskKeysStorageKey,
     snapshot,
     unreadTaskKeysStorageKey,
+    windowFocused,
+    userId,
   ])
 
   return useMemo(
@@ -297,11 +364,20 @@ export function useRuntimeTaskReminders({
       items: snapshot.items,
       markRuntimeTaskRead: (address: RuntimeTaskAddress) => {
         const nextKeys = readStoredStringSet(unreadTaskKeysStorageKey)
-        nextKeys.delete(getRuntimeTaskReminderKey(address))
+        const key = getRuntimeTaskReminderKey(address)
+        const hadUnread = nextKeys.delete(key)
+        logRuntimeTaskReminderState('mark-read', {
+          userId,
+          key: debugReminderKey(key),
+          hadUnread,
+          previousUnreadTaskKeys: debugReminderKeys(readStoredStringSet(unreadTaskKeysStorageKey)),
+          nextUnreadTaskKeys: debugReminderKeys(nextKeys),
+          address,
+        })
         writeStoredStringSet(unreadTaskKeysStorageKey, nextKeys)
         setStorageVersion(version => version + 1)
       },
     }),
-    [preferences, snapshot, unreadTaskKeysStorageKey]
+    [preferences, snapshot, unreadTaskKeysStorageKey, userId]
   )
 }

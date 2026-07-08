@@ -39,6 +39,7 @@ describe('localModelSettings', () => {
       group: '本地推理',
       modelId: 'gpt-oss:20b',
       baseUrl: ' http://localhost:11434/v1/ ',
+      contextWindow: '128000',
       enabled: true,
     })
     const withKey = saveLocalModelConfig({
@@ -55,6 +56,7 @@ describe('localModelSettings', () => {
       group: '本地推理',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
+      contextWindow: 128000,
       webSearchMode: 'disabled',
       imageGenerationEnabled: false,
       enabled: true,
@@ -62,6 +64,108 @@ describe('localModelSettings', () => {
     expect(withoutKey.apiKey).toBeUndefined()
     expect(withKey.apiKey).toBe('local-secret')
     expect(listLocalModelConfigs()).toEqual([withoutKey, withKey])
+  })
+
+  test('normalizes full responses endpoint to model base URL', () => {
+    const saved = saveLocalModelConfig({
+      id: 'full-endpoint',
+      displayName: 'Full Endpoint',
+      modelId: 'gpt-local',
+      baseUrl: 'https://models.local/v1/responses',
+    })
+
+    expect(saved.baseUrl).toBe('https://models.local/v1')
+    expect(saved.requestPath).toBe('/responses')
+  })
+
+  test('splits custom request URLs into base URL and request path', () => {
+    const saved = saveLocalModelConfig({
+      id: 'custom-url',
+      displayName: 'Custom URL',
+      modelId: 'gpt-local',
+      baseUrl: 'https://models.local/api/respond',
+    })
+
+    expect(saved).toMatchObject({
+      baseUrl: 'https://models.local/api',
+      requestPath: '/respond',
+    })
+  })
+
+  test('preserves explicit custom request paths', () => {
+    const saved = saveLocalModelConfig({
+      id: 'custom-path',
+      displayName: 'Custom Path',
+      modelId: 'gpt-local',
+      baseUrl: 'https://models.local/v1',
+      requestPath: 'custom-responses',
+    })
+
+    expect(saved).toMatchObject({
+      baseUrl: 'https://models.local/v1',
+      requestPath: '/custom-responses',
+    })
+  })
+
+  test('normalizes legacy request URL mode configs when reading storage', () => {
+    localStorage.setItem(
+      'wework.localModelSettings.v1',
+      JSON.stringify([
+        {
+          id: 'legacy-default',
+          displayName: 'Legacy Default',
+          modelId: 'gpt-local',
+          baseUrl: 'https://models.local/v1',
+          requestUrlMode: 'responses_path',
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+        {
+          id: 'legacy-custom',
+          displayName: 'Legacy Custom',
+          modelId: 'custom-model',
+          baseUrl: 'https://models.local/api/respond',
+          requestUrlMode: 'custom_url',
+          enabled: true,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ])
+    )
+
+    expect(listLocalModelConfigs()).toEqual([
+      expect.objectContaining({
+        id: 'legacy-default',
+        baseUrl: 'https://models.local/v1',
+        requestPath: '/responses',
+      }),
+      expect.objectContaining({
+        id: 'legacy-custom',
+        baseUrl: 'https://models.local/api',
+        requestPath: '/respond',
+      }),
+    ])
+  })
+
+  test('validates optional context window before saving', () => {
+    expect(() =>
+      saveLocalModelConfig({
+        id: 'bad-context',
+        displayName: 'Bad Context',
+        modelId: 'gpt-local',
+        baseUrl: 'http://localhost:11434/v1',
+        contextWindow: '12.5',
+      })
+    ).toThrow('Context window must be a positive integer')
+
+    expect(() =>
+      saveLocalModelConfig({
+        id: 'zero-context',
+        displayName: 'Zero Context',
+        modelId: 'gpt-local',
+        baseUrl: 'http://localhost:11434/v1',
+        contextWindow: 0,
+      })
+    ).toThrow('Context window must be a positive integer')
   })
 
   test('updates, deletes, clears, and emits change events', () => {

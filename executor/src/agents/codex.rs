@@ -24,7 +24,7 @@ use tokio::{
 };
 
 use crate::{
-    agents::{runtime_capabilities, task_identity::task_identity_env},
+    agents::runtime_capabilities,
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
@@ -256,6 +256,10 @@ impl CodexAppServerClient {
         run_codex_app_server_turn_on_shared_client(self, request, options).await
     }
 
+    pub async fn restart(&self) {
+        self.state.lock().await.process = None;
+    }
+
     pub async fn steer_turn(
         &self,
         thread_id: &str,
@@ -326,8 +330,12 @@ impl CodexAppServerClient {
             if !start_if_missing {
                 return Err("codex app-server is not running".to_owned());
             }
-            let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id).await?;
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                &CodexLaunchConfig::default(),
+            )
+            .await?;
             state.process = Some(process);
             state.next_id = next_id;
         }
@@ -358,6 +366,17 @@ impl CodexAppServerClient {
         &self,
     ) -> Result<broadcast::Receiver<Value>, String> {
         Ok(self.ensure_process().await?.notifications.subscribe())
+    }
+
+    async fn subscribe_notifications_for_launch_config(
+        &self,
+        launch_config: &CodexLaunchConfig,
+    ) -> Result<broadcast::Receiver<Value>, String> {
+        Ok(self
+            .ensure_process_for_launch_config(launch_config)
+            .await?
+            .notifications
+            .subscribe())
     }
 
     async fn existing_process(&self) -> Result<CodexAppServerHandle, String> {
@@ -403,8 +422,38 @@ impl CodexAppServerClient {
             state.process = None;
         }
         if state.process.is_none() {
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                &CodexLaunchConfig::default(),
+            )
+            .await?;
+            state.process = Some(process);
+            state.next_id = next_id;
+        }
+        Ok(state
+            .process
+            .as_ref()
+            .expect("persistent Codex app-server should be initialized")
+            .handle())
+    }
+
+    async fn ensure_process_for_launch_config(
+        &self,
+        launch_config: &CodexLaunchConfig,
+    ) -> Result<CodexAppServerHandle, String> {
+        let mut state = self.state.lock().await;
+        if state
+            .process
+            .as_mut()
+            .is_some_and(|process| process.has_exited())
+        {
+            state.process = None;
+        }
+        if state.process.is_none() {
             let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id).await?;
+                start_persistent_codex_app_server(&self.binary, state.next_id, launch_config)
+                    .await?;
             state.process = Some(process);
             state.next_id = next_id;
         }
@@ -515,9 +564,9 @@ impl CodexAppServerHandle {
 async fn start_persistent_codex_app_server(
     binary: &str,
     next_id: u64,
+    request_launch_config: &CodexLaunchConfig,
 ) -> Result<(CodexAppServerProcess, u64), String> {
-    let mut launch_config = CodexLaunchConfig::default();
-    launch_config.config_overrides.push("goals=true".to_owned());
+    let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
     let mut child = spawn_codex_app_server(binary, &launch_config)?;
     let result: Result<(ChildStdin, BufReader<ChildStdout>, u64), String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
@@ -571,6 +620,17 @@ async fn start_persistent_codex_app_server(
             Err(error)
         }
     }
+}
+
+fn persistent_codex_app_server_launch_config(
+    request_launch_config: &CodexLaunchConfig,
+) -> CodexLaunchConfig {
+    let mut launch_config = CodexLaunchConfig {
+        env: request_launch_config.env.clone(),
+        ..CodexLaunchConfig::default()
+    };
+    launch_config.config_overrides.push("goals=true".to_owned());
+    launch_config
 }
 
 async fn read_persistent_codex_app_server_stdout(
@@ -709,7 +769,9 @@ async fn run_codex_app_server_turn_on_shared_client(
 
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
-        let mut notification_rx = client.subscribe_notifications().await?;
+        let mut notification_rx = client
+            .subscribe_notifications_for_launch_config(&launch_config)
+            .await?;
         let mut state = CodexRunState::default();
         let direct_thread_id = direct_thread_id
             .as_deref()
@@ -2072,13 +2134,11 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     let reasoning = normalize_reasoning(request.model_config.get("reasoning"));
     let service_tier = normalize_service_tier(request.model_config.get("service_tier"));
     let thread_config = thread_config(&reasoning, service_tier.as_deref());
-    let mut env = runtime_proxy_env(&request.model_config);
-    env.extend(task_identity_env(request));
     let mut launch_config = CodexLaunchConfig {
         thread_config,
         effort: reasoning.effort.clone(),
         summary: reasoning.summary.clone(),
-        env,
+        env: runtime_proxy_env(&request.model_config),
         ..CodexLaunchConfig::default()
     };
     launch_config
@@ -2187,6 +2247,9 @@ fn codex_model_config_overrides(model_config: &Value) -> Vec<String> {
     if let Some(image_generation) = codex_image_generation_enabled(model_config) {
         overrides.push(format!("features.image_generation={image_generation}"));
     }
+    if let Some(context_window) = codex_model_context_window(model_config) {
+        overrides.push(format!("model_context_window={context_window}"));
+    }
     overrides
 }
 
@@ -2209,6 +2272,15 @@ fn codex_image_generation_enabled(model_config: &Value) -> Option<bool> {
         .or_else(|| bool_value(model_config.get("imageGenerationEnabled")))
 }
 
+fn codex_model_context_window(model_config: &Value) -> Option<i64> {
+    model_config
+        .get("model_context_window")
+        .or_else(|| model_config.get("context_window"))
+        .or_else(|| model_config.get("contextWindow"))
+        .and_then(value_i64)
+        .filter(|value| *value > 0)
+}
+
 fn codex_provider_base_url(model_config: &Value, base_url: &str, api_key: &str) -> String {
     let normalized_base_url = base_url.trim_end_matches('/').to_owned();
     let wire_api = wire_api(model_config);
@@ -2221,8 +2293,11 @@ fn codex_provider_base_url(model_config: &Value, base_url: &str, api_key: &str) 
 
     let token = register_codex_responses_proxy(CodexResponsesProxyUpstream {
         base_url: normalized_base_url,
+        responses_url: non_empty_config(model_config, "responses_url")
+            .or_else(|| non_empty_config(model_config, "responsesUrl")),
         api_key: api_key.to_owned(),
         default_headers: parse_header_map(model_config.get("default_headers")),
+        proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
     });
     let base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
@@ -2276,13 +2351,7 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
     if !bool_value(runtime_config.get("use_proxy")).unwrap_or(false) {
         return BTreeMap::new();
     }
-    let Some(proxy_url) = model_config
-        .get("proxy")
-        .and_then(|proxy| proxy.get("url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    else {
+    let Some(proxy_url) = runtime_proxy_url(model_config) else {
         return BTreeMap::new();
     };
 
@@ -2304,6 +2373,15 @@ fn runtime_proxy_env(model_config: &Value) -> BTreeMap<String, String> {
     .into_iter()
     .map(|(key, value)| (key.to_owned(), value.to_owned()))
     .collect()
+}
+
+fn runtime_proxy_url(model_config: &Value) -> Option<&str> {
+    model_config
+        .get("proxy")
+        .and_then(|proxy| proxy.get("url"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn runtime_config(model_config: &Value) -> Option<&Value> {
@@ -3642,6 +3720,7 @@ mod tests {
                 "model_id": "gpt-5.5-codex",
                 "web_search": "disabled",
                 "image_generation": false,
+                "model_context_window": 128000,
             }),
             ..ExecutionRequest::default()
         };
@@ -3655,6 +3734,7 @@ mod tests {
 
         assert_eq!(config.get("web_search"), Some(&json!("disabled")));
         assert_eq!(config.get("features.image_generation"), Some(&json!(false)));
+        assert_eq!(config.get("model_context_window"), Some(&json!(128000)));
     }
 
     #[test]
@@ -3681,6 +3761,103 @@ mod tests {
             &"model_providers.wecode-openai.experimental_bearer_token=\"wegent-codex-responses-proxy\""
                 .to_owned()
         ));
+    }
+
+    #[test]
+    fn codex_launch_config_forwards_runtime_proxy_env() {
+        let request = ExecutionRequest {
+            prompt: Value::String("create a file".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5-codex",
+                "proxy": {
+                    "url": "http://127.0.0.1:7890"
+                },
+                "runtime_config": {
+                    "codex": {
+                        "use_proxy": true
+                    }
+                }
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+
+        assert_eq!(
+            launch_config.env.get("HTTP_PROXY").map(String::as_str),
+            Some("http://127.0.0.1:7890")
+        );
+        assert_eq!(
+            launch_config.env.get("HTTPS_PROXY").map(String::as_str),
+            Some("http://127.0.0.1:7890")
+        );
+        assert_eq!(
+            launch_config.env.get("ALL_PROXY").map(String::as_str),
+            Some("http://127.0.0.1:7890")
+        );
+    }
+
+    #[test]
+    fn codex_launch_config_does_not_forward_task_identity() {
+        let request = ExecutionRequest {
+            task_id: "task-525".to_owned(),
+            auth_token: Some("task-jwt".to_owned()),
+            skill_identity_token: Some("skill-jwt".to_owned()),
+            user_name: Some("alice".to_owned()),
+            prompt: Value::String("create a file".to_owned()),
+            model_config: json!({
+                "model_id": "gpt-5.5-codex",
+            }),
+            ..ExecutionRequest::default()
+        };
+
+        let launch_config = build_codex_launch_config(&request);
+        let params = thread_start_params(&request, &launch_config);
+        let config = params
+            .get("config")
+            .and_then(Value::as_object)
+            .expect("thread config should include shell env");
+
+        assert!(!launch_config.env.contains_key("WEGENT_TASK_ID"));
+        assert!(!launch_config.env.contains_key("AUTH_TOKEN"));
+        assert!(config
+            .get("shell_environment_policy.set.WEGENT_TASK_ID")
+            .is_none());
+        assert!(config
+            .get("shell_environment_policy.set.AUTH_TOKEN")
+            .is_none());
+        assert!(config
+            .get("shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN")
+            .is_none());
+        assert!(config
+            .get("shell_environment_policy.set.WEGENT_SKILL_USER_NAME")
+            .is_none());
+    }
+
+    #[test]
+    fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
+        let request_launch_config = CodexLaunchConfig {
+            env: BTreeMap::from([("HTTP_PROXY".to_owned(), "http://127.0.0.1:7890".to_owned())]),
+            config_overrides: vec![
+                "model_provider=wecode-openai".to_owned(),
+                "mcp_servers.wework.command=\"node\"".to_owned(),
+            ],
+            model_provider: Some("wecode-openai".to_owned()),
+            effort: Some("high".to_owned()),
+            summary: Some("auto".to_owned()),
+            ..CodexLaunchConfig::default()
+        };
+
+        let launch_config = persistent_codex_app_server_launch_config(&request_launch_config);
+
+        assert_eq!(
+            launch_config.env.get("HTTP_PROXY").map(String::as_str),
+            Some("http://127.0.0.1:7890")
+        );
+        assert_eq!(launch_config.config_overrides, vec!["goals=true"]);
+        assert!(launch_config.model_provider.is_none());
+        assert!(launch_config.effort.is_none());
+        assert!(launch_config.summary.is_none());
     }
 
     #[test]
