@@ -109,6 +109,31 @@ describe('FolderTree query/result separation', () => {
     expect(folderContainer).not.toHaveTextContent('root.txt')
   })
 
+  it('expands active folders so scoped documents remain visible', () => {
+    const folder = createFolder({
+      total_document_count: 1,
+      children: [
+        createFolder({
+          id: 2,
+          parent_id: 1,
+          name: 'Child',
+          document_count: 1,
+          direct_document_count: 1,
+          total_document_count: 1,
+        }),
+      ],
+    })
+    const documents = [createDocument({ id: 11, name: 'child-doc.txt', folder_id: 2 })]
+    const { rerender } = render(<FolderTree folders={[folder]} documents={documents} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Reports/ }).querySelector('svg')!)
+    expect(screen.queryByText('child-doc.txt')).not.toBeInTheDocument()
+
+    rerender(<FolderTree folders={[folder]} documents={documents} activeFolderId={2} />)
+
+    expect(screen.getByText('child-doc.txt')).toBeInTheDocument()
+  })
+
   it('keeps slash-containing document names as plain file names', () => {
     render(
       <FolderTree folders={[]} documents={[createDocument({ id: 12, name: 'legacy/path.txt' })]} />

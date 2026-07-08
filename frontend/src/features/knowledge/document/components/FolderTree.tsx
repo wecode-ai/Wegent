@@ -139,6 +139,25 @@ function buildMergedTree(folders: KnowledgeFolder[], documents: KnowledgeDocumen
   return [...folderNodes, ...rootDocuments, ...orphanDocuments]
 }
 
+function findFolderPathIds(
+  folders: KnowledgeFolder[],
+  targetId: number | undefined,
+  path: number[] = []
+): number[] {
+  if (targetId === undefined) return []
+  for (const folder of folders) {
+    const nextPath = [...path, folder.id]
+    if (folder.id === targetId) {
+      return nextPath
+    }
+    const childPath = findFolderPathIds(folder.children, targetId, nextPath)
+    if (childPath.length > 0) {
+      return childPath
+    }
+  }
+  return []
+}
+
 /** Generate a stable key for a tree node based on its type */
 function treeNodeKey(node: TreeNode): string {
   if (node.type === 'document') {
@@ -585,6 +604,10 @@ export function FolderTree({
 
     return paths
   }, [folders])
+  const activeFolderPaths = useMemo(
+    () => findFolderPathIds(folders, activeFolderId).map(id => `folder:${id}`),
+    [folders, activeFolderId]
+  )
 
   // Default: all folders expanded; sync when new folders are added
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
@@ -598,6 +621,17 @@ export function FolderTree({
       return next
     })
   }, [allFolderPaths])
+
+  useEffect(() => {
+    if (activeFolderPaths.length === 0) return
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      for (const path of activeFolderPaths) {
+        next.add(path)
+      }
+      return next
+    })
+  }, [activeFolderPaths])
 
   const handleToggleFolder = (path: string) => {
     setExpandedFolders(prev => {
