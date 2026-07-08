@@ -37,7 +37,7 @@ node e2e/utils/mock-response-api-server.mjs
 - `VITE_WEWORK_E2E=true`
 - `VITE_WEWORK_RUNTIME_MODE=backend`
 - `VITE_LOGIN_MODE=password`
-- `WEWORK_RESPONSE_API_MOCK_URL=http://127.0.0.1:9998`
+- `WEWORK_RESPONSE_API_MOCK_URL`: `http://127.0.0.1:9998`
 
 测试不 mock 后端 API。没有启动 Backend 时，登录页 smoke 测试只验证前端能渲染登录入口；需要登录后的业务流程时，CI 必须先启动真实 Backend 和依赖服务。
 
