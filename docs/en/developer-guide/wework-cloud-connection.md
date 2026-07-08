@@ -15,7 +15,11 @@ Cloud connection state is owned by the frontend `cloud-connection` layer and is 
 - Cloud login token, expiry, cloud user, and connection time.
 - Current status: disconnected, connecting, connected, expired, or error.
 
-Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then reuses the WeWork login form against `/auth/login`; when admin password initialization is required, it reuses the same admin setup form.
+Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the embedded authorization browser and polls the session result with the client-only `poll_token`.
+
+Local Wework does not render cloud username/password forms and does not call `/auth/login` or `/auth/admin-password/setup`. Cloud login, OIDC, and admin initialization all happen on the cloud Wegent Web authorization page. After login, the user must explicitly approve Wework access; only then does Backend store a one-time claimable cloud JWT in the authorization session. Local Wework claims it, verifies the user through `/users/me`, and persists the cloud connection state.
+
+Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. Deployments with separate API and Web origins must configure the Web root URL explicitly. The Wework client only opens the complete `authorize_url` returned by Backend and does not infer the Web address itself.
 
 ## Interaction Entry
 

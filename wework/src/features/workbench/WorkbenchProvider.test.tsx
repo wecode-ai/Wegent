@@ -406,8 +406,7 @@ function renderWorkbenchWithDefaultServices(children: React.ReactNode) {
     ...DISCONNECTED_STATE,
     isConnected: false,
     serviceKey: 'test-disconnected',
-    connectWithPassword: vi.fn(),
-    setupAdminPassword: vi.fn(),
+    connectWithAuthorization: vi.fn(),
     refreshUser: vi.fn(),
     disconnect: vi.fn(),
   }

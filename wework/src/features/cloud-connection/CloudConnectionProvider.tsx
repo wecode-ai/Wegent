@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { LoginRequest, LoginResponse } from '@/api/auth'
 import { ApiError, createHttpClient } from '@/api/http'
-import { ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE } from '@/features/auth/adminPasswordSetup'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
+  type CloudAuthorizationHandle,
   type CloudConnectionContextValue,
+  type OpenCloudAuthorizationUrl,
 } from './CloudConnectionContext'
 import {
   clearStoredCloudConnection,
@@ -18,6 +18,38 @@ import {
   type CloudConnectionRuntimeConfig,
   type CloudConnectionSnapshot,
 } from './cloudConnectionStorage'
+
+interface WeworkAuthSessionCreateResponse {
+  session_id: string
+  poll_token: string
+  authorize_url: string
+  expires_at: number
+  poll_interval_seconds: number
+}
+
+interface WeworkAuthSessionPollResponse {
+  status: 'pending' | 'success' | 'declined' | 'failed'
+  access_token?: string
+  token_type?: string
+  username?: string
+  error?: string
+}
+
+const DEFAULT_AUTH_POLL_INTERVAL_MS = 2000
+const CLOUD_AUTHORIZATION_CLOSED_MESSAGE = '云端授权窗口已关闭，请重新连接'
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+function authWindowClosedPromise(handle: CloudAuthorizationHandle | void): Promise<never> | null {
+  if (!handle?.closed) return null
+  return handle.closed.then(() => {
+    throw new Error(CLOUD_AUTHORIZATION_CLOSED_MESSAGE)
+  })
+}
 
 function snapshotFromStored(): CloudConnectionSnapshot {
   const stored = readStoredCloudConnection()
@@ -128,27 +160,25 @@ async function fetchCloudUser(config: CloudConnectionRuntimeConfig, token: strin
   )
 }
 
-async function loginCloudUser(
-  config: CloudConnectionRuntimeConfig,
-  credentials: LoginRequest
-): Promise<LoginResponse> {
+async function createWeworkAuthSession(
+  config: CloudConnectionRuntimeConfig
+): Promise<WeworkAuthSessionCreateResponse> {
   const client = createCloudClient(config, null)
-  return runCloudRequest(
-    '登录云端',
-    config,
-    '/auth/login',
-    () => client.post<LoginResponse>('/auth/login', credentials),
-    { preserveErrorCodes: [ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE] }
+  return runCloudRequest('创建云端授权会话', config, '/auth/wework/sessions', () =>
+    client.post<WeworkAuthSessionCreateResponse>('/auth/wework/sessions')
   )
 }
 
-async function setupCloudAdminPassword(
+async function pollWeworkAuthSession(
   config: CloudConnectionRuntimeConfig,
-  password: string
-): Promise<LoginResponse> {
+  session: WeworkAuthSessionCreateResponse
+): Promise<WeworkAuthSessionPollResponse> {
   const client = createCloudClient(config, null)
-  return runCloudRequest('初始化管理员密码', config, '/auth/admin-password/setup', () =>
-    client.post<LoginResponse>('/auth/admin-password/setup', { password })
+  const endpoint = `/auth/wework/sessions/${encodeURIComponent(
+    session.session_id
+  )}/poll?poll_token=${encodeURIComponent(session.poll_token)}`
+  return runCloudRequest('等待云端授权', config, endpoint, () =>
+    client.get<WeworkAuthSessionPollResponse>(endpoint, { redirectOnUnauthorized: false })
   )
 }
 
@@ -208,8 +238,8 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
     setSnapshot(nextSnapshot)
   }, [])
 
-  const connectWithPassword = useCallback(
-    async (backendUrl: string, credentials: LoginRequest): Promise<User> => {
+  const connectWithAuthorization = useCallback(
+    async (backendUrl: string, openAuthorizationUrl?: OpenCloudAuthorizationUrl): Promise<User> => {
       const config = normalizeCloudBackendUrl(backendUrl)
       setSnapshot(current => ({
         ...current,
@@ -220,10 +250,44 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
 
       try {
         await checkCloudHealth(config)
-        const response = await loginCloudUser(config, credentials)
-        const user = await fetchCloudUser(config, response.access_token)
-        applyConnectedSnapshot(connectionSnapshot(config, response.access_token, user))
-        return user
+        const session = await createWeworkAuthSession(config)
+        const authorizationHandle = await openAuthorizationUrl?.(session.authorize_url)
+        const windowClosed = authWindowClosedPromise(authorizationHandle)
+
+        const pollIntervalMs =
+          Number.isFinite(session.poll_interval_seconds) && session.poll_interval_seconds > 0
+            ? session.poll_interval_seconds * 1000
+            : DEFAULT_AUTH_POLL_INTERVAL_MS
+        const expiresAtMs = session.expires_at * 1000
+
+        while (Date.now() < expiresAtMs) {
+          if (windowClosed) {
+            await Promise.race([delay(pollIntervalMs), windowClosed])
+          } else {
+            await delay(pollIntervalMs)
+          }
+          const pollResult = windowClosed
+            ? await Promise.race([pollWeworkAuthSession(config, session), windowClosed])
+            : await pollWeworkAuthSession(config, session)
+          if (pollResult.status === 'pending') continue
+          if (pollResult.status === 'declined') {
+            throw new Error('云端授权已取消')
+          }
+          if (pollResult.status === 'failed') {
+            throw new Error(pollResult.error || '云端授权失败')
+          }
+          if (!pollResult.access_token) {
+            throw new Error('云端授权未返回登录凭证')
+          }
+          await Promise.resolve(authorizationHandle?.close?.()).catch(error => {
+            console.warn('[CloudConnection] Failed to close authorization window', error)
+          })
+          const user = await fetchCloudUser(config, pollResult.access_token)
+          applyConnectedSnapshot(connectionSnapshot(config, pollResult.access_token, user))
+          return user
+        }
+
+        throw new Error('云端授权已超时，请重新连接')
       } catch (error) {
         setSnapshot(current => ({
           ...current,
@@ -237,37 +301,6 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
     },
     [applyConnectedSnapshot]
   )
-
-  const setupAdminPassword = useCallback(
-    async (backendUrl: string, password: string): Promise<User> => {
-      const config = normalizeCloudBackendUrl(backendUrl)
-      setSnapshot(current => ({
-        ...current,
-        ...config,
-        status: 'connecting',
-        error: null,
-      }))
-
-      try {
-        await checkCloudHealth(config)
-        const response = await setupCloudAdminPassword(config, password)
-        const user = await fetchCloudUser(config, response.access_token)
-        applyConnectedSnapshot(connectionSnapshot(config, response.access_token, user))
-        return user
-      } catch (error) {
-        setSnapshot(current => ({
-          ...current,
-          ...config,
-          status: 'error',
-          token: null,
-          error: getCloudErrorMessage(error),
-        }))
-        throw error
-      }
-    },
-    [applyConnectedSnapshot]
-  )
-
   const refreshUser = useCallback(async (): Promise<User | null> => {
     if (!snapshot.apiBaseUrl || !snapshot.token) return null
     const config = {
@@ -314,12 +347,11 @@ export function CloudConnectionProvider({ children }: { children: ReactNode }) {
       serviceKey: isConnected
         ? `${snapshot.apiBaseUrl ?? ''}:${snapshot.tokenExpiresAt ?? ''}:${snapshot.user?.id ?? ''}`
         : snapshot.status,
-      connectWithPassword,
-      setupAdminPassword,
+      connectWithAuthorization,
       refreshUser,
       disconnect,
     }
-  }, [connectWithPassword, disconnect, refreshUser, setupAdminPassword, snapshot])
+  }, [connectWithAuthorization, disconnect, refreshUser, snapshot])
 
   return <CloudConnectionContext.Provider value={value}>{children}</CloudConnectionContext.Provider>
 }
