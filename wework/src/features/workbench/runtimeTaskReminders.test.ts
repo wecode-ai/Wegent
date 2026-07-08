@@ -49,7 +49,6 @@ describe('runtimeTaskReminders', () => {
 
     const snapshot = buildRuntimeTaskReminderSnapshot({
       runtimeWork: runtimeWork([completedTask]),
-      currentRuntimeTask: null,
       previousRunningTaskKeys: new Set([key]),
       storedUnreadTaskKeys: new Set(),
     })
@@ -64,7 +63,6 @@ describe('runtimeTaskReminders', () => {
 
     const snapshot = buildRuntimeTaskReminderSnapshot({
       runtimeWork: runtimeWork([completedTask]),
-      currentRuntimeTask: null,
       previousRunningTaskKeys: new Set([key]),
       storedUnreadTaskKeys: new Set(),
     })
@@ -79,7 +77,6 @@ describe('runtimeTaskReminders', () => {
 
     const snapshot = buildRuntimeTaskReminderSnapshot({
       runtimeWork: runtimeWork([activeTask]),
-      currentRuntimeTask: null,
       previousRunningTaskKeys: new Set(),
       storedUnreadTaskKeys: new Set(),
     })
@@ -88,64 +85,57 @@ describe('runtimeTaskReminders', () => {
     expect(snapshot.completedUnreadItems).toEqual([])
   })
 
-  test('marks the currently selected completed task unread when the window is not focused', () => {
+  test('marks the currently selected completed task unread', () => {
     const completedTask = task({ running: false })
     const taskWorkspace = workspace([completedTask])
     const key = getRuntimeTaskReminderItemKey(taskWorkspace, completedTask)
 
     const snapshot = buildRuntimeTaskReminderSnapshot({
       runtimeWork: runtimeWork([completedTask]),
-      currentRuntimeTask: { deviceId: 'local-device', taskId: 'task-1' },
       previousRunningTaskKeys: new Set([key]),
       storedUnreadTaskKeys: new Set(),
-      currentRuntimeTaskVisible: false,
     })
 
     expect(snapshot.unreadTaskKeys.has(key)).toBe(true)
     expect(snapshot.completedUnreadItems.map(item => item.key)).toEqual([key])
   })
 
-  test('treats a focused current task as read when it completes', () => {
+  test('does not auto-clear unread for a completed current task', () => {
     const completedTask = task({ running: false })
     const taskWorkspace = workspace([completedTask])
     const key = getRuntimeTaskReminderItemKey(taskWorkspace, completedTask)
 
     const snapshot = buildRuntimeTaskReminderSnapshot({
       runtimeWork: runtimeWork([completedTask]),
-      currentRuntimeTask: { deviceId: 'local-device', taskId: 'task-1' },
       previousRunningTaskKeys: new Set([key]),
       storedUnreadTaskKeys: new Set(),
-      currentRuntimeTaskVisible: true,
     })
 
-    expect(snapshot.unreadTaskKeys.has(key)).toBe(false)
-    expect(snapshot.completedUnreadItems).toEqual([])
+    expect(snapshot.unreadTaskKeys.has(key)).toBe(true)
+    expect(snapshot.completedUnreadItems.map(item => item.key)).toEqual([key])
   })
 
-  test('clears stored unread for the focused current task', () => {
+  test('keeps stored unread for the current task until explicit read', () => {
     const completedTask = task({ running: false })
     const taskWorkspace = workspace([completedTask])
     const key = getRuntimeTaskReminderItemKey(taskWorkspace, completedTask)
 
     const snapshot = buildRuntimeTaskReminderSnapshot({
       runtimeWork: runtimeWork([completedTask]),
-      currentRuntimeTask: { deviceId: 'local-device', taskId: 'task-1' },
       previousRunningTaskKeys: new Set(),
       storedUnreadTaskKeys: new Set([key]),
-      currentRuntimeTaskVisible: true,
     })
 
-    expect(snapshot.unreadTaskKeys.has(key)).toBe(false)
+    expect(snapshot.unreadTaskKeys.has(key)).toBe(true)
   })
 
-  test('prunes unread keys for tasks no longer present', () => {
+  test('keeps unread keys for tasks that are temporarily missing from runtime work', () => {
     const snapshot = buildRuntimeTaskReminderSnapshot({
       runtimeWork: runtimeWork([]),
-      currentRuntimeTask: null,
       previousRunningTaskKeys: new Set(),
       storedUnreadTaskKeys: new Set(['local-device\0archived-task']),
     })
 
-    expect(snapshot.unreadTaskKeys.size).toBe(0)
+    expect(snapshot.unreadTaskKeys).toEqual(new Set(['local-device\0archived-task']))
   })
 })

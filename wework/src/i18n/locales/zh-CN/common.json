@@ -697,7 +697,7 @@
     "general_settings_background_disabled_description": "关闭主窗口会退出应用，并中断正在运行的任务。",
     "general_settings_system_tray_title": "系统托盘",
     "general_settings_task_completion_notifications": "任务完成时发送系统通知",
-    "general_settings_task_completion_notifications_description": "后台任务完成后显示系统通知，并在任务列表保留未读提醒。",
+    "general_settings_task_completion_notifications_description": "后台任务完成后，通过系统通知插件发送操作系统通知。",
     "general_settings_tray_display_content": "托盘显示内容",
     "general_settings_tray_display_content_description": "选择托盘图标和菜单里展示的状态。",
     "general_settings_tray_unread": "未读任务",
