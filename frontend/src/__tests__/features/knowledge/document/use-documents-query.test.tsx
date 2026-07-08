@@ -115,7 +115,10 @@ describe('useDocuments query parameters', () => {
         { initialProps: { keyword: '' } }
       )
 
-      await waitFor(() => expect(mockListDocuments).toHaveBeenCalledTimes(1))
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(mockListDocuments).toHaveBeenCalledTimes(1)
       mockListDocuments.mockClear()
 
       rerender({ keyword: 'a' })
@@ -127,20 +130,20 @@ describe('useDocuments query parameters', () => {
       })
       expect(mockListDocuments).not.toHaveBeenCalled()
 
-      act(() => {
+      await act(async () => {
         jest.advanceTimersByTime(1)
+        await Promise.resolve()
+        await Promise.resolve()
       })
 
-      await waitFor(() => {
-        expect(mockListDocuments).toHaveBeenCalledWith(1, {
-          folder_id: undefined,
-          include_subfolders: false,
-          keyword: 'abc',
-          sort_by: 'createdAt',
-          sort_order: 'desc',
-          limit: 50,
-          offset: 0,
-        })
+      expect(mockListDocuments).toHaveBeenCalledWith(1, {
+        folder_id: undefined,
+        include_subfolders: false,
+        keyword: 'abc',
+        sort_by: 'createdAt',
+        sort_order: 'desc',
+        limit: 50,
+        offset: 0,
       })
     } finally {
       jest.useRealTimers()

@@ -223,6 +223,9 @@ function FolderRow({
         style={{ paddingLeft: `${8 + indent}px` }}
         onClick={() => onActivate?.(node.id)}
         onKeyDown={e => {
+          if (e.currentTarget !== e.target) {
+            return
+          }
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
             onActivate?.(node.id)
@@ -272,6 +275,9 @@ function FolderRow({
       role="button"
       tabIndex={0}
       onKeyDown={e => {
+        if (e.currentTarget !== e.target) {
+          return
+        }
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
           onActivate?.(node.id)

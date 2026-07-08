@@ -119,6 +119,26 @@ describe('FolderTree query/result separation', () => {
     expect(onActivateFolder).toHaveBeenCalledTimes(2)
     expect(onActivateFolder).toHaveBeenCalledWith(1)
   })
+
+  it('does not activate table-mode folder rows from nested control key events', () => {
+    const onActivateFolder = jest.fn()
+
+    render(
+      <FolderTree
+        folders={[createFolder()]}
+        documents={[]}
+        compact={false}
+        canSelectFolders={true}
+        selectedFolderIds={new Set()}
+        onSelectFolder={jest.fn()}
+        onActivateFolder={onActivateFolder}
+      />
+    )
+
+    fireEvent.keyDown(screen.getByTestId('folder-checkbox-1'), { key: ' ' })
+
+    expect(onActivateFolder).not.toHaveBeenCalled()
+  })
 })
 
 describe('DocumentItem table grid', () => {
