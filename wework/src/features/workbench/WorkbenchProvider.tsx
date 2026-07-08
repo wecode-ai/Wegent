@@ -6,6 +6,7 @@ import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { getActiveWorkbenchDeviceId } from '@/lib/workbench-device'
+import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import type {
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
@@ -674,6 +675,17 @@ export function WorkbenchProvider({
       return transcript
     }
   )
+
+  useEffect(() => {
+    const listener = installLocalWorkspaceOpenListener(
+      stableOpenStandaloneWorkspace,
+      stableSetWorkbenchError
+    )
+
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [stableOpenStandaloneWorkspace, stableSetWorkbenchError])
   const stableSubscribeRuntimeTaskStream = useStableEvent(
     (
       address: RuntimeTaskAddress,

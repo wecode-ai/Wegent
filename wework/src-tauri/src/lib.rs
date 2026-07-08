@@ -30,6 +30,8 @@ const TRAY_OPEN_SETTINGS_EVENT: &str = "wework-tray-open-settings";
 #[cfg(desktop)]
 const TRAY_OPEN_TASK_EVENT: &str = "wework-tray-open-task";
 #[cfg(desktop)]
+const LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT: &str = "wework-open-local-workspace-requested";
+#[cfg(desktop)]
 const CLOSE_TO_TRAY_HINT_REQUESTED_EVENT: &str = "wework-close-to-tray-hint-requested";
 #[cfg(desktop)]
 const TRAY_MENU_OPEN_ID: &str = "open";
@@ -85,6 +87,12 @@ const WEBVIEW_LOG_FILE_NAME: &str = "wework-frontend";
 const WEBVIEW_DEVTOOLS_ENV: &str = "WEWORK_WEBVIEW_DEVTOOLS";
 #[cfg(desktop)]
 const APP_PREFERENCES_FILE_NAME: &str = "app-preferences.json";
+#[cfg(all(desktop, target_os = "macos"))]
+const WEWORK_CLI_INSTALL_DIR: &str = ".local/bin";
+#[cfg(all(desktop, target_os = "macos"))]
+const WEWORK_CLI_INSTALL_NAME: &str = "wework";
+#[cfg(all(desktop, target_os = "macos"))]
+const WEWORK_CLI_MANAGED_MARKER: &str = "# Wework CLI launcher";
 
 #[cfg(desktop)]
 fn app_log_directory(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -298,6 +306,7 @@ struct AppPreferencesPatch {
 enum MainWindowOpenAction {
     Settings,
     Task(String),
+    LocalWorkspace,
 }
 
 #[cfg(desktop)]
@@ -305,6 +314,88 @@ enum MainWindowOpenAction {
 struct MainWindowLifecycleState {
     destroy_to_tray_in_progress: AtomicBool,
     pending_open_action: Mutex<Option<MainWindowOpenAction>>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalWorkspaceOpenRequest {
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+
+#[derive(Default)]
+struct LocalWorkspaceOpenState {
+    #[cfg(desktop)]
+    pending_requests: Mutex<Vec<LocalWorkspaceOpenRequest>>,
+}
+
+#[cfg(desktop)]
+fn parse_local_workspace_open_request(argv: &[String]) -> Option<LocalWorkspaceOpenRequest> {
+    let mut path: Option<String> = None;
+    let mut label: Option<String> = None;
+    let mut index = 1;
+
+    while index < argv.len() {
+        match argv[index].as_str() {
+            "--open-workspace" => {
+                index += 1;
+                path = argv
+                    .get(index)
+                    .and_then(|value| normalized_non_empty(value.clone()));
+            }
+            "--workspace-label" => {
+                index += 1;
+                label = argv
+                    .get(index)
+                    .and_then(|value| normalized_non_empty(value.clone()));
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    path.map(|path| LocalWorkspaceOpenRequest { path, label })
+}
+
+#[cfg(desktop)]
+fn queue_local_workspace_open_request<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    request: LocalWorkspaceOpenRequest,
+) {
+    let state = app.state::<LocalWorkspaceOpenState>();
+    match state.pending_requests.lock() {
+        Ok(mut requests) => requests.push(request),
+        Err(_) => {
+            log::warn!("Failed to lock pending local workspace open requests");
+            return;
+        }
+    }
+
+    if let Err(error) = app.emit(LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT, ()) {
+        log::debug!("Local workspace open request queued before frontend listener: {error}");
+    }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn take_pending_local_workspace_open_requests(
+    app: tauri::AppHandle,
+) -> Result<Vec<LocalWorkspaceOpenRequest>, String> {
+    let state = app.state::<LocalWorkspaceOpenState>();
+    let mut requests = state
+        .pending_requests
+        .lock()
+        .map_err(|_| "Failed to lock pending local workspace open requests".to_string())?;
+    Ok(std::mem::take(&mut *requests))
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn take_pending_local_workspace_open_requests(
+    _app: tauri::AppHandle,
+) -> Result<Vec<LocalWorkspaceOpenRequest>, String> {
+    Err("Local workspace open requests are only available on desktop".to_string())
 }
 
 #[cfg(desktop)]
@@ -343,6 +434,171 @@ fn write_app_preferences_impl(
         .map_err(|error| format!("Failed to serialize app preferences: {error}"))?;
     std::fs::write(path, content)
         .map_err(|error| format!("Failed to write app preferences: {error}"))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn macos_app_bundle_for_executable(
+    executable_path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    executable_path
+        .ancestors()
+        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+        .map(std::path::Path::to_path_buf)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn wework_cli_launcher_content(
+    executable_path: &std::path::Path,
+    app_bundle_path: Option<&std::path::Path>,
+) -> String {
+    let executable = shell_single_quote(&executable_path.to_string_lossy());
+    let app_bundle = app_bundle_path
+        .map(|path| shell_single_quote(&path.to_string_lossy()))
+        .unwrap_or_else(|| "''".to_string());
+
+    format!(
+        r#"#!/usr/bin/env bash
+{WEWORK_CLI_MANAGED_MARKER}
+
+set -euo pipefail
+
+usage() {{
+  cat <<'EOF'
+Usage: wework [path]
+
+Open a local workspace in the Wework desktop app.
+
+Examples:
+  wework
+  wework .
+  wework ~/projects/my-app
+EOF
+}}
+
+if [ "${{1:-}}" = "-h" ] || [ "${{1:-}}" = "--help" ]; then
+  usage
+  exit 0
+fi
+
+if [ "$#" -gt 1 ]; then
+  echo "wework: expected at most one path argument" >&2
+  usage >&2
+  exit 2
+fi
+
+TARGET_PATH="${{1:-.}}"
+
+if [ ! -e "$TARGET_PATH" ]; then
+  echo "wework: path does not exist: $TARGET_PATH" >&2
+  exit 1
+fi
+
+if [ ! -d "$TARGET_PATH" ]; then
+  echo "wework: path is not a directory: $TARGET_PATH" >&2
+  exit 1
+fi
+
+ABSOLUTE_PATH="$(cd "$TARGET_PATH" && pwd -P)"
+APP_BUNDLE={app_bundle}
+WEWORK_EXECUTABLE={executable}
+
+if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ]; then
+  exec open "$APP_BUNDLE" --args --open-workspace "$ABSOLUTE_PATH"
+fi
+
+if [ -x "$WEWORK_EXECUTABLE" ]; then
+  exec "$WEWORK_EXECUTABLE" --open-workspace "$ABSOLUTE_PATH"
+fi
+
+echo "wework: unable to locate Wework app executable" >&2
+exit 1
+"#
+    )
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn can_replace_wework_cli_path(path: &std::path::Path) -> Result<bool, String> {
+    if let Ok(target) = std::fs::read_link(path) {
+        let target_text = target.to_string_lossy();
+        return Ok(target_text.contains("wework") || target_text.contains("WeWork"));
+    }
+
+    if !path.exists() {
+        return Ok(true);
+    }
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|error| format!("Failed to inspect existing Wework CLI file: {error}"))?;
+    Ok(content.contains(WEWORK_CLI_MANAGED_MARKER))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn install_wework_cli_impl(
+    home_dir: &std::path::Path,
+    executable_path: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let install_dir = home_dir.join(WEWORK_CLI_INSTALL_DIR);
+    std::fs::create_dir_all(&install_dir)
+        .map_err(|error| format!("Failed to create Wework CLI install directory: {error}"))?;
+    let installed_path = install_dir.join(WEWORK_CLI_INSTALL_NAME);
+
+    if !can_replace_wework_cli_path(&installed_path)? {
+        return Err(format!(
+            "Wework CLI install path already exists and is not managed by Wework: {}",
+            installed_path.display()
+        ));
+    }
+
+    if installed_path.exists() || std::fs::symlink_metadata(&installed_path).is_ok() {
+        std::fs::remove_file(&installed_path)
+            .map_err(|error| format!("Failed to replace existing Wework CLI file: {error}"))?;
+    }
+
+    let app_bundle = macos_app_bundle_for_executable(executable_path);
+    let content = wework_cli_launcher_content(executable_path, app_bundle.as_deref());
+    std::fs::write(&installed_path, content)
+        .map_err(|error| format!("Failed to write Wework CLI launcher: {error}"))?;
+    let mut permissions = std::fs::metadata(&installed_path)
+        .map_err(|error| format!("Failed to inspect Wework CLI launcher: {error}"))?
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&installed_path, permissions)
+        .map_err(|error| format!("Failed to make Wework CLI executable: {error}"))?;
+
+    Ok(installed_path)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn install_wework_cli_link(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let home_dir = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("Failed to locate home directory: {error}"))?;
+    let executable_path = std::env::current_exe()
+        .map_err(|error| format!("Failed to locate Wework executable: {error}"))?;
+    install_wework_cli_impl(&home_dir, &executable_path)
+}
+
+#[cfg(all(desktop, not(target_os = "macos")))]
+fn install_wework_cli_link(_app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Err("Wework CLI installation is only available on macOS".to_string())
+}
+
+#[cfg(not(desktop))]
+fn install_wework_cli_link(_app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Err("Wework CLI installation is only available on desktop".to_string())
+}
+
+#[tauri::command]
+fn install_wework_cli(app: tauri::AppHandle) -> Result<String, String> {
+    install_wework_cli_link(&app).map(|path| path.to_string_lossy().to_string())
 }
 
 #[cfg(desktop)]
@@ -1303,6 +1559,11 @@ fn emit_main_window_open_action<R: tauri::Runtime>(
                 log::warn!("Failed to emit tray task navigation event: {error}");
             }
         }
+        MainWindowOpenAction::LocalWorkspace => {
+            if let Err(error) = app.emit(LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT, ()) {
+                log::warn!("Failed to emit local workspace open event: {error}");
+            }
+        }
     }
 }
 
@@ -2069,12 +2330,11 @@ fn tray_usage_icon(
     } else {
         0
     };
-    let text_x =
-        base_icon_size
-            + status_meter_width
-            + TRAY_USAGE_ICON_TEXT_GAP
-            + hidden_meter_gap
-            + TRAY_USAGE_TEXT_LEFT_EXTRA_GAP;
+    let text_x = base_icon_size
+        + status_meter_width
+        + TRAY_USAGE_ICON_TEXT_GAP
+        + hidden_meter_gap
+        + TRAY_USAGE_TEXT_LEFT_EXTRA_GAP;
     let width = text_x + text_width + TRAY_USAGE_ICON_LEFT_PADDING;
     let height = TRAY_USAGE_ICON_HEIGHT.max(text_height);
     let mut buffer = vec![0; (width * height * 4) as usize];
@@ -2297,10 +2557,20 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_process, collect_descendant_pids, executor_home_attachment_root,
-        local_workspace_opener_app_name, parse_process_snapshot_line, RawProcessInfo,
+        can_replace_wework_cli_path, classify_process, collect_descendant_pids,
+        executor_home_attachment_root, install_wework_cli_impl, local_workspace_opener_app_name,
+        parse_local_workspace_open_request, parse_process_snapshot_line,
+        wework_cli_launcher_content, RawProcessInfo,
     };
     use std::collections::HashSet;
+
+    fn test_temp_dir(name: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("wework-cli-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("test temp dir should be created");
+        path
+    }
 
     #[test]
     fn maps_local_workspace_openers_to_macos_app_names() {
@@ -2330,6 +2600,88 @@ mod tests {
             executor_home_attachment_root(std::path::Path::new("/Users/me/.wegent-executor")),
             std::path::PathBuf::from("/Users/me/.wegent-executor/workspace/attachments/draft")
         );
+    }
+
+    #[test]
+    fn parses_local_workspace_open_request_from_argv() {
+        let request = parse_local_workspace_open_request(&[
+            "WeWork".to_string(),
+            "--open-workspace".to_string(),
+            "/Users/me/project".to_string(),
+            "--workspace-label".to_string(),
+            "Project".to_string(),
+        ])
+        .expect("workspace request should parse");
+
+        assert_eq!(request.path, "/Users/me/project");
+        assert_eq!(request.label.as_deref(), Some("Project"));
+    }
+
+    #[test]
+    fn ignores_blank_local_workspace_open_path() {
+        assert!(parse_local_workspace_open_request(&[
+            "WeWork".to_string(),
+            "--open-workspace".to_string(),
+            "   ".to_string(),
+        ])
+        .is_none());
+    }
+
+    #[test]
+    fn renders_wework_cli_launcher_for_app_bundle() {
+        let content = wework_cli_launcher_content(
+            std::path::Path::new("/Applications/WeWork.app/Contents/MacOS/WeWork"),
+            Some(std::path::Path::new("/Applications/WeWork.app")),
+        );
+
+        assert!(content.contains("# Wework CLI launcher"));
+        assert!(content.contains("APP_BUNDLE='/Applications/WeWork.app'"));
+        assert!(content.contains("open \"$APP_BUNDLE\" --args --open-workspace"));
+    }
+
+    #[test]
+    fn installs_wework_cli_launcher_and_replaces_managed_files() {
+        let temp_dir = test_temp_dir("install");
+        let executable_path = temp_dir.join("debug").join("app");
+        std::fs::create_dir_all(executable_path.parent().expect("executable has parent"))
+            .expect("executable dir should be created");
+        std::fs::write(&executable_path, b"app").expect("executable should be written");
+
+        let installed_path = install_wework_cli_impl(&temp_dir, &executable_path)
+            .expect("launcher should be installed");
+        let content = std::fs::read_to_string(&installed_path).expect("launcher should be read");
+        assert!(content.contains("# Wework CLI launcher"));
+        assert!(content.contains("WEWORK_EXECUTABLE="));
+
+        std::fs::write(&installed_path, "# Wework CLI launcher\nold")
+            .expect("managed launcher should be overwritten");
+        install_wework_cli_impl(&temp_dir, &executable_path)
+            .expect("managed launcher should be replaced");
+        let replaced_content =
+            std::fs::read_to_string(&installed_path).expect("launcher should be read again");
+        assert!(replaced_content.contains("Open a local workspace in the Wework desktop app."));
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn refuses_to_replace_unmanaged_wework_cli_file() {
+        let temp_dir = test_temp_dir("unmanaged");
+        let install_dir = temp_dir.join(".local/bin");
+        std::fs::create_dir_all(&install_dir).expect("install dir should be created");
+        let installed_path = install_dir.join("wework");
+        std::fs::write(&installed_path, "#!/bin/sh\necho custom")
+            .expect("custom command should be written");
+
+        assert!(!can_replace_wework_cli_path(&installed_path)
+            .expect("existing file should be inspected"));
+        assert!(
+            install_wework_cli_impl(&temp_dir, std::path::Path::new("/tmp/app"))
+                .expect_err("unmanaged file should not be replaced")
+                .contains("not managed by Wework")
+        );
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]
@@ -2417,8 +2769,14 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init());
 
     #[cfg(all(desktop, not(debug_assertions)))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        if let Err(error) = ensure_main_window(app, None) {
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        let action = if let Some(request) = parse_local_workspace_open_request(&argv) {
+            queue_local_workspace_open_request(app, request);
+            Some(MainWindowOpenAction::LocalWorkspace)
+        } else {
+            None
+        };
+        if let Err(error) = ensure_main_window(app, action) {
             log::warn!("Failed to open main window from single-instance activation: {error}");
         }
     }));
@@ -2426,6 +2784,7 @@ pub fn run() {
     let app = builder
         .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(MainWindowLifecycleState::default())
+        .manage(LocalWorkspaceOpenState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .on_window_event(|window, event| {
@@ -2484,7 +2843,23 @@ pub fn run() {
             #[cfg(desktop)]
             setup_system_tray(app)?;
             #[cfg(desktop)]
-            maybe_show_main_window_on_launch(app.handle());
+            match install_wework_cli_link(app.handle()) {
+                Ok(path) => log::info!("Installed Wework CLI launcher: {}", path.display()),
+                Err(error) => log::warn!("{error}"),
+            }
+            #[cfg(desktop)]
+            if let Some(request) =
+                parse_local_workspace_open_request(&std::env::args().collect::<Vec<_>>())
+            {
+                queue_local_workspace_open_request(app.handle(), request);
+                if let Err(error) =
+                    ensure_main_window(app.handle(), Some(MainWindowOpenAction::LocalWorkspace))
+                {
+                    log::warn!("Failed to open main window for local workspace request: {error}");
+                }
+            } else {
+                maybe_show_main_window_on_launch(app.handle());
+            }
             #[cfg(desktop)]
             install_shutdown_signal_handler(app.handle().clone())
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
@@ -2530,6 +2905,8 @@ pub fn run() {
             open_app_log_directory,
             get_wework_process_snapshot,
             open_main_webview_devtools,
+            install_wework_cli,
+            take_pending_local_workspace_open_requests,
             set_tray_menu_state,
             update_app_preferences,
             download_local_file_to_downloads,
