@@ -117,6 +117,10 @@ The workflow uploads these release assets:
 
 When downloaded from GitHub Release assets, the link points directly to the `.dmg` file and is not wrapped by an Actions artifact `.zip`. When the workflow is triggered manually without a version input, the release tag auto-increments the patch version from the latest `wework-vX.Y.Z` tag.
 
+For a formal release, the workflow syncs `wework/package.json`, `wework/src-tauri/tauri.conf.json`, `wework/src-tauri/Cargo.toml`, and `wework/src-tauri/Cargo.lock` to the release version before building, then commits those files directly back to the triggering `main` branch. The macOS build jobs and GitHub Release target use that version commit, keeping the About page version, Tauri bundle version, and source version aligned.
+
+Manual workflow runs that do not publish a formal release only produce test artifacts and do not commit version files. For releases triggered by a `wework-vX.Y.Z` tag, the tag already points to an immutable commit, so the workflow does not rewrite source files; if the tagged version files do not match the tag version, the release fails and the version files must be updated before creating the tag again.
+
 ## CI DMG Without Apple Developer
 
 The GitHub workflow applies an ad-hoc codesign signature to the `.app`, but it does not perform Apple notarization, so first launch still triggers Gatekeeper. Use this mode for internal testing and developer distribution only; do not label it as a notarized production package.
