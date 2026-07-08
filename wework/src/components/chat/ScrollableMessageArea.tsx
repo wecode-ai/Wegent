@@ -13,6 +13,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
+import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
 const BOTTOM_THRESHOLD = 48
 const STABLE_SCROLL_DELAYS = [0, 50]
@@ -64,7 +65,7 @@ interface ScrollableMessageAreaProps {
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
