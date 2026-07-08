@@ -591,38 +591,27 @@ export function FolderTree({
 }: FolderTreeProps) {
   const tree = useMemo(() => buildMergedTree(folders, documents), [folders, documents])
 
-  // Collect all folder paths for default-expand (from source data, independent of sort)
-  const allFolderPaths = useMemo(() => {
-    const paths: string[] = []
-
-    // API folder paths: folder:${id}
-    const collectApiPaths = (items: KnowledgeFolder[]) => {
-      for (const f of items) {
-        paths.push(`folder:${f.id}`)
-        if (f.children) collectApiPaths(f.children)
-      }
-    }
-    collectApiPaths(folders)
-
-    return paths
-  }, [folders])
+  const defaultExpandedFolderPaths = useMemo(
+    () => folders.map(folder => `folder:${folder.id}`),
+    [folders]
+  )
   const activeFolderPaths = useMemo(
     () => findFolderPathIds(folders, activeFolderId).map(id => `folder:${id}`),
     [folders, activeFolderId]
   )
 
-  // Default: all folders expanded; sync when new folders are added
+  // Default: expand root-level folders only; active folder paths are expanded separately.
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     setExpandedFolders(prev => {
       const next = new Set(prev)
-      for (const path of allFolderPaths) {
+      for (const path of defaultExpandedFolderPaths) {
         next.add(path)
       }
       return next
     })
-  }, [allFolderPaths])
+  }, [defaultExpandedFolderPaths])
 
   useEffect(() => {
     if (activeFolderPaths.length === 0) return

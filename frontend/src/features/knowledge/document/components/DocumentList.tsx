@@ -305,6 +305,26 @@ export function DocumentList({
   const [sortField, setSortField] = useState<SortField>('createdAt')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [activeFolderId, setActiveFolderId] = useState<number | undefined>(undefined)
+
+  // Folder state
+  const {
+    folders,
+    fetchFolders,
+    createFolder,
+    updateFolder,
+    deleteFolder,
+    moveDocument,
+    batchMove,
+  } = useFolders({ knowledgeBaseId: knowledgeBase.id })
+
+  const activeFolderScopeIds = useMemo(
+    () =>
+      activeFolderId === undefined
+        ? undefined
+        : Array.from(collectFolderAndDescendantIds(folders, activeFolderId)),
+    [folders, activeFolderId]
+  )
+
   const {
     documents,
     loading,
@@ -326,21 +346,11 @@ export function DocumentList({
     paginationEnabled,
     folderId: activeFolderId,
     includeSubfolders: activeFolderId !== undefined,
+    folderScopeIds: activeFolderScopeIds,
     keyword: searchQuery,
     sortBy: sortField,
     sortOrder,
   })
-
-  // Folder state
-  const {
-    folders,
-    fetchFolders,
-    createFolder,
-    updateFolder,
-    deleteFolder,
-    moveDocument,
-    batchMove,
-  } = useFolders({ knowledgeBaseId: knowledgeBase.id })
 
   const [showCreateFolder, setShowCreateFolder] = useState(false)
   const [createFolderParentId, setCreateFolderParentId] = useState(0)
