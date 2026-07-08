@@ -177,22 +177,35 @@ function collectRuntimeTaskReminderItems(
 
 export function buildRuntimeTaskReminderSnapshot({
   runtimeWork,
+  currentRuntimeTask,
   previousRunningTaskKeys,
   storedUnreadTaskKeys,
+  currentRuntimeTaskVisible = false,
 }: {
   runtimeWork: RuntimeWorkListResponse | null | undefined
+  currentRuntimeTask: RuntimeTaskAddress | null | undefined
   previousRunningTaskKeys: ReadonlySet<string>
   storedUnreadTaskKeys: ReadonlySet<string>
+  currentRuntimeTaskVisible?: boolean
 }): RuntimeTaskReminderSnapshot {
   const items = collectRuntimeTaskReminderItems(runtimeWork)
+  const currentRuntimeTaskKey = currentRuntimeTask
+    ? getRuntimeTaskReminderKey(currentRuntimeTask)
+    : null
   const runningTaskKeys = new Set(
     items.filter(item => isRuntimeTaskActive(item.task)).map(item => item.key)
   )
   const unreadTaskKeys = new Set(storedUnreadTaskKeys)
   const completedUnreadItems: RuntimeTaskReminderItem[] = []
+  if (currentRuntimeTaskVisible && currentRuntimeTaskKey) {
+    unreadTaskKeys.delete(currentRuntimeTaskKey)
+  }
 
   for (const item of items) {
     if (!isRuntimeTaskTerminal(item.task) || !previousRunningTaskKeys.has(item.key)) {
+      continue
+    }
+    if (currentRuntimeTaskVisible && item.key === currentRuntimeTaskKey) {
       continue
     }
     if (!unreadTaskKeys.has(item.key)) {
@@ -204,9 +217,15 @@ export function buildRuntimeTaskReminderSnapshot({
   return { unreadTaskKeys, runningTaskKeys, completedUnreadItems, items }
 }
 
+function getWindowFocused(): boolean {
+  if (typeof document === 'undefined') return false
+  return document.visibilityState === 'visible' && document.hasFocus()
+}
+
 export function useRuntimeTaskReminders({
   userId,
   runtimeWork,
+  currentRuntimeTask,
 }: {
   userId: number | string | null | undefined
   runtimeWork: RuntimeWorkListResponse | null | undefined
@@ -214,6 +233,7 @@ export function useRuntimeTaskReminders({
 }): RuntimeTaskReminderState {
   const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
   const [storageVersion, setStorageVersion] = useState(0)
+  const [windowFocused, setWindowFocused] = useState(getWindowFocused)
   const notifiedTaskKeysRef = useRef<Set<string>>(new Set())
   const runningTaskKeysStorageKey = getReminderStorageKey(userId, 'runningTaskKeys')
   const unreadTaskKeysStorageKey = getReminderStorageKey(userId, 'unreadTaskKeys')
@@ -238,6 +258,19 @@ export function useRuntimeTaskReminders({
     }
   }, [])
 
+  useEffect(() => {
+    const refreshFocused = () => setWindowFocused(getWindowFocused())
+    window.addEventListener('focus', refreshFocused)
+    window.addEventListener('blur', refreshFocused)
+    document.addEventListener('visibilitychange', refreshFocused)
+    refreshFocused()
+    return () => {
+      window.removeEventListener('focus', refreshFocused)
+      window.removeEventListener('blur', refreshFocused)
+      document.removeEventListener('visibilitychange', refreshFocused)
+    }
+  }, [])
+
   const storedUnreadTaskKeys = useMemo(() => {
     void storageVersion
     return readStoredStringSet(unreadTaskKeysStorageKey)
@@ -246,10 +279,18 @@ export function useRuntimeTaskReminders({
     () =>
       buildRuntimeTaskReminderSnapshot({
         runtimeWork,
+        currentRuntimeTask,
         previousRunningTaskKeys: readStoredStringSet(runningTaskKeysStorageKey),
         storedUnreadTaskKeys,
+        currentRuntimeTaskVisible: windowFocused,
       }),
-    [runningTaskKeysStorageKey, runtimeWork, storedUnreadTaskKeys]
+    [
+      currentRuntimeTask,
+      runningTaskKeysStorageKey,
+      runtimeWork,
+      storedUnreadTaskKeys,
+      windowFocused,
+    ]
   )
 
   useEffect(() => {
@@ -262,6 +303,14 @@ export function useRuntimeTaskReminders({
     if (unreadChanged || runningChanged || snapshot.completedUnreadItems.length > 0) {
       logRuntimeTaskReminderState('persist', {
         userId,
+        currentRuntimeTask: currentRuntimeTask
+          ? {
+              deviceId: currentRuntimeTask.deviceId,
+              taskId: currentRuntimeTask.taskId,
+              workspacePath: currentRuntimeTask.workspacePath ?? null,
+            }
+          : null,
+        currentRuntimeTaskVisible: windowFocused,
         taskCompletionNotificationsEnabled: preferences.taskCompletionNotificationsEnabled,
         previousUnreadTaskKeys: debugReminderKeys(previousUnreadTaskKeys),
         nextUnreadTaskKeys: debugReminderKeys(snapshot.unreadTaskKeys),
@@ -297,10 +346,12 @@ export function useRuntimeTaskReminders({
     }
   }, [
     preferences.taskCompletionNotificationsEnabled,
+    currentRuntimeTask,
     runtimeWork,
     runningTaskKeysStorageKey,
     snapshot,
     unreadTaskKeysStorageKey,
+    windowFocused,
     userId,
   ])
 
