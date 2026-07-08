@@ -24,7 +24,7 @@ const DELETED_ARCHIVED_TASK_ID_MAX_COUNT: usize = 2_000;
 pub(crate) struct RuntimeWorkStore {
     index_path: PathBuf,
     index: Arc<Mutex<RuntimeWorkIndex>>,
-    throttled_writes: Arc<Mutex<HashMap<String, i64>>>,
+    index_signature: Arc<Mutex<Option<IndexFileSignature>>>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -37,13 +37,20 @@ struct RuntimeWorkIndex {
     deleted_archived_task_ids: HashMap<String, i64>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct IndexFileSignature {
+    len: u64,
+    modified_ms: u128,
+}
+
 impl RuntimeWorkStore {
     pub fn new(index_path: PathBuf) -> Self {
         let index = read_index_from_path(&index_path);
+        let index_signature = index_file_signature(&index_path);
         Self {
             index_path,
             index: Arc::new(Mutex::new(index)),
-            throttled_writes: Arc::new(Mutex::new(HashMap::new())),
+            index_signature: Arc::new(Mutex::new(index_signature)),
         }
     }
 
@@ -51,32 +58,49 @@ impl RuntimeWorkStore {
         Self::new(default_index_path())
     }
 
-    pub fn list_tasks(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
-        let mut tasks = self
-            .read_index_snapshot()
+    pub fn list_task_summaries(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
+        self.refresh_index_from_disk_if_changed();
+        let Some(index) = self.index.lock().ok() else {
+            return Vec::new();
+        };
+        let mut tasks = index
             .tasks
-            .into_values()
+            .values()
             .filter(|task| include_archived || task.status != "archived")
+            .map(RuntimeTaskLink::list_summary)
             .collect::<Vec<_>>();
         tasks.sort_by_key(|task| Reverse(task.updated_at));
         tasks
     }
 
     pub fn get_task(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
-        self.read_index_snapshot().tasks.get(local_task_id).cloned()
+        self.refresh_index_from_disk_if_changed();
+        self.index.lock().ok()?.tasks.get(local_task_id).cloned()
     }
 
-    pub fn find_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
-        self.read_index_snapshot()
+    pub fn find_summary_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
+        self.refresh_index_from_disk_if_changed();
+        self.index
+            .lock()
+            .ok()?
             .tasks
-            .into_values()
+            .values()
             .find(|link| link.thread_id.as_deref() == Some(thread_id))
+            .map(RuntimeTaskLink::list_summary)
     }
 
     pub fn is_deleted_archived_task_id(&self, task_id: &str) -> bool {
-        self.read_index_snapshot()
-            .deleted_archived_task_ids
-            .contains_key(task_id)
+        self.refresh_index_from_disk_if_changed();
+        let Some(mut index) = self.index.lock().ok() else {
+            return false;
+        };
+        let before_deleted_count = index.deleted_archived_task_ids.len();
+        prune_deleted_archived_task_ids(&mut index.deleted_archived_task_ids, current_time_ms());
+        let deleted = index.deleted_archived_task_ids.contains_key(task_id);
+        if index.deleted_archived_task_ids.len() != before_deleted_count {
+            self.write_index(&index);
+        }
+        deleted
     }
 
     pub fn mark_deleted_archived_task_ids(&self, task_ids: impl IntoIterator<Item = String>) {
@@ -109,20 +133,12 @@ impl RuntimeWorkStore {
         self.update_task_with_persistence(local_task_id, updater, true)
     }
 
-    pub fn update_task_throttled(
+    pub fn update_task_in_memory(
         &self,
         local_task_id: &str,
-        min_interval_ms: i64,
         updater: impl FnOnce(&mut RuntimeTaskLink),
     ) -> Option<RuntimeTaskLink> {
-        let mut index = self.index.lock().ok()?;
-        let task = index.tasks.get_mut(local_task_id)?;
-        updater(task);
-        let updated = task.clone();
-        if self.throttled_write_due(local_task_id, min_interval_ms) {
-            self.write_index(&index);
-        }
-        Some(updated)
+        self.update_task_with_persistence(local_task_id, updater, false)
     }
 
     fn update_task_with_persistence(
@@ -144,27 +160,8 @@ impl RuntimeWorkStore {
     pub fn delete_task(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
         let mut index = self.index.lock().ok()?;
         let removed = index.tasks.remove(local_task_id)?;
-        if let Ok(mut throttled_writes) = self.throttled_writes.lock() {
-            throttled_writes.remove(local_task_id);
-        }
         self.write_index(&index);
         Some(removed)
-    }
-
-    fn throttled_write_due(&self, local_task_id: &str, min_interval_ms: i64) -> bool {
-        let now_ms = current_time_ms();
-        let Ok(mut throttled_writes) = self.throttled_writes.lock() else {
-            return true;
-        };
-        let last_write_ms = throttled_writes
-            .get(local_task_id)
-            .copied()
-            .unwrap_or_default();
-        if now_ms - last_write_ms < min_interval_ms {
-            return false;
-        }
-        throttled_writes.insert(local_task_id.to_owned(), now_ms);
-        true
     }
 
     fn write_index(&self, index: &RuntimeWorkIndex) {
@@ -182,40 +179,40 @@ impl RuntimeWorkStore {
         });
         if let Ok(payload) = payload {
             let temp_path = temporary_index_path(&self.index_path);
-            if fs::write(&temp_path, payload).is_ok()
-                && fs::rename(&temp_path, &self.index_path).is_err()
-            {
-                let _ = fs::remove_file(temp_path);
+            if fs::write(&temp_path, payload).is_ok() {
+                if fs::rename(&temp_path, &self.index_path).is_ok() {
+                    self.update_index_signature();
+                } else {
+                    let _ = fs::remove_file(temp_path);
+                }
             }
         }
     }
 
-    fn read_index_snapshot(&self) -> RuntimeWorkIndex {
-        let mut disk_index = read_index_from_path(&self.index_path);
-        let before_deleted_count = disk_index.deleted_archived_task_ids.len();
-        prune_deleted_archived_task_ids(
-            &mut disk_index.deleted_archived_task_ids,
-            current_time_ms(),
-        );
-        let dirty_task_ids = self
-            .throttled_writes
+    fn refresh_index_from_disk_if_changed(&self) {
+        let current_signature = index_file_signature(&self.index_path);
+        let changed = self
+            .index_signature
             .lock()
             .ok()
-            .map(|writes| writes.keys().cloned().collect::<Vec<_>>())
-            .unwrap_or_default();
-        let Some(mut memory_index) = self.index.lock().ok() else {
-            return disk_index;
-        };
-        for task_id in dirty_task_ids {
-            if let Some(link) = memory_index.tasks.get(&task_id) {
-                disk_index.tasks.insert(task_id, link.clone());
-            }
+            .is_some_and(|signature| *signature != current_signature);
+        if !changed {
+            return;
         }
-        *memory_index = disk_index.clone();
-        if disk_index.deleted_archived_task_ids.len() != before_deleted_count {
-            self.write_index(&disk_index);
+
+        let disk_index = read_index_from_path(&self.index_path);
+        if let Ok(mut index) = self.index.lock() {
+            *index = disk_index;
         }
-        disk_index
+        if let Ok(mut signature) = self.index_signature.lock() {
+            *signature = current_signature;
+        }
+    }
+
+    fn update_index_signature(&self) {
+        if let Ok(mut signature) = self.index_signature.lock() {
+            *signature = index_file_signature(&self.index_path);
+        }
     }
 }
 
@@ -231,6 +228,20 @@ fn read_index_from_path(index_path: &Path) -> RuntimeWorkIndex {
         return empty_index();
     };
     serde_json::from_str::<RuntimeWorkIndex>(&content).unwrap_or_else(|_| empty_index())
+}
+
+fn index_file_signature(index_path: &Path) -> Option<IndexFileSignature> {
+    let metadata = fs::metadata(index_path).ok()?;
+    let modified_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    Some(IndexFileSignature {
+        len: metadata.len(),
+        modified_ms,
+    })
 }
 
 fn empty_index() -> RuntimeWorkIndex {
@@ -342,8 +353,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn update_task_throttled_persists_at_interval() {
-        let index_path = temp_index_path("throttled-delta");
+    fn update_task_in_memory_defers_persistence_until_next_write() {
+        let index_path = temp_index_path("in-memory-update");
         let store = RuntimeWorkStore::new(index_path.clone());
         store.upsert_task(RuntimeTaskLink::new_pending(
             "task-1".to_owned(),
@@ -351,31 +362,22 @@ mod tests {
             "Task".to_owned(),
         ));
 
-        store.update_task_throttled("task-1", 60_000, |link| {
-            link.title = "First delta".to_owned();
+        store.update_task_in_memory("task-1", |link| {
+            link.title = "Streaming delta".to_owned();
         });
-        let reloaded_after_first_write = RuntimeWorkStore::new(index_path.clone());
+        assert_eq!(store.get_task("task-1").unwrap().title, "Streaming delta");
+        let reloaded_before_persist = RuntimeWorkStore::new(index_path.clone());
         assert_eq!(
-            reloaded_after_first_write.get_task("task-1").unwrap().title,
-            "First delta"
-        );
-
-        store.update_task_throttled("task-1", 60_000, |link| {
-            link.title = "Second delta".to_owned();
-        });
-        assert_eq!(store.get_task("task-1").unwrap().title, "Second delta");
-        let reloaded_before_next_due = RuntimeWorkStore::new(index_path.clone());
-        assert_eq!(
-            reloaded_before_next_due.get_task("task-1").unwrap().title,
-            "First delta"
+            reloaded_before_persist.get_task("task-1").unwrap().title,
+            "Task"
         );
 
         store.update_task("task-1", |link| {
             link.status = "done".to_owned();
         });
-        let reloaded_after_terminal_write = RuntimeWorkStore::new(index_path.clone());
-        let task = reloaded_after_terminal_write.get_task("task-1").unwrap();
-        assert_eq!(task.title, "Second delta");
+        let reloaded_after_persist = RuntimeWorkStore::new(index_path.clone());
+        let task = reloaded_after_persist.get_task("task-1").unwrap();
+        assert_eq!(task.title, "Streaming delta");
         assert_eq!(task.status, "done");
 
         let _ = fs::remove_file(index_path);

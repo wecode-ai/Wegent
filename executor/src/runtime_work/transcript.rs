@@ -10,9 +10,11 @@ use super::util::{
     bool_field, codex_wrapped_item_payload, extract_text, id_field, integer_field,
     is_codex_context_compaction_item_type, is_codex_tool_item_type, is_codex_tool_output_item_type,
     is_likely_codex_tool_item_type, is_likely_codex_tool_output_item_type, item_id, item_type,
-    normalize_workspace_path, now_ms, raw_string_field, reasoning_content, string_field,
-    timestamp_ms_field,
+    normalize_workspace_path, now_ms, raw_string_field, raw_string_field_ref, reasoning_content,
+    string_field, timestamp_ms_field,
 };
+
+const MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
 
 pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
     let mut messages = Vec::new();
@@ -456,8 +458,10 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
     }
     let mut updates = json!({
         "status": tool_status(&item),
-        "tool_output": tool_output(&item),
     });
+    if let Some(object) = updates.as_object_mut() {
+        insert_tool_output_fields(object, &item);
+    }
     if let Some(input) = command_input_from_output(&item) {
         if let Some(object) = updates.as_object_mut() {
             object.insert("tool_input".to_owned(), input);
@@ -1231,16 +1235,19 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
 }
 
 fn command_block(item: &Value, timestamp: i64) -> Value {
-    json!({
+    let mut block = json!({
         "id": item_id(item, "tool"),
         "type": "tool",
         "tool_use_id": item_id(item, "tool"),
         "tool_name": "bash",
         "tool_input": command_input(item),
-        "tool_output": command_output(item),
         "status": tool_status(item),
         "timestamp": timestamp,
-    })
+    });
+    if let Some(object) = block.as_object_mut() {
+        insert_tool_output_fields(object, item);
+    }
+    block
 }
 
 fn tool_block(item: &Value, timestamp: i64) -> Value {
@@ -1250,16 +1257,19 @@ fn tool_block(item: &Value, timestamp: i64) -> Value {
     ) {
         return command_block(item, timestamp);
     }
-    json!({
+    let mut block = json!({
         "id": tool_call_id(item),
         "type": "tool",
         "tool_use_id": tool_call_id(item),
         "tool_name": tool_name(item),
         "tool_input": tool_input(item),
-        "tool_output": tool_output(item),
         "status": tool_status(item),
         "timestamp": timestamp,
-    })
+    });
+    if let Some(object) = block.as_object_mut() {
+        insert_tool_output_fields(object, item);
+    }
+    block
 }
 
 fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
@@ -1272,7 +1282,7 @@ fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
     }) {
         if let Some(object) = block.as_object_mut() {
             merge_tool_input(object, command_input_from_output(item));
-            object.insert("tool_output".to_owned(), tool_output(item));
+            insert_tool_output_fields(object, item);
             object.insert("status".to_owned(), Value::String(tool_status(item)));
         }
         return;
@@ -1282,16 +1292,33 @@ fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
         "type": "tool",
         "tool_use_id": tool_call_id(item),
         "tool_name": tool_name(item),
-        "tool_output": tool_output(item),
         "status": tool_status(item),
         "timestamp": timestamp,
     });
+    if let Some(object) = block.as_object_mut() {
+        insert_tool_output_fields(object, item);
+    }
     if let Some(input) = command_input_from_output(item) {
         if let Some(object) = block.as_object_mut() {
             object.insert("tool_input".to_owned(), input);
         }
     }
     blocks.push(block);
+}
+
+fn insert_tool_output_fields(object: &mut Map<String, Value>, item: &Value) {
+    let output = limited_tool_output(item);
+    object.insert("tool_output".to_owned(), output.value);
+    if output.truncated {
+        object.insert("tool_output_truncated".to_owned(), Value::Bool(true));
+        object.insert(
+            "tool_output_original_bytes".to_owned(),
+            json!(output.original_bytes),
+        );
+    } else {
+        object.remove("tool_output_truncated");
+        object.remove("tool_output_original_bytes");
+    }
 }
 
 fn command_input(item: &Value) -> Value {
@@ -1303,11 +1330,57 @@ fn command_input(item: &Value) -> Value {
     })
 }
 
-fn command_output(item: &Value) -> String {
-    raw_string_field(item, "aggregatedOutput")
-        .or_else(|| raw_string_field(item, "aggregated_output"))
-        .or_else(|| raw_string_field(item, "output"))
-        .unwrap_or_default()
+#[derive(Debug)]
+struct LimitedToolOutput {
+    value: Value,
+    truncated: bool,
+    original_bytes: usize,
+}
+
+fn limited_tool_output(item: &Value) -> LimitedToolOutput {
+    match raw_tool_output(item) {
+        RawToolOutput::String(text) => limited_tool_output_string(text),
+        RawToolOutput::Value(value) => LimitedToolOutput {
+            value,
+            truncated: false,
+            original_bytes: 0,
+        },
+    }
+}
+
+enum RawToolOutput<'a> {
+    String(&'a str),
+    Value(Value),
+}
+
+fn limited_tool_output_string(text: &str) -> LimitedToolOutput {
+    let original_bytes = text.len();
+    if original_bytes <= MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES {
+        return LimitedToolOutput {
+            value: Value::String(text.to_owned()),
+            truncated: false,
+            original_bytes,
+        };
+    }
+    LimitedToolOutput {
+        value: Value::String(tail_utf8_bytes(text, MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES)),
+        truncated: true,
+        original_bytes,
+    }
+}
+
+fn tail_utf8_bytes(text: &str, max_bytes: usize) -> String {
+    let mut start = text.len().saturating_sub(max_bytes);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_owned()
+}
+
+fn command_output_ref(item: &Value) -> Option<&str> {
+    raw_string_field_ref(item, "aggregatedOutput")
+        .or_else(|| raw_string_field_ref(item, "aggregated_output"))
+        .or_else(|| raw_string_field_ref(item, "output"))
 }
 
 fn command_input_from_output(item: &Value) -> Option<Value> {
@@ -1474,57 +1547,74 @@ fn parse_json_object_string(item: &Value, key: &str) -> Option<Value> {
         .filter(Value::is_object)
 }
 
-fn tool_output(item: &Value) -> Value {
+fn raw_tool_output(item: &Value) -> RawToolOutput<'_> {
     match item_type(item).as_str() {
         "commandexecution" | "shellcall" | "localshellcall" | "execcommandend" => {
-            Value::String(command_output(item))
+            RawToolOutput::String(command_output_ref(item).unwrap_or_default())
         }
         "functioncalloutput" | "customtoolcalloutput" => output_payload_text(item)
-            .map(Value::String)
-            .unwrap_or_else(|| item.get("output").cloned().unwrap_or(Value::Null)),
-        "toolsearchoutput" => item.get("results").cloned().unwrap_or_else(|| {
-            output_payload_text(item)
-                .map(Value::String)
-                .unwrap_or(Value::Null)
-        }),
+            .map(|output| RawToolOutput::Value(Value::String(output)))
+            .unwrap_or_else(|| {
+                RawToolOutput::Value(item.get("output").cloned().unwrap_or(Value::Null))
+            }),
+        "toolsearchoutput" => item
+            .get("results")
+            .cloned()
+            .unwrap_or_else(|| {
+                output_payload_text(item)
+                    .map(Value::String)
+                    .unwrap_or(Value::Null)
+            })
+            .into(),
         "dynamictoolcall" => item
             .get("contentItems")
             .or_else(|| item.get("content_items"))
             .map(output_content_items_text)
-            .map(Value::String)
-            .unwrap_or_else(|| item.get("result").cloned().unwrap_or(Value::Null)),
-        "mcptoolcall" | "mcpcall" | "mcptoolcallend" => mcp_tool_output(item),
+            .map(|output| RawToolOutput::Value(Value::String(output)))
+            .unwrap_or_else(|| {
+                RawToolOutput::Value(item.get("result").cloned().unwrap_or(Value::Null))
+            }),
+        "mcptoolcall" | "mcpcall" | "mcptoolcallend" => RawToolOutput::Value(mcp_tool_output(item)),
         "imagegeneration" => string_field(item, "savedPath")
             .or_else(|| string_field(item, "saved_path"))
             .or_else(|| raw_string_field(item, "result"))
-            .map(Value::String)
-            .unwrap_or(Value::Null),
+            .map(|output| RawToolOutput::Value(Value::String(output)))
+            .unwrap_or(RawToolOutput::Value(Value::Null)),
         _ => default_tool_output(item),
     }
 }
 
-fn default_tool_output(item: &Value) -> Value {
+impl From<Value> for RawToolOutput<'_> {
+    fn from(value: Value) -> Self {
+        RawToolOutput::Value(value)
+    }
+}
+
+fn default_tool_output(item: &Value) -> RawToolOutput<'_> {
     if let Some(output) = output_payload_text(item) {
-        return Value::String(output);
+        return RawToolOutput::Value(Value::String(output));
     }
-    let command_output = command_output(item);
-    if !command_output.is_empty() {
-        return Value::String(command_output);
+    if let Some(command_output) = command_output_ref(item) {
+        if !command_output.is_empty() {
+            return RawToolOutput::String(command_output);
+        }
     }
-    let stdout = raw_string_field(item, "stdout").unwrap_or_default();
-    let stderr = raw_string_field(item, "stderr").unwrap_or_default();
+    let stdout = raw_string_field_ref(item, "stdout").unwrap_or_default();
+    let stderr = raw_string_field_ref(item, "stderr").unwrap_or_default();
     let combined = [stdout, stderr]
         .into_iter()
         .filter(|value| !value.is_empty())
         .collect::<Vec<_>>()
         .join("\n");
     if !combined.is_empty() {
-        return Value::String(combined);
+        return RawToolOutput::Value(limited_tool_output_string(&combined).value);
     }
-    item.get("result")
-        .or_else(|| item.get("formatted_output"))
-        .cloned()
-        .unwrap_or(Value::Null)
+    RawToolOutput::Value(
+        item.get("result")
+            .or_else(|| item.get("formatted_output"))
+            .cloned()
+            .unwrap_or(Value::Null),
+    )
 }
 
 fn mcp_invocation_field(item: &Value, key: &str) -> Option<String> {
@@ -2810,6 +2900,51 @@ mod tests {
         assert_eq!(block["tool_input"]["cwd"], "/tmp/project");
         assert_eq!(block["tool_output"], "/tmp/project\n");
         assert_eq!(block["status"], "done");
+    }
+
+    #[test]
+    fn transcript_truncates_large_exec_command_output() {
+        let output = format!(
+            "{}tail",
+            "x".repeat(MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES + 1024)
+        );
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "running",
+                    "items": [
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "exec_command_end",
+                                "call_id": "call-1",
+                                "command": ["/bin/zsh", "-lc", "cat large.log"],
+                                "cwd": "/tmp/project",
+                                "aggregated_output": output,
+                                "status": "completed",
+                                "exit_code": 0
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = transcript_messages(&thread, "device-1");
+        let block = &messages[0]["blocks"][0];
+        let tool_output = block["tool_output"].as_str().unwrap();
+
+        assert_eq!(tool_output.len(), MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES);
+        assert!(tool_output.ends_with("tail"));
+        assert_eq!(block["tool_output_truncated"], true);
+        assert_eq!(
+            block["tool_output_original_bytes"],
+            MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES + 1028
+        );
     }
 
     #[test]

@@ -27,8 +27,6 @@ use super::{
     },
 };
 
-const STREAM_DELTA_PERSIST_INTERVAL_MS: i64 = 10_000;
-
 pub(crate) fn cached_messages(link: &RuntimeTaskLink) -> Vec<Value> {
     link.runtime_handle
         .get("messages")
@@ -41,19 +39,17 @@ pub(crate) fn cached_messages(link: &RuntimeTaskLink) -> Vec<Value> {
 }
 
 pub(crate) fn set_runtime_handle_messages(runtime_handle: &mut Value, messages: Vec<Value>) {
-    let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
+    if !runtime_handle.is_object() {
+        *runtime_handle = Value::Object(Map::new());
+    }
+    let object = runtime_handle
+        .as_object_mut()
+        .expect("runtime handle object was just inserted");
     object.insert("messages".to_owned(), Value::Array(messages));
-    *runtime_handle = Value::Object(object);
 }
 
 pub(crate) fn append_runtime_handle_message(runtime_handle: &mut Value, message: Value) {
-    let mut messages = runtime_handle
-        .get("messages")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    messages.push(message);
-    set_runtime_handle_messages(runtime_handle, messages);
+    runtime_handle_messages_mut(runtime_handle).push(message);
 }
 
 #[cfg(test)]
@@ -483,7 +479,7 @@ fn cache_runtime_assistant_block(
     request: &ExecutionRequest,
     block: Value,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         complete_open_process_blocks(blocks);
         merge_cached_block(blocks, block);
     });
@@ -498,7 +494,7 @@ fn cache_runtime_assistant_plan_item(
 ) {
     let block_id = plan_block_id(params);
     let process_item_id = notification_item_id(params);
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         if let Some(block) = blocks.iter_mut().find(|block| {
             block_identity(block).as_deref() == Some(block_id.as_str())
                 || process_block_accepts_delta_for_item(
@@ -541,7 +537,7 @@ fn update_runtime_assistant_block(
     block_id: &str,
     updates: Value,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         update_cached_block(blocks, block_id, updates);
     });
 }
@@ -589,7 +585,7 @@ fn append_runtime_assistant_process_snapshot(
     process_item_id: Option<String>,
     content: String,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         if let Some(block) = blocks.iter_mut().rev().find(|block| {
             process_block_accepts_delta_for_item(
                 block,
@@ -688,18 +684,6 @@ pub(crate) fn merge_cached_messages(
     merged
 }
 
-fn mutate_cached_assistant_blocks(
-    store: &RuntimeWorkStore,
-    local_task_id: &str,
-    request: &ExecutionRequest,
-    mutate_blocks: impl FnOnce(&mut Vec<Value>),
-) {
-    mutate_cached_assistant_message(store, local_task_id, request, |assistant| {
-        let blocks = ensure_message_blocks(assistant);
-        mutate_blocks(blocks);
-    });
-}
-
 fn mutate_cached_assistant_blocks_throttled(
     store: &RuntimeWorkStore,
     local_task_id: &str,
@@ -715,21 +699,6 @@ fn mutate_cached_assistant_blocks_throttled(
             let blocks = ensure_message_blocks(assistant);
             mutate_blocks(blocks);
         },
-    );
-}
-
-fn mutate_cached_assistant_message(
-    store: &RuntimeWorkStore,
-    local_task_id: &str,
-    request: &ExecutionRequest,
-    mutate_message: impl FnOnce(&mut Value),
-) {
-    mutate_cached_assistant_message_with_persistence(
-        store,
-        local_task_id,
-        request,
-        true,
-        mutate_message,
     );
 }
 
@@ -756,16 +725,15 @@ fn mutate_cached_assistant_message_with_persistence(
     mutate_message: impl FnOnce(&mut Value),
 ) {
     let update = |link: &mut RuntimeTaskLink| {
-        let mut messages = cached_messages(link);
-        let assistant = ensure_cached_assistant_message(&mut messages, local_task_id, request);
+        let messages = runtime_handle_messages_mut(&mut link.runtime_handle);
+        let assistant = ensure_cached_assistant_message(messages, local_task_id, request);
         mutate_message(assistant);
         link.updated_at = now_ms();
-        set_runtime_handle_messages(&mut link.runtime_handle, messages);
     };
     if persist {
         store.update_task(local_task_id, update);
     } else {
-        store.update_task_throttled(local_task_id, STREAM_DELTA_PERSIST_INTERVAL_MS, update);
+        store.update_task_in_memory(local_task_id, update);
     }
 }
 
@@ -775,14 +743,13 @@ fn mutate_existing_cached_assistant_message(
     request: &ExecutionRequest,
     mutate_message: impl FnOnce(&mut Value),
 ) {
-    store.update_task(local_task_id, |link| {
-        let mut messages = cached_messages(link);
-        let Some(index) = cached_assistant_message_index(&messages, request) else {
+    store.update_task_in_memory(local_task_id, |link| {
+        let messages = runtime_handle_messages_mut(&mut link.runtime_handle);
+        let Some(index) = cached_assistant_message_index(messages, request) else {
             return;
         };
         mutate_message(&mut messages[index]);
         link.updated_at = now_ms();
-        set_runtime_handle_messages(&mut link.runtime_handle, messages);
     });
 }
 
@@ -910,6 +877,22 @@ fn ensure_cached_assistant_message<'a>(
     messages
         .last_mut()
         .expect("assistant message was just inserted")
+}
+
+fn runtime_handle_messages_mut(runtime_handle: &mut Value) -> &mut Vec<Value> {
+    if !runtime_handle.is_object() {
+        *runtime_handle = Value::Object(Map::new());
+    }
+    let object = runtime_handle
+        .as_object_mut()
+        .expect("runtime handle object was just inserted");
+    if !object.get("messages").is_some_and(Value::is_array) {
+        object.insert("messages".to_owned(), Value::Array(Vec::new()));
+    }
+    object
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .expect("messages array was just inserted")
 }
 
 fn cached_assistant_message_index(messages: &[Value], request: &ExecutionRequest) -> Option<usize> {

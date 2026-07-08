@@ -160,7 +160,19 @@ function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): b
 }
 
 function logRuntimeTaskReminderState(event: string, payload: Record<string, unknown>) {
+  if (globalThis.localStorage?.getItem('wework:debug-runtime') !== '1') return
+
   console.info(`[Wework] Runtime task reminder ${event}`, payload)
+}
+
+function debugRuntimeTaskAddress(address: RuntimeTaskAddress): Record<string, unknown> {
+  return {
+    deviceId: address.deviceId,
+    taskId: address.taskId,
+    workspacePath: address.workspacePath ?? null,
+    hasRuntimeHandle: Boolean(address.runtimeHandle),
+    runtimeHandleKeys: address.runtimeHandle ? Object.keys(address.runtimeHandle).sort() : [],
+  }
 }
 
 export function getRuntimeTaskReminderKey(address: RuntimeTaskAddress): string {
@@ -397,7 +409,7 @@ export function useRuntimeTaskReminders({
           hadUnread,
           previousUnreadTaskKeys: debugReminderKeys(readStoredStringSet(unreadTaskKeysStorageKey)),
           nextUnreadTaskKeys: debugReminderKeys(nextKeys),
-          address,
+          address: debugRuntimeTaskAddress(address),
         })
         writeLimitedStoredStringSet(unreadTaskKeysStorageKey, nextKeys)
         emitStoredStringSetChange(unreadTaskKeysStorageKey)

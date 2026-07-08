@@ -195,6 +195,7 @@ export function createRuntimeTaskStreamHandlers(
         hasToolInput: payload.toolInput !== undefined,
         hasToolOutput: payload.toolOutput !== undefined,
         hasToolOutputDelta: payload.toolOutputDelta !== undefined,
+        hasToolOutputTruncated: payload.toolOutputTruncated !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
       })
       handlers.onMessageAction({
@@ -207,6 +208,9 @@ export function createRuntimeTaskStreamHandlers(
           ...(payload.toolOutput !== undefined && { toolOutput: payload.toolOutput }),
           ...(payload.toolOutputDelta !== undefined && {
             toolOutputDelta: payload.toolOutputDelta,
+          }),
+          ...(payload.toolOutputTruncated !== undefined && {
+            toolOutputTruncated: payload.toolOutputTruncated,
           }),
           ...(payload.fileChanges !== undefined && {
             fileChanges: normalizeTurnFileChanges(payload.fileChanges),
@@ -552,6 +556,18 @@ function normalizeProcessingBlock(
           ? block.tool_input
           : undefined,
       toolOutput: block.toolOutput ?? block.tool_output,
+      toolOutputTruncated:
+        typeof block.toolOutputTruncated === 'boolean'
+          ? block.toolOutputTruncated
+          : typeof block.tool_output_truncated === 'boolean'
+            ? block.tool_output_truncated
+            : undefined,
+      toolOutputOriginalBytes:
+        typeof block.toolOutputOriginalBytes === 'number'
+          ? block.toolOutputOriginalBytes
+          : typeof block.tool_output_original_bytes === 'number'
+            ? block.tool_output_original_bytes
+            : undefined,
       renderPayload: normalizeToolRenderPayload(block),
       status,
       createdAt: timestamp,

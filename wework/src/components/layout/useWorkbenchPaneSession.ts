@@ -3,6 +3,7 @@ import i18n from '@/i18n'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import {
   compareMessageStyles,
+  summarizeRuntimePaneMemory,
   summarizeMessages,
   updateRuntimePaneDebugSnapshot,
 } from '@/lib/debugPanel'
@@ -83,6 +84,12 @@ interface LoadedTranscriptRange {
   end: number
 }
 
+interface RuntimeTaskLoadTarget {
+  key: string
+  identityKey: string
+  address: RuntimeTaskAddress
+}
+
 interface PendingRuntimeGoalState {
   goal: RuntimeGoal
   targetKey: string | null
@@ -151,25 +158,22 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const getRuntimeGoalRef = useRef(getRuntimeGoal)
   const refreshWorkListsRef = useRef(refreshWorkLists)
   const currentRuntimeTaskRef = useRef(currentRuntimeTask)
-  const runtimeTaskLoadTargetRef = useRef<{
-    key: string
-    address: RuntimeTaskAddress
-  } | null>(null)
+  const runtimeTaskLoadTargetRef = useRef<RuntimeTaskLoadTarget | null>(null)
   const messagesRef = useRef<WorkbenchMessage[]>([])
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
   const guidanceSplitBoundariesRef = useRef(new Map<string, GuidanceSplitBoundary>())
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const messageActionFrameRef = useRef<number | null>(null)
-  const runtimeTaskLoadTarget = useMemo(() => {
-    if (!currentRuntimeTask) return null
-    return {
-      key: runtimeTranscriptPaneKey(currentRuntimeTask),
-      address: currentRuntimeTask,
-    }
-  }, [currentRuntimeTask])
-  const runtimeTaskStreamTargetKey = runtimeTaskLoadTarget
-    ? runtimeTranscriptPaneIdentityKey(runtimeTaskLoadTarget.address)
-    : null
+  const currentRuntimeTaskLoadTarget = useMemo(
+    () => (currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null),
+    [currentRuntimeTask]
+  )
+  const [retainedRuntimeTaskLoadTarget, setRetainedRuntimeTaskLoadTarget] =
+    useState<RuntimeTaskLoadTarget | null>(() =>
+      currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null
+    )
+  const runtimeTaskLoadTarget = retainedRuntimeTaskLoadTarget
+  const runtimeTaskStreamTargetKey = runtimeTaskLoadTarget?.identityKey ?? null
   const [messages, setMessages] = useState<WorkbenchMessage[]>([])
   const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
     if (actions.length === 0) return
@@ -185,7 +189,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           actionForReduction
         )
       }
-      const activeRuntimeTask = currentRuntimeTaskRef.current
+      const activeRuntimeTask =
+        runtimeTaskLoadTargetRef.current?.address ?? currentRuntimeTaskRef.current
       if (activeRuntimeTask) {
         snapshotRuntimePaneMessages(activeRuntimeTask, nextMessages)
         debugRuntimePaneMessageFlow('message-action', {
@@ -230,9 +235,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     },
     [applyMessageActions, flushPendingMessageActions]
   )
+  const runtimeTaskStatusAddress = runtimeTaskLoadTarget?.address ?? currentRuntimeTask
   const taskExecution = useMemo(
-    () => getRuntimePaneTaskExecution(workbenchState.runtimeWork, currentRuntimeTask),
-    [currentRuntimeTask, workbenchState.runtimeWork]
+    () => getRuntimePaneTaskExecution(workbenchState.runtimeWork, runtimeTaskStatusAddress),
+    [runtimeTaskStatusAddress, workbenchState.runtimeWork]
   )
   const paneStatus = useMemo(
     () =>
@@ -246,25 +252,36 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   )
   const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = useMemo(() => {
+    if (!currentRuntimeTaskLoadTarget) {
+      if (pendingGoalState && isUnboundPendingGoalState(pendingGoalState)) {
+        return visibleRuntimeGoal(pendingGoalState.goal)
+      }
+      return null
+    }
+
     const visibleThreadGoal = visibleRuntimeGoal(threadGoal)
     if (visibleThreadGoal) return visibleThreadGoal
     if (!pendingGoalState) return null
-    if (!runtimeTaskLoadTarget && isUnboundPendingGoalState(pendingGoalState)) {
-      return visibleRuntimeGoal(pendingGoalState.goal)
-    }
     if (
-      runtimeTaskLoadTarget &&
-      isPendingGoalVisibleForRuntimeTarget(pendingGoalState, runtimeTaskLoadTarget.address)
+      isPendingGoalVisibleForRuntimeTarget(pendingGoalState, currentRuntimeTaskLoadTarget.address)
     ) {
       return visibleRuntimeGoal(pendingGoalState.goal)
     }
     return null
-  }, [pendingGoalState, runtimeTaskLoadTarget, threadGoal])
+  }, [currentRuntimeTaskLoadTarget, pendingGoalState, threadGoal])
 
   /* eslint-disable react-hooks/set-state-in-effect -- Runtime task changes reset pane transcript state before the async transcript load completes. */
   useEffect(() => {
     currentRuntimeTaskRef.current = currentRuntimeTask
   }, [currentRuntimeTask])
+
+  useEffect(() => {
+    if (currentRuntimeTaskLoadTarget) {
+      setRetainedRuntimeTaskLoadTarget(current =>
+        current?.key === currentRuntimeTaskLoadTarget.key ? current : currentRuntimeTaskLoadTarget
+      )
+    }
+  }, [currentRuntimeTaskLoadTarget])
 
   useEffect(() => {
     return () => {
@@ -358,15 +375,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
-      loadedRuntimeTranscriptKeyRef.current = null
-      // This clears pane-local transcript state when there is no runtime target.
+      // Keep the loaded transcript key and range metadata while the pane is on a blank
+      // chat. The pane intentionally keeps the previous runtime DOM alive, so returning
+      // to the same task should not reload and reset the transcript tree.
       setTranscriptLoading(false)
-      setTranscriptHasMoreBefore(false)
-      setTranscriptBeforeCursor(null)
       setTranscriptLoadingMoreBefore(false)
-      setLoadedTranscriptRanges([])
-      setTurnNavigation([])
-      setSubagentStatuses([])
       return
     }
 
@@ -1162,12 +1175,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               },
             })
             if (sent) {
-              setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
               if (!isRuntimeTaskAddress(sent)) {
+                setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
                 appendLocalUserMessage(submittedInput, currentAttachments, {
                   runtimeGoalRequest: true,
                 })
               } else {
+                setSendPhase('idle')
                 setPendingGoalState(current =>
                   current
                     ? {
@@ -1253,22 +1267,25 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               },
             })
             if (sent) {
-              setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
               if (!isRuntimeTaskAddress(sent)) {
+                setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
                 appendLocalUserMessage(visibleSubmittedInput, currentAttachments, {
                   runtimeGoalRequest: Boolean(pendingInitialGoal),
                   codeComments: codeCommentContexts,
                 })
-              } else if (pendingInitialGoal) {
-                setPendingGoalState(current =>
-                  current
-                    ? {
-                        ...current,
-                        targetKey: runtimeTranscriptPaneKey(sent),
-                        targetIdentityKey: runtimeTranscriptPaneIdentityKey(sent),
-                      }
-                    : current
-                )
+              } else {
+                setSendPhase('idle')
+                if (pendingInitialGoal) {
+                  setPendingGoalState(current =>
+                    current
+                      ? {
+                          ...current,
+                          targetKey: runtimeTranscriptPaneKey(sent),
+                          targetIdentityKey: runtimeTranscriptPaneIdentityKey(sent),
+                        }
+                      : current
+                  )
+                }
               }
               if (isRuntimeTaskAddress(sent)) {
                 dispatchMessages({ type: 'reset', messages: [] })
@@ -1390,10 +1407,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   )
 
   const pauseCurrentResponse = useCallback(async () => {
-    if (!currentRuntimeTask || !activeAssistantMessage) return
+    if (!currentRuntimeTask) return
 
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
     if (!cancelled) return
+
+    if (!activeAssistantMessage) return
 
     dispatchMessages({
       type: 'assistant_cancelled',
@@ -1498,6 +1517,11 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       status: paneStatus,
       messageSummary: summarizeMessages(messages),
       messageStyleComparison: compareMessageStyles(messages),
+      memory: summarizeRuntimePaneMemory({
+        messages,
+        currentRuntimeTask,
+        loadedRanges: loadedTranscriptRanges,
+      }),
       queuedMessages,
       guidanceMessages,
       codeCommentContextCount: codeCommentContexts.length,
@@ -1507,6 +1531,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         hasMoreBefore: transcriptHasMoreBefore,
         loadingMoreBefore: transcriptLoadingMoreBefore,
         turnNavigationCount: turnNavigation.length,
+        loadedRanges: loadedTranscriptRanges,
       },
       subagentStatuses,
       goal,
@@ -1519,6 +1544,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     goalDraftActive,
     guidanceMessages,
     input.length,
+    loadedTranscriptRanges,
     messages,
     paneActive,
     paneStatus,
@@ -1573,6 +1599,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 }
 
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
+
+function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {
+  return {
+    key: runtimeTranscriptPaneKey(address),
+    identityKey: runtimeTranscriptPaneIdentityKey(address),
+    address,
+  }
+}
 
 function runtimeTranscriptPaneKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}:${address.workspacePath ?? ''}`

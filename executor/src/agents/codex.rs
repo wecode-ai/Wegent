@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     future::Future,
+    io::{self, Write},
     path::{Path, PathBuf},
     pin::Pin,
     process::Stdio,
@@ -53,6 +54,9 @@ const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
     "suppress_unstable_features_warning=true";
 const DEFAULT_EXECUTOR_SERVER_PORT: u16 = 10001;
+const CODEX_RAW_LOG_PREVIEW_CHARS: usize = 1200;
+const CODEX_RAW_LOG_LARGE_STRING_CHARS: usize = 2048;
+const CODEX_RAW_LOG_STRING_PREVIEW_CHARS: usize = 240;
 const SIDE_BOUNDARY_PROMPT: &str = r#"Side conversation boundary.
 
 The messages before this boundary are inherited reference context from the main thread.
@@ -2008,8 +2012,10 @@ fn log_codex_raw_turn_message(message: &Value) {
 
     let params = message_params(message);
     let item = params.get("item").unwrap_or(params);
-    let raw = serde_json::to_string(message)
-        .unwrap_or_else(|error| format!("failed to serialize codex raw message: {error}"));
+    let raw_len = serialized_json_len(message)
+        .map(|length| length.to_string())
+        .unwrap_or_else(|error| format!("failed to measure codex raw message: {error}"));
+    let raw_preview = codex_raw_log_preview(message);
     log_executor_event(
         "codex raw turn message",
         &[
@@ -2042,10 +2048,82 @@ fn log_codex_raw_turn_message(message: &Value) {
                     "turn_id",
                 ),
             ),
-            ("raw_len", raw.len().to_string()),
-            ("raw_preview", truncate_log_text(&raw, 1200)),
+            ("raw_len", raw_len),
+            ("raw_preview", raw_preview),
         ],
     );
+}
+
+struct ByteCounter {
+    length: usize,
+}
+
+impl Write for ByteCounter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.length += buffer.len();
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+fn serialized_json_len(value: &Value) -> serde_json::Result<usize> {
+    let mut counter = ByteCounter { length: 0 };
+    serde_json::to_writer(&mut counter, value)?;
+    Ok(counter.length)
+}
+
+fn codex_raw_log_preview(value: &Value) -> String {
+    let sanitized = sanitize_codex_raw_log_value(value, None);
+    let preview = serde_json::to_string(&sanitized)
+        .unwrap_or_else(|error| format!("failed to serialize codex raw message preview: {error}"));
+    truncate_log_text(&preview, CODEX_RAW_LOG_PREVIEW_CHARS)
+}
+
+fn sanitize_codex_raw_log_value(value: &Value, key: Option<&str>) -> Value {
+    match value {
+        Value::Object(object) => Value::Object(
+            object
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        sanitize_codex_raw_log_value(value, Some(key.as_str())),
+                    )
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| sanitize_codex_raw_log_value(item, None))
+                .collect(),
+        ),
+        Value::String(text) if should_summarize_codex_raw_log_string(key, text) => {
+            Value::String(format!(
+                "[{} chars omitted; preview: {}]",
+                text.chars().count(),
+                truncate_log_text(text, CODEX_RAW_LOG_STRING_PREVIEW_CHARS)
+            ))
+        }
+        _ => value.clone(),
+    }
+}
+
+fn should_summarize_codex_raw_log_string(key: Option<&str>, text: &str) -> bool {
+    matches!(
+        key,
+        Some("aggregatedOutput")
+            | Some("toolOutput")
+            | Some("tool_output")
+            | Some("toolOutputDelta")
+            | Some("tool_output_delta")
+            | Some("output")
+            | Some("stdout")
+            | Some("stderr")
+    ) || text.len() > CODEX_RAW_LOG_LARGE_STRING_CHARS
 }
 
 fn json_string_field(value: &Value, key: &str) -> String {
@@ -3691,6 +3769,32 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn codex_raw_log_preview_summarizes_large_command_output() {
+        let output = "x".repeat(4096);
+        let message = json!({
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "cmd-1",
+                    "type": "commandExecution",
+                    "aggregatedOutput": output,
+                }
+            }
+        });
+
+        let preview = codex_raw_log_preview(&message);
+
+        assert!(preview.contains("4096 chars omitted"));
+        assert!(!preview.contains(&"x".repeat(512)));
+        assert_eq!(
+            serialized_json_len(&message).expect("message length should serialize"),
+            serde_json::to_string(&message)
+                .expect("message should serialize")
+                .len()
+        );
+    }
 
     #[test]
     fn codex_launch_config_enables_streaming_patch_updates() {

@@ -68,7 +68,7 @@ export function ToolBlockItem({
   )
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]">
+    <div className="min-w-0 overflow-x-hidden text-[13px]" data-processing-block-id={block.id}>
       <div className="flex max-w-full items-center gap-1.5 text-text-secondary">
         {workspaceFilePath && onOpenWorkspaceFile ? (
           <button
@@ -135,7 +135,9 @@ function PlanBlockItem({
   }
 
   return (
-    <AssistantPlanCard content={block.content} isStreaming={isStreaming} onOpenPlan={openPlan} />
+    <div data-processing-block-id={block.id}>
+      <AssistantPlanCard content={block.content} isStreaming={isStreaming} onOpenPlan={openPlan} />
+    </div>
   )
 }
 
@@ -153,7 +155,11 @@ function ProcessFileChangesBlockItem({
   if (!summary.files.length) return null
 
   return (
-    <div className="min-w-0 overflow-visible text-[13px]" data-testid="process-file-changes-block">
+    <div
+      className="min-w-0 overflow-visible text-[13px]"
+      data-processing-block-id={block.id}
+      data-testid="process-file-changes-block"
+    >
       <button
         type="button"
         aria-expanded={expanded}
@@ -705,7 +711,7 @@ function ThinkingBlockItem({
     const preview = buildBlockPreview(block.content)
 
     return (
-      <div className="min-w-0 overflow-x-hidden text-[13px]">
+      <div className="min-w-0 overflow-x-hidden text-[13px]" data-processing-block-id={block.id}>
         <div
           className="flex max-w-full items-center gap-1.5 text-text-secondary"
           role="status"
@@ -726,7 +732,7 @@ function ThinkingBlockItem({
   const detailId = `${block.id}-thinking-detail`
 
   return (
-    <div className="min-w-0 overflow-x-hidden text-[13px]">
+    <div className="min-w-0 overflow-x-hidden text-[13px]" data-processing-block-id={block.id}>
       <button
         type="button"
         data-testid="thinking-toggle-button"
@@ -770,6 +776,7 @@ function ProcessTextBlockItem({
   return (
     <div
       className="min-w-0 overflow-x-hidden text-[13px] text-text-secondary"
+      data-processing-block-id={block.id}
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}
       aria-label={isRunning ? t('process_text.running') : undefined}
