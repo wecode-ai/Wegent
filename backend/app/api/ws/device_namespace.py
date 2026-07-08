@@ -45,6 +45,11 @@ from app.api.ws.local_task_responses import (
     LocalTaskResponsesHandler,
     emit_response_api_event,
 )
+from app.api.ws.wework_runtime_namespace import (
+    WEWORK_RUNTIME_EVENT,
+    WEWORK_RUNTIME_NAMESPACE,
+    wework_runtime_user_room,
+)
 from app.core.auth_utils import is_api_key, verify_api_key
 from app.core.constants import get_wework_task_room, get_wework_user_room
 from app.core.events import TaskCompletedEvent, get_event_bus
@@ -584,6 +589,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
             "device:heartbeat": "on_device_heartbeat",
             "device:status": "on_device_status",
             "device:upgrade_status": "on_device_upgrade_status",
+            "runtime:event": "on_runtime_event",
             "runtime.tasks.updated": "on_runtime_task_updated",
             "terminal:output": "on_terminal_output",
             "terminal:exit": "on_terminal_exit",
@@ -1758,6 +1764,35 @@ class DeviceNamespace(socketio.AsyncNamespace):
             notified,
         )
         return {"success": True, "notified": notified}
+
+    async def on_runtime_event(self, sid: str, data: dict) -> dict:
+        """Forward native runtime app IPC events to Wework relay subscribers."""
+
+        session = await self.get_session(sid)
+        user_id = session.get("user_id") if session else None
+        device_id = str(session.get("device_id") or "") if session else ""
+        if not user_id or not device_id:
+            return {"error": "Device not authenticated"}
+        if not isinstance(data, dict):
+            return {"error": "Invalid runtime event payload"}
+
+        payload = dict(data)
+        nested_payload = payload.get("payload")
+        if isinstance(nested_payload, dict):
+            nested_payload = dict(nested_payload)
+            nested_payload.setdefault("deviceId", device_id)
+            nested_payload.setdefault("device_id", device_id)
+            payload["payload"] = nested_payload
+        else:
+            payload["payload"] = {"deviceId": device_id, "device_id": device_id}
+
+        await get_sio().emit(
+            WEWORK_RUNTIME_EVENT,
+            payload,
+            room=wework_runtime_user_room(int(user_id)),
+            namespace=WEWORK_RUNTIME_NAMESPACE,
+        )
+        return {"success": True}
 
     async def _publish_task_completed_event(
         self,

@@ -1,6 +1,8 @@
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
+import { createCloudRuntimeIpcClient } from '@/api/backend/runtimeIpc'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
-import { createLocalAppServices } from '@/api/local/localServices'
+import { createLocalAppServices, createRuntimeWorkApiFromIpc } from '@/api/local/localServices'
+import { createLocalChatStream } from '@/api/local/localChatStream'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-registration'
 import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
@@ -74,6 +76,11 @@ function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+function stringField(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key]
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
 function annotateHybridModel(
@@ -227,6 +234,22 @@ function compareSearchItemUpdatedAt(
   return rightTime - leftTime
 }
 
+function mergeRuntimeWorkLists(items: RuntimeWorkListResponse[]): RuntimeWorkListResponse {
+  return {
+    projects: items.flatMap(item => item.projects),
+    chats: items.flatMap(item => item.chats),
+    totalTasks: items.reduce((total, item) => total + item.totalTasks, 0),
+  }
+}
+
+function cloudDeviceIdFromData(data?: Record<string, unknown> | null): string | undefined {
+  if (!data) return undefined
+  const direct = stringField(data, 'deviceId') ?? stringField(data, 'device_id')
+  if (direct) return direct
+  const address = recordValue(data.address)
+  return stringField(address, 'deviceId') ?? stringField(address, 'device_id')
+}
+
 function mergeBulkResponses(
   responses: RuntimeArchivedConversationBulkResponse[]
 ): RuntimeArchivedConversationBulkResponse {
@@ -252,6 +275,12 @@ export function createHybridWorkbenchServices(
     redirectOnUnauthorized: false,
     transportKind: 'backend-relay',
   })
+  const cloudRuntimeIpc = createCloudRuntimeIpcClient({
+    socketBaseUrl: options.socketBaseUrl,
+    socketPath: options.socketPath,
+    token: options.token,
+  })
+  const cloudRuntimeApis = new Map<string, NonNullable<WorkbenchServices['runtimeWorkApi']>>()
   const localDeviceIds = new Set<string>([LOCAL_DEVICE_ID])
 
   const rememberLocalDevices = (devices: DeviceInfo[]) => {
@@ -265,8 +294,26 @@ export function createHybridWorkbenchServices(
   }
   const isLocalDeviceId = (deviceId?: string | null) =>
     Boolean(deviceId && localDeviceIds.has(deviceId))
+  const cloudRuntimeApi = (deviceId?: string | null) => {
+    const resolvedDeviceId = deviceId?.trim()
+    if (!resolvedDeviceId) {
+      throw new Error('Cloud runtime deviceId is required')
+    }
+    const cached = cloudRuntimeApis.get(resolvedDeviceId)
+    if (cached) return cached
+    const api = createRuntimeWorkApiFromIpc(
+      (method, params, requestDeviceId) =>
+        cloudRuntimeIpc.request(method, params, requestDeviceId ?? resolvedDeviceId),
+      async () => resolvedDeviceId,
+      {
+        resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? resolvedDeviceId,
+      }
+    ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
+    cloudRuntimeApis.set(resolvedDeviceId, api)
+    return api
+  }
   const runtimeApi = (deviceId?: string | null) =>
-    isLocalDeviceId(deviceId) ? localServices.runtimeWorkApi! : cloudServices.runtimeWorkApi!
+    isLocalDeviceId(deviceId) ? localServices.runtimeWorkApi! : cloudRuntimeApi(deviceId)
   const deviceApi = (deviceId?: string | null) =>
     isLocalDeviceId(deviceId) ? localServices.deviceApi : cloudServices.deviceApi
   const routeByAddress = (address: RuntimeTaskAddress) => runtimeApi(address.deviceId)
@@ -286,11 +333,18 @@ export function createHybridWorkbenchServices(
     rememberLocalRuntimeWorkDevices(work)
     return work
   }
-  const listCloudRuntimeWork = async () =>
-    removeCurrentAppCloudRuntimeWork(
-      await cloudServices.runtimeWorkApi!.listRuntimeWork(),
+  const listCloudRuntimeWork = async () => {
+    const devices = await listCloudDevices()
+    const results = await Promise.allSettled(
+      devices.map(device => cloudRuntimeApi(device.device_id).listRuntimeWork())
+    )
+    return removeCurrentAppCloudRuntimeWork(
+      mergeRuntimeWorkLists(
+        results.flatMap(result => (result.status === 'fulfilled' ? [result.value] : []))
+      ),
       localDeviceIds
     )
+  }
 
   const hybridDeviceApi: WorkbenchServices['deviceApi'] = {
     async listDevices() {
@@ -364,13 +418,24 @@ export function createHybridWorkbenchServices(
       }
     },
     async searchRuntimeWork(data: RuntimeWorkSearchRequest) {
-      const [localResult, cloudResult] = await Promise.allSettled([
+      const cloudDevicesPromise = listCloudDevices()
+      const [localResult, cloudDevicesResult] = await Promise.allSettled([
         localServices.runtimeWorkApi!.searchRuntimeWork(data),
-        cloudServices.runtimeWorkApi!.searchRuntimeWork(data),
+        cloudDevicesPromise.then(devices =>
+          Promise.allSettled(
+            devices.map(device => cloudRuntimeApi(device.device_id).searchRuntimeWork(data))
+          )
+        ),
       ])
+      const cloudItems =
+        cloudDevicesResult.status === 'fulfilled'
+          ? cloudDevicesResult.value.flatMap(result =>
+              result.status === 'fulfilled' ? result.value.items : []
+            )
+          : []
       return mergeSearchResults(
         fulfilledValue(localResult, { items: [] }),
-        fulfilledValue(cloudResult, { items: [] }),
+        { items: cloudItems },
         data.limit
       )
     },
@@ -502,10 +567,24 @@ export function createHybridWorkbenchServices(
   const hybridChatStream: WorkbenchServices['chatStream'] = {
     subscribe(handlers) {
       const cleanupLocal = localServices.chatStream.subscribe(handlers)
-      const cleanupCloud = cloudServices.chatStream.subscribe(handlers)
+      const cleanupCloudRuntime = createLocalChatStream({
+        request: (method, params) => {
+          const deviceId = cloudDeviceIdFromData(params)
+          return cloudRuntimeIpc.request(method, params, deviceId)
+        },
+        subscribe: cloudRuntimeIpc.subscribe,
+      }).subscribe(handlers)
+      const cleanupCloudDeviceEvents = cloudServices.chatStream.subscribe({
+        onDeviceOnline: handlers.onDeviceOnline,
+        onDeviceOffline: handlers.onDeviceOffline,
+        onDeviceStatus: handlers.onDeviceStatus,
+        onDeviceSlotUpdate: handlers.onDeviceSlotUpdate,
+        onDeviceUpgradeStatus: handlers.onDeviceUpgradeStatus,
+      })
       return () => {
         cleanupLocal()
-        cleanupCloud()
+        cleanupCloudRuntime()
+        cleanupCloudDeviceEvents()
       }
     },
   }

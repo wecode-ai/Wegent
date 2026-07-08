@@ -236,6 +236,12 @@ interface LocalAppServicesDeps {
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 }
 
+interface RuntimeWorkIpcOptions {
+  resolveDeviceId?: (data?: Record<string, unknown>) => Promise<string>
+  normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
+  adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
+}
+
 function cloudConnectionRequired(name: string): never {
   throw new Error(`${name} requires cloud connection`)
 }
@@ -1348,21 +1354,28 @@ function adaptRuntimeWorkListResponse(
   return { projects, chats, totalTasks }
 }
 
-function createRuntimeWorkApi(
-  request: <T>(method: string, params?: Record<string, unknown>) => Promise<T>,
-  getLocalDeviceId: () => Promise<string>
+export function createRuntimeWorkApiFromIpc(
+  request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>,
+  getDefaultDeviceId: () => Promise<string>,
+  options: RuntimeWorkIpcOptions = {}
 ) {
+  const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
+  const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
+  const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
-    normalizeLocalDeviceRecord(data as Record<string, unknown>, await getLocalDeviceId()) as T &
-      Record<string, unknown>
+    normalizeDeviceRecord(
+      data as Record<string, unknown>,
+      await resolveDeviceId(data as Record<string, unknown>)
+    ) as T & Record<string, unknown>
 
   const requestWithLocalDevice = async <TResponse, TRequest extends object>(
     method: string,
     data: TRequest
   ): Promise<TResponse> => {
     const normalizedData = await normalizeRequest(data)
+    const deviceId = await resolveDeviceId(normalizedData)
     const startedAt = nowMs()
     const debugTranscript = method === 'runtime.tasks.transcript' && isRuntimeDebugEnabled()
     try {
@@ -1372,7 +1385,7 @@ function createRuntimeWorkApi(
           runtimeHandle: runtimeHandleDebug(normalizedData),
         })
       }
-      const response = await request<TResponse>(method, normalizedData)
+      const response = await request<TResponse>(method, normalizedData, deviceId)
       if (debugTranscript) {
         console.debug('[Wework] Local runtime IPC transcript response', {
           address: runtimeAddressDebug(normalizedData),
@@ -1395,11 +1408,11 @@ function createRuntimeWorkApi(
 
   return {
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
       try {
-        const response = await request('runtime.tasks.list', {})
-        const runtimeWork = adaptRuntimeWorkListResponse(response, localDeviceId)
+        const response = await request('runtime.tasks.list', {}, localDeviceId)
+        const runtimeWork = adaptListResponse(response, localDeviceId)
         return runtimeWork
       } catch (error) {
         console.error('[Wework] Local runtime IPC list failed', {
@@ -1442,7 +1455,7 @@ function createRuntimeWorkApi(
       return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       const payload = createLocalRuntimeSendPayload(data, localDeviceId)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
@@ -1457,10 +1470,10 @@ function createRuntimeWorkApi(
         address: runtimeAddressDebug(payload),
         payloadKeys: Object.keys(payload).sort(),
       })
-      return request('runtime.tasks.send', payload)
+      return request('runtime.tasks.send', payload, localDeviceId)
     },
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       const payload = createLocalRuntimeSendPayload(data, localDeviceId)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
@@ -1475,19 +1488,23 @@ function createRuntimeWorkApi(
         address: runtimeAddressDebug(payload),
         payloadKeys: Object.keys(payload).sort(),
       })
-      return request('runtime.tasks.rollback', payload)
+      return request('runtime.tasks.rollback', payload, localDeviceId)
     },
     async guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await resolveDeviceId({ address: data.address })
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
         .address as RuntimeTaskAddress
-      return request('runtime.tasks.guidance', {
-        taskId: normalizedAddress.taskId,
-        address: normalizedAddress,
-        message: data.message,
-        ...(data.clientGuidanceId ? { clientGuidanceId: data.clientGuidanceId } : {}),
-        ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
-      })
+      return request(
+        'runtime.tasks.guidance',
+        {
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
+          message: data.message,
+          ...(data.clientGuidanceId ? { clientGuidanceId: data.clientGuidanceId } : {}),
+          ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
+        },
+        localDeviceId
+      )
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)
@@ -1552,7 +1569,9 @@ function createRuntimeWorkApi(
       )
     },
     archiveAllConversations(): Promise<RuntimeArchivedConversationBulkResponse> {
-      return request('runtime.archived_conversations.archive_all', {})
+      return getDefaultDeviceId().then(deviceId =>
+        request('runtime.archived_conversations.archive_all', {}, deviceId)
+      )
     },
     unarchiveConversation(data: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
       return requestWithLocalDevice('runtime.archived_conversations.unarchive', data)
@@ -1569,7 +1588,7 @@ function createRuntimeWorkApi(
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       const payload = await createLocalRuntimeTaskPayload(
         data,
         localDeviceId,
@@ -1578,7 +1597,8 @@ function createRuntimeWorkApi(
       debugLocalRuntimeCreatePayload(data, payload)
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
-        payload
+        payload,
+        localDeviceId
       )
       const workspacePath = stringValue(payload.workspacePath) ?? requiredRuntimeWorkspacePath(data)
       const executionRequest = recordValue(payload.executionRequest)
@@ -1761,9 +1781,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return normalizeWorkspaceTextFile(response.stdout, filePath)
     },
   }
-  const runtimeWorkApi = createRuntimeWorkApi(request, getLocalDeviceId) as unknown as NonNullable<
-    WorkbenchServices['runtimeWorkApi']
-  >
+  const runtimeWorkApi = createRuntimeWorkApiFromIpc(
+    (method, params) => request(method, params),
+    getLocalDeviceId
+  ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
 
   return {
     teamApi: {

@@ -42,6 +42,12 @@ Workbench services have three layers:
 
 When disconnected, Wework continues to use local services only. When connected, models, devices, and runtime work lists are merged; execution and stream subscriptions route to local IPC or Backend relay by device or source.
 
+## Cloud Runtime IPC Relay
+
+Wework cloud runtime execution uses the same app IPC protocol as local mode. The frontend connects to the Backend `/wework-runtime` Socket.IO namespace and wraps `runtime.*` requests as `{ id, method, params, device_id }` frames. Backend only authenticates the user, verifies the online target device, and forwards the request to the matching executor; it does not translate this Wework runtime path into `chat:*` events.
+
+Cloud executors still connect to Backend through the `/local-executor` namespace. Inside the executor, the same local `RuntimeWorkRpcHandler` handles `runtime.tasks.create`, `runtime.tasks.send`, `runtime.tasks.list`, `runtime.tasks.transcript`, and related methods. Responses API-style app IPC events are relayed back through `runtime:event` to `/wework-runtime`. The Wework frontend reuses the local streaming event mapper, so local and cloud runtime execution share the same runtime flow.
+
 ## Local Executor Lifecycle
 
 Packaged release builds of Wework must keep one active app paired with one local executor. On release startup, only one Wework instance may stay active; repeated launches focus the existing window. Before starting the local executor for the first time, the app cleans up stale `wegent-executor` processes that use the release fixed `WEGENT_EXECUTOR_APP_IPC_SOCKET` and removes the stale socket, then starts the executor owned by the current app. This prevents a new app from attaching to an executor left by an older app instance.
