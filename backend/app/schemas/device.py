@@ -109,8 +109,14 @@ class DeviceInfo(BaseModel):
     runtime_transfer_host: Optional[str] = Field(
         None, description="Host peers should use for runtime direct transfers"
     )
+    runtime_instance_id: Optional[str] = Field(
+        None, description="Stable runtime installation ID shared by all routes"
+    )
     app_device_id: Optional[str] = Field(
         None, description="Desktop app IPC device ID for app registrations"
+    )
+    socket_device_id: Optional[str] = Field(
+        None, description="Online WebSocket route device ID for relay-backed devices"
     )
     # Cloud device specific config
     cloud_config: Optional[Dict[str, Any]] = Field(
@@ -290,6 +296,11 @@ class DeviceRegisterPayload(BaseModel):
         None,
         max_length=255,
         description="Host peers should use for runtime direct transfers",
+    )
+    runtime_instance_id: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="Stable runtime installation ID shared by all routes",
     )
     app_device_id: Optional[str] = Field(
         None,

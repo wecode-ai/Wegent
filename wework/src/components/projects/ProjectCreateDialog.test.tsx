@@ -121,6 +121,47 @@ describe('ProjectCreateDialog', () => {
     expect(screen.getByTestId('create-project-button')).toBeDisabled()
   })
 
+  test('keeps opened device tabs when background sync temporarily returns no devices', () => {
+    const { rerender } = render(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={devices}
+        preferredDeviceId="cloud-device"
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onPrepareDeviceWorkspace={vi.fn()}
+        onDeleteDeviceWorkspace={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('project-device-tab-cloud-device')).toHaveClass('bg-text-primary')
+
+    rerender(
+      <ProjectCreateDialog
+        open
+        mode="scratch"
+        devices={[]}
+        preferredDeviceId="cloud-device"
+        onClose={vi.fn()}
+        onCreateProject={vi.fn()}
+        onPrepareDeviceWorkspace={vi.fn()}
+        onDeleteDeviceWorkspace={vi.fn()}
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('/home/user')}
+        onGetProjectWorkspaceRoot={vi.fn().mockResolvedValue('/workspace/projects')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('project-device-tab-cloud-device')).toBeInTheDocument()
+    expect(screen.queryByTestId('open-cloud-device-settings-link')).not.toBeInTheDocument()
+  })
+
   test('create flow disables unavailable device tabs and starts on an available device', async () => {
     const onSelectDevicePreference = vi.fn()
     const offlineDevices: DeviceInfo[] = [

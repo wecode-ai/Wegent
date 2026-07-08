@@ -318,6 +318,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
             "update_available": update_available,
             "client_ip": spec.get("clientIp"),
             "runtime_transfer_host": spec.get("runtimeTransferHost"),
+            "runtime_instance_id": spec.get("runtimeInstanceId"),
             "app_device_id": spec.get("appDeviceId"),
             "bind_shell": spec.get("bindShell", "claudecode"),
         }
@@ -452,6 +453,7 @@ class LocalDeviceProvider(BaseDeviceProvider):
                     "update_available": update_available,
                     "client_ip": spec.get("clientIp"),
                     "runtime_transfer_host": spec.get("runtimeTransferHost"),
+                    "runtime_instance_id": spec.get("runtimeInstanceId"),
                     "app_device_id": spec.get("appDeviceId"),
                     "bind_shell": spec.get("bindShell", "claudecode"),
                 }

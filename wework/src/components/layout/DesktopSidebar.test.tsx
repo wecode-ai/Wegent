@@ -267,9 +267,25 @@ describe('DesktopSidebar', () => {
     })
 
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
+    const statusLabel = screen.getByTestId('sidebar-cloud-status-label')
+    const settingsButton = screen.getByTestId('sidebar-cloud-management-button')
 
     expect(cloudButton).toHaveTextContent('云端工作')
     expect(cloudButton).toHaveTextContent('可用')
+    expect(cloudButton).toHaveClass('pr-2')
+    expect(cloudButton).not.toHaveClass('pr-8')
+    expect(statusLabel).toHaveClass(
+      'ml-auto',
+      'group-hover/cloud:invisible',
+      'group-focus-within/cloud:invisible'
+    )
+    expect(settingsButton).toHaveClass(
+      'pointer-events-none',
+      'group-hover/cloud:pointer-events-auto',
+      'group-hover/cloud:opacity-100',
+      'group-focus-within/cloud:pointer-events-auto',
+      'group-focus-within/cloud:opacity-100'
+    )
   })
 
   test('shows cloud work unavailable when background cloud reads fail', () => {

@@ -126,6 +126,45 @@ export type RuntimeTranscriptLoader = (
 export type CloudWorkCheckKey = 'teams' | 'devices' | 'runtimeWork'
 export type CloudWorkCheckStatus = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
 export type CloudWorkAvailability = 'idle' | 'syncing' | 'available' | 'empty' | 'unavailable'
+export type CloudSyncTrigger =
+  | 'bootstrap'
+  | 'manual-refresh'
+  | 'cloud-connection'
+  | 'device-event'
+  | 'runtime-event'
+  | 'poll'
+export type CloudRuntimeAvailability =
+  | 'idle'
+  | 'syncing'
+  | 'ready'
+  | 'partial'
+  | 'stale'
+  | 'unavailable'
+export type SyncCheckStateStatus = 'idle' | 'syncing' | 'success' | 'empty' | 'failed' | 'stale'
+
+export interface SyncCheckState {
+  status: SyncCheckStateStatus
+  updatedAt: string | null
+  error: string | null
+}
+
+export interface CloudRuntimeSnapshot {
+  revision: number
+  devices: DeviceInfo[]
+  runtimeWork: RuntimeWorkListResponse
+  teams: Team[]
+  fetchedAt: string | null
+  checks: Record<CloudWorkCheckKey, SyncCheckState>
+}
+
+export interface CloudRuntimeState {
+  availability: CloudRuntimeAvailability
+  current: CloudRuntimeSnapshot | null
+  lastGood: CloudRuntimeSnapshot | null
+  inFlightRevision: number | null
+  lastTrigger: CloudSyncTrigger | null
+  nextRevision: number
+}
 
 export interface CloudWorkStatus {
   availability: CloudWorkAvailability
