@@ -507,12 +507,13 @@ ABSOLUTE_PATH="$(cd "$TARGET_PATH" && pwd -P)"
 APP_BUNDLE={app_bundle}
 WEWORK_EXECUTABLE={executable}
 
-if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ]; then
-  exec open "$APP_BUNDLE" --args --open-workspace "$ABSOLUTE_PATH"
+if [ -x "$WEWORK_EXECUTABLE" ]; then
+  "$WEWORK_EXECUTABLE" --open-workspace "$ABSOLUTE_PATH" >/dev/null 2>&1 &
+  exit 0
 fi
 
-if [ -x "$WEWORK_EXECUTABLE" ]; then
-  exec "$WEWORK_EXECUTABLE" --open-workspace "$ABSOLUTE_PATH"
+if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ]; then
+  exec open "$APP_BUNDLE" --args --open-workspace "$ABSOLUTE_PATH"
 fi
 
 echo "wework: unable to locate Wework app executable" >&2
@@ -2636,7 +2637,8 @@ mod tests {
 
         assert!(content.contains("# Wework CLI launcher"));
         assert!(content.contains("APP_BUNDLE='/Applications/WeWork.app'"));
-        assert!(content.contains("open \"$APP_BUNDLE\" --args --open-workspace"));
+        assert!(content.contains("\"$WEWORK_EXECUTABLE\" --open-workspace \"$ABSOLUTE_PATH\""));
+        assert!(content.contains("exec open \"$APP_BUNDLE\" --args --open-workspace"));
     }
 
     #[test]
