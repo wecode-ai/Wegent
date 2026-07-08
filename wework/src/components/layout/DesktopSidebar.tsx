@@ -154,8 +154,13 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onOpenSettings: (options?: { autoOpenAddCloudDeviceDialog?: boolean }) => void
+  onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
+}
+
+interface OpenSettingsOptions {
+  autoOpenAddCloudDeviceDialog?: boolean
+  settingsPage?: 'connections'
 }
 
 type ProjectCreateMenuPosition = {
@@ -2371,7 +2376,7 @@ export function DesktopSidebar({
               <CloudConnectionSidebarButton
                 devices={devices}
                 cloudWorkStatus={cloudWorkStatus}
-                onOpenSettings={() => onOpenSettings()}
+                onOpenSettings={() => onOpenSettings({ settingsPage: 'connections' })}
                 onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
                 onAddDevice={() => {
                   setStandaloneRemoteDialogIntent('add-device')

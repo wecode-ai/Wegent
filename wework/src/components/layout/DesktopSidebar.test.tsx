@@ -107,8 +107,7 @@ function renderSidebar(
       ...DISCONNECTED_STATE,
       isConnected: false,
       serviceKey: 'test-disconnected',
-      connectWithPassword: vi.fn(),
-      setupAdminPassword: vi.fn(),
+      connectWithAuthorization: vi.fn(),
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
       ...cloudConnection,
@@ -349,6 +348,19 @@ describe('DesktopSidebar', () => {
       'group-focus-within/cloud:pointer-events-auto',
       'group-focus-within/cloud:opacity-100'
     )
+  })
+
+  test('opens cloud connection settings from the sidebar cloud management button', async () => {
+    const onOpenSettings = vi.fn()
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
+      onOpenSettings,
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-management-button'))
+
+    expect(onOpenSettings).toHaveBeenCalledWith({ settingsPage: 'connections' })
   })
 
   test('shows cloud work unavailable when background cloud reads fail', () => {

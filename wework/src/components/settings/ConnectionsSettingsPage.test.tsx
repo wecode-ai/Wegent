@@ -529,8 +529,7 @@ describe('ConnectionsSettingsPage', () => {
       ...DISCONNECTED_STATE,
       isConnected: false,
       serviceKey: 'disconnected',
-      connectWithPassword: vi.fn(),
-      setupAdminPassword: vi.fn(),
+      connectWithAuthorization: vi.fn(),
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
     }
@@ -607,8 +606,7 @@ describe('ConnectionsSettingsPage', () => {
       ...DISCONNECTED_STATE,
       isConnected: false,
       serviceKey: 'disconnected',
-      connectWithPassword: vi.fn(),
-      setupAdminPassword: vi.fn(),
+      connectWithAuthorization: vi.fn(),
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
     }
