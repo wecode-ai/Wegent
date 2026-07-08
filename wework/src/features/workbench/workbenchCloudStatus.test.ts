@@ -4,6 +4,7 @@ import {
   EMPTY_CLOUD_RUNTIME_STATE,
   finishCloudRuntimeSync,
   mergeRuntimeWorkLists,
+  selectCloudWorkStatus,
   selectProjectCreatableDevices,
   selectRuntimeWorkView,
   selectVisibleDevices,
@@ -274,6 +275,17 @@ describe('cloud runtime sync state', () => {
 
     expect(stale).toBe(second)
     expect(selectVisibleDevices([], stale)).toEqual([])
+  })
+
+  test('keeps sidebar cloud work status stable during a background refresh', () => {
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: { status: 'fulfilled', value: [device()] },
+    })
+    const refreshing = startCloudRuntimeSync(ready, 'poll', ['devices'])
+
+    expect(selectCloudWorkStatus(refreshing).availability).toBe('available')
+    expect(selectCloudWorkStatus(refreshing).checks.devices).toBe('available')
   })
 
   test('derives runtime work from last good cloud snapshot without duplicating tasks', () => {

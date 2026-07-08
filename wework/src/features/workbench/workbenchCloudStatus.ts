@@ -271,7 +271,10 @@ export function selectCloudRuntimeSnapshot(state: CloudRuntimeState): CloudRunti
 }
 
 export function selectCloudWorkStatus(state: CloudRuntimeState): CloudWorkStatus {
-  const snapshot = state.current ?? state.lastGood
+  const snapshot =
+    state.inFlightRevision != null && state.lastGood
+      ? state.lastGood
+      : (state.current ?? state.lastGood)
   if (!snapshot) return EMPTY_CLOUD_WORK_STATUS
   const checks = {
     teams: cloudRuntimeCheckToLegacyStatus(snapshot.checks.teams.status),

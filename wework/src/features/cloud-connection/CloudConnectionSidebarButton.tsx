@@ -62,7 +62,7 @@ export function CloudConnectionSidebarButton({
     !needsAttention &&
     !cloudWorkUnavailable &&
     !cloudWorkEmpty &&
-    cloudWorkStatus?.availability !== 'available'
+    cloudWorkStatus?.availability === 'syncing'
   const cloudWorkAvailable =
     connected && !needsAttention && cloudWorkStatus?.availability === 'available'
   const hasErrorDetail = connected && (needsAttention || cloudWorkUnavailable)
