@@ -580,6 +580,27 @@ function getDeviceNetworkLabel(device?: DeviceInfo): string | null {
   return getDisplayableNetworkHost(device?.client_ip)
 }
 
+function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
+  return Boolean(
+    device?.runtime_routes?.some(
+      route => route.kind === 'cloud-relay' || route.kind === 'remote-relay'
+    )
+  )
+}
+
+function getDeviceRouteLabel(deviceState: SidebarDeviceState): string {
+  if (hasCloudRuntimeRoute(deviceState.device) && deviceState.device?.device_type === 'local') {
+    return '本机 · 云端'
+  }
+  return getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+}
+
+function getDeviceRouteTitle(deviceState: SidebarDeviceState): string {
+  const routes = deviceState.device?.runtime_routes
+  if (!routes?.length) return getDeviceRouteLabel(deviceState)
+  return routes.map(route => `${route.kind}: ${route.device_id}`).join('\n')
+}
+
 function getDisplayableNetworkHost(value?: string | null): string | null {
   if (!value) return null
   const host = extractNetworkHost(value.trim())
@@ -633,7 +654,9 @@ function shouldShowProjectDeviceStatus(
   deviceState: SidebarDeviceState | null,
   devices: DeviceInfo[]
 ): deviceState is SidebarDeviceState {
-  if (!deviceState || devices.length <= 1) return false
+  if (!deviceState) return false
+  if (hasCloudRuntimeRoute(deviceState.device)) return true
+  if (devices.length <= 1) return false
   return Boolean(
     deviceState.device && (isCloudDevice(deviceState.device) || isRemoteDevice(deviceState.device))
   )
@@ -966,13 +989,14 @@ function ProjectDeviceInlineStatus({
   testId: string
   className?: string
 }) {
-  const label = getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+  const label = getDeviceRouteLabel(deviceState)
+  const title = getDeviceRouteTitle(deviceState)
   const online = deviceState.status === 'online'
 
   return (
     <span
       data-testid={testId}
-      title={label}
+      title={title}
       aria-label={label}
       className={cn(
         'ml-auto flex min-w-0 shrink-0 items-center gap-2 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]',

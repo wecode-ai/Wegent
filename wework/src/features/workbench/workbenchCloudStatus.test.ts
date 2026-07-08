@@ -94,6 +94,63 @@ describe('mergeRuntimeWorkLists', () => {
       )
     ).toEqual(['task-local', 'task-remote'])
   })
+
+  test('keeps mapped project workspaces without tasks so the first task has a target', () => {
+    const localWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { id: 7, name: 'Repo' },
+          deviceWorkspaces: [workspace('local-device', [])],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const cloudWork: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    const merged = mergeRuntimeWorkLists(localWork, cloudWork)
+
+    expect(merged.projects[0].deviceWorkspaces).toEqual([
+      expect.objectContaining({
+        deviceId: 'local-device',
+        workspacePath: '/workspace/repo',
+        mapped: true,
+        available: true,
+        tasks: [],
+      }),
+    ])
+  })
+
+  test('drops unmapped empty chat workspaces during runtime work merge', () => {
+    const localWork: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'local-device',
+          deviceStatus: 'online',
+          available: true,
+          mapped: false,
+          workspacePath: '/workspace/empty-chat',
+          workspaceKind: 'chat',
+          tasks: [],
+        },
+      ],
+      totalTasks: 0,
+    }
+    const cloudWork: RuntimeWorkListResponse = {
+      projects: [],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    expect(mergeRuntimeWorkLists(localWork, cloudWork).chats).toEqual([])
+  })
 })
 
 function device(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
@@ -124,6 +181,48 @@ describe('cloud runtime sync state', () => {
     expect(selectVisibleDevices([], failed).map(item => item.device_id)).toEqual(['cloud-device'])
     expect(failed.availability).toBe('partial')
     expect(failed.current?.checks.devices.status).toBe('failed')
+  })
+
+  test('merges local and cloud routes for the same runtime identity with local as primary', () => {
+    const started = startCloudRuntimeSync(EMPTY_CLOUD_RUNTIME_STATE, 'bootstrap', ['devices'])
+    const ready = finishCloudRuntimeSync(started, started.inFlightRevision ?? 0, {
+      devices: {
+        status: 'fulfilled',
+        value: [
+          device({
+            device_id: 'cloud-device',
+            app_device_id: 'local-device',
+            device_type: 'cloud',
+          }),
+        ],
+      },
+    })
+
+    const visibleDevices = selectVisibleDevices(
+      [
+        device({
+          device_id: 'local-device',
+          name: 'Local Executor',
+          device_type: 'local',
+        }),
+      ],
+      ready
+    )
+
+    expect(visibleDevices).toHaveLength(1)
+    expect(visibleDevices[0]).toMatchObject({
+      device_id: 'local-device',
+      device_type: 'local',
+      app_device_id: 'local-device',
+    })
+    expect(visibleDevices[0].runtime_routes?.map(route => route.kind)).toEqual([
+      'local-ipc',
+      'cloud-relay',
+    ])
+    expect(visibleDevices[0].runtime_routes?.map(route => route.device_id)).toEqual([
+      'local-device',
+      'cloud-device',
+    ])
   })
 
   test('drops stale revisions that complete after a newer sync starts', () => {

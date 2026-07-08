@@ -337,6 +337,36 @@ describe('createHybridWorkbenchServices', () => {
     expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
   })
 
+  it('merges remembered cloud devices into the local device when app_device_id matches', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        app_device_id: 'local-device',
+        name: 'Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+
+    await services.cloudBackgroundApi?.listDevices?.()
+    const devices = await services.deviceApi.listDevices()
+
+    expect(devices.map(device => device.device_id)).toEqual(['local-device'])
+    expect(devices[0].device_type).toBe('local')
+    expect(devices[0].runtime_routes?.map(route => route.kind)).toEqual([
+      'local-ipc',
+      'cloud-relay',
+    ])
+    expect(devices[0].runtime_routes?.map(route => route.device_id)).toEqual([
+      'local-device',
+      'cloud-device',
+    ])
+  })
+
   it('does not wait for cloud device or runtime-work reads on the primary path', async () => {
     mocks.cloudListDevices.mockReturnValue(new Promise(() => undefined))
     mocks.cloudListRuntimeWork.mockReturnValue(new Promise(() => undefined))

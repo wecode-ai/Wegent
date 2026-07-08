@@ -7,6 +7,8 @@ import {
 } from '@/lib/device-capabilities'
 import type {
   DeviceInfo,
+  DeviceRuntimeRoute,
+  DeviceRuntimeRouteKind,
   RuntimeDeviceWorkspace,
   RuntimeProjectWork,
   RuntimeTaskSummary,
@@ -438,13 +440,108 @@ export function mergeDeviceLists(
   primaryDevices: DeviceInfo[],
   secondaryDevices: DeviceInfo[]
 ): DeviceInfo[] {
-  const merged = new Map<string, DeviceInfo>()
-  primaryDevices.forEach(device => merged.set(device.device_id, device))
-  secondaryDevices.forEach(device => {
-    const existing = merged.get(device.device_id)
-    merged.set(device.device_id, existing ? { ...existing, ...device } : device)
+  const merged: DeviceInfo[] = []
+
+  const upsertDevice = (device: DeviceInfo) => {
+    const existingIndex = merged.findIndex(item => devicesShareRuntimeIdentity(item, device))
+    if (existingIndex < 0) {
+      merged.push(withRuntimeRoutes(device))
+      return
+    }
+    merged[existingIndex] = mergeRuntimeDeviceRecord(merged[existingIndex], device)
+  }
+
+  primaryDevices.forEach(upsertDevice)
+  secondaryDevices.forEach(upsertDevice)
+  return merged
+}
+
+function withRuntimeRoutes(device: DeviceInfo): DeviceInfo {
+  return {
+    ...device,
+    runtime_routes: mergeRuntimeRoutes(device.runtime_routes ?? [], [
+      runtimeRouteFromDevice(device),
+    ]),
+  }
+}
+
+function mergeRuntimeDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): DeviceInfo {
+  const preferred = preferDeviceRecord(existing, incoming)
+  const fallback = preferred === existing ? incoming : existing
+  return {
+    ...fallback,
+    ...preferred,
+    app_device_id: preferred.app_device_id ?? fallback.app_device_id ?? null,
+    socket_device_id: preferred.socket_device_id ?? fallback.socket_device_id ?? null,
+    runtime_instance_id: preferred.runtime_instance_id ?? fallback.runtime_instance_id ?? null,
+    runtime_routes: mergeRuntimeRoutes(existing.runtime_routes ?? [], [
+      ...(incoming.runtime_routes ?? []),
+      runtimeRouteFromDevice(incoming),
+    ]),
+  }
+}
+
+function preferDeviceRecord(existing: DeviceInfo, incoming: DeviceInfo): DeviceInfo {
+  return deviceRoutePriority(incoming) < deviceRoutePriority(existing) ? incoming : existing
+}
+
+function deviceRoutePriority(device: DeviceInfo): number {
+  return runtimeRoutePriority(runtimeRouteKind(device))
+}
+
+function devicesShareRuntimeIdentity(left: DeviceInfo, right: DeviceInfo): boolean {
+  const leftIds = runtimeIdentityCandidates(left)
+  if (leftIds.size === 0) return false
+  for (const candidate of runtimeIdentityCandidates(right)) {
+    if (leftIds.has(candidate)) return true
+  }
+  return false
+}
+
+function runtimeIdentityCandidates(device: DeviceInfo): Set<string> {
+  return new Set(
+    [device.runtime_instance_id, device.device_id, device.app_device_id, device.socket_device_id]
+      .map(value => value?.trim())
+      .filter((value): value is string => Boolean(value))
+  )
+}
+
+function runtimeRouteFromDevice(device: DeviceInfo): DeviceRuntimeRoute {
+  return {
+    kind: runtimeRouteKind(device),
+    device_id: device.device_id,
+    runtime_device_id: device.socket_device_id || device.device_id,
+    device_type: device.device_type ?? null,
+    name: device.name,
+    status: device.status,
+  }
+}
+
+function runtimeRouteKind(device: DeviceInfo): DeviceRuntimeRouteKind {
+  if (isCloudDevice(device)) return 'cloud-relay'
+  if (isRemoteDevice(device)) return 'remote-relay'
+  if (isAppDevice(device)) return 'app-ipc'
+  return 'local-ipc'
+}
+
+function mergeRuntimeRoutes(
+  existingRoutes: DeviceRuntimeRoute[],
+  incomingRoutes: DeviceRuntimeRoute[]
+): DeviceRuntimeRoute[] {
+  const routes = new Map<string, DeviceRuntimeRoute>()
+  ;[...existingRoutes, ...incomingRoutes].forEach(route => {
+    routes.set(`${route.kind}\0${route.device_id}\0${route.runtime_device_id}`, route)
   })
-  return Array.from(merged.values())
+  return Array.from(routes.values()).sort(
+    (left, right) => runtimeRoutePriority(left.kind) - runtimeRoutePriority(right.kind)
+  )
+}
+
+function runtimeRoutePriority(kind: DeviceRuntimeRouteKind): number {
+  if (kind === 'local-ipc') return 0
+  if (kind === 'cloud-relay') return 1
+  if (kind === 'remote-relay') return 2
+  return 3
 }
 
 export function mergeRuntimeWorkLists(
@@ -515,11 +612,15 @@ function mergeRuntimeWorkspaces(
   secondaryWorkspaces: RuntimeDeviceWorkspace[],
   taskOwners: Map<string, string>
 ): RuntimeDeviceWorkspace[] {
-  const workspaces = new Map<string, RuntimeDeviceWorkspace>()
+  const workspaces = new Map<
+    string,
+    { workspace: RuntimeDeviceWorkspace; inputTaskCount: number }
+  >()
 
   const upsertWorkspace = (workspace: RuntimeDeviceWorkspace) => {
     const key = runtimeWorkspaceKey(workspace)
-    const existing = workspaces.get(key)
+    const existingEntry = workspaces.get(key)
+    const existing = existingEntry?.workspace
     const tasks = mergeRuntimeTasks(
       existing?.tasks ?? [],
       workspace.tasks,
@@ -528,16 +629,30 @@ function mergeRuntimeWorkspaces(
       taskOwners
     )
     workspaces.set(key, {
-      ...(existing ?? workspace),
-      ...workspace,
-      tasks,
+      workspace: {
+        ...(existing ?? workspace),
+        ...workspace,
+        tasks,
+      },
+      inputTaskCount: (existingEntry?.inputTaskCount ?? 0) + workspace.tasks.length,
     })
   }
 
   primaryWorkspaces.forEach(upsertWorkspace)
   secondaryWorkspaces.forEach(upsertWorkspace)
 
-  return Array.from(workspaces.values()).filter(workspace => workspace.tasks.length > 0)
+  return Array.from(workspaces.values())
+    .filter(entry => shouldKeepRuntimeWorkspace(entry.workspace, entry.inputTaskCount))
+    .map(entry => entry.workspace)
+}
+
+function shouldKeepRuntimeWorkspace(
+  workspace: RuntimeDeviceWorkspace,
+  inputTaskCount: number
+): boolean {
+  if (workspace.tasks.length > 0) return true
+  if (inputTaskCount > 0) return false
+  return workspace.mapped === true || workspace.projectId != null || workspace.id != null
 }
 
 function mergeRuntimeTasks(

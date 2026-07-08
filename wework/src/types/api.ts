@@ -119,6 +119,19 @@ export interface DeviceInfo {
   runtime_transfer_host?: string | null
   app_device_id?: string | null
   socket_device_id?: string | null
+  runtime_instance_id?: string | null
+  runtime_routes?: DeviceRuntimeRoute[]
+}
+
+export type DeviceRuntimeRouteKind = 'local-ipc' | 'cloud-relay' | 'remote-relay' | 'app-ipc'
+
+export interface DeviceRuntimeRoute {
+  kind: DeviceRuntimeRouteKind
+  device_id: string
+  runtime_device_id: string
+  device_type?: string | null
+  name?: string | null
+  status: DeviceInfo['status']
 }
 
 export interface DeviceRunningTask {
@@ -325,6 +338,8 @@ export interface RuntimeTaskSummary {
   updatedAt?: string | number | null
   running?: boolean
   status?: string | null
+  optimistic?: boolean
+  error?: string | null
   runtimeHandle?: Record<string, unknown> | null
   modelSelection?: ModelSelectionConfig | null
   parent?: Record<string, unknown> | null
