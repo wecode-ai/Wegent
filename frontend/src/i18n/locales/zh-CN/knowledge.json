@@ -320,6 +320,7 @@
         "web": "网页"
       },
       "search": "搜索文档",
+      "searchInFolder": "在 {{folder}} 中搜索文档",
       "empty": "暂无文档",
       "emptyHint": "上传您的第一个文档开始使用",
       "noResults": "没有匹配的文档",

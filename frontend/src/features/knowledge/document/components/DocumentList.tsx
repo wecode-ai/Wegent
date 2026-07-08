@@ -362,6 +362,13 @@ export function DocumentList({
     () => findFolderName(folders, activeFolderId),
     [folders, activeFolderId]
   )
+  const searchPlaceholder = activeFolderName
+    ? t('document.document.searchInFolder', { folder: activeFolderName })
+    : t('document.document.search')
+
+  const handleActivateFolder = useCallback((folderId: number) => {
+    setActiveFolderId(currentFolderId => (currentFolderId === folderId ? undefined : folderId))
+  }, [])
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
@@ -1089,7 +1096,7 @@ export function DocumentList({
                     type="text"
                     autoFocus
                     className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                    placeholder={t('document.document.search')}
+                    placeholder={searchPlaceholder}
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     onKeyDown={e => {
@@ -1112,7 +1119,7 @@ export function DocumentList({
             <input
               type="text"
               className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-              placeholder={t('document.document.search')}
+              placeholder={searchPlaceholder}
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
             />
@@ -1328,7 +1335,7 @@ export function DocumentList({
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
                 activeFolderId={activeFolderId}
-                onActivateFolder={setActiveFolderId}
+                onActivateFolder={handleActivateFolder}
               />
               {paginationEnabled && (
                 <Pagination
@@ -1452,7 +1459,7 @@ export function DocumentList({
                   selectedFolderIds={selectedFolderIds}
                   onSelectFolder={handleSelectFolder}
                   activeFolderId={activeFolderId}
-                  onActivateFolder={setActiveFolderId}
+                  onActivateFolder={handleActivateFolder}
                 />
                 {/* Pagination bar for classic mode */}
                 {paginationEnabled && (

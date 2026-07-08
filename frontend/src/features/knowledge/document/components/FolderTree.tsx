@@ -260,6 +260,7 @@ function FolderRow({
       <div
         role="button"
         tabIndex={0}
+        aria-pressed={active}
         className={`flex items-center gap-2 w-full px-2 py-2 rounded-lg transition-colors text-left cursor-pointer ${
           active ? 'bg-primary/10 text-primary' : 'hover:bg-surface'
         }`}
@@ -317,6 +318,7 @@ function FolderRow({
       onClick={() => onActivate?.(node.id)}
       role="button"
       tabIndex={0}
+      aria-pressed={active}
       onKeyDown={e => {
         if (e.currentTarget !== e.target) {
           return

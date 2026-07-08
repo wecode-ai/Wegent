@@ -320,6 +320,7 @@
         "web": "Web Page"
       },
       "search": "Search documents",
+      "searchInFolder": "Search documents in {{folder}}",
       "empty": "No documents yet",
       "emptyHint": "Upload your first document to get started",
       "noResults": "No matching documents",
