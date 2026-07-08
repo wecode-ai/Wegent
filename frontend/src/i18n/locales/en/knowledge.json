@@ -738,7 +738,7 @@
     "pagination": {
       "totalCount": "{{count}} items",
       "pageSize": "Per page",
-      "searchHint": "Search applies to current page only"
+      "searchHint": "Search and sort apply to the full query result"
     }
   },
   "add_repository": "Add Repository",

@@ -8,6 +8,7 @@ import importlib
 import inspect
 import json
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -126,6 +127,110 @@ class TestKnowledgeTool:
         assert "wegent_kb_list_knowledge_bases" in module.KNOWLEDGE_MCP_TOOLS
         assert "wegent_kb_list_documents" in module.KNOWLEDGE_MCP_TOOLS
         assert "wegent_kb_read_document_content" in module.KNOWLEDGE_MCP_TOOLS
+
+    def test_list_documents_passes_optional_query_params(self):
+        """list_documents should pass backward-compatible optional query params."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1, subtask_id=2, user_id=3, user_name="alice"
+        )
+        mock_session = MagicMock()
+        user = SimpleNamespace(id=3)
+        response = SimpleNamespace(
+            total=1,
+            returned_count=1,
+            limit=10,
+            offset=0,
+            has_more=False,
+            items=[SimpleNamespace(model_dump=lambda: {"id": 9})],
+        )
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(module, "_get_user_from_token", return_value=user),
+            patch.object(
+                module.knowledge_orchestrator, "list_documents", return_value=response
+            ) as mock_list,
+        ):
+            result = module.list_documents(
+                token_info=token_info,
+                knowledge_base_id=7,
+                folder_id=5,
+                include_subfolders=True,
+                keyword="report",
+                sort_by="name",
+                sort_order="asc",
+                limit=10,
+                offset=0,
+            )
+
+        mock_list.assert_called_once_with(
+            db=mock_session,
+            user=user,
+            knowledge_base_id=7,
+            folder_id=5,
+            limit=10,
+            offset=0,
+            include_subfolders=True,
+            keyword="report",
+            sort_by="name",
+            sort_order="asc",
+        )
+        assert result["items"] == [{"id": 9}]
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_base_resolves_folder_scope(self):
+        """search_knowledge_base should resolve folder scope without breaking document_ids."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1, subtask_id=2, user_id=3, user_name="alice"
+        )
+        mock_session = MagicMock()
+        user = SimpleNamespace(id=3)
+
+        async def fake_retrieve(**kwargs):
+            return {
+                "query": kwargs["query"],
+                "records": [],
+                "total": 0,
+                "mode": "rag_retrieval",
+            }
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(module, "_get_user_from_token", return_value=user),
+            patch.object(
+                module.KnowledgeFolderService,
+                "resolve_document_ids_for_scope",
+                return_value=[11, 12],
+            ) as mock_resolve,
+            patch.object(
+                module.knowledge_orchestrator,
+                "retrieve_knowledge",
+                side_effect=fake_retrieve,
+            ) as mock_retrieve,
+        ):
+            result = await module.search_knowledge_base(
+                token_info=token_info,
+                knowledge_base_id=7,
+                query="policy",
+                max_results=5,
+                document_ids=[11],
+                folder_ids=[5],
+                include_subfolders=False,
+            )
+
+        mock_resolve.assert_called_once_with(
+            db=mock_session,
+            knowledge_base_id=7,
+            user_id=3,
+            folder_ids=[5],
+            document_ids=[11],
+            include_subfolders=False,
+        )
+        mock_retrieve.assert_called_once()
+        assert mock_retrieve.call_args.kwargs["document_ids"] == [11, 12]
+        assert result["query"] == "policy"
 
     def test_read_document_content_returns_orchestrator_payload(self):
         """Test that read_document_content returns the orchestrator payload."""

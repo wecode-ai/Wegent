@@ -188,13 +188,16 @@ class KnowledgeFolderService:
         children_map: Dict[int, List[KnowledgeFolderResponse]] = defaultdict(list)
 
         for f in all_folders:
+            direct_document_count = doc_counts.get(f.id, 0)
             node = KnowledgeFolderResponse(
                 id=f.id,
                 kind_id=f.kind_id,
                 parent_id=f.parent_id,
                 name=f.name,
                 children=[],
-                document_count=doc_counts.get(f.id, 0),
+                document_count=direct_document_count,
+                direct_document_count=direct_document_count,
+                total_document_count=direct_document_count,
                 created_at=f.created_at,
                 updated_at=f.updated_at,
             )
@@ -206,6 +209,9 @@ class KnowledgeFolderService:
             result = []
             for child in children_map.get(pid, []):
                 child.children = attach_children(child.id)
+                child.total_document_count = child.direct_document_count + sum(
+                    grandchild.total_document_count for grandchild in child.children
+                )
                 result.append(child)
             return result
 
@@ -340,6 +346,8 @@ class KnowledgeFolderService:
             name=folder.name,
             children=[],
             document_count=doc_count,
+            direct_document_count=doc_count,
+            total_document_count=doc_count,
             created_at=folder.created_at,
             updated_at=folder.updated_at,
         )

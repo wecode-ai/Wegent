@@ -59,6 +59,17 @@ interface DocumentItemProps {
   indent?: number
 }
 
+export function getDocumentTableGridTemplate(options: {
+  showSelectionColumn: boolean
+  showActionsColumn: boolean
+  nameColumnWidth?: number
+}) {
+  const selectionColumn = options.showSelectionColumn ? '20px ' : ''
+  const nameColumn = options.nameColumnWidth ? `${options.nameColumnWidth}px` : 'minmax(200px, 1fr)'
+  const actionsColumn = options.showActionsColumn ? '80px' : ''
+  return `${selectionColumn}${nameColumn} 28px 80px 80px 96px 160px 160px 96px ${actionsColumn}`.trim()
+}
+
 export function DocumentItem({
   document,
   onEdit,
@@ -198,6 +209,14 @@ export function DocumentItem({
   const handleRowClick = () => {
     onViewDetail?.(document)
   }
+
+  const showSelectionColumn = Boolean(onSelect)
+  const showActionsColumn = Boolean(onMove || onEdit || onDelete || onRefresh || onReindex)
+  const tableGridTemplate = getDocumentTableGridTemplate({
+    showSelectionColumn,
+    showActionsColumn,
+    nameColumnWidth,
+  })
 
   let unavailableHint = t('knowledge:document.document.indexStatus.unavailableHint')
   if (isExcelExceedingSizeLimit) {
@@ -421,25 +440,27 @@ export function DocumentItem({
   // Normal mode: Table row layout
   return (
     <div
-      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[880px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
+      className={`grid items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group min-w-[880px] ${showBorder ? 'border-b border-border' : ''} ${onViewDetail ? 'cursor-pointer' : ''}`}
+      style={{ gridTemplateColumns: tableGridTemplate }}
       onClick={handleRowClick}
     >
       {/* Checkbox for batch selection */}
-      {canSelect && (
-        <div className="flex-shrink-0" onClick={handleCheckboxClick}>
-          <Checkbox
-            checked={selected}
-            onCheckedChange={handleCheckboxChange}
-            className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-          />
+      {showSelectionColumn && (
+        <div onClick={handleCheckboxClick}>
+          {canSelect && (
+            <Checkbox
+              checked={selected}
+              onCheckedChange={handleCheckboxChange}
+              className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+            />
+          )}
         </div>
       )}
 
       {/* Icon + Name container - indent applied to both */}
       <div
-        className={`flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[200px]'}`}
+        className="flex items-center gap-2 overflow-hidden min-w-0"
         style={{
-          ...(nameColumnWidth ? { width: `${nameColumnWidth}px` } : {}),
           ...(indent > 0 ? { paddingLeft: `${indent}px` } : {}),
         }}
       >
@@ -458,7 +479,9 @@ export function DocumentItem({
         <TooltipProvider>
           <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>
-              <span className="text-sm font-medium text-text-primary truncate">{displayName}</span>
+              <span className="min-w-0 flex-1 text-sm font-medium text-text-primary truncate">
+                {displayName}
+              </span>
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-xs">
               <p className="text-xs break-all">{displayName}</p>
@@ -476,7 +499,7 @@ export function DocumentItem({
         )}
       </div>
       {/* Edit button - right aligned */}
-      <div className="w-7 flex-shrink-0 flex items-center justify-end">
+      <div className="flex items-center justify-end">
         {canManage && (
           <button
             className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors"
@@ -489,7 +512,7 @@ export function DocumentItem({
       </div>
 
       {/* Type */}
-      <div className="w-20 flex-shrink-0 text-center">
+      <div className="text-center min-w-0">
         {isTable ? (
           <Badge
             variant="default"
@@ -512,13 +535,13 @@ export function DocumentItem({
       </div>
 
       {/* Size */}
-      <div className="w-20 flex-shrink-0 text-center">
+      <div className="text-center min-w-0">
         <span className="text-xs text-text-muted">
           {isTable || isWeb ? '-' : formatFileSize(document.file_size)}
         </span>
       </div>
       {/* Creator */}
-      <div className="w-24 flex-shrink-0 text-center" data-testid="creator-cell">
+      <div className="text-center min-w-0" data-testid="creator-cell">
         <TooltipProvider>
           <Tooltip delayDuration={300}>
             <TooltipTrigger asChild>
@@ -535,18 +558,18 @@ export function DocumentItem({
         </TooltipProvider>
       </div>
       {/* Upload date with time */}
-      <div className="w-40 flex-shrink-0 text-center">
+      <div className="text-center min-w-0">
         <span className="text-xs text-text-muted">{formatDateTime(document.created_at)}</span>
       </div>
       {/* Updated date */}
-      <div className="w-40 flex-shrink-0 text-center" data-testid="updated-at-cell">
+      <div className="text-center min-w-0" data-testid="updated-at-cell">
         <span className="text-xs text-text-muted">
           {isUnmodified ? '-' : formatDateTime(document.updated_at)}
         </span>
       </div>
 
       {/* Index status (is_active) */}
-      <div className="w-24 flex-shrink-0 text-center">
+      <div className="text-center min-w-0">
         {document.is_active ? (
           <Badge variant="success" size="sm" className="whitespace-nowrap">
             {t('knowledge:document.document.indexStatus.available')}
@@ -599,75 +622,79 @@ export function DocumentItem({
       </div>
 
       {/* Action buttons */}
-      {canManage && (
-        <div className="w-20 flex-shrink-0 flex items-center justify-center gap-1">
-          {/* Move to folder button */}
-          {onMove && (
-            <button
-              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
-              onClick={handleMove}
-              title={t('knowledge:document.folder.moveDocument')}
-              data-testid="move-button"
-            >
-              <FolderInput className="w-3.5 h-3.5" />
-            </button>
+      {showActionsColumn && (
+        <div className="flex items-center justify-center gap-1">
+          {canManage && (
+            <>
+              {/* Move to folder button */}
+              {onMove && (
+                <button
+                  className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+                  onClick={handleMove}
+                  title={t('knowledge:document.folder.moveDocument')}
+                  data-testid="move-button"
+                >
+                  <FolderInput className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {/* Re-fetch button - only for web documents */}
+              {isWeb && onRefresh && (
+                <button
+                  className={`p-1.5 rounded-md transition-colors ${
+                    isRefreshing
+                      ? 'text-primary cursor-not-allowed'
+                      : 'text-text-muted hover:text-primary hover:bg-primary/10'
+                  }`}
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  title={
+                    isRefreshing
+                      ? t('knowledge:document.upload.web.refetching')
+                      : t('knowledge:document.upload.web.refetch')
+                  }
+                >
+                  <CloudDownload className={`w-4 h-4 ${isRefreshing ? 'animate-pulse' : ''}`} />
+                </button>
+              )}
+              {/* Reindex button - only when RAG configured and document not indexed */}
+              {canReindex && (
+                <button
+                  className={`p-1.5 rounded-md transition-colors ${
+                    showIndexingState
+                      ? 'text-primary cursor-not-allowed'
+                      : 'text-text-muted hover:text-primary hover:bg-primary/10'
+                  }`}
+                  onClick={handleReindex}
+                  disabled={showIndexingState}
+                  title={
+                    showIndexingState
+                      ? t('knowledge:document.document.reindexing')
+                      : t('knowledge:document.document.reindex')
+                  }
+                >
+                  <RotateCcw className={`w-4 h-4 ${showIndexingState ? 'animate-spin' : ''}`} />
+                </button>
+              )}
+              {/* Download button - only for file documents with attachment */}
+              {showDownload && (
+                <button
+                  className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+                  onClick={handleDownload}
+                  title={t('knowledge:document.document.download')}
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+              )}
+              {/* Delete button */}
+              <button
+                className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
+                onClick={handleDelete}
+                title={t('common:actions.delete')}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </>
           )}
-          {/* Re-fetch button - only for web documents */}
-          {isWeb && onRefresh && (
-            <button
-              className={`p-1.5 rounded-md transition-colors ${
-                isRefreshing
-                  ? 'text-primary cursor-not-allowed'
-                  : 'text-text-muted hover:text-primary hover:bg-primary/10'
-              }`}
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              title={
-                isRefreshing
-                  ? t('knowledge:document.upload.web.refetching')
-                  : t('knowledge:document.upload.web.refetch')
-              }
-            >
-              <CloudDownload className={`w-4 h-4 ${isRefreshing ? 'animate-pulse' : ''}`} />
-            </button>
-          )}
-          {/* Reindex button - only when RAG configured and document not indexed */}
-          {canReindex && (
-            <button
-              className={`p-1.5 rounded-md transition-colors ${
-                showIndexingState
-                  ? 'text-primary cursor-not-allowed'
-                  : 'text-text-muted hover:text-primary hover:bg-primary/10'
-              }`}
-              onClick={handleReindex}
-              disabled={showIndexingState}
-              title={
-                showIndexingState
-                  ? t('knowledge:document.document.reindexing')
-                  : t('knowledge:document.document.reindex')
-              }
-            >
-              <RotateCcw className={`w-4 h-4 ${showIndexingState ? 'animate-spin' : ''}`} />
-            </button>
-          )}
-          {/* Download button - only for file documents with attachment */}
-          {showDownload && (
-            <button
-              className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
-              onClick={handleDownload}
-              title={t('knowledge:document.document.download')}
-            >
-              <Download className="w-4 h-4" />
-            </button>
-          )}
-          {/* Delete button */}
-          <button
-            className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
-            onClick={handleDelete}
-            title={t('common:actions.delete')}
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
         </div>
       )}
     </div>

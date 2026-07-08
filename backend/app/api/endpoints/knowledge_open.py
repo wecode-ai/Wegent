@@ -31,6 +31,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentCreateV1,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
+    KnowledgeDocumentSortField,
     KnowledgeDocumentUpdate,
     KnowledgeFolderCreate,
     KnowledgeFolderCreateOpen,
@@ -38,6 +39,7 @@ from app.schemas.knowledge import (
     KnowledgeFolderUpdate,
     KnowledgeFolderUpdateOpen,
     KnowledgeSearchRequest,
+    SortOrder,
 )
 from app.schemas.rag import RetrieveResponse
 from app.services.knowledge import KnowledgeFolderService, KnowledgeService
@@ -155,6 +157,22 @@ def list_documents_open(
         ge=0,
         description="Filter documents by folder (None = all, 0 = root)",
     ),
+    include_subfolders: bool = Query(
+        default=False,
+        description="Whether folder_id includes descendant folders",
+    ),
+    keyword: str | None = Query(
+        default=None,
+        description="Search keyword for document names",
+    ),
+    sort_by: KnowledgeDocumentSortField = Query(
+        default=KnowledgeDocumentSortField.CREATED_AT,
+        description="Document sort field",
+    ),
+    sort_order: SortOrder = Query(
+        default=SortOrder.DESC,
+        description="Document sort order",
+    ),
     limit: int = Query(
         default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
         ge=1,
@@ -196,6 +214,10 @@ def list_documents_open(
             folder_id=folder_id,
             limit=limit,
             offset=offset,
+            include_subfolders=include_subfolders,
+            keyword=keyword,
+            sort_by=sort_by.value,
+            sort_order=sort_order.value,
         )
     except ValueError as exc:
         _raise_open_knowledge_http_error(exc)

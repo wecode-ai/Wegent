@@ -738,7 +738,7 @@
     "pagination": {
       "totalCount": "共 {{count}} 条",
       "pageSize": "每页",
-      "searchHint": "搜索范围仅限当前页文档"
+      "searchHint": "搜索和排序已应用到完整查询结果"
     }
   },
   "add_repository": "添加仓库",

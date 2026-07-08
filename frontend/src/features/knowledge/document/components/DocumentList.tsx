@@ -26,6 +26,7 @@ import {
   Pencil,
   FolderInput,
   ArrowRightLeft,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -40,6 +41,7 @@ import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { useDocuments } from '../hooks/useDocuments'
 import { useFolders } from '../hooks/useFolders'
 import { FolderTree, type SortField, type SortOrder } from './FolderTree'
+import { getDocumentTableGridTemplate } from './DocumentItem'
 import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
@@ -251,6 +253,16 @@ function collectFolderAndAncestorIds(folders: KnowledgeFolder[], targetId: numbe
   return new Set(findPath(folders, []) ?? [])
 }
 
+function findFolderName(folders: KnowledgeFolder[], targetId: number | undefined): string | null {
+  if (targetId === undefined) return null
+  for (const folder of folders) {
+    if (folder.id === targetId) return folder.name
+    const childName = findFolderName(folder.children, targetId)
+    if (childName) return childName
+  }
+  return null
+}
+
 export function DocumentList({
   knowledgeBase,
   onBack,
@@ -268,6 +280,10 @@ export function DocumentList({
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortField, setSortField] = useState<SortField>('createdAt')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const [activeFolderId, setActiveFolderId] = useState<number | undefined>(undefined)
   const {
     documents,
     loading,
@@ -287,6 +303,11 @@ export function DocumentList({
   } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
     paginationEnabled,
+    folderId: activeFolderId,
+    includeSubfolders: activeFolderId !== undefined,
+    keyword: searchQuery,
+    sortBy: sortField,
+    sortOrder,
   })
 
   // Folder state
@@ -310,11 +331,16 @@ export function DocumentList({
     if (knowledgeBase.id) {
       fetchFolders()
       setSelectedUploadFolderId(0)
+      setActiveFolderId(undefined)
     }
   }, [knowledgeBase.id, fetchFolders])
 
   // Flatten folder tree for select dropdowns
   const folderOptions = useMemo(() => flattenFoldersForSelect(folders), [folders])
+  const activeFolderName = useMemo(
+    () => findFolderName(folders, activeFolderId),
+    [folders, activeFolderId]
+  )
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
@@ -325,9 +351,6 @@ export function DocumentList({
   const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [sortField, setSortField] = useState<SortField>('createdAt')
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [selectedFolderIds, setSelectedFolderIds] = useState<Set<number>>(new Set())
   const [batchLoading, setBatchLoading] = useState(false)
@@ -454,11 +477,10 @@ export function DocumentList({
     }
   }, [selectedIds, onSelectionChange])
 
-  const filteredDocuments = useMemo(() => {
-    if (!searchQuery.trim()) return documents
-    const query = searchQuery.toLowerCase()
-    return documents.filter(doc => doc.name.toLowerCase().includes(query))
-  }, [documents, searchQuery])
+  useEffect(() => {
+    setSelectedIds(new Set())
+    setSelectedFolderIds(new Set())
+  }, [activeFolderId, searchQuery, sortField, sortOrder])
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
 
@@ -468,9 +490,15 @@ export function DocumentList({
   const canSelectDocument = (document: KnowledgeDocument) =>
     Boolean(onSelectionChange) || (canManageAllDocuments && canManageDocument(document))
 
+  const tableGridTemplate = getDocumentTableGridTemplate({
+    showSelectionColumn: canManageAllDocuments,
+    showActionsColumn: canManageAnyDocuments,
+    nameColumnWidth: nameColumnWidth ?? undefined,
+  })
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'))
     } else {
       setSortField(field)
       setSortOrder('desc')
@@ -601,40 +629,9 @@ export function DocumentList({
     })
   }
 
-  // Folder selection handler: when a folder is selected/deselected,
-  // select/deselect all documents within it (including sub-folders)
+  // Folder selection handler: folder checkbox represents a backend-resolved scope.
   const handleSelectFolder = useCallback(
     (folderId: number, selected: boolean) => {
-      // Collect all document IDs in the selected folder (recursively)
-      const collectDocIdsInFolder = (folderList: KnowledgeFolder[], targetId: number): number[] => {
-        for (const f of folderList) {
-          if (f.id === targetId) {
-            const docIds: number[] = []
-            const collectDocs = (folder: KnowledgeFolder) => {
-              const folderDocs = documents.filter(d => d.folder_id === folder.id)
-              docIds.push(...folderDocs.map(d => d.id))
-              for (const child of folder.children) {
-                collectDocs(child)
-              }
-            }
-            collectDocs(f)
-            return docIds
-          }
-          const found = collectDocIdsInFolder(f.children, targetId)
-          if (found.length > 0) return found
-        }
-        return []
-      }
-
-      const docIdsInFolder = collectDocIdsInFolder(folders, folderId)
-
-      // Prevent selecting empty folders/subtrees — the backend skips transfer
-      // when there are no documents, so allowing selection would mislead the user
-      // into thinking something will be transferred.
-      if (selected && docIdsInFolder.length === 0) {
-        return
-      }
-
       const affectedFolderIds = collectFolderAndDescendantIds(folders, folderId)
       setSelectedFolderIds(prev => {
         const newSet = new Set(prev)
@@ -645,25 +642,13 @@ export function DocumentList({
         }
         return newSet
       })
-
-      if (docIdsInFolder.length > 0) {
-        setSelectedIds(prev => {
-          const newSet = new Set(prev)
-          if (selected) {
-            docIdsInFolder.forEach(id => newSet.add(id))
-          } else {
-            docIdsInFolder.forEach(id => newSet.delete(id))
-          }
-          return newSet
-        })
-      }
     },
-    [folders, documents]
+    [folders]
   )
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(new Set(filteredDocuments.map(doc => doc.id)))
+      setSelectedIds(new Set(documents.map(doc => doc.id)))
       setSelectedFolderIds(new Set()) // Clear folder selection to avoid duplicate transfer
     } else {
       setSelectedIds(new Set())
@@ -671,10 +656,9 @@ export function DocumentList({
     }
   }
 
-  const isAllSelected =
-    filteredDocuments.length > 0 && filteredDocuments.every(doc => selectedIds.has(doc.id))
+  const isAllSelected = documents.length > 0 && documents.every(doc => selectedIds.has(doc.id))
 
-  const isPartialSelected = filteredDocuments.some(doc => selectedIds.has(doc.id)) && !isAllSelected
+  const isPartialSelected = documents.some(doc => selectedIds.has(doc.id)) && !isAllSelected
 
   // Batch operations using batch API
   const handleBatchDelete = async () => {
@@ -1068,6 +1052,17 @@ export function DocumentList({
             />
           </div>
         )}
+        {activeFolderName && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setActiveFolderId(undefined)}
+            className="max-w-[220px]"
+          >
+            <span className="truncate">{activeFolderName}</span>
+            <X className="w-3.5 h-3.5 ml-1 flex-shrink-0" />
+          </Button>
+        )}
         {/* Spacer to push buttons to the right */}
         <div className="flex-1" />
 
@@ -1132,7 +1127,7 @@ export function DocumentList({
             {t('common:actions.retry')}
           </Button>
         </div>
-      ) : filteredDocuments.length > 0 || folders.length > 0 ? (
+      ) : documents.length > 0 || folders.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
           {canManageAllDocuments &&
@@ -1154,7 +1149,9 @@ export function DocumentList({
                   variant="outline"
                   size="sm"
                   onClick={() => setShowBatchMove(true)}
-                  disabled={batchLoading || isBatchMoving || isTransferring}
+                  disabled={
+                    selectedIds.size === 0 || batchLoading || isBatchMoving || isTransferring
+                  }
                   data-testid="batch-move-button"
                   aria-label={t('document.document.batch.move')}
                 >
@@ -1176,7 +1173,7 @@ export function DocumentList({
                   variant="destructive"
                   size="sm"
                   onClick={handleBatchDelete}
-                  disabled={batchLoading}
+                  disabled={selectedIds.size === 0 || batchLoading}
                 >
                   <Trash2 className="w-4 h-4 mr-1" />
                   {compact ? '' : t('document.document.batch.delete')}
@@ -1188,7 +1185,7 @@ export function DocumentList({
           {compact ? (
             <div className="space-y-2">
               {/* Select all control bar for notebook mode */}
-              {onSelectionChange && filteredDocuments.length > 0 && (
+              {onSelectionChange && documents.length > 0 && (
                 <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
                   <button
                     onClick={() => handleSelectAll(!isAllSelected)}
@@ -1206,14 +1203,13 @@ export function DocumentList({
                     </span>
                   </button>
                   <span className="text-text-muted">
-                    ({filteredDocuments.filter(doc => selectedIds.has(doc.id)).length}/
-                    {filteredDocuments.length})
+                    ({documents.filter(doc => selectedIds.has(doc.id)).length}/{documents.length})
                   </span>
                 </div>
               )}
               <FolderTree
                 folders={folders}
-                documents={filteredDocuments}
+                documents={documents}
                 compact={true}
                 onViewDetail={setViewingDoc}
                 onEdit={setEditingDoc}
@@ -1232,11 +1228,11 @@ export function DocumentList({
                 onRenameFolder={canUpload ? handleRenameFolder : undefined}
                 onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
                 canManageFolders={canUpload}
-                sortField={sortField}
-                sortOrder={sortOrder}
                 canSelectFolders={canManageAllDocuments && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
+                activeFolderId={activeFolderId}
+                onActivateFolder={setActiveFolderId}
               />
               {paginationEnabled && (
                 <Pagination
@@ -1256,10 +1252,13 @@ export function DocumentList({
               {/* Inner container - width determined by content, background covers all */}
               <div className="bg-base min-w-[880px] w-fit">
                 {/* Table header */}
-                <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium border-b border-border">
+                <div
+                  className="grid items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium border-b border-border"
+                  style={{ gridTemplateColumns: tableGridTemplate }}
+                >
                   {/* Checkbox for select all */}
                   {canManageAllDocuments && (
-                    <div className="flex-shrink-0">
+                    <div>
                       <Checkbox
                         checked={isPartialSelected ? 'indeterminate' : isAllSelected}
                         onCheckedChange={handleSelectAll}
@@ -1273,11 +1272,7 @@ export function DocumentList({
                     </div>
                   )}
                   {/* Icon + Name column header */}
-                  <div
-                    ref={nameColumnRef}
-                    className={`relative flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[200px]'}`}
-                    style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
-                  >
+                  <div ref={nameColumnRef} className="relative flex items-center gap-2 min-w-0">
                     {/* Icon placeholder */}
                     <div className="w-4 h-4 flex-shrink-0" />
                     <button
@@ -1298,25 +1293,21 @@ export function DocumentList({
                     </div>
                   </div>
                   {/* Spacer to match DocumentItem edit button area */}
-                  <div className="w-7 flex-shrink-0" />
-                  <div className="w-20 flex-shrink-0 text-center">
-                    {t('document.document.columns.type')}
-                  </div>
+                  <div />
+                  <div className="text-center">{t('document.document.columns.type')}</div>
                   <button
                     type="button"
-                    className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                    className="text-center cursor-pointer hover:text-text-primary select-none"
                     onClick={() => handleSort('size')}
                   >
                     {t('document.document.columns.size')}
                     <SortIcon field="size" />
                   </button>
                   {/* Creator column header */}
-                  <div className="w-24 flex-shrink-0 text-center">
-                    {t('document.document.columns.createdBy')}
-                  </div>
+                  <div className="text-center">{t('document.document.columns.createdBy')}</div>
                   <button
                     type="button"
-                    className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                    className="text-center cursor-pointer hover:text-text-primary select-none"
                     onClick={() => handleSort('createdAt')}
                   >
                     {t('document.document.columns.date')}
@@ -1325,25 +1316,21 @@ export function DocumentList({
                   {/* Updated date column header */}
                   <button
                     type="button"
-                    className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
+                    className="text-center cursor-pointer hover:text-text-primary select-none"
                     onClick={() => handleSort('updatedAt')}
                   >
                     {t('document.document.columns.updatedAt')}
                     <SortIcon field="updatedAt" />
                   </button>
-                  <div className="w-24 flex-shrink-0 text-center">
-                    {t('document.document.columns.indexStatus')}
-                  </div>
+                  <div className="text-center">{t('document.document.columns.indexStatus')}</div>
                   {canManageAnyDocuments && (
-                    <div className="w-20 flex-shrink-0 text-center">
-                      {t('document.document.columns.actions')}
-                    </div>
+                    <div className="text-center">{t('document.document.columns.actions')}</div>
                   )}
                 </div>
                 {/* Document rows with folder tree - no extra border */}
                 <FolderTree
                   folders={folders}
-                  documents={filteredDocuments}
+                  documents={documents}
                   compact={false}
                   withBorder={false}
                   onViewDetail={setViewingDoc}
@@ -1357,18 +1344,18 @@ export function DocumentList({
                   canManage={canManageDocument}
                   canSelect={doc => canSelectDocument(doc) && canManageAllDocuments}
                   selectedIds={selectedIds}
-                  onSelect={handleSelectDoc}
+                  onSelect={canManageAllDocuments ? handleSelectDoc : undefined}
                   ragConfigured={ragConfigured}
                   nameColumnWidth={nameColumnWidth ?? undefined}
                   onCreateFolder={canUpload ? handleCreateFolder : undefined}
                   onRenameFolder={canUpload ? handleRenameFolder : undefined}
                   onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
                   canManageFolders={canUpload}
-                  sortField={sortField}
-                  sortOrder={sortOrder}
                   canSelectFolders={canManageAllDocuments && !onSelectionChange}
                   selectedFolderIds={selectedFolderIds}
                   onSelectFolder={handleSelectFolder}
+                  activeFolderId={activeFolderId}
+                  onActivateFolder={setActiveFolderId}
                 />
                 {/* Pagination bar for classic mode */}
                 {paginationEnabled && (
@@ -1392,13 +1379,11 @@ export function DocumentList({
             <div className="fixed inset-0 z-50" style={{ cursor: 'col-resize' }} />
           )}
         </>
-      ) : searchQuery ? (
+      ) : searchQuery || activeFolderId !== undefined ? (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.noResults')}</p>
-          {paginationEnabled && (
-            <p className="text-xs text-text-muted mt-2">{t('document.pagination.searchHint')}</p>
-          )}
+          <p className="text-xs text-text-muted mt-2">{t('document.pagination.searchHint')}</p>
         </div>
       ) : canUpload ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">

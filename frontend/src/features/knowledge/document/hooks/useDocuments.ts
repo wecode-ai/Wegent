@@ -22,6 +22,7 @@ import {
   type BatchOperationResult,
   type TransferDocumentsRequest,
   type TransferDocumentsResponse,
+  type ListDocumentsParams,
 } from '@/apis/knowledge'
 import type {
   KnowledgeDocument,
@@ -39,10 +40,24 @@ interface UseDocumentsOptions {
   autoLoad?: boolean
   /** Whether server-side pagination is enabled */
   paginationEnabled?: boolean
+  folderId?: number
+  includeSubfolders?: boolean
+  keyword?: string
+  sortBy?: ListDocumentsParams['sort_by']
+  sortOrder?: ListDocumentsParams['sort_order']
 }
 
 export function useDocuments(options: UseDocumentsOptions) {
-  const { knowledgeBaseId, autoLoad = true, paginationEnabled = false } = options
+  const {
+    knowledgeBaseId,
+    autoLoad = true,
+    paginationEnabled = false,
+    folderId,
+    includeSubfolders = false,
+    keyword,
+    sortBy = 'createdAt',
+    sortOrder = 'desc',
+  } = options
   const { t } = useTranslation('knowledge')
 
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
@@ -62,6 +77,13 @@ export function useDocuments(options: UseDocumentsOptions) {
   const pageSizeRef = useRef(pageSize)
   const paginationEnabledRef = useRef(paginationEnabled)
   const knowledgeBaseIdRef = useRef(knowledgeBaseId)
+  const queryRef = useRef({
+    folderId,
+    includeSubfolders,
+    keyword,
+    sortBy,
+    sortOrder,
+  })
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -76,6 +98,15 @@ export function useDocuments(options: UseDocumentsOptions) {
   useEffect(() => {
     knowledgeBaseIdRef.current = knowledgeBaseId
   }, [knowledgeBaseId])
+  useEffect(() => {
+    queryRef.current = {
+      folderId,
+      includeSubfolders,
+      keyword,
+      sortBy,
+      sortOrder,
+    }
+  }, [folderId, includeSubfolders, keyword, sortBy, sortOrder])
 
   const fetchDocuments = useCallback(
     async (targetPage?: number, targetPageSize?: number) => {
@@ -89,22 +120,32 @@ export function useDocuments(options: UseDocumentsOptions) {
 
       const effectivePage = targetPage ?? pageRef.current
       const effectivePageSize = targetPageSize ?? pageSizeRef.current
+      const query = queryRef.current
+      const trimmedKeyword = query.keyword?.trim()
 
       setLoading(true)
       setError(null)
       try {
         let response
+        const params: ListDocumentsParams = {
+          folder_id: query.folderId,
+          include_subfolders: query.includeSubfolders,
+          keyword: trimmedKeyword || undefined,
+          sort_by: query.sortBy,
+          sort_order: query.sortOrder,
+        }
 
         if (paginationEnabledRef.current) {
           // Server-side pagination
           const offset = (effectivePage - 1) * effectivePageSize
           response = await listDocuments(currentKbId, {
+            ...params,
             limit: effectivePageSize,
             offset,
           })
         } else {
           // Compatibility mode: load documents without explicit pagination
-          response = await listDocuments(currentKbId)
+          response = await listDocuments(currentKbId, params)
         }
 
         setDocuments(response.items)
@@ -123,7 +164,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     },
     // No page/pageSize dependencies — reads from refs instead to avoid
     // recreating on every state change which would trigger the auto-load effect.
-    []
+    [t]
   )
 
   // Page navigation methods
@@ -303,7 +344,16 @@ export function useDocuments(options: UseDocumentsOptions) {
     if (autoLoad && knowledgeBaseId) {
       fetchDocuments(1, pageSizeRef.current)
     }
-  }, [autoLoad, knowledgeBaseId, fetchDocuments])
+  }, [
+    autoLoad,
+    knowledgeBaseId,
+    folderId,
+    includeSubfolders,
+    keyword,
+    sortBy,
+    sortOrder,
+    fetchDocuments,
+  ])
 
   return {
     documents,

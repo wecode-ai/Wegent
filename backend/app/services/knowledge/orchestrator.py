@@ -728,6 +728,10 @@ class KnowledgeOrchestrator:
         *,
         offset: int = 0,
         limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        include_subfolders: bool = False,
+        keyword: str | None = None,
+        sort_by: str = "createdAt",
+        sort_order: str = "desc",
     ) -> KnowledgeDocumentListResponse:
         """
         List documents in a knowledge base.
@@ -764,6 +768,10 @@ class KnowledgeOrchestrator:
             folder_id=folder_id,
             offset=offset,
             limit=limit,
+            include_subfolders=include_subfolders,
+            keyword=keyword,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
         # Batch query user names for created_by field

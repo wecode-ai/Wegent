@@ -1197,6 +1197,10 @@ class KnowledgeService:
         *,
         offset: int = 0,
         limit: int = 50,
+        include_subfolders: bool = False,
+        keyword: str | None = None,
+        sort_by: str = "createdAt",
+        sort_order: str = "desc",
     ) -> tuple[list[KnowledgeDocument], int]:
         """List documents with offset/limit pagination."""
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -1210,11 +1214,49 @@ class KnowledgeService:
         )
 
         if folder_id is not None:
-            query = query.filter(KnowledgeDocument.folder_id == folder_id)
+            if include_subfolders and folder_id > 0:
+                folder_rows = (
+                    db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
+                    .filter(KnowledgeFolder.kind_id == knowledge_base_id)
+                    .all()
+                )
+                children_by_parent: dict[int, list[int]] = {}
+                for child_id, parent_id in folder_rows:
+                    children_by_parent.setdefault(parent_id, []).append(child_id)
+
+                folder_ids: set[int] = set()
+                stack = [folder_id]
+                while stack:
+                    current_id = stack.pop()
+                    if current_id in folder_ids:
+                        continue
+                    folder_ids.add(current_id)
+                    stack.extend(children_by_parent.get(current_id, []))
+
+                folder_ids.add(folder_id)
+                query = query.filter(KnowledgeDocument.folder_id.in_(folder_ids))
+            else:
+                query = query.filter(KnowledgeDocument.folder_id == folder_id)
+
+        if keyword:
+            keyword = keyword.strip()
+            if keyword:
+                query = query.filter(KnowledgeDocument.name.ilike(f"%{keyword}%"))
+
+        sort_columns = {
+            "name": KnowledgeDocument.name,
+            "size": KnowledgeDocument.file_size,
+            "createdAt": KnowledgeDocument.created_at,
+            "updatedAt": KnowledgeDocument.updated_at,
+        }
+        sort_column = sort_columns.get(sort_by, KnowledgeDocument.created_at)
+        ordered_column = (
+            sort_column.asc() if sort_order == "asc" else sort_column.desc()
+        )
 
         total = query.count()
         items = (
-            query.order_by(KnowledgeDocument.created_at.desc())
+            query.order_by(ordered_column, KnowledgeDocument.id.desc())
             .offset(offset)
             .limit(limit)
             .all()
