@@ -77,4 +77,39 @@ describe('localModelConnectionTest', () => {
       })
     )
   })
+
+  test('accepts a full responses endpoint without duplicating the path', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'resp_1' })))
+
+    await expect(
+      testLocalModelConnection(
+        {
+          baseUrl: 'https://models.local/v1/responses',
+          modelId: 'gpt-5',
+          apiKey: '',
+        },
+        { fetcher }
+      )
+    ).resolves.toEqual({ status: 200 })
+
+    expect(fetcher).toHaveBeenCalledWith('https://models.local/v1/responses', expect.any(Object))
+  })
+
+  test('uses a custom request path when configured', async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 'resp_1' })))
+
+    await expect(
+      testLocalModelConnection(
+        {
+          baseUrl: 'https://models.local/api',
+          requestPath: '/respond',
+          modelId: 'gpt-5',
+          apiKey: '',
+        },
+        { fetcher }
+      )
+    ).resolves.toEqual({ status: 200 })
+
+    expect(fetcher).toHaveBeenCalledWith('https://models.local/api/respond', expect.any(Object))
+  })
 })

@@ -1215,6 +1215,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
+        let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
         let mut side_source = side_source_thread(&payload);
@@ -1241,6 +1242,7 @@ impl RuntimeWorkRpcHandler {
             "taskId": local_task_id,
             "workspacePath": workspace_path,
             "runtime": "codex",
+            "runtimeHandle": runtime_handle,
         }))
     }
 
@@ -4792,7 +4794,7 @@ mod tests {
         let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
         handler.store = RuntimeWorkStore::new(index_path.clone());
 
-        handler
+        let response = handler
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.create",
                 "payload": {
@@ -4809,6 +4811,16 @@ mod tests {
             }))
             .await
             .expect("runtime task should be created");
+        assert_eq!(
+            response["runtimeHandle"]["modelSelection"],
+            json!({
+                "modelName": "local-model:mimo",
+                "modelType": "runtime",
+                "options": {
+                    "collaborationMode": "plan"
+                }
+            })
+        );
 
         let link = handler
             .local_task_link("local-task-1")

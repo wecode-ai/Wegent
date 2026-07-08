@@ -205,6 +205,7 @@ async fn envd_health_check() -> StatusCode {
 #[derive(Debug, Clone)]
 pub struct CodexResponsesProxyUpstream {
     pub base_url: String,
+    pub responses_url: Option<String>,
     pub api_key: String,
     pub default_headers: Vec<(String, String)>,
 }
@@ -249,7 +250,9 @@ async fn codex_responses_proxy(
             status: StatusCode::NOT_FOUND,
             detail: "unknown Codex responses proxy token".to_owned(),
         })?;
-    let upstream_url = format!("{}/responses", upstream.base_url.trim_end_matches('/'));
+    let upstream_url = upstream
+        .responses_url
+        .unwrap_or_else(|| format!("{}/responses", upstream.base_url.trim_end_matches('/')));
     log_executor_event(
         "codex responses proxy request started",
         &[
