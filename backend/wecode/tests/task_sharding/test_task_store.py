@@ -141,6 +141,51 @@ def add_legacy_resource(
     return resource
 
 
+def add_migrated_legacy_resource(
+    test_db,
+    *,
+    task_id_value: int,
+    user_id: int,
+    kind: str = "Task",
+    state: int = TaskResource.STATE_ACTIVE,
+    name: str = "migrated-shard",
+    project_id: int = 0,
+    updated_at: datetime | None = None,
+    created_at: datetime | None = None,
+):
+    index_row = add_legacy_resource(
+        test_db,
+        task_id_value=task_id_value,
+        user_id=user_id,
+        kind=kind,
+        state=state,
+        name=f"legacy-index-{task_id_value}",
+        project_id=project_id,
+        updated_at=updated_at,
+        created_at=created_at,
+    )
+    model = task_model_for_user(user_id)
+    shard_row = model(
+        id=task_id_value,
+        user_id=user_id,
+        kind=kind,
+        name=name,
+        namespace="default",
+        json={"kind": kind, "source": "shard"},
+        is_active=state,
+        client_origin="frontend",
+        project_id=project_id,
+        is_group_chat=False,
+    )
+    if updated_at is not None:
+        shard_row.updated_at = updated_at
+    if created_at is not None:
+        shard_row.created_at = created_at
+    test_db.add(shard_row)
+    test_db.flush()
+    return index_row, shard_row
+
+
 def add_resource_member(
     test_db,
     *,
@@ -162,6 +207,162 @@ def add_resource_member(
     test_db.add(member)
     test_db.flush()
     return member
+
+
+def test_get_by_id_reads_migrated_legacy_id_from_owner_shard(test_db):
+    _, shard_row = add_migrated_legacy_resource(
+        test_db,
+        task_id_value=91,
+        user_id=1091,
+    )
+    store = ShardedTaskStore()
+
+    task = store.get_by_id(test_db, task_id=91)
+
+    assert task.id == shard_row.id
+    assert task.name == "migrated-shard"
+
+
+def test_list_by_ids_prefers_migrated_legacy_id_shard_row(test_db):
+    add_migrated_legacy_resource(test_db, task_id_value=92, user_id=1092)
+    store = ShardedTaskStore()
+
+    tasks = store.list_by_ids(test_db, task_ids=[92])
+
+    assert [task.name for task in tasks] == ["migrated-shard"]
+
+
+def test_list_regular_active_tasks_deduplicates_migrated_legacy_rows(test_db):
+    add_migrated_legacy_resource(test_db, task_id_value=93, user_id=1093)
+    store = ShardedTaskStore()
+
+    tasks = store.list_regular_active_tasks(
+        test_db,
+        user_id=1093,
+        order_by_id_desc=True,
+    )
+
+    assert [task.id for task in tasks] == [93]
+    assert tasks[0].name == "migrated-shard"
+
+
+def test_owned_task_ids_deduplicate_migrated_legacy_rows(test_db):
+    add_migrated_legacy_resource(test_db, task_id_value=94, user_id=1094)
+    store = ShardedTaskStore()
+
+    task_ids, total = store.list_owned_task_ids(
+        test_db,
+        user_id=1094,
+        skip=0,
+        limit=10,
+        extra_limit=0,
+    )
+    active_tasks = store.list_active_tasks_for_user(test_db, user_id=1094)
+
+    assert task_ids == [94]
+    assert total == 1
+    assert [task.name for task in active_tasks] == ["migrated-shard"]
+
+
+def test_migrated_legacy_index_row_is_not_source_of_truth(test_db):
+    add_legacy_resource(
+        test_db,
+        task_id_value=98,
+        user_id=1098,
+        state=TaskResource.STATE_ACTIVE,
+        name="stale-active-index",
+    )
+    model = task_model_for_user(1098)
+    shard_row = model(
+        id=98,
+        user_id=1098,
+        kind="Task",
+        name="archived-shard-source",
+        namespace="default",
+        json={"kind": "Task", "source": "shard"},
+        is_active=TaskResource.STATE_ARCHIVED,
+        client_origin="frontend",
+        project_id=0,
+        is_group_chat=False,
+    )
+    test_db.add(shard_row)
+    test_db.flush()
+    store = ShardedTaskStore()
+
+    active_tasks = store.list_regular_active_tasks(test_db, user_id=1098)
+    owned_ids, owned_total = store.list_owned_task_ids(
+        test_db,
+        user_id=1098,
+        skip=0,
+        limit=10,
+        extra_limit=0,
+    )
+    archived_tasks, archived_total = store.list_archived_tasks(test_db, user_id=1098)
+
+    assert active_tasks == []
+    assert owned_ids == []
+    assert owned_total == 0
+    assert [task.name for task in archived_tasks] == ["archived-shard-source"]
+    assert archived_total == 1
+
+
+def test_workspace_lists_deduplicate_migrated_legacy_rows(test_db):
+    add_migrated_legacy_resource(
+        test_db,
+        task_id_value=95,
+        user_id=1095,
+        kind="Workspace",
+    )
+    store = ShardedTaskStore()
+
+    by_user = store.list_active_workspaces_by_user(test_db, user_id=1095)
+    by_ids = store.list_active_workspaces_by_ids(test_db, workspace_ids=[95])
+
+    assert [workspace.name for workspace in by_user] == ["migrated-shard"]
+    assert [workspace.name for workspace in by_ids] == ["migrated-shard"]
+
+
+def test_archived_and_project_lists_deduplicate_migrated_legacy_rows(test_db):
+    updated_at = datetime(2026, 6, 12, 9, 0, 0)
+    add_migrated_legacy_resource(
+        test_db,
+        task_id_value=96,
+        user_id=1096,
+        state=TaskResource.STATE_ARCHIVED,
+        name="archived-shard",
+        updated_at=updated_at,
+    )
+    add_migrated_legacy_resource(
+        test_db,
+        task_id_value=97,
+        user_id=1096,
+        project_id=42,
+        name="project-shard",
+        updated_at=updated_at,
+    )
+    store = ShardedTaskStore()
+
+    archived, archived_total = store.list_archived_tasks(
+        test_db,
+        user_id=1096,
+    )
+    archived_ids = store.list_archived_task_ids(test_db, user_id=1096)
+    project_tasks = store.list_active_project_tasks(
+        test_db,
+        project_id=42,
+        owner_user_id=1096,
+    )
+    project_count = store.count_active_project_tasks(
+        test_db,
+        project_id=42,
+        owner_user_id=1096,
+    )
+
+    assert [task.name for task in archived] == ["archived-shard"]
+    assert archived_total == 1
+    assert archived_ids == [96]
+    assert [task.name for task in project_tasks] == ["project-shard"]
+    assert project_count == 1
 
 
 def test_create_placeholder_task_id_allocates_new_id_without_legacy_row(
@@ -1390,7 +1591,9 @@ def test_list_personal_task_ids_uses_lightweight_candidate_scan(
     row_selects = [
         statement
         for statement in statements
-        if "FROM TASKS" in statement and "COUNT" not in statement
+        if "FROM TASKS" in statement
+        and "COUNT" not in statement
+        and "TASKS.USER_ID" in statement
     ]
     assert row_selects
     assert all("JSON" not in statement for statement in row_selects)

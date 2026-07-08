@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, undefer
 
 from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import SubtaskContext
+from app.models.task import TaskResource
 from app.stores.tasks.sqlalchemy_subtask_store import SqlAlchemySubtaskStore
 from wecode.task_sharding.global_id_allocator import (
     GlobalIdAllocator,
@@ -22,6 +23,7 @@ from wecode.task_sharding.shard import (
     subtask_model_for_subtask_id,
     subtask_model_for_task_id,
     task_model_for_task_id,
+    task_model_for_user,
 )
 from wecode.task_sharding.task_id import (
     is_new_task_id,
@@ -56,7 +58,7 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         result: dict[str, Any] | None = None,
         progress: int = 100,
     ) -> Subtask:
-        if not is_new_task_id(task_id):
+        if not self._task_uses_subtask_shard(db, task_id):
             return super().create_user_subtask(
                 db,
                 user_id=user_id,
@@ -111,7 +113,7 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         message_id: int,
         parent_id: int,
     ) -> Subtask:
-        if not is_new_task_id(task_id):
+        if not self._task_uses_subtask_shard(db, task_id):
             return super().create_assistant_subtask(
                 db,
                 user_id=user_id,
@@ -173,7 +175,7 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         result: dict[str, Any] | None = None,
         progress: int = 100,
     ) -> tuple[Subtask, Subtask]:
-        if not is_new_task_id(task_id):
+        if not self._task_uses_subtask_shard(db, task_id):
             return super().create_user_and_assistant_subtasks(
                 db,
                 user_id=user_id,
@@ -192,12 +194,14 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
                 progress=progress,
             )
 
-        model = subtask_model_for_task_id(task_id)
+        model = self._subtask_model_for_task_lookup(
+            db, task_id=task_id, owner_user_id=None
+        )
         executor_namespace, executor_name, executor_deleted_at = (
             self._latest_assistant_executor(db, task_id=task_id)
         )
         last_integrity_error: IntegrityError | None = None
-        routing_user_id = self._subtask_id_routing_user_id(task_id)
+        routing_user_id = self._subtask_id_routing_user_id(db, task_id)
         for _ in range(MAX_TASK_ID_INSERT_ATTEMPTS):
             user_subtask_id = self._allocate_subtask_id(routing_user_id)
             assistant_subtask_id = self._allocate_subtask_id(routing_user_id)
@@ -276,7 +280,7 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         result: dict[str, Any] | None,
         error_message: str | None,
     ) -> Subtask:
-        if not is_new_task_id(task_id):
+        if not self._task_uses_subtask_shard(db, task_id):
             return super().create_subtask(
                 db,
                 user_id=user_id,
@@ -325,6 +329,12 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         self, db: Session, *, subtask_id: int, owner_user_id: int | None = None
     ) -> Subtask | None:
         if not is_new_task_id(subtask_id):
+            migrated = self._get_migrated_legacy_subtask_by_id(
+                db, subtask_id=subtask_id, owner_user_id=owner_user_id
+            )
+            if migrated is not None:
+                self._attach_contexts(db, [migrated])
+                return migrated
             return super().get_by_id(
                 db,
                 subtask_id=subtask_id,
@@ -342,6 +352,11 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         self, db: Session, *, subtask_id: int, owner_user_id: int | None = None
     ) -> Subtask | None:
         if not is_new_task_id(subtask_id):
+            migrated = self._get_migrated_legacy_subtask_by_id(
+                db, subtask_id=subtask_id, owner_user_id=owner_user_id
+            )
+            if migrated is not None:
+                return migrated
             return super().get_basic_by_id(
                 db,
                 subtask_id=subtask_id,
@@ -419,7 +434,9 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
     def _latest_assistant_executor(
         self, db: Session, *, task_id: int
     ) -> tuple[str, str, bool]:
-        model = subtask_model_for_task_id(task_id)
+        model = self._subtask_model_for_task_lookup(
+            db, task_id=task_id, owner_user_id=None
+        )
         previous = (
             db.query(
                 model.executor_namespace,
@@ -461,9 +478,11 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         user_id: int,
         factory: Callable[[type, int], Subtask],
     ) -> Subtask:
-        model = subtask_model_for_task_id(task_id)
+        model = self._subtask_model_for_task_lookup(
+            db, task_id=task_id, owner_user_id=None
+        )
         last_integrity_error: IntegrityError | None = None
-        routing_user_id = self._subtask_id_routing_user_id(task_id)
+        routing_user_id = self._subtask_id_routing_user_id(db, task_id)
         for _ in range(MAX_TASK_ID_INSERT_ATTEMPTS):
             subtask_id = self._allocate_subtask_id(routing_user_id)
             subtask = factory(model, subtask_id)
@@ -479,8 +498,18 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
             raise last_integrity_error
         raise RuntimeError("Failed to insert subtask")
 
-    def _subtask_id_routing_user_id(self, task_id: int) -> int:
-        return uid_from_id(task_id)
+    def _subtask_id_routing_user_id(self, db: Session, task_id: int) -> int:
+        if is_new_task_id(task_id):
+            return uid_from_id(task_id)
+
+        owner_id = self._legacy_task_owner_user_id(
+            db,
+            task_id=task_id,
+            owner_user_id=None,
+        )
+        if owner_id is None:
+            raise RuntimeError(f"No legacy task owner index for task_id={task_id}")
+        return owner_id
 
     def list_by_task(
         self,
@@ -494,7 +523,10 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         from_latest: bool = False,
         before_message_id: int | None = None,
     ) -> list[Subtask]:
-        if not is_new_task_id(task_id):
+        model = self._subtask_model_for_task_lookup(
+            db, task_id=task_id, owner_user_id=None
+        )
+        if model is Subtask:
             return super().list_by_task(
                 db,
                 task_id=task_id,
@@ -506,7 +538,6 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
                 before_message_id=before_message_id,
             )
 
-        model = subtask_model_for_task_id(task_id)
         base_query = db.query(model.id).filter(model.task_id == task_id)
         if not access_store.is_member(db, task_id=task_id, user_id=user_id):
             base_query = base_query.filter(model.user_id == user_id)
@@ -646,7 +677,12 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
     def list_latest_by_task(
         self, db: Session, *, task_id: int, user_id: int, limit: int = 100
     ) -> list[Subtask]:
-        if not is_new_task_id(task_id):
+        model = self._subtask_model_for_task_lookup(
+            db,
+            task_id=task_id,
+            owner_user_id=user_id,
+        )
+        if model is Subtask:
             return super().list_latest_by_task(
                 db,
                 task_id=task_id,
@@ -654,7 +690,6 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
                 limit=limit,
             )
 
-        model = subtask_model_for_task_id(task_id)
         rows = (
             db.query(model.id)
             .filter(model.task_id == task_id, model.user_id == user_id)
@@ -727,16 +762,22 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
     def get_next_message_id(
         self, db: Session, *, task_id: int, owner_user_id: int | None = None
     ) -> int:
-        if not is_new_task_id(task_id):
+        if is_new_task_id(task_id) and not self._owner_matches_task_id(
+            db, task_id, owner_user_id
+        ):
+            return 1
+        model = self._subtask_model_for_task_lookup(
+            db,
+            task_id=task_id,
+            owner_user_id=owner_user_id,
+        )
+        if model is Subtask:
             return super().get_next_message_id(
                 db,
                 task_id=task_id,
                 owner_user_id=owner_user_id,
             )
-        if not self._owner_matches_task_id(db, task_id, owner_user_id):
-            return 1
 
-        model = subtask_model_for_task_id(task_id)
         max_message_id = (
             db.query(func.max(model.message_id))
             .filter(model.task_id == task_id)
@@ -1101,7 +1142,16 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         order_by: Literal["id", "message_id", "created_at"] = "message_id",
         owner_user_id: int | None = None,
     ) -> list[Subtask]:
-        if not is_new_task_id(task_id):
+        if is_new_task_id(task_id) and not self._owner_matches_task_id(
+            db, task_id, owner_user_id
+        ):
+            return []
+        model = self._subtask_model_for_task_lookup(
+            db,
+            task_id=task_id,
+            owner_user_id=owner_user_id,
+        )
+        if model is Subtask:
             return super().list_by_task_ordered(
                 db,
                 task_id=task_id,
@@ -1111,12 +1161,9 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
                 order_by=order_by,
                 owner_user_id=owner_user_id,
             )
-        if not self._owner_matches_task_id(db, task_id, owner_user_id):
-            return []
         if message_ids is not None and not message_ids:
             return []
 
-        model = subtask_model_for_task_id(task_id)
         query = db.query(model).filter(model.task_id == task_id)
         if message_ids is not None:
             query = query.filter(model.message_id.in_(message_ids))
@@ -1160,16 +1207,22 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
     def list_by_task_unfiltered(
         self, db: Session, *, task_id: int, owner_user_id: int | None = None
     ) -> list[Subtask]:
-        if not is_new_task_id(task_id):
+        if is_new_task_id(task_id) and not self._owner_matches_task_id(
+            db, task_id, owner_user_id
+        ):
+            return []
+        model = self._subtask_model_for_task_lookup(
+            db,
+            task_id=task_id,
+            owner_user_id=owner_user_id,
+        )
+        if model is Subtask:
             return super().list_by_task_unfiltered(
                 db,
                 task_id=task_id,
                 owner_user_id=owner_user_id,
             )
-        if not self._owner_matches_task_id(db, task_id, owner_user_id):
-            return []
 
-        model = subtask_model_for_task_id(task_id)
         return db.query(model).filter(model.task_id == task_id).all()
 
     def list_assistant_by_task(
@@ -1857,6 +1910,73 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
     def _get_shard_subtask_by_id(self, db: Session, subtask_id: int) -> Subtask | None:
         model = subtask_model_for_subtask_id(subtask_id)
         return db.query(model).filter(model.id == subtask_id).first()
+
+    def _get_migrated_legacy_subtask_by_id(
+        self,
+        db: Session,
+        *,
+        subtask_id: int,
+        owner_user_id: int | None = None,
+    ) -> Subtask | None:
+        index_row = db.query(Subtask.task_id).filter(Subtask.id == subtask_id).first()
+        if index_row is None:
+            return None
+
+        model = self._subtask_model_for_task_lookup(
+            db,
+            task_id=int(index_row[0]),
+            owner_user_id=owner_user_id,
+        )
+        if model is Subtask:
+            return None
+        return db.query(model).filter(model.id == subtask_id).first()
+
+    def _subtask_model_for_task_lookup(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int | None,
+    ) -> type:
+        if is_new_task_id(task_id):
+            return subtask_model_for_task_id(task_id)
+
+        owner_id = self._legacy_task_owner_user_id(
+            db,
+            task_id=task_id,
+            owner_user_id=owner_user_id,
+        )
+        if owner_id is None:
+            return Subtask
+
+        task_model = task_model_for_user(owner_id)
+        migrated_task_exists = (
+            db.query(task_model.id).filter(task_model.id == task_id).first() is not None
+        )
+        return subtask_model_for_owner(owner_id) if migrated_task_exists else Subtask
+
+    def _task_uses_subtask_shard(self, db: Session, task_id: int) -> bool:
+        return (
+            self._subtask_model_for_task_lookup(
+                db,
+                task_id=task_id,
+                owner_user_id=None,
+            )
+            is not Subtask
+        )
+
+    def _legacy_task_owner_user_id(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int | None,
+    ) -> int | None:
+        query = db.query(TaskResource.user_id).filter(TaskResource.id == task_id)
+        if owner_user_id is not None:
+            query = query.filter(TaskResource.user_id == owner_user_id)
+        row = query.first()
+        return int(row[0]) if row is not None else None
 
     def _scan_subtask_tables(
         self,

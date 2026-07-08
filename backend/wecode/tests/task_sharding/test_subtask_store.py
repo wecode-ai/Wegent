@@ -8,6 +8,7 @@ from app.stores.tasks.sqlalchemy_subtask_store import SqlAlchemySubtaskStore
 from shared.models.db.enums import ContextType
 from wecode.task_sharding.shard import (
     SHARD_COUNT,
+    subtask_model_for_owner,
     subtask_model_for_task_id,
     task_model_for_user,
 )
@@ -180,6 +181,260 @@ def legacy_subtask(
         created_at=now + timedelta(seconds=message_id),
         updated_at=updated_at,
     )
+
+
+def add_migrated_legacy_task_and_subtask(
+    test_db,
+    *,
+    task_id_value: int,
+    subtask_id: int,
+    owner_user_id: int,
+):
+    task_index = task_model_for_user(owner_user_id)(
+        id=task_id_value,
+        user_id=owner_user_id,
+        kind="Task",
+        name="migrated-task",
+        namespace="default",
+        json={"kind": "Task"},
+        is_active=1,
+        client_origin="frontend",
+        project_id=0,
+        is_group_chat=False,
+    )
+    from app.models.task import TaskResource
+
+    legacy_task_index = TaskResource(
+        id=task_id_value,
+        user_id=owner_user_id,
+        kind="Task",
+        name="legacy-index-task",
+        namespace="default",
+        json={"kind": "Task"},
+        is_active=1,
+        client_origin="frontend",
+        project_id=0,
+        is_group_chat=False,
+    )
+    legacy_index = legacy_subtask(
+        subtask_id=subtask_id,
+        task_id_value=task_id_value,
+        user_id=owner_user_id,
+        message_id=1,
+        prompt="legacy-index-prompt",
+    )
+    shard_model = subtask_model_for_owner(owner_user_id)
+    now = datetime.now()
+    shard_row = shard_model(
+        id=subtask_id,
+        user_id=owner_user_id,
+        task_id=task_id_value,
+        team_id=25,
+        title="migrated-message",
+        bot_ids=[3],
+        role=SubtaskRole.USER,
+        executor_namespace="",
+        executor_name="",
+        prompt="migrated-shard-prompt",
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+        message_id=1,
+        parent_id=0,
+        error_message="",
+        result={"source": "shard"},
+        completed_at=now,
+        created_at=now,
+    )
+    test_db.add_all([legacy_task_index, task_index, legacy_index, shard_row])
+    test_db.flush()
+    return shard_row
+
+
+def add_migrated_legacy_task(test_db, *, task_id_value: int, owner_user_id: int):
+    from app.models.task import TaskResource
+
+    legacy_task_index = TaskResource(
+        id=task_id_value,
+        user_id=owner_user_id,
+        kind="Task",
+        name="legacy-index-task",
+        namespace="default",
+        json={"kind": "Task"},
+        is_active=1,
+        client_origin="frontend",
+        project_id=0,
+        is_group_chat=False,
+    )
+    shard_task = task_model_for_user(owner_user_id)(
+        id=task_id_value,
+        user_id=owner_user_id,
+        kind="Task",
+        name="migrated-task",
+        namespace="default",
+        json={"kind": "Task"},
+        is_active=1,
+        client_origin="frontend",
+        project_id=0,
+        is_group_chat=False,
+    )
+    test_db.add_all([legacy_task_index, shard_task])
+    test_db.flush()
+    return shard_task
+
+
+def test_get_by_id_reads_migrated_legacy_subtask_from_owner_shard(test_db):
+    shard_row = add_migrated_legacy_task_and_subtask(
+        test_db,
+        task_id_value=701,
+        subtask_id=1701,
+        owner_user_id=71,
+    )
+    store = ShardedSubtaskStore()
+
+    subtask = store.get_by_id(test_db, subtask_id=1701)
+
+    assert subtask.id == shard_row.id
+    assert subtask.prompt == "migrated-shard-prompt"
+
+
+def test_list_by_task_reads_migrated_legacy_task_subtasks_from_owner_shard(test_db):
+    add_migrated_legacy_task_and_subtask(
+        test_db,
+        task_id_value=702,
+        subtask_id=1702,
+        owner_user_id=72,
+    )
+    store = ShardedSubtaskStore()
+
+    subtasks = store.list_by_task(
+        test_db,
+        task_id=702,
+        user_id=72,
+        access_store=StaticAccessStore(is_member=True),
+    )
+
+    assert [subtask.prompt for subtask in subtasks] == ["migrated-shard-prompt"]
+
+
+def test_history_reads_migrated_legacy_task_subtasks_from_owner_shard(test_db):
+    add_migrated_legacy_task_and_subtask(
+        test_db,
+        task_id_value=706,
+        subtask_id=1706,
+        owner_user_id=76,
+    )
+    shard_model = subtask_model_for_owner(76)
+    now = datetime.now()
+    new_follow_up = shard_model(
+        id=encode_user_scoped_id(76, SEQUENCE_BASE + 1707),
+        user_id=76,
+        task_id=706,
+        team_id=25,
+        title="new-follow-up",
+        bot_ids=[3],
+        role=SubtaskRole.USER,
+        executor_namespace="",
+        executor_name="",
+        prompt="new-follow-up",
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+        message_id=2,
+        parent_id=1,
+        error_message="",
+        result={"source": "follow-up"},
+        completed_at=now,
+        created_at=now + timedelta(seconds=2),
+    )
+    test_db.add(new_follow_up)
+    test_db.flush()
+    store = ShardedSubtaskStore()
+
+    ordered = store.list_by_task_ordered(
+        test_db,
+        task_id=706,
+        owner_user_id=76,
+    )
+    unfiltered = store.list_by_task_unfiltered(
+        test_db,
+        task_id=706,
+        owner_user_id=76,
+    )
+
+    assert [subtask.prompt for subtask in ordered] == [
+        "migrated-shard-prompt",
+        "new-follow-up",
+    ]
+    assert {subtask.prompt for subtask in unfiltered} == {
+        "migrated-shard-prompt",
+        "new-follow-up",
+    }
+    assert store.list_by_task_ordered(test_db, task_id=706, owner_user_id=77) == []
+
+
+def test_create_user_subtask_for_migrated_legacy_task_writes_owner_shard(test_db):
+    add_migrated_legacy_task(test_db, task_id_value=703, owner_user_id=73)
+    subtask_id = encode_user_scoped_id(73, SEQUENCE_BASE + 703)
+    store = ShardedSubtaskStore(
+        global_id_allocator=RecordingGlobalIdAllocator([subtask_id])
+    )
+
+    subtask = store.create_user_subtask(
+        test_db,
+        user_id=73,
+        task_id=703,
+        team_id=25,
+        title="User message",
+        bot_ids=[3],
+        prompt="migrated task prompt",
+        message_id=1,
+        parent_id=0,
+    )
+    test_db.flush()
+
+    shard_model = subtask_model_for_owner(73)
+    assert subtask.id == subtask_id
+    assert test_db.query(shard_model).filter(shard_model.id == subtask_id).count() == 1
+    assert count_legacy_subtasks(test_db) == 0
+
+
+def test_create_pair_for_migrated_legacy_task_writes_owner_shard(test_db):
+    add_migrated_legacy_task(test_db, task_id_value=704, owner_user_id=74)
+    user_subtask_id = encode_user_scoped_id(74, SEQUENCE_BASE + 704)
+    assistant_subtask_id = encode_user_scoped_id(74, SEQUENCE_BASE + 705)
+    store = ShardedSubtaskStore(
+        global_id_allocator=RecordingGlobalIdAllocator(
+            [user_subtask_id, assistant_subtask_id]
+        )
+    )
+
+    user_subtask, assistant_subtask = store.create_user_and_assistant_subtasks(
+        test_db,
+        user_id=74,
+        task_id=704,
+        team_id=25,
+        title="User message",
+        assistant_title="Assistant message",
+        bot_ids=[3],
+        prompt="pair prompt",
+        user_message_id=1,
+        user_parent_id=0,
+        assistant_message_id=2,
+        assistant_parent_id=1,
+    )
+    test_db.flush()
+
+    shard_model = subtask_model_for_owner(74)
+    assert {user_subtask.id, assistant_subtask.id} == {
+        user_subtask_id,
+        assistant_subtask_id,
+    }
+    assert (
+        test_db.query(shard_model)
+        .filter(shard_model.id.in_([user_subtask_id, assistant_subtask_id]))
+        .count()
+        == 2
+    )
+    assert count_legacy_subtasks(test_db) == 0
 
 
 def test_create_user_subtask_writes_new_task_subtask_to_shard_only(
@@ -834,6 +1089,50 @@ def test_get_next_message_id_reads_new_shard_and_owner_guard(test_db):
         )
         == 1
     )
+
+
+def test_get_next_message_id_reads_migrated_legacy_task_owner_shard(test_db):
+    migrated = add_migrated_legacy_task_and_subtask(
+        test_db,
+        task_id_value=707,
+        subtask_id=1707,
+        owner_user_id=77,
+    )
+    shard_model = subtask_model_for_owner(77)
+    latest = shard_model(
+        id=encode_user_scoped_id(77, SEQUENCE_BASE + 2707),
+        user_id=77,
+        task_id=707,
+        team_id=25,
+        title="latest-follow-up",
+        bot_ids=[3],
+        role=SubtaskRole.ASSISTANT,
+        executor_namespace="",
+        executor_name="",
+        prompt="latest-follow-up",
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+        message_id=8,
+        parent_id=7,
+        error_message="",
+        result={"source": "follow-up"},
+        completed_at=datetime.now(),
+        created_at=migrated.created_at + timedelta(seconds=8),
+    )
+    test_db.add(latest)
+    test_db.flush()
+    store = ShardedSubtaskStore()
+
+    assert store.get_next_message_id(test_db, task_id=707, owner_user_id=77) == 9
+    assert [
+        subtask.message_id
+        for subtask in store.list_latest_by_task(
+            test_db,
+            task_id=707,
+            user_id=77,
+            limit=2,
+        )
+    ] == [1, 8]
 
 
 def test_list_by_task_ordered_filters_new_shard_rows(test_db):
