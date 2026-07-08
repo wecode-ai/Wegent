@@ -253,6 +253,27 @@ function collectFolderAndAncestorIds(folders: KnowledgeFolder[], targetId: numbe
   return new Set(findPath(folders, []) ?? [])
 }
 
+export function folderTreeContainsId(folders: KnowledgeFolder[], targetId: number | undefined) {
+  if (targetId === undefined) return true
+  return collectFolderAndAncestorIds(folders, targetId).size > 0
+}
+
+export function deletedFolderAffectsActiveFolder(
+  folders: KnowledgeFolder[],
+  deletedFolderId: number,
+  activeFolderId: number | undefined
+) {
+  if (activeFolderId === undefined) return false
+  return collectFolderAndDescendantIds(folders, deletedFolderId).has(activeFolderId)
+}
+
+export function shouldDisableDocumentBatchActions(options: {
+  selectedDocumentCount: number
+  selectedFolderCount: number
+}) {
+  return options.selectedDocumentCount === 0 || options.selectedFolderCount > 0
+}
+
 function findFolderName(folders: KnowledgeFolder[], targetId: number | undefined): string | null {
   if (targetId === undefined) return null
   for (const folder of folders) {
@@ -276,7 +297,7 @@ export function DocumentList({
   onGroupClick,
   initialDocPath,
   isOrganization = false,
-  paginationEnabled = false,
+  paginationEnabled = true,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const { user } = useUser()
@@ -482,6 +503,14 @@ export function DocumentList({
     setSelectedFolderIds(new Set())
   }, [activeFolderId, searchQuery, sortField, sortOrder])
 
+  useEffect(() => {
+    if (!folderTreeContainsId(folders, activeFolderId)) {
+      setActiveFolderId(undefined)
+      setSelectedIds(new Set())
+      setSelectedFolderIds(new Set())
+    }
+  }, [folders, activeFolderId])
+
   const canManageAnyDocuments = canUpload || canManageAllDocuments
 
   const canManageDocument = (document: KnowledgeDocument) =>
@@ -489,6 +518,12 @@ export function DocumentList({
 
   const canSelectDocument = (document: KnowledgeDocument) =>
     Boolean(onSelectionChange) || (canManageAllDocuments && canManageDocument(document))
+
+  const folderSelectionBlocksDocumentBatchActions = selectedFolderIds.size > 0
+  const documentBatchActionsDisabled = shouldDisableDocumentBatchActions({
+    selectedDocumentCount: selectedIds.size,
+    selectedFolderCount: selectedFolderIds.size,
+  })
 
   const tableGridTemplate = getDocumentTableGridTemplate({
     showSelectionColumn: canManageAllDocuments,
@@ -504,6 +539,32 @@ export function DocumentList({
       setSortOrder('desc')
     }
   }
+
+  const handleOpenUpload = useCallback(() => {
+    setSelectedUploadFolderId(activeFolderId ?? 0)
+    setShowUpload(true)
+  }, [activeFolderId])
+
+  const clearBatchSelection = useCallback(() => {
+    setSelectedIds(new Set())
+    setSelectedFolderIds(new Set())
+  }, [])
+
+  const handleGoToPage = useCallback(
+    (targetPage: number) => {
+      clearBatchSelection()
+      goToPage(targetPage)
+    },
+    [clearBatchSelection, goToPage]
+  )
+
+  const handlePageSizeChange = useCallback(
+    (targetPageSize: number) => {
+      clearBatchSelection()
+      changePageSize(targetPageSize)
+    },
+    [changePageSize, clearBatchSelection]
+  )
 
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return null
@@ -781,6 +842,11 @@ export function DocumentList({
 
   const handleDeleteFolderConfirm = async () => {
     if (!deletingFolder) return
+    if (deletedFolderAffectsActiveFolder(folders, deletingFolder.id, activeFolderId)) {
+      setActiveFolderId(undefined)
+      setSelectedIds(new Set())
+      setSelectedFolderIds(new Set())
+    }
     await deleteFolder(deletingFolder.id)
     setDeletingFolder(null)
     refresh()
@@ -1108,7 +1174,7 @@ export function DocumentList({
 
         {/* Upload button */}
         {canUpload && (
-          <Button variant="primary" size="sm" onClick={() => setShowUpload(true)}>
+          <Button variant="primary" size="sm" onClick={handleOpenUpload}>
             <Upload className="w-4 h-4 mr-1" />
             {t('document.document.upload')}
           </Button>
@@ -1145,19 +1211,35 @@ export function DocumentList({
                     : t('document.document.batch.selected', { count: selectedIds.size })}
                 </span>
                 <div className="flex-1" />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowBatchMove(true)}
-                  disabled={
-                    selectedIds.size === 0 || batchLoading || isBatchMoving || isTransferring
-                  }
-                  data-testid="batch-move-button"
-                  aria-label={t('document.document.batch.move')}
-                >
-                  <FolderInput className="w-4 h-4 mr-1" />
-                  {compact ? '' : t('document.document.batch.move')}
-                </Button>
+                <TooltipProvider>
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowBatchMove(true)}
+                          disabled={
+                            documentBatchActionsDisabled ||
+                            batchLoading ||
+                            isBatchMoving ||
+                            isTransferring
+                          }
+                          data-testid="batch-move-button"
+                          aria-label={t('document.document.batch.move')}
+                        >
+                          <FolderInput className="w-4 h-4 mr-1" />
+                          {compact ? '' : t('document.document.batch.move')}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    {folderSelectionBlocksDocumentBatchActions && (
+                      <TooltipContent>
+                        <p>{t('document.document.batch.folderScopeTransferOnly')}</p>
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
                 <Button
                   variant="outline"
                   size="sm"
@@ -1169,15 +1251,28 @@ export function DocumentList({
                   <ArrowRightLeft className="w-4 h-4 mr-1" />
                   {compact ? '' : t('document.document.batch.transfer')}
                 </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleBatchDelete}
-                  disabled={selectedIds.size === 0 || batchLoading}
-                >
-                  <Trash2 className="w-4 h-4 mr-1" />
-                  {compact ? '' : t('document.document.batch.delete')}
-                </Button>
+                <TooltipProvider>
+                  <Tooltip delayDuration={200}>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={handleBatchDelete}
+                          disabled={documentBatchActionsDisabled || batchLoading}
+                        >
+                          <Trash2 className="w-4 h-4 mr-1" />
+                          {compact ? '' : t('document.document.batch.delete')}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    {folderSelectionBlocksDocumentBatchActions && (
+                      <TooltipContent>
+                        <p>{t('document.document.batch.folderScopeTransferOnly')}</p>
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
               </div>
             )}
 
@@ -1240,8 +1335,8 @@ export function DocumentList({
                   totalPages={totalPages}
                   totalCount={totalCount}
                   pageSize={pageSize}
-                  onGoToPage={goToPage}
-                  onPageSizeChange={changePageSize}
+                  onGoToPage={handleGoToPage}
+                  onPageSizeChange={handlePageSizeChange}
                   disabled={loading}
                 />
               )}
@@ -1347,6 +1442,7 @@ export function DocumentList({
                   onSelect={canManageAllDocuments ? handleSelectDoc : undefined}
                   ragConfigured={ragConfigured}
                   nameColumnWidth={nameColumnWidth ?? undefined}
+                  showActionsColumn={canManageAnyDocuments}
                   onCreateFolder={canUpload ? handleCreateFolder : undefined}
                   onRenameFolder={canUpload ? handleRenameFolder : undefined}
                   onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
@@ -1365,8 +1461,8 @@ export function DocumentList({
                       totalPages={totalPages}
                       totalCount={totalCount}
                       pageSize={pageSize}
-                      onGoToPage={goToPage}
-                      onPageSizeChange={changePageSize}
+                      onGoToPage={handleGoToPage}
+                      onPageSizeChange={handlePageSizeChange}
                       disabled={loading}
                     />
                   </div>
@@ -1427,7 +1523,6 @@ export function DocumentList({
         onTableAdd={handleTableAdd}
         onWebAdd={handleWebAdd}
         kbType={knowledgeBase.kb_type}
-        currentDocumentCount={documents.length}
         folderId={selectedUploadFolderId}
         folderOptions={folderOptions}
         onFolderChange={setSelectedUploadFolderId}

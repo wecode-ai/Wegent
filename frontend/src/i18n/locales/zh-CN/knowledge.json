@@ -347,6 +347,7 @@
         "delete": "批量删除",
         "move": "移动",
         "transfer": "转移到知识库",
+        "folderScopeTransferOnly": "目录选择仅支持转移到知识库；移动或删除请只选择文档。",
         "transferTitle": "转移到其他知识库",
         "transferHint": "将 {{docCount}} 个文档和 {{folderCount}} 个文件夹转移到允许的目标知识库，文件夹结构将被保留。",
         "selectTargetKb": "选择目标知识库",

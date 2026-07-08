@@ -347,6 +347,7 @@
         "delete": "Delete",
         "move": "Move",
         "transfer": "Transfer to KB",
+        "folderScopeTransferOnly": "Folder selections can only be transferred to another knowledge base. Select documents only to move or delete.",
         "transferTitle": "Transfer to Knowledge Base",
         "transferHint": "Transfer {{docCount}} document(s) and {{folderCount}} folder(s) to an allowed target knowledge base. The folder structure will be preserved.",
         "selectTargetKb": "Select target knowledge base",

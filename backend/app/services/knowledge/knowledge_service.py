@@ -1214,6 +1214,18 @@ class KnowledgeService:
         )
 
         if folder_id is not None:
+            if folder_id > 0:
+                folder = (
+                    db.query(KnowledgeFolder)
+                    .filter(
+                        KnowledgeFolder.id == folder_id,
+                        KnowledgeFolder.kind_id == knowledge_base_id,
+                    )
+                    .first()
+                )
+                if folder is None:
+                    raise ValueError("Folder not found in this knowledge base")
+
             if include_subfolders and folder_id > 0:
                 folder_rows = (
                     db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)

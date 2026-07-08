@@ -10,6 +10,11 @@ import {
   getDocumentTableGridTemplate,
 } from '@/features/knowledge/document/components/DocumentItem'
 import { FolderTree } from '@/features/knowledge/document/components/FolderTree'
+import {
+  deletedFolderAffectsActiveFolder,
+  folderTreeContainsId,
+  shouldDisableDocumentBatchActions,
+} from '@/features/knowledge/document/components/DocumentList'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -119,5 +124,70 @@ describe('DocumentItem table grid', () => {
 
     const row = screen.getByText('doc.txt').closest('.grid')
     expect(row).toHaveStyle({ gridTemplateColumns: template })
+  })
+
+  it('does not reserve the action column in readonly table mode', () => {
+    const template = getDocumentTableGridTemplate({
+      showSelectionColumn: false,
+      showActionsColumn: false,
+    })
+
+    render(
+      <FolderTree
+        folders={[]}
+        documents={[createDocument()]}
+        compact={false}
+        onEdit={jest.fn()}
+        onDelete={jest.fn()}
+        onMove={jest.fn()}
+        canManage={() => false}
+        showActionsColumn={false}
+      />
+    )
+
+    const row = screen.getByText('doc.txt').closest('.grid')
+    expect(row).toHaveStyle({ gridTemplateColumns: template })
+  })
+})
+
+describe('DocumentList folder navigation guard helpers', () => {
+  const folderTree = [
+    createFolder({
+      id: 1,
+      children: [
+        createFolder({
+          id: 2,
+          parent_id: 1,
+          children: [],
+        }),
+      ],
+    }),
+  ]
+
+  it('detects deleted active folders and deleted ancestors', () => {
+    expect(deletedFolderAffectsActiveFolder(folderTree, 2, 2)).toBe(true)
+    expect(deletedFolderAffectsActiveFolder(folderTree, 1, 2)).toBe(true)
+    expect(deletedFolderAffectsActiveFolder(folderTree, 2, 1)).toBe(false)
+  })
+
+  it('detects stale active folders after folder tree refresh', () => {
+    expect(folderTreeContainsId(folderTree, 2)).toBe(true)
+    expect(folderTreeContainsId(folderTree, 99)).toBe(false)
+    expect(folderTreeContainsId(folderTree, undefined)).toBe(true)
+  })
+
+  it('disables document batch actions whenever folder scope is selected', () => {
+    expect(
+      shouldDisableDocumentBatchActions({
+        selectedDocumentCount: 1,
+        selectedFolderCount: 1,
+      })
+    ).toBe(true)
+    expect(
+      shouldDisableDocumentBatchActions({
+        selectedDocumentCount: 1,
+        selectedFolderCount: 0,
+      })
+    ).toBe(false)
   })
 })

@@ -55,6 +55,8 @@ interface DocumentItemProps {
   ragConfigured?: boolean
   /** Width of the name column in pixels (for table mode column resize) */
   nameColumnWidth?: number
+  /** Whether to reserve the table action column */
+  showActionsColumn?: boolean
   /** Indentation for nested documents (in pixels, applied to name column only) */
   indent?: number
 }
@@ -88,6 +90,7 @@ export function DocumentItem({
   isReindexing = false,
   ragConfigured = true,
   nameColumnWidth,
+  showActionsColumn: showActionsColumnProp,
   indent = 0,
 }: DocumentItemProps) {
   const { t } = useTranslation()
@@ -211,7 +214,8 @@ export function DocumentItem({
   }
 
   const showSelectionColumn = Boolean(onSelect)
-  const showActionsColumn = Boolean(onMove || onEdit || onDelete || onRefresh || onReindex)
+  const showActionsColumn =
+    showActionsColumnProp ?? Boolean(onMove || onEdit || onDelete || onRefresh || onReindex)
   const tableGridTemplate = getDocumentTableGridTemplate({
     showSelectionColumn,
     showActionsColumn,

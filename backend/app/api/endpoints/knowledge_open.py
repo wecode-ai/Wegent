@@ -199,14 +199,6 @@ def list_documents_open(
     """
     current_user = auth_context.user
     try:
-        if folder_id and folder_id > 0:
-            folder = KnowledgeFolderService.get_folder(
-                db=db,
-                folder_id=folder_id,
-                user_id=current_user.id,
-            )
-            if folder.kind_id != knowledge_base_id:
-                raise ValueError("Folder not found in this knowledge base")
         return knowledge_orchestrator.list_documents(
             db=db,
             user=current_user,

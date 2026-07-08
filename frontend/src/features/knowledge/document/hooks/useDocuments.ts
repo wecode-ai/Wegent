@@ -51,7 +51,7 @@ export function useDocuments(options: UseDocumentsOptions) {
   const {
     knowledgeBaseId,
     autoLoad = true,
-    paginationEnabled = false,
+    paginationEnabled = true,
     folderId,
     includeSubfolders = false,
     keyword,
@@ -77,6 +77,7 @@ export function useDocuments(options: UseDocumentsOptions) {
   const pageSizeRef = useRef(pageSize)
   const paginationEnabledRef = useRef(paginationEnabled)
   const knowledgeBaseIdRef = useRef(knowledgeBaseId)
+  const requestSeqRef = useRef(0)
   const queryRef = useRef({
     folderId,
     includeSubfolders,
@@ -110,6 +111,8 @@ export function useDocuments(options: UseDocumentsOptions) {
 
   const fetchDocuments = useCallback(
     async (targetPage?: number, targetPageSize?: number) => {
+      const requestSeq = requestSeqRef.current + 1
+      requestSeqRef.current = requestSeq
       const currentKbId = knowledgeBaseIdRef.current
       if (!currentKbId) {
         setDocuments([])
@@ -148,6 +151,10 @@ export function useDocuments(options: UseDocumentsOptions) {
           response = await listDocuments(currentKbId, params)
         }
 
+        if (requestSeq !== requestSeqRef.current) {
+          return
+        }
+
         setDocuments(response.items)
         setTotalCount(response.total)
         if (targetPage !== undefined) {
@@ -157,9 +164,14 @@ export function useDocuments(options: UseDocumentsOptions) {
           setPageSize(targetPageSize)
         }
       } catch (err) {
+        if (requestSeq !== requestSeqRef.current) {
+          return
+        }
         setError(err instanceof Error ? err.message : t('document.document.fetchFailed'))
       } finally {
-        setLoading(false)
+        if (requestSeq === requestSeqRef.current) {
+          setLoading(false)
+        }
       }
     },
     // No page/pageSize dependencies — reads from refs instead to avoid

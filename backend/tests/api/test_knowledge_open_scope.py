@@ -282,6 +282,26 @@ def test_open_list_documents_supports_subfolders_keyword_sort_and_folder_counts(
     assert child_node["total_document_count"] == 1
 
 
+def test_rest_list_documents_rejects_folder_from_other_knowledge_base(
+    test_client: TestClient,
+    test_db: Session,
+    test_user,
+    test_token: str,
+) -> None:
+    source_kb_id = _create_kb(test_db, test_user.id, "rest-source-kb")
+    other_kb_id = _create_kb(test_db, test_user.id, "rest-other-kb")
+    other_folder = _create_folder(test_db, other_kb_id, test_user.id, "other-folder")
+
+    response = test_client.get(
+        f"/api/knowledge-bases/{source_kb_id}/documents",
+        headers={"Authorization": f"Bearer {test_token}"},
+        params={"folder_id": other_folder.id},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Folder not found in this knowledge base"
+
+
 def test_open_delete_document_removes_document_and_schedules_summary_update(
     test_client: TestClient,
     test_db: Session,

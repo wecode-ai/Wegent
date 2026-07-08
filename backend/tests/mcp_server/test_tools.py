@@ -178,6 +178,37 @@ class TestKnowledgeTool:
         )
         assert result["items"] == [{"id": 9}]
 
+    def test_list_documents_returns_error_for_invalid_folder_scope(self):
+        """list_documents should expose invalid folder scope errors."""
+        module = get_knowledge_module()
+        token_info = TaskTokenInfo(
+            task_id=1, subtask_id=2, user_id=3, user_name="alice"
+        )
+        mock_session = MagicMock()
+        user = SimpleNamespace(id=3)
+
+        with (
+            patch.object(module, "SessionLocal", return_value=mock_session),
+            patch.object(module, "_get_user_from_token", return_value=user),
+            patch.object(
+                module.knowledge_orchestrator,
+                "list_documents",
+                side_effect=ValueError("Folder not found in this knowledge base"),
+            ),
+        ):
+            result = module.list_documents(
+                token_info=token_info,
+                knowledge_base_id=7,
+                folder_id=999,
+            )
+
+        assert result == {
+            "error": "Folder not found in this knowledge base",
+            "total": 0,
+            "items": [],
+        }
+        mock_session.close.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_search_knowledge_base_resolves_folder_scope(self):
         """search_knowledge_base should resolve folder scope without breaking document_ids."""

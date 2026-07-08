@@ -60,6 +60,7 @@ interface FolderTreeProps {
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
   nameColumnWidth?: number
+  showActionsColumn?: boolean
   /** Folder CRUD handlers */
   onCreateFolder?: (parentId: number) => void
   onRenameFolder?: (folderId: number, currentName: string) => void
@@ -327,6 +328,7 @@ interface FolderTreeNodeProps {
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
   nameColumnWidth?: number
+  showActionsColumn?: boolean
   // Folder selection props
   canSelectFolders?: boolean
   selectedFolderIds?: Set<number>
@@ -359,6 +361,7 @@ function FolderTreeNode({
   onSelect,
   ragConfigured,
   nameColumnWidth,
+  showActionsColumn,
   canSelectFolders,
   selectedFolderIds,
   onSelectFolder,
@@ -399,6 +402,7 @@ function FolderTreeNode({
             onSelect={onSelect}
             compact={true}
             ragConfigured={ragConfigured}
+            showActionsColumn={showActionsColumn}
           />
         </div>
       )
@@ -425,6 +429,7 @@ function FolderTreeNode({
         compact={false}
         ragConfigured={ragConfigured}
         nameColumnWidth={nameColumnWidth}
+        showActionsColumn={showActionsColumn}
       />
     )
   }
@@ -514,6 +519,7 @@ export function FolderTree({
   onSelect,
   ragConfigured,
   nameColumnWidth,
+  showActionsColumn,
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
@@ -595,6 +601,7 @@ export function FolderTree({
             selected={id => selectedIds?.has(id) ?? false}
             onSelect={onSelect}
             ragConfigured={ragConfigured}
+            showActionsColumn={showActionsColumn}
             canSelectFolders={canSelectFolders}
             selectedFolderIds={selectedFolderIds}
             onSelectFolder={onSelectFolder}
@@ -633,6 +640,7 @@ export function FolderTree({
       onSelect={onSelect}
       ragConfigured={ragConfigured}
       nameColumnWidth={nameColumnWidth}
+      showActionsColumn={showActionsColumn}
       canSelectFolders={canSelectFolders}
       selectedFolderIds={selectedFolderIds}
       onSelectFolder={onSelectFolder}
