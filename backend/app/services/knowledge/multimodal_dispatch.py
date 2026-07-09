@@ -105,6 +105,14 @@ class MultimodalDispatchContext:
     # media staging config forwarded to the converter; None = no staging
     # provider configured (image still works via inline base64).
     media_staging_config: Dict[str, Any] = field(default_factory=dict)
+    # video only: backend internal endpoint path the converter calls to resolve
+    # a fresh short-lived download URL at execution time. None in the open-source
+    # default build; internal deployments inject the video source resolver path.
+    video_download_url_path: Optional[str] = None
+    # video only: staging proxy upload/delete paths. None in the open-source
+    # default build; internal deployments inject GCS proxy paths.
+    gcs_upload_path: Optional[str] = None
+    gcs_delete_path: Optional[str] = None
 
 
 def validate_multimodal_dispatch(
@@ -270,6 +278,11 @@ def build_multimodal_conversion_kwargs(
         # Media staging config forwarded to the converter's pluggable provider.
         # Empty in the default build (image still works via inline base64).
         "media_staging_config": dispatch_ctx.media_staging_config,
+        # video-only: download URL resolver path + staging proxy paths.
+        # None in the default build; internal deployments inject these.
+        "video_download_url_path": dispatch_ctx.video_download_url_path,
+        "gcs_upload_path": dispatch_ctx.gcs_upload_path,
+        "gcs_delete_path": dispatch_ctx.gcs_delete_path,
         "request_id": f"multimodal-{document.id}",
         # Resolved effective prompt; None ⇒ converter uses its built-in default.
         "prompt_override": prompt_override,

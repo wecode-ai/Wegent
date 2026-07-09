@@ -759,15 +759,20 @@ async def reindex_document(
     and embedding model. Only works for documents in knowledge bases with
     RAG configured.
 
-    When ``payload.multimodal_analysis_prompt`` is provided it is persisted into
-    the document's ``source_config`` before re-dispatch, driving the
-    "modify prompt & re-analyze" flow for multimodal documents.
+    An optional body may carry ``multimodal_analysis_prompt``: when present it
+    is written into the document's ``source_config`` (overriding the KB default)
+    before re-dispatch, enabling the "modify prompt & re-analyze" flow to reuse
+    this endpoint. A blank value clears the document override (revert to the
+    KB default). Absent body / field = leave the stored prompt unchanged.
 
     Returns:
         Success message indicating reindex has started
     """
     try:
-        # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
+        # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic).
+        # The optional multimodal prompt override is forwarded to the orchestrator, which persists
+        # it into the document's source_config AFTER the access check — so an unauthorized caller
+        # cannot poison the stored prompt. None = leave unchanged; "" = clear (revert to KB default).
         result = knowledge_orchestrator.reindex_document(
             db=db,
             user=current_user,

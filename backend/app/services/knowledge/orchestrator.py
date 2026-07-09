@@ -1630,6 +1630,17 @@ class KnowledgeOrchestrator:
 
         # Schedule re-indexing via Celery if enabled
         if trigger_reindex and kb and has_access:
+            # Multimodal re-index gate: resolve dispatch preconditions (model/
+            # api_key, and for video the fid/download URL) before re-dispatch,
+            # so a content update on a multimodal document re-enters the
+            # multimodal pipeline. No-op for non-multimodal files.
+            from app.services.knowledge.multimodal_pipeline import (
+                resolve_dispatch_for_document_or_none,
+            )
+
+            multimodal_dispatch_ctx = resolve_dispatch_for_document_or_none(
+                db, kb, document, settings
+            )
             self._schedule_indexing_celery(
                 db=db,
                 knowledge_base=kb,
@@ -1638,6 +1649,7 @@ class KnowledgeOrchestrator:
                 trigger_summary=False,  # Don't re-generate summary on update
                 allow_if_success=True,
                 replace_active=True,
+                multimodal_dispatch_ctx=multimodal_dispatch_ctx,
             )
 
         return {
@@ -1988,6 +2000,13 @@ class KnowledgeOrchestrator:
         user: User,
         document_id: int,
         trigger_summary: bool = False,
+        # Optional multimodal prompt override for the "modify prompt & re-analyze"
+        # flow. Apply semantics (see DocumentReindexRequest): a non-blank string
+        # persists a per-document override; a blank string clears it (revert to
+        # KB default); None = leave the stored prompt unchanged. The write happens
+        # AFTER the access check below so an unauthorized caller cannot poison
+        # the stored prompt (the prompt is only persisted once management access
+        # is confirmed).
         multimodal_prompt_override: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
@@ -2002,10 +2021,6 @@ class KnowledgeOrchestrator:
             user: Current user
             document_id: Document ID to reindex
             trigger_summary: Whether to trigger summary generation after indexing
-            multimodal_prompt_override: Optional per-document multimodal analysis
-                prompt override. Non-blank string → write override; blank string →
-                clear (revert to KB default); None → leave unchanged. Powers the
-                "modify prompt & re-analyze" flow for multimodal documents.
 
         Returns:
             Dict with success status and message
@@ -2017,9 +2032,6 @@ class KnowledgeOrchestrator:
         from app.services.knowledge.indexing import (
             extract_rag_config_from_knowledge_base,
             get_rag_indexing_skip_reason,
-        )
-        from app.services.knowledge.multimodal_pipeline import (
-            apply_multimodal_prompt_override,
         )
 
         # Get document with access check
@@ -2038,10 +2050,6 @@ class KnowledgeOrchestrator:
         if skip_reason:
             raise ValueError(skip_reason)
 
-        # Persist (or clear) the per-document multimodal prompt override before
-        # re-dispatch so the re-analyze flow reuses the re-index pipeline.
-        apply_multimodal_prompt_override(document, multimodal_prompt_override, db)
-
         # Check access permission via knowledge base
         knowledge_base, has_access = KnowledgeService.get_knowledge_base(
             db=db,
@@ -2059,6 +2067,15 @@ class KnowledgeOrchestrator:
             raise ValueError(
                 "You do not have permission to manage this document in this knowledge base"
             )
+
+        # Apply an optional multimodal prompt override AFTER the access check so
+        # an unauthorized caller cannot poison the stored prompt. Powers the
+        # "modify prompt & re-analyze" action (non-multimodal docs ignore it).
+        from app.services.knowledge.multimodal_pipeline import (
+            apply_multimodal_prompt_override,
+        )
+
+        apply_multimodal_prompt_override(document, multimodal_prompt_override, db)
 
         # Extract RAG config using shared helper
         rag_params = extract_rag_config_from_knowledge_base(db, knowledge_base, user.id)

@@ -153,6 +153,13 @@ def convert_multimodal_task(
     # Media staging config forwarded to the pluggable provider. Empty/None in
     # the default build (image still works via inline base64; video fails fast).
     media_staging_config: Optional[Dict[str, Any]] = None,
+    # video-only: backend internal endpoint path the converter calls to resolve
+    # a fresh short-lived download URL at execution time. None in the default
+    # build; internal deployments inject the video source resolver path.
+    video_download_url_path: Optional[str] = None,
+    # video-only: staging proxy upload/delete paths. None in the default build.
+    gcs_upload_path: Optional[str] = None,
+    gcs_delete_path: Optional[str] = None,
     request_id: Optional[str] = None,
     # Resolved effective prompt (document override > KB default). When None/blank
     # the converter falls back to the shared default for this media_type.
@@ -263,22 +270,38 @@ def convert_multimodal_task(
                 f"longer current (notify_started ok=false)",
             )
 
-        # 2. Fetch media bytes. Video is vendor-specific (no generic download
-        # path in the open-source build); image uses the attachment endpoint.
+        # 2. Fetch media bytes. Video uses a vendor-specific download URL resolver
+        # (video_download_url_path); image uses the generic attachment endpoint.
         t0 = time.perf_counter()
         add_span_event("multimodal.download.start", {"media_type": media_type})
         image_bytes: Optional[bytes] = None
         if media_type == "video":
-            # Video source resolution is vendor-specific (e.g. a Weibo CDN fid).
-            # The open-source build carries no video_source_ref, so reject
-            # up-front with a clear message rather than attempting a download.
-            # Internal deployments inject a concrete VideoSourceProvider that
-            # resolves video_source_ref into a downloadable URL.
-            raise PermanentError(
-                "video_source_not_supported",
-                "Video source resolution is not supported in the open-source "
-                "build (no VideoSourceProvider configured)",
+            if not video_download_url_path:
+                raise PermanentError(
+                    "video_no_download_path",
+                    "Video task missing video_download_url_path "
+                    "(no video source provider configured)",
+                )
+            # Resolve a fresh short-lived download URL at execution time via
+            # the backend internal endpoint (bound to task execution, not queue
+            # wait time). The converter calls the endpoint with the internal
+            # service token.
+            video_download_url = get_model_config_fetcher().fetch_video_download_url(
+                video_download_url_path
             )
+            if not video_download_url:
+                raise TransientError(
+                    "video_download_url_unresolved",
+                    "Failed to resolve video download URL at execution time",
+                )
+            tmp_path = _stream_download_to_tempfile(video_download_url, document_id)
+            media_size = os.path.getsize(tmp_path)
+            if media_size > settings.MULTIMODAL_VIDEO_MAX_BYTES:
+                raise PermanentError(
+                    "video_too_large",
+                    f"Video size {media_size} exceeds max "
+                    f"{settings.MULTIMODAL_VIDEO_MAX_BYTES}",
+                )
         else:
             if not content_download_path:
                 raise PermanentError(
@@ -320,27 +343,44 @@ def convert_multimodal_task(
             content_type = _mime_for_ext(ext, media_type)
             add_span_event("multimodal.staging_upload.start", {"size": media_size})
             # Image (in-memory) is spilled to a temp file so the same streaming
-            # upload path is reused; video is already on a temp file (but the
-            # video branch above rejects before reaching here in the default
-            # build — this path is reached only for large images, which need a
-            # configured staging provider).
+            # upload path is reused; video is already on a temp file.
             upload_tmp = tmp_path
             if image_bytes is not None:
                 upload_tmp = _spill_bytes_to_tempfile(image_bytes, document_id, ext)
                 tmp_path = upload_tmp
-            staging_provider = get_staging_provider(media_staging_config)
-            staged = multimodal_conversion_coordinator.upload(
-                tmp_path=upload_tmp,
-                filename=original_filename,
-                content_type=content_type,
-                media_type=media_type,
-                staging_provider=staging_provider,
-                timeout_seconds=(
-                    settings.MULTIMODAL_IMAGE_DOWNLOAD_TIMEOUT_SECONDS
-                    if media_type == "image"
-                    else None
-                ),
-            )
+            if gcs_upload_path:
+                # Internal deployments inject GCS proxy paths — upload via the
+                # backend's internal GCS proxy (the converter has no TAuth2).
+                staged = multimodal_conversion_coordinator.upload_via_proxy(
+                    tmp_path=upload_tmp,
+                    filename=original_filename,
+                    content_type=content_type,
+                    gcs_upload_path=gcs_upload_path,
+                    gcs_resumable_base_path=_derive_resumable_base_path(
+                        gcs_upload_path
+                    ),
+                    timeout_seconds=(
+                        settings.MULTIMODAL_IMAGE_DOWNLOAD_TIMEOUT_SECONDS
+                        if media_type == "image"
+                        else settings.MULTIMODAL_DOWNLOAD_TIMEOUT_SECONDS
+                    ),
+                )
+            else:
+                # Open-source default: pluggable MediaStagingProvider (NoOp by
+                # default → rejects with a clear "not configured" error).
+                staging_provider = get_staging_provider(media_staging_config)
+                staged = multimodal_conversion_coordinator.upload(
+                    tmp_path=upload_tmp,
+                    filename=original_filename,
+                    content_type=content_type,
+                    media_type=media_type,
+                    staging_provider=staging_provider,
+                    timeout_seconds=(
+                        settings.MULTIMODAL_IMAGE_DOWNLOAD_TIMEOUT_SECONDS
+                        if media_type == "image"
+                        else None
+                    ),
+                )
             staged_object_name = staged["object_name"]
             media_uri = staged["gs_url"]
             set_span_attribute("multimodal.media_uri", media_uri)
@@ -560,11 +600,17 @@ def convert_multimodal_task(
             file_extension=ext, media_type=media_type
         ).observe(time.perf_counter() - t_start)
         if staged_object_name:
-            staging_provider = get_staging_provider(media_staging_config)
-            multimodal_conversion_coordinator.delete(
-                staging_provider=staging_provider,
-                object_name=staged_object_name,
-            )
+            if gcs_delete_path:
+                multimodal_conversion_coordinator.delete_via_proxy(
+                    gcs_delete_path=gcs_delete_path,
+                    object_name=staged_object_name,
+                )
+            else:
+                staging_provider = get_staging_provider(media_staging_config)
+                multimodal_conversion_coordinator.delete(
+                    staging_provider=staging_provider,
+                    object_name=staged_object_name,
+                )
         if tmp_path:
             _safe_remove_tmp(tmp_path)
         cfg["api_key"] = None
@@ -580,6 +626,37 @@ def _record_failure(ext: str, media_type: str) -> None:
         media_type=media_type,
         delivery="n/a",
     ).inc()
+
+
+def _derive_resumable_base_path(gcs_upload_path: str) -> str:
+    """Derive the resumable endpoint base path from the simple upload path."""
+    if gcs_upload_path.endswith("/upload"):
+        return gcs_upload_path[: -len("/upload")] + "/upload-resumable"
+    return gcs_upload_path.rstrip("/").rsplit("/upload", 1)[0] + "/upload-resumable"
+
+
+def _stream_download_to_tempfile(download_url: str, doc_id: int) -> str:
+    """Stream-download ``download_url`` to a unique temp file (peak ~1 MiB)."""
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f"wegent-multimodal-doc{doc_id}-pid{os.getpid()}-",
+        suffix=".bin",
+    )
+    os.close(fd)
+    try:
+        with httpx.stream(
+            "GET",
+            download_url,
+            timeout=settings.MULTIMODAL_DOWNLOAD_TIMEOUT_SECONDS,
+            follow_redirects=True,
+        ) as resp:
+            resp.raise_for_status()
+            with open(tmp_path, "wb") as f:
+                for chunk in resp.iter_bytes(settings.MULTIMODAL_DOWNLOAD_CHUNK_BYTES):
+                    f.write(chunk)
+        return tmp_path
+    except Exception:
+        _safe_remove_tmp(tmp_path)
+        raise
 
 
 def _select_prompt(

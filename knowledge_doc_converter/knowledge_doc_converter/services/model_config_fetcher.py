@@ -100,6 +100,36 @@ class ModelConfigFetcher:
         )
         return cfg
 
+    def fetch_video_download_url(self, path: str) -> Optional[str]:
+        """Resolve a fresh short-lived video download URL via the backend.
+
+        GET ``{base_url}{path}`` → ``{"url": "...", "expires_in": ...}``.
+        Returns the URL string, or None if the backend could not resolve one.
+        """
+        url = f"{self.base_url}{path}"
+        try:
+            resp = httpx.get(url, headers=self.headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            record_http_request_failed("video_download_url")
+            raise
+        record_http_request_success("video_download_url")
+        video_url = data.get("url") if isinstance(data, dict) else None
+        if not video_url:
+            logger.warning(
+                "video-download-url response had no url field: path=%s body=%s",
+                path,
+                data,
+            )
+            return None
+        logger.info(
+            "Resolved video download url path=%s expires_in=%s",
+            path,
+            data.get("expires_in"),
+        )
+        return video_url
+
 
 # Module-level singleton. Built lazily on first use so importing this module
 # never triggers settings/network access at import time.

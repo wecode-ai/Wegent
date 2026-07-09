@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/dropdown'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { downloadAttachment } from '@/apis/attachments'
+import { getKnowledgeVideoDownloader } from '../video-download-registry'
 import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDate } from '@/utils/dateTime'
@@ -155,7 +156,26 @@ export function DocumentItem({
     e.stopPropagation()
     if (document.source_type === 'file' && document.attachment_id) {
       try {
-        await downloadAttachment(document.attachment_id, document.name)
+        const { isVideoFileName } = await import('@/apis/attachments')
+        if (isVideoFileName(document.name)) {
+          // Video attachments may be backed by a non-local store (e.g. a CDN
+          // proxy) in internal deployments. Ensure the KB extension loader has
+          // run so any registered video downloader is available, then use it;
+          // otherwise fall back to the standard attachment download endpoint.
+          let downloader = getKnowledgeVideoDownloader()
+          if (!downloader) {
+            const { loadKBExtensions } = await import('../extension-loader')
+            await loadKBExtensions()
+            downloader = getKnowledgeVideoDownloader()
+          }
+          if (downloader) {
+            await downloader(document.attachment_id, document.name)
+          } else {
+            await downloadAttachment(document.attachment_id, document.name)
+          }
+        } else {
+          await downloadAttachment(document.attachment_id, document.name)
+        }
       } catch {
         toast({
           title: t('knowledge:document.document.downloadFailed'),

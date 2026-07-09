@@ -16,7 +16,10 @@ Transient/Permanent categories so the task's retry decision stays uniform.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, Optional
+
+import httpx
 
 from knowledge_doc_converter.services.errors import (
     PermanentError,
@@ -90,6 +93,106 @@ class MultimodalConversionCoordinator:
         except Exception as exc:  # noqa: BLE001 — cleanup must never raise
             logger.warning(
                 "Media staging delete failed object_name=%s error=%s",
+                object_name,
+                exc,
+            )
+
+    def upload_via_proxy(
+        self,
+        *,
+        tmp_path: str,
+        filename: str,
+        content_type: str,
+        gcs_upload_path: str,
+        gcs_resumable_base_path: Optional[str] = None,
+        timeout_seconds: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Upload a local file to a staging proxy (e.g. backend GCS proxy).
+
+        Used by internal deployments where the converter has no direct cloud
+        credentials — it streams the file to a backend internal endpoint which
+        proxies the upload to the staging provider (GCS gateway, S3, etc.).
+
+        Returns ``{gs_url, object_name}``.
+        """
+        from knowledge_doc_converter.config import settings
+        from knowledge_doc_converter.services.errors import (
+            PermanentError,
+            TransientError,
+        )
+
+        base_url = settings.BACKEND_BASE_URL
+        headers = {
+            "Authorization": f"Bearer {settings.BACKEND_INTERNAL_TOKEN}",
+        }
+        upload_url = f"{base_url}{gcs_upload_path}"
+        file_size = os.path.getsize(tmp_path)
+
+        try:
+            with open(tmp_path, "rb") as f:
+                resp = httpx.post(
+                    upload_url,
+                    data={"filename": filename, "content_type": content_type},
+                    files={"file": (filename, f, content_type)},
+                    headers=headers,
+                    timeout=timeout_seconds or 300,
+                )
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            if status == 413:
+                raise PermanentError(
+                    "staging_file_too_large",
+                    f"Staging proxy rejected file (too large): {status}",
+                ) from exc
+            if 500 <= status < 600:
+                raise TransientError(
+                    "staging_proxy_server",
+                    f"Staging proxy server error (status={status})",
+                ) from exc
+            raise TransientError(
+                "staging_proxy_client",
+                f"Staging proxy client error (status={status})",
+            ) from exc
+        except Exception as exc:
+            raise TransientError(
+                "staging_upload_failed", f"Media staging upload failed: {exc}"
+            ) from exc
+
+        gs_url = data.get("gs_url")
+        object_name = data.get("object_name")
+        if not gs_url or not object_name:
+            raise PermanentError(
+                "staging_invalid_response",
+                f"Staging proxy returned incomplete response: {data!r}",
+            )
+        return {"gs_url": gs_url, "object_name": object_name}
+
+    def delete_via_proxy(
+        self,
+        *,
+        gcs_delete_path: str,
+        object_name: str,
+    ) -> None:
+        """Best-effort delete of a staged object via a proxy. Never raises."""
+        from knowledge_doc_converter.config import settings
+
+        base_url = settings.BACKEND_BASE_URL
+        headers = {
+            "Authorization": f"Bearer {settings.BACKEND_INTERNAL_TOKEN}",
+        }
+        delete_url = f"{base_url}{gcs_delete_path}"
+        try:
+            httpx.post(
+                delete_url,
+                data={"object_name": object_name},
+                headers=headers,
+                timeout=30,
+            )
+        except Exception as exc:  # noqa: BLE001 — cleanup must never raise
+            logger.warning(
+                "Staging proxy delete failed object_name=%s error=%s",
                 object_name,
                 exc,
             )
