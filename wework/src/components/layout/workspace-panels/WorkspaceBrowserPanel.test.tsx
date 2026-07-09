@@ -17,6 +17,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   reloadEmbeddedBrowser: vi.fn(),
   setEmbeddedBrowserBounds: vi.fn(),
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT: 'wework:debug-panel-visibility-change',
+  EMBEDDED_BROWSER_OCCLUSION_EVENT: 'wework:embedded-browser-occlusion-change',
 }))
 
 vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
@@ -192,6 +193,59 @@ describe('WorkspaceBrowserPanel', () => {
           height: 1,
         },
         false,
+        'workspace-browser'
+      )
+    })
+  })
+
+  test('hides the native browser while a main webview overlay occludes it', async () => {
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id: 'workspace-add-menu', occluded: true },
+      })
+    )
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        false,
+        'workspace-browser'
+      )
+    })
+
+    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    window.dispatchEvent(
+      new CustomEvent('wework:embedded-browser-occlusion-change', {
+        detail: { id: 'workspace-add-menu', occluded: false },
+      })
+    )
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+        {
+          x: 500,
+          y: 120,
+          width: 400,
+          height: 300,
+        },
+        true,
         'workspace-browser'
       )
     })

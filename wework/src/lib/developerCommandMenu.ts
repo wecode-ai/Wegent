@@ -15,6 +15,7 @@ import {
   setPerformanceDiagnosticsEnabled,
 } from './performanceDiagnostics'
 import { isTauriRuntime } from './runtime-environment'
+import { setEmbeddedBrowserOcclusion } from './embedded-browser'
 
 const MENU_ID = 'wework-developer-command-menu'
 const DEBUG_PANEL_ID = 'wework-debug-panel'
@@ -23,6 +24,8 @@ const INSPECTOR_COMMAND = 'open_main_webview_devtools'
 const OPEN_LOG_DIRECTORY_COMMAND = 'open_app_log_directory'
 const CODEX_STREAM_DEBUG_GET_METHOD = 'runtime.codex.stream_debug.get'
 const CODEX_STREAM_DEBUG_SET_METHOD = 'runtime.codex.stream_debug.set'
+const DEVELOPER_COMMAND_MENU_OCCLUSION_ID = 'developer-command-menu'
+const DEBUG_PANEL_OCCLUSION_ID = 'debug-panel'
 
 interface DeveloperCommand {
   id: string
@@ -54,6 +57,7 @@ export function installDeveloperCommandMenu() {
 
 function openDeveloperCommandMenu() {
   closeDeveloperCommandMenu()
+  setEmbeddedBrowserOcclusion(DEVELOPER_COMMAND_MENU_OCCLUSION_ID, true)
 
   const overlay = document.createElement('div')
   overlay.id = MENU_ID
@@ -93,6 +97,7 @@ function openDeveloperCommandMenu() {
 
 function closeDeveloperCommandMenu() {
   document.getElementById(MENU_ID)?.remove()
+  setEmbeddedBrowserOcclusion(DEVELOPER_COMMAND_MENU_OCCLUSION_ID, false)
 }
 
 function handleMenuKeyDown(event: KeyboardEvent) {
@@ -346,6 +351,7 @@ function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
 }
 
 function emitDebugPanelVisibility(expanded: boolean) {
+  setEmbeddedBrowserOcclusion(DEBUG_PANEL_OCCLUSION_ID, expanded)
   window.dispatchEvent(
     new CustomEvent(DEBUG_PANEL_VISIBILITY_EVENT, {
       detail: { expanded },
