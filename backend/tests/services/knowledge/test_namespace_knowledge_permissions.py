@@ -444,7 +444,7 @@ def test_developer_can_add_document_to_someone_elses_namespace_kb(
 
 
 @pytest.mark.unit
-def test_developer_cannot_delete_someone_elses_namespace_document(
+def test_namespace_developer_can_manage_shared_kb_documents(
     test_db: Session,
 ) -> None:
     owner = _create_user(test_db, "owner-delete-other-doc")
@@ -470,8 +470,10 @@ def test_developer_cannot_delete_someone_elses_namespace_document(
         ),
     )
 
-    with pytest.raises(ValueError, match="permission"):
-        KnowledgeService.delete_document(test_db, owner_document.id, developer.id)
+    result = KnowledgeService.delete_document(test_db, owner_document.id, developer.id)
+
+    assert result.success is True
+    assert result.kb_id == knowledge_base_id
 
 
 @pytest.mark.unit
@@ -631,7 +633,7 @@ def test_explicit_kb_developer_can_add_document_to_shared_kb(test_db: Session) -
 
 
 @pytest.mark.unit
-def test_explicit_kb_developer_can_delete_own_document_but_not_others(
+def test_explicit_kb_developer_can_manage_shared_kb_documents(
     test_db: Session,
 ) -> None:
     owner = _create_user(test_db, "owner-kb-dev-doc-delete")
@@ -675,8 +677,11 @@ def test_explicit_kb_developer_can_delete_own_document_but_not_others(
         ),
     )
 
-    with pytest.raises(ValueError, match="permission"):
-        KnowledgeService.delete_document(test_db, owner_document.id, collaborator.id)
+    owner_delete_result = KnowledgeService.delete_document(
+        test_db, owner_document.id, collaborator.id
+    )
+    assert owner_delete_result.success is True
+    assert owner_delete_result.kb_id == knowledge_base_id
 
     result = KnowledgeService.delete_document(
         test_db, collaborator_document.id, collaborator.id
@@ -751,7 +756,7 @@ def test_admin_can_manage_organization_knowledge_base_without_namespace_membersh
 
 
 @pytest.mark.unit
-def test_developer_can_manage_own_documents_but_not_folder_structure(
+def test_developer_can_manage_document_area_but_not_kb_settings(
     test_db: Session,
 ) -> None:
     owner = _create_user(test_db, "owner-folder-structure")
@@ -776,19 +781,25 @@ def test_developer_can_manage_own_documents_but_not_folder_structure(
     assert not KnowledgeService.can_manage_knowledge_base(
         test_db, knowledge_base_id, developer.id
     )
+    assert KnowledgeService.can_manage_knowledge_document(
+        test_db, knowledge_base_id, developer.id, owner.id
+    )
 
-    developer_document = KnowledgeService.create_document(
+    owner_document = KnowledgeService.create_document(
         test_db,
         knowledge_base_id,
-        developer.id,
+        owner.id,
         KnowledgeDocumentCreate(
-            name="developer-owned-doc",
+            name="owner-owned-doc",
             file_extension="md",
             file_size=12,
             source_type=DocumentSourceType.TEXT,
         ),
     )
-    assert developer_document.user_id == developer.id
+    delete_result = KnowledgeService.delete_document(
+        test_db, owner_document.id, developer.id
+    )
+    assert delete_result.success is True
 
     owner_folder = KnowledgeFolderService.create_folder(
         test_db,
@@ -797,30 +808,22 @@ def test_developer_can_manage_own_documents_but_not_folder_structure(
         KnowledgeFolderCreate(name="owner-folder", parent_id=0),
     )
 
-    with pytest.raises(ValueError, match="permission to modify"):
-        KnowledgeFolderService.create_folder(
-            test_db,
-            knowledge_base_id,
-            developer.id,
-            KnowledgeFolderCreate(name="developer-folder", parent_id=0),
-        )
+    updated_folder = KnowledgeFolderService.update_folder(
+        test_db,
+        owner_folder.id,
+        developer.id,
+        KnowledgeFolderUpdate(name="renamed-by-developer"),
+        knowledge_base_id=knowledge_base_id,
+    )
+    assert updated_folder.name == "renamed-by-developer"
 
-    with pytest.raises(ValueError, match="permission to modify"):
-        KnowledgeFolderService.update_folder(
-            test_db,
-            owner_folder.id,
-            developer.id,
-            KnowledgeFolderUpdate(name="renamed-by-developer"),
-            knowledge_base_id=knowledge_base_id,
-        )
-
-    with pytest.raises(ValueError, match="permission to modify"):
-        KnowledgeFolderService.delete_folder(
-            test_db,
-            owner_folder.id,
-            developer.id,
-            knowledge_base_id=knowledge_base_id,
-        )
+    folder_delete_result = KnowledgeFolderService.delete_folder(
+        test_db,
+        owner_folder.id,
+        developer.id,
+        knowledge_base_id=knowledge_base_id,
+    )
+    assert folder_delete_result["deleted_folder_count"] == 1
 
 
 @pytest.mark.unit

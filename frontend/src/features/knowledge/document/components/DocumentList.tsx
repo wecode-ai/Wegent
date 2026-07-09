@@ -58,7 +58,6 @@ import type {
   KbGroupInfo,
 } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
 import { useKnowledgeBaseSummaryEditor } from '../hooks/useKnowledgeBaseSummaryEditor'
@@ -253,7 +252,6 @@ export function DocumentList({
   paginationEnabled = true,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
-  const { user } = useUser()
   const [searchQuery, setSearchQuery] = useState('')
   const [sortField, setSortField] = useState<SortField>('createdAt')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
@@ -498,10 +496,9 @@ export function DocumentList({
   }, [folders, activeFolderId, resetSelection])
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
-  const canManageFolderStructure = canManageAllDocuments
+  const canManageDocumentArea = canManageAnyDocuments
 
-  const canManageDocument = (document: KnowledgeDocument) =>
-    canManageAllDocuments || (canUpload && user?.id === document.user_id)
+  const canManageDocument = (_document: KnowledgeDocument) => canManageDocumentArea
 
   const canSelectDocument = (document: KnowledgeDocument) =>
     Boolean(onSelectionChange) || (canManageAllDocuments && canManageDocument(document))
@@ -1236,10 +1233,10 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
-                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
-                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
-                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
-                canManageFolders={canManageFolderStructure}
+                onCreateFolder={canManageDocumentArea ? handleCreateFolder : undefined}
+                onRenameFolder={canManageDocumentArea ? handleRenameFolder : undefined}
+                onDeleteFolder={canManageDocumentArea ? handleDeleteFolderClick : undefined}
+                canManageFolders={canManageDocumentArea}
                 canSelectFolders={canManageAllDocuments && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
@@ -1296,10 +1293,10 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={canManageAllDocuments ? handleSelectDoc : undefined}
                 ragConfigured={ragConfigured}
-                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
-                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
-                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
-                canManageFolders={canManageFolderStructure}
+                onCreateFolder={canManageDocumentArea ? handleCreateFolder : undefined}
+                onRenameFolder={canManageDocumentArea ? handleRenameFolder : undefined}
+                onDeleteFolder={canManageDocumentArea ? handleDeleteFolderClick : undefined}
+                canManageFolders={canManageDocumentArea}
                 canSelectFolders={canManageAllDocuments && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}

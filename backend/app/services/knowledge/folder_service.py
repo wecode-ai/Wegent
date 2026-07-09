@@ -67,12 +67,12 @@ class KnowledgeFolderService:
     def _check_kb_write_access(
         db: Session, knowledge_base_id: int, user_id: int
     ) -> Kind:
-        """Verify user can manage knowledge base folder structure.
+        """Verify user has document-area write access to the knowledge base.
 
         Raises ValueError if access is denied or KB not found.
         """
         kb = KnowledgeFolderService._check_kb_access(db, knowledge_base_id, user_id)
-        if not KnowledgeService.can_manage_knowledge_base(
+        if not KnowledgeService.can_manage_knowledge_base_documents(
             db, knowledge_base_id, user_id
         ):
             raise ValueError("You do not have permission to modify this knowledge base")
