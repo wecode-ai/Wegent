@@ -6,7 +6,6 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 
 import { KnowledgeDocumentTreeGrid } from '@/features/knowledge/document/components/KnowledgeDocumentTreeGrid'
-import { getDocumentTableGridTemplate } from '@/features/knowledge/document/components/DocumentItem'
 import { buildKnowledgeResourceTree } from '@/features/knowledge/document/utils/resource-tree'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 
@@ -60,6 +59,16 @@ function createFolder(overrides?: Partial<KnowledgeFolder>): KnowledgeFolder {
   }
 }
 
+const requiredTreeGridProps = {
+  sortField: 'createdAt' as const,
+  sortOrder: 'desc' as const,
+  onSortChange: jest.fn(),
+  isAllSelected: false,
+  isPartialSelected: false,
+  onSelectAll: jest.fn(),
+  selectAllLabel: 'select all',
+}
+
 describe('KnowledgeDocumentTreeGrid', () => {
   it('renders folders and documents through visible TreeGrid rows', () => {
     const folders = [createFolder()]
@@ -72,10 +81,7 @@ describe('KnowledgeDocumentTreeGrid', () => {
         treeIndex={index}
         folders={folders}
         documents={documents}
-        gridTemplateColumns={getDocumentTableGridTemplate({
-          showSelectionColumn: true,
-          showActionsColumn: true,
-        })}
+        {...requiredTreeGridProps}
         showSelectionColumn={true}
         showActionsColumn={true}
         canSelectFolders={true}
@@ -101,10 +107,7 @@ describe('KnowledgeDocumentTreeGrid', () => {
         treeIndex={index}
         folders={folders}
         documents={documents}
-        gridTemplateColumns={getDocumentTableGridTemplate({
-          showSelectionColumn: true,
-          showActionsColumn: true,
-        })}
+        {...requiredTreeGridProps}
         showSelectionColumn={true}
         showActionsColumn={true}
         canSelectFolders={true}
@@ -134,10 +137,7 @@ describe('KnowledgeDocumentTreeGrid', () => {
         treeIndex={index}
         folders={folders}
         documents={documents}
-        gridTemplateColumns={getDocumentTableGridTemplate({
-          showSelectionColumn: true,
-          showActionsColumn: true,
-        })}
+        {...requiredTreeGridProps}
         showSelectionColumn={true}
         showActionsColumn={true}
         canSelectFolders={true}
@@ -155,5 +155,33 @@ describe('KnowledgeDocumentTreeGrid', () => {
     fireEvent.click(screen.getByRole('button', { name: /Reports/ }))
 
     expect(onActivateFolder).toHaveBeenCalledWith(1)
+  })
+
+  it('delegates sortable header changes to the controlled sort contract', () => {
+    const onSortChange = jest.fn()
+    const folders: KnowledgeFolder[] = []
+    const documents = [createDocument({ id: 11, name: 'root.txt', folder_id: 0 })]
+    const { nodes, index } = buildKnowledgeResourceTree(folders, documents)
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={folders}
+        documents={documents}
+        {...requiredTreeGridProps}
+        sortField="createdAt"
+        sortOrder="desc"
+        onSortChange={onSortChange}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /document.document.columns.size/ }))
+
+    expect(onSortChange).toHaveBeenCalledWith('size', 'desc')
   })
 })
