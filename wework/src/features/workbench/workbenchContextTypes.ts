@@ -243,6 +243,10 @@ export interface WorkbenchContextValue {
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
   sendRuntimePaneGuidance: (request: RuntimeGuidanceRequest) => Promise<RuntimePaneGuidanceResult>
+  compactRuntimePaneTask: (
+    address: RuntimeTaskAddress,
+    options?: RuntimePaneActionOptions
+  ) => Promise<boolean>
   editLastUserMessage: (request: RuntimeRollbackRequest) => Promise<boolean>
   cancelRuntimePaneTask: (
     address: RuntimeTaskAddress,

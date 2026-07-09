@@ -1321,6 +1321,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             codeComments={paneSession.codeCommentContexts}
                             isStreaming={paneIsResponseStreaming}
                             onPause={() => void paneSession.pauseCurrentResponse()}
+                            onCompactContext={() => void paneSession.compactContext()}
                             goal={paneSession.goal}
                             goalDraftActive={paneSession.goalDraftActive}
                             onSetGoal={
@@ -1428,6 +1429,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   codeComments={paneSession.codeCommentContexts}
                   isStreaming={paneIsResponseStreaming}
                   onPause={() => void paneSession.pauseCurrentResponse()}
+                  onCompactContext={() => void paneSession.compactContext()}
                   goal={paneSession.goal}
                   goalDraftActive={paneSession.goalDraftActive}
                   onSetGoal={

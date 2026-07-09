@@ -274,6 +274,39 @@ export function useWorkbenchRuntimeMessaging({
     [executorClient, refreshWorkLists, reportError]
   )
 
+  const compactRuntimePaneTask = useCallback(
+    async (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): Promise<boolean> => {
+      dispatch({ type: 'runtime_task_started', address })
+      try {
+        const response = await executorClient.runtime.compactRuntimeTask({ address })
+        if (!response.accepted) {
+          throw new Error(response.error || '压缩上下文失败')
+        }
+        try {
+          await refreshWorkLists()
+        } catch (error) {
+          console.warn('[Wework] Runtime compact accepted but work list refresh failed', {
+            taskId: response.taskId ?? address.taskId,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+        dispatch({ type: 'runtime_task_settled', address })
+        return true
+      } catch (error) {
+        dispatch({ type: 'runtime_task_settled', address })
+        console.warn('[Wework] Runtime compact failed', {
+          taskId: address.taskId,
+          deviceId: address.deviceId,
+          workspacePath: address.workspacePath ?? null,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        reportError(error instanceof Error ? error.message : '压缩上下文失败', options)
+        return false
+      }
+    },
+    [dispatch, executorClient, refreshWorkLists, reportError]
+  )
+
   const cancelRuntimePaneTask = useCallback(
     async (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): Promise<boolean> => {
       try {
@@ -1117,6 +1150,7 @@ export function useWorkbenchRuntimeMessaging({
   return {
     sendRuntimePaneMessage,
     sendRuntimePaneGuidance,
+    compactRuntimePaneTask,
     editLastUserMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,

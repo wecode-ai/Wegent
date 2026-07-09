@@ -327,6 +327,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.guidance" => self.send_guidance(payload).await,
+            "runtime.tasks.compact" => self.compact_task(payload).await,
             "runtime.tasks.prepare_fork_transfer" => self.prepare_fork_transfer(payload).await,
             "runtime.tasks.import_fork" => self.import_fork(payload).await,
             "runtime.tasks.archive" => self.archive_task(payload).await,
@@ -1621,6 +1622,74 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             })),
         }
+    }
+
+    async fn compact_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let link = self.task_link_from_payload(&payload, false).await?;
+        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+            .or_else(|| runtime_session_id_from_link(&link))
+        else {
+            return Ok(task_action_failure(
+                &link,
+                "runtime task session is not ready".to_owned(),
+            ));
+        };
+
+        let thread_id = match self.resume_codex_thread_for_action(&link, &thread_id).await {
+            Ok(resumed_thread_id) => resumed_thread_id,
+            Err(error) => return Ok(task_action_failure(&link, error)),
+        };
+        self.register_thread_event_route(
+            &thread_id,
+            link.local_task_id.clone(),
+            runtime_event_request_from_link(&link),
+            true,
+        );
+        match self
+            .call_codex_thread_method("thread/compact/start", json!({"threadId": thread_id}))
+            .await
+        {
+            Ok(_) => {
+                self.store.update_task(&local_task_id, |stored| {
+                    stored.updated_at = now_ms();
+                });
+                Ok(task_action_success(&link))
+            }
+            Err(error) => Ok(task_action_failure(&link, error)),
+        }
+    }
+
+    async fn resume_codex_thread_for_action(
+        &self,
+        link: &RuntimeTaskLink,
+        thread_id: &str,
+    ) -> Result<String, String> {
+        let mut params = Map::new();
+        params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+        params.insert(
+            "approvalPolicy".to_owned(),
+            Value::String("never".to_owned()),
+        );
+        params.insert("excludeTurns".to_owned(), Value::Bool(true));
+        if !link.workspace_path.trim().is_empty() {
+            params.insert("cwd".to_owned(), Value::String(link.workspace_path.clone()));
+        }
+        if let Some(thread_path) = runtime_thread_path_from_link(link) {
+            params.insert("path".to_owned(), Value::String(thread_path));
+        }
+
+        let response = self
+            .call_codex_thread_method_without_list_invalidation(
+                "thread/resume",
+                Value::Object(params),
+            )
+            .await?;
+        Ok(response
+            .get("thread")
+            .and_then(|thread| string_field(thread, "id"))
+            .unwrap_or_else(|| thread_id.to_owned()))
     }
 
     async fn send_request_user_input_response(
@@ -3532,6 +3601,8 @@ fn debug_unrouted_codex_notification(message: &Value, reason: &str) {
 
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
     ExecutionRequest {
+        task_id: link.local_task_id.clone(),
+        subtask_id: format!("{}-context-compact", link.local_task_id),
         project_workspace_path: Some(link.workspace_path.clone()),
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
@@ -4158,6 +4229,13 @@ fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
     link.thread_id
         .clone()
         .or_else(|| runtime_session_id_from_handle(&link.runtime_handle))
+}
+
+fn runtime_thread_path_from_link(link: &RuntimeTaskLink) -> Option<String> {
+    string_field(&link.runtime_handle, "threadPath")
+        .or_else(|| string_field(&link.runtime_handle, "thread_path"))
+        .or_else(|| string_field(&link.runtime_handle, "path"))
+        .filter(|path| !path.trim().is_empty())
 }
 
 fn archived_link_from_payload_item(

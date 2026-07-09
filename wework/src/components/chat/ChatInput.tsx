@@ -96,6 +96,7 @@ export interface ChatInputProps {
   onClearCodeComments?: () => void
   isStreaming?: boolean
   onPause?: () => void
+  onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
@@ -132,6 +133,7 @@ export function ChatInput({
   onClearCodeComments,
   isStreaming = false,
   onPause,
+  onCompactContext,
   goal,
   goalDraftActive = false,
   onSetGoal,
@@ -177,6 +179,13 @@ export function ChatInput({
   }
   const handleClearPlanMode = () => {
     controls.setSelectedModelOption('collaborationMode', 'default')
+  }
+  const handleCompactContext = () => {
+    if (onCompactContext) {
+      void onCompactContext()
+      return
+    }
+    void onSubmit('/compact')
   }
 
   const composerProps = {
@@ -243,6 +252,7 @@ export function ChatInput({
           onSetPlanMode={handleSetPlanMode}
           onClearPlanMode={handleClearPlanMode}
           onSetGoal={onSetGoal}
+          onCompactContext={handleCompactContext}
           goalDraftActive={goalDraftActive}
           onCancelGoalDraft={onCancelGoalDraft}
           onRemoveAttachment={attachmentId => {

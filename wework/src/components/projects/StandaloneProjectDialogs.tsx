@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isImeEnterEvent } from '@/lib/ime'
 import { openNativeProjectDirectoryPicker } from '@/lib/native-directory-picker'
 import {
   canUseForProjectCreation,
@@ -243,6 +244,7 @@ export function StandaloneBlankProjectDialog({
             setError(null)
           }}
           onKeyDown={event => {
+            if (isImeEnterEvent(event)) return
             if (event.key === 'Enter') {
               event.preventDefault()
               void submit()
