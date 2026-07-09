@@ -44,6 +44,8 @@ import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 import { SubagentStatusIndicator } from './SubagentStatusIndicator'
 import { BufferedChatInput } from './BufferedChatInput'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import type { TurnFileChangesSummary } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
 
 export function MobileWorkbenchLayout() {
   const { state } = useWorkbench()
@@ -123,6 +125,24 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const activePaneProject = pane.currentProject
   const paneMessages = paneSession.messages
+  const turnFileChangesMessages = (
+    subtaskId: string,
+    summary?: TurnFileChangesSummary
+  ): WorkbenchMessage[] => {
+    if (!summary) return paneMessages
+    return [
+      {
+        id: `file-changes:${subtaskId}`,
+        role: 'assistant',
+        subtaskId,
+        content: '',
+        status: 'done',
+        createdAt: new Date().toISOString(),
+        fileChanges: summary,
+      },
+      ...paneMessages,
+    ]
+  }
   const pendingRequestUserInput = pendingRequestUserInputPayload(
     paneMessages,
     paneSession.answeredRequestUserInputIds
@@ -320,7 +340,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 void retryFailedMessage(message.id, paneMessages)
               }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
-              onLoadFileChangesDiff={subtaskId => loadTurnFileChangesDiff(subtaskId, paneMessages)}
+              onLoadFileChangesDiff={(subtaskId, summary) =>
+                loadTurnFileChangesDiff(subtaskId, turnFileChangesMessages(subtaskId, summary))
+              }
               onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
               onEditLastUserMessage={paneSession.editLastUserMessage}
               canEditLastUserMessage={canEditLastUserMessage}

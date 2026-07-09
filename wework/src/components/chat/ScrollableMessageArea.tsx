@@ -56,7 +56,7 @@ interface ScrollableMessageAreaProps {
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
+  onLoadFileChangesDiff?: (subtaskId: string, summary?: TurnFileChangesSummary) => Promise<string>
   onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
     subtaskId: string

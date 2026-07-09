@@ -22,7 +22,7 @@ interface FileChangesCardProps {
   subtaskId: string
   summary: TurnFileChangesSummary
   deviceOnline: boolean
-  onLoadDiff: (subtaskId: string) => Promise<string>
+  onLoadDiff: (subtaskId: string, summary?: TurnFileChangesSummary) => Promise<string>
   onRevert: (subtaskId: string) => Promise<TurnFileChangesSummary>
   onOpenReview?: (request: {
     subtaskId: string
@@ -612,7 +612,7 @@ export function FileChangesCard({
   const openReview = (focusFilePath?: string) => {
     onOpenReview?.({
       subtaskId,
-      loadDiff: () => onLoadDiff(subtaskId),
+      loadDiff: () => onLoadDiff(subtaskId, summary),
       reviewTitle: t('file_changes.previous_turn_label'),
       defaultFileTreeVisible: false,
       focusFilePath,

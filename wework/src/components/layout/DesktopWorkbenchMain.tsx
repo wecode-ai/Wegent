@@ -549,6 +549,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     defaultFileTreeVisible?: boolean
   } | null>(null)
   const paneMessages = paneSession.messages
+  const getTurnFileChangesMessages = useCallback(
+    (subtaskId: string, summary?: WorkbenchMessage['fileChanges']) => {
+      if (!summary) return paneMessages
+      return [
+        {
+          id: `file-changes:${subtaskId}`,
+          role: 'assistant' as const,
+          subtaskId,
+          content: '',
+          status: 'done' as const,
+          createdAt: new Date().toISOString(),
+          fileChanges: summary,
+        },
+        ...paneMessages,
+      ]
+    },
+    [paneMessages]
+  )
   const pendingRequestUserInput = pendingRequestUserInputPayload(
     paneMessages,
     paneSession.answeredRequestUserInputIds
@@ -874,7 +892,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             latestPreviousTurnSubtaskId !== null
               ? {
                   loadDiff: () =>
-                    loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessages),
+                    loadTurnFileChangesDiff(
+                      latestPreviousTurnSubtaskId,
+                      getTurnFileChangesMessages(latestPreviousTurnSubtaskId)
+                    ),
                   defaultFileTreeVisible: false,
                 }
               : previousTurnReviewRef.current
@@ -892,9 +913,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       latestPreviousTurnSubtaskId,
       loadEnvironmentDiff,
       loadTurnFileChangesDiff,
+      getTurnFileChangesMessages,
       openEnvironmentChangesReview,
       openReviewFromDiffLoader,
-      paneMessages,
       reviewState.reviewMode,
       tChat,
       workspaceTarget,
@@ -1329,10 +1350,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onSwitchModelForFailedMessage={() =>
                   setModelSelectorOpenSignal(signal => signal + 1)
                 }
-                onLoadFileChangesDiff={subtaskId =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages)
+                onLoadFileChangesDiff={(subtaskId, summary) =>
+                  loadTurnFileChangesDiff(subtaskId, getTurnFileChangesMessages(subtaskId, summary))
                 }
-                onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
+                onRevertFileChanges={subtaskId =>
+                  revertTurnFileChanges(subtaskId, getTurnFileChangesMessages(subtaskId))
+                }
                 onOpenFileChangesReview={({
                   loadDiff,
                   reviewTitle,

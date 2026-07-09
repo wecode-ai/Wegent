@@ -249,7 +249,17 @@ export function findFileChangesBySubtaskId(
   messages: WorkbenchMessage[],
   subtaskId: string
 ): TurnFileChangesSummary | undefined {
-  return messages.find(message => message.subtaskId === subtaskId)?.fileChanges
+  const matchingMessages = messages.filter(message => message.subtaskId === subtaskId)
+  for (const message of matchingMessages) {
+    if (message.fileChanges) return message.fileChanges
+
+    const blockFileChanges = message.blocks?.find(
+      block => block.type === 'file_changes'
+    )?.fileChanges
+    if (blockFileChanges) return blockFileChanges
+  }
+
+  return undefined
 }
 
 export function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
@@ -355,6 +365,9 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     typeof subtaskId === 'string'
       ? normalizeProcessingBlocks(subtaskId, message.blocks, messageCreatedAtMs)
       : []
+  const fileChanges =
+    normalizeTurnFileChanges(message.fileChanges ?? message.file_changes) ??
+    blocks.find(block => block.type === 'file_changes')?.fileChanges
   return {
     id: message.id,
     role,
@@ -367,7 +380,7 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     attachments: message.attachments,
     runtimeGoalRequest: normalizeRuntimeGoalRequest(message),
     blocks: blocks.length > 0 ? blocks : undefined,
-    fileChanges: normalizeTurnFileChanges(message.fileChanges ?? message.file_changes),
+    fileChanges,
     references: normalizeRuntimeReferences(message.references),
     memoryCitations: normalizeRuntimeMemoryCitations(message),
     createdAt,

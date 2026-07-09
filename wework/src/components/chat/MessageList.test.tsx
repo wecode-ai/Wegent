@@ -1742,7 +1742,10 @@ describe('MessageList', () => {
     expect(request.defaultFileTreeVisible).toBe(false)
     expect(onLoadFileChangesDiff).not.toHaveBeenCalled()
     await request.loadDiff()
-    expect(onLoadFileChangesDiff).toHaveBeenCalledWith(42)
+    expect(onLoadFileChangesDiff).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({ artifact_id: 'turn-42' })
+    )
   })
 
   test('renders Codex memory citations and one-column deduped file references', async () => {
