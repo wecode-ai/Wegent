@@ -38,7 +38,7 @@ jobs:
         id: release-app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
@@ -520,7 +520,7 @@ jobs:
         id: release-app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
@@ -568,7 +568,7 @@ jobs:
         id: release-app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
@@ -651,7 +651,7 @@ jobs:
         id: release-app-token
         uses: actions/create-github-app-token@v3
         with:
-          app-id: ${{ vars.RELEASE_APP_ID }}
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
           permission-contents: write
 
