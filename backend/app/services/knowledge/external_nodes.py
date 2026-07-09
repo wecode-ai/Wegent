@@ -14,6 +14,7 @@ from app.schemas.knowledge_external import (
     ExternalKnowledgeNode,
     ExternalKnowledgeNodeType,
 )
+from app.services.knowledge.external_creator import resolve_external_knowledge_creators
 from app.services.knowledge.external_document_access import (
     build_document_capabilities,
     load_attachment_map,
@@ -112,6 +113,10 @@ def list_direct_nodes(
         include_inactive=include_inactive,
     )
     attachment_map = load_attachment_map(db, child_documents)
+    creator_map = resolve_external_knowledge_creators(
+        db,
+        [document.user_id for document in child_documents],
+    )
     nodes = [
         _build_folder_node(folder, has_children=child_counts.get(folder.id, 0) > 0)
         for folder in child_folders
@@ -120,6 +125,7 @@ def list_direct_nodes(
         _build_document_node(
             document,
             attachment=attachment_map.get(document.attachment_id),
+            creator=creator_map.get(document.user_id),
         )
         for document in child_documents
     )
@@ -176,6 +182,10 @@ def list_recursive_nodes(
         folders_by_parent.setdefault(folder.parent_id or 0, []).append(folder)
     for document in documents:
         documents_by_folder.setdefault(document.folder_id or 0, []).append(document)
+    creator_map = resolve_external_knowledge_creators(
+        db,
+        [document.user_id for document in documents],
+    )
 
     def build_children(parent_id: int, path: set[int]) -> list[ExternalKnowledgeNode]:
         if len(path) > MAX_RECURSIVE_DEPTH:
@@ -206,6 +216,7 @@ def list_recursive_nodes(
             _build_document_node(
                 document,
                 attachment=attachment_map.get(document.attachment_id),
+                creator=creator_map.get(document.user_id),
             )
             for document in documents_by_folder.get(parent_id, [])
         )
@@ -259,6 +270,7 @@ def list_recursive_nodes(
                 _build_document_node(
                     document,
                     attachment=attachment_map.get(document.attachment_id),
+                    creator=creator_map.get(document.user_id),
                     orphan=True,
                 )
             )
@@ -331,6 +343,10 @@ def _list_recursive_subtree_nodes(
         document for documents in documents_by_folder.values() for document in documents
     ]
     attachment_map = load_attachment_map(db, all_documents)
+    creator_map = resolve_external_knowledge_creators(
+        db,
+        [document.user_id for document in all_documents],
+    )
 
     def build_children(parent_id: int) -> list[ExternalKnowledgeNode]:
         nodes: list[ExternalKnowledgeNode] = []
@@ -347,6 +363,7 @@ def _list_recursive_subtree_nodes(
             _build_document_node(
                 document,
                 attachment=attachment_map.get(document.attachment_id),
+                creator=creator_map.get(document.user_id),
             )
             for document in documents_by_folder.get(parent_id, [])
         )
@@ -388,6 +405,7 @@ def _build_folder_node(
 def _build_document_node(
     document: KnowledgeDocument,
     attachment=None,
+    creator=None,
     orphan: bool = False,
 ) -> ExternalKnowledgeNode:
     capabilities = build_document_capabilities(document, attachment)
@@ -405,6 +423,7 @@ def _build_document_node(
         previewable=capabilities.previewable,
         mime_type=capabilities.mime_type,
         file_size=capabilities.file_size,
+        creator=creator,
         created_at=document.created_at,
         updated_at=document.updated_at,
         orphan=orphan,

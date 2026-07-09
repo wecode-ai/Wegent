@@ -27,6 +27,7 @@
   },
   "plan_card": {
     "title": "Plan",
+    "generating": "Generating",
     "download": "Download plan",
     "copy": "Copy plan",
     "copy_success": "Copied",

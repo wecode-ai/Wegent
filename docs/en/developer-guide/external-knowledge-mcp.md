@@ -111,6 +111,34 @@ def enterprise_auth_handler(token, request):
 set_external_knowledge_auth_handler(enterprise_auth_handler)
 ```
 
+### Creator Resolution
+
+`wegent_kb_list_knowledge_bases` and `wegent_kb_list_nodes` return `creator` on knowledge bases and document nodes. The default resolver reads `user_id` and `user_name` from the Wegent `users` table and returns empty `attributes`. Folder nodes do not have independent creator information, so their `creator` is `null`.
+
+Internal deployments can replace the creator resolver when they need to map users to employees, organizations, or external accounts. The resolver receives the current database session and a deduplicated list of positive user IDs, then returns an `ExternalKnowledgeCreatorInfo` map keyed by `user_id`. Resolver failures do not fail the main response; the system logs the error and falls back to the default users-table resolver.
+
+```python
+from app.schemas.knowledge_external import ExternalKnowledgeCreatorInfo
+from app.services.knowledge.external_creator import (
+    set_external_knowledge_creator_resolver,
+)
+
+
+def enterprise_creator_resolver(db, user_ids):
+    employees = load_employees_by_user_ids(user_ids)
+    return {
+        user_id: ExternalKnowledgeCreatorInfo(
+            user_id=user_id,
+            user_name=employee.display_name,
+            attributes={"employee_id": employee.employee_id},
+        )
+        for user_id, employee in employees.items()
+    }
+
+
+set_external_knowledge_creator_resolver(enterprise_creator_resolver)
+```
+
 ## Tools
 
 ### `wegent_kb_list_knowledge_bases`
@@ -124,6 +152,7 @@ Parameters:
 | `scope` | `string` | `all` | Visibility scope, matching the internal knowledge list, for example `all`, `personal`, `group`, or `organization` |
 | `group_name` | `string \| null` | `null` | Optional space or group name. Required when `scope=group`; an empty string is treated as missing |
 | `query` | `string \| null` | `null` | Optional keyword filter. It matches knowledge base name and description case-insensitively |
+| `owner_user_ids` | `list[int] \| null` | `null` | Optional creator user ID filter, at most `100` IDs. An empty list is treated as unfiltered |
 | `limit` | `int` | `50` | Number of results to return, from `1` to `100` |
 | `offset` | `int` | `0` | Offset, must be greater than or equal to `0` |
 
@@ -131,6 +160,7 @@ Behavior:
 
 - Results are sorted by `created_at` descending, so callers do not need to sort again for display.
 - `document_count` counts all documents in the knowledge base, including inactive documents, matching the internal knowledge list behavior.
+- Each `items[]` entry returns `owner_user_id` and `creator`; `creator` contains `user_id`, `user_name`, and deployment-extensible `attributes`.
 - Each `items[]` entry returns `namespace_level` and `namespace_display_name`: personal knowledge bases use `personal` / `personal`, group knowledge bases use `group` / the group display name, and organization knowledge bases use `organization` / the organization display name. `namespace_display_name` only represents the space display name and does not encode sharing or creator relation.
 - `document_count` is calculated only for the current page to avoid turning one request into many count queries.
 - `total` is the total number of matching knowledge bases, `total_returned` is the number returned in the current page, and `has_more` indicates whether another page exists. Callers should page with `limit` and `offset`.
@@ -155,6 +185,7 @@ Behavior:
 - Within the same level, folders are returned before documents. Nodes of the same type are sorted by `created_at` descending.
 - `recursive` and `include_inactive` must be strict booleans. The string `"false"` is rejected.
 - `include_inactive` defaults to `true`, so inactive documents are shown to callers, matching the internal MCP behavior. Callers can use `index_status` to determine whether a document is searchable.
+- Document nodes return `creator`; folder nodes do not have independent creator information, so their `creator` is `null`.
 - Non-recursive listing returns `total_available` and `has_more`; callers should page with `limit` and `offset`.
 - `total_returned` counts every node in the returned tree, including nested children.
 - Root recursive listing pre-counts candidate folders and documents. If the result exceeds `MAX_RECURSIVE_NODES`, it returns `result_too_large` before loading the whole tree.

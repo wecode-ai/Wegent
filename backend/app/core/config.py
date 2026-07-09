@@ -237,6 +237,9 @@ class Settings(BaseSettings):
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
+    # Optional Web URL used to build Wework desktop cloud authorization pages.
+    # Defaults to FRONTEND_URL when empty.
+    WEWORK_AUTHORIZE_BASE_URL: str = ""
 
     # Task notification URL configuration (for DingTalk mobile notifications)
     # External URL for task completion notifications

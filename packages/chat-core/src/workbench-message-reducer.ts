@@ -29,6 +29,8 @@ export interface WorkbenchToolBlock extends BaseWorkbenchProcessingBlock {
   toolName: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
+  toolOutputTruncated?: boolean
+  toolOutputOriginalBytes?: number
   renderPayload?: unknown
 }
 
@@ -86,6 +88,9 @@ type ProcessingBlockUpdate = {
   content?: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
+  toolOutputDelta?: string
+  toolOutputTruncated?: boolean
+  toolOutputOriginalBytes?: number
   renderPayload?: unknown
   fileChanges?: unknown
   status?: WorkbenchToolBlockStatus
@@ -369,10 +374,7 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
               ...withActiveStreamState(message, isActiveBlockStatus(action.updates.status)),
               blocks: (message.blocks ?? []).map(block =>
                 block.id === action.blockId
-                  ? ({
-                      ...block,
-                      ...action.updates
-                    } as WorkbenchProcessingBlock<TFileChanges>)
+                  ? mergeProcessingBlockUpdate(block, action.updates)
                   : block
               )
             }
@@ -381,6 +383,35 @@ export function reduceWorkbenchMessages<TAttachment = unknown, TFileChanges = un
     default:
       return state
   }
+}
+
+function mergeProcessingBlockUpdate<TFileChanges>(
+  block: WorkbenchProcessingBlock<TFileChanges>,
+  updates: ProcessingBlockUpdate
+): WorkbenchProcessingBlock<TFileChanges> {
+  const { toolOutputDelta, ...directUpdates } = updates
+  const nextBlock = {
+    ...block,
+    ...directUpdates
+  } as WorkbenchProcessingBlock<TFileChanges>
+
+  if (typeof toolOutputDelta !== 'string' || block.type !== 'tool') {
+    return nextBlock
+  }
+
+  const nextToolBlock = nextBlock as WorkbenchToolBlock
+  return {
+    ...nextToolBlock,
+    toolOutput: appendToolOutputDelta(nextToolBlock.toolOutput, toolOutputDelta)
+  }
+}
+
+function appendToolOutputDelta(current: unknown, delta: string): unknown {
+  if (typeof current === 'string' || typeof current === 'undefined' || current === null) {
+    return `${current ?? ''}${delta}`
+  }
+
+  return `${String(current)}${delta}`
 }
 
 function normalizeUniqueWorkbenchMessages<TAttachment, TFileChanges>(

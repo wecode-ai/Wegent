@@ -3,16 +3,8 @@ import { isValidFileSize, MAX_FILE_SIZE } from '@/api/attachments'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { Attachment } from '@/types/api'
 
-export interface LocalAttachmentUploadContext {
-  workspacePath?: string | null
-}
-
 export interface LocalAttachmentApi {
-  uploadAttachment: (
-    file: File,
-    onProgress?: (progress: number) => void,
-    context?: LocalAttachmentUploadContext
-  ) => Promise<Attachment>
+  uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
   deleteAttachment: (attachmentId: number) => Promise<void>
 }
 
@@ -48,7 +40,7 @@ async function maybeTextLength(file: File): Promise<number | null> {
 
 export function createLocalAttachmentApi(): LocalAttachmentApi {
   return {
-    async uploadAttachment(file, onProgress, context) {
+    async uploadAttachment(file, onProgress) {
       if (!isValidFileSize(file.size)) {
         throw new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)} MB`)
       }
@@ -59,7 +51,7 @@ export function createLocalAttachmentApi(): LocalAttachmentApi {
       onProgress?.(0)
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()))
       const localPath = await invoke<string>('save_local_attachment_file', {
-        workspacePath: context?.workspacePath ?? null,
+        workspacePath: null,
         filename: file.name,
         bytes,
       })

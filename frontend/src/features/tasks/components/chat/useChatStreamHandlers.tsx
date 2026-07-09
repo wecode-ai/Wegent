@@ -464,6 +464,9 @@ export function useChatStreamHandlers({
                 name: ctx.name,
                 document_count: ctx.document_count,
                 document_ids: ctx.document_ids,
+                folder_ids: ctx.folder_ids,
+                folder_names: ctx.folder_names,
+                include_subfolders: ctx.include_subfolders,
                 scope_restricted: ctx.scope_restricted,
               },
             }
@@ -558,6 +561,9 @@ export function useChatStreamHandlers({
         mime_type?: string
         document_count?: number
         document_ids?: number[]
+        folder_ids?: number[]
+        folder_names?: string[]
+        include_subfolders?: boolean
         scope_restricted?: boolean
         knowledge_id?: number
         document_id?: number
@@ -621,6 +627,9 @@ export function useChatStreamHandlers({
           const kbContext = ctx as typeof ctx & {
             document_count?: number
             document_ids?: number[]
+            folder_ids?: number[]
+            folder_names?: string[]
+            include_subfolders?: boolean
             scope_restricted?: boolean
           }
           pendingContexts.push({
@@ -631,6 +640,9 @@ export function useChatStreamHandlers({
             knowledge_id: typeof ctx.id === 'number' ? ctx.id : parseInt(String(ctx.id), 10),
             document_count: kbContext.document_count,
             document_ids: kbContext.document_ids,
+            folder_ids: kbContext.folder_ids,
+            folder_names: kbContext.folder_names,
+            include_subfolders: kbContext.include_subfolders,
             scope_restricted: kbContext.scope_restricted,
           })
         } else if (ctx.type === 'table') {
@@ -1328,6 +1340,9 @@ export function useChatStreamHandlers({
                   name: ctx.name,
                   document_count: ctx.document_count,
                   document_ids: ctx.document_ids,
+                  folder_ids: ctx.folder_ids,
+                  folder_names: ctx.folder_names,
+                  include_subfolders: ctx.include_subfolders,
                   scope_restricted: ctx.scope_restricted,
                 },
               })
@@ -1375,6 +1390,9 @@ export function useChatStreamHandlers({
           mime_type?: string
           document_count?: number
           document_ids?: number[] | null
+          folder_ids?: number[] | null
+          folder_names?: string[] | null
+          include_subfolders?: boolean | null
           scope_restricted?: boolean | null
           knowledge_id?: number
           document_id?: number
@@ -1409,6 +1427,9 @@ export function useChatStreamHandlers({
             mime_type: ctx.mime_type ?? undefined,
             document_count: ctx.document_count ?? undefined,
             document_ids: ctx.document_ids ?? undefined,
+            folder_ids: ctx.folder_ids ?? undefined,
+            folder_names: ctx.folder_names ?? undefined,
+            include_subfolders: ctx.include_subfolders ?? undefined,
             scope_restricted: ctx.scope_restricted ?? undefined,
             knowledge_id: ctx.knowledge_id ?? undefined,
             document_id: ctx.document_id ?? undefined,

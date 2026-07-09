@@ -8,6 +8,7 @@ import type {
   ChatStartPayload,
   ChatBlockCreatedPayload,
   ChatBlockUpdatedPayload,
+  RuntimeContextUsage,
   RuntimeGoalEventPayload,
   RuntimeSubagentActivityPayload,
   NormalizedRuntimeMessage,
@@ -26,6 +27,7 @@ export interface RuntimeTaskStreamHandlers {
   onAssistantStart?: () => void
   onAssistantSettled?: () => void
   onRefreshWorkLists?: () => void
+  onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
@@ -36,6 +38,10 @@ export function createRuntimeTaskStreamHandlers(
   handlers: RuntimeTaskStreamHandlers
 ): ChatStreamHandlers {
   return {
+    scope: {
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+    },
     onChatStart: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
@@ -55,9 +61,14 @@ export function createRuntimeTaskStreamHandlers(
     },
     onChatChunk: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
+      const contextUsage = payload.result?.contextUsage
       const identity = runtimeStreamTaskSubtaskIdentity(payload)
       const reasoningChunk = getReasoningChunk(payload.result)
       if (!identity) {
+        if (contextUsage && !payload.content && !reasoningChunk) {
+          handlers.onContextUsageUpdated?.(contextUsage)
+          return
+        }
         warnAndDropRuntimeStreamEvent('chat:chunk', address, payload, {
           hasContent: Boolean(payload.content),
           hasReasoningChunk: Boolean(reasoningChunk),
@@ -66,11 +77,18 @@ export function createRuntimeTaskStreamHandlers(
       }
       const blocks = getResultBlocks(identity.subtaskId, payload.result)
       if (!payload.content && !reasoningChunk && (!blocks || blocks.length === 0)) {
+        if (contextUsage) {
+          handlers.onContextUsageUpdated?.(contextUsage)
+          return
+        }
         warnAndDropEmptyRuntimeChunk(address, payload, {
           reason: 'empty_chunk',
           resultKeys: isRecord(payload.result) ? Object.keys(payload.result) : [],
         })
         return
+      }
+      if (contextUsage) {
+        handlers.onContextUsageUpdated?.(contextUsage)
       }
       debugRuntimeStreamEvent('chat:chunk', address, payload, true, {
         hasContent: Boolean(payload.content),
@@ -98,6 +116,9 @@ export function createRuntimeTaskStreamHandlers(
         blockCount: getResultBlocks(identity.subtaskId, payload.result)?.length ?? 0,
       })
       handlers.onAssistantSettled?.()
+      if (payload.result.contextUsage) {
+        handlers.onContextUsageUpdated?.(payload.result.contextUsage)
+      }
       handlers.onMessageAction({
         type: 'assistant_done',
         subtaskId: identity.subtaskId,
@@ -173,6 +194,8 @@ export function createRuntimeTaskStreamHandlers(
         hasContent: payload.content !== undefined,
         hasToolInput: payload.toolInput !== undefined,
         hasToolOutput: payload.toolOutput !== undefined,
+        hasToolOutputDelta: payload.toolOutputDelta !== undefined,
+        hasToolOutputTruncated: payload.toolOutputTruncated !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
       })
       handlers.onMessageAction({
@@ -183,6 +206,12 @@ export function createRuntimeTaskStreamHandlers(
           ...(payload.content !== undefined && { content: payload.content }),
           ...(payload.toolInput !== undefined && { toolInput: payload.toolInput }),
           ...(payload.toolOutput !== undefined && { toolOutput: payload.toolOutput }),
+          ...(payload.toolOutputDelta !== undefined && {
+            toolOutputDelta: payload.toolOutputDelta,
+          }),
+          ...(payload.toolOutputTruncated !== undefined && {
+            toolOutputTruncated: payload.toolOutputTruncated,
+          }),
           ...(payload.fileChanges !== undefined && {
             fileChanges: normalizeTurnFileChanges(payload.fileChanges),
           }),
@@ -527,6 +556,18 @@ function normalizeProcessingBlock(
           ? block.tool_input
           : undefined,
       toolOutput: block.toolOutput ?? block.tool_output,
+      toolOutputTruncated:
+        typeof block.toolOutputTruncated === 'boolean'
+          ? block.toolOutputTruncated
+          : typeof block.tool_output_truncated === 'boolean'
+            ? block.tool_output_truncated
+            : undefined,
+      toolOutputOriginalBytes:
+        typeof block.toolOutputOriginalBytes === 'number'
+          ? block.toolOutputOriginalBytes
+          : typeof block.tool_output_original_bytes === 'number'
+            ? block.tool_output_original_bytes
+            : undefined,
       renderPayload: normalizeToolRenderPayload(block),
       status,
       createdAt: timestamp,

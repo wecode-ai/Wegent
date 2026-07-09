@@ -157,12 +157,20 @@ class JobService(BaseService[Kind, None, None]):
                     task_map=task_map,
                     subtasks=group_subtasks,
                 )
-                if archive_task:
-                    await self._archive_workspace(
-                        task=archive_task,
-                        executor_name=name,
-                        executor_namespace=namespace,
+                if archive_task and not await self._archive_workspace(
+                    task=archive_task,
+                    executor_name=name,
+                    executor_namespace=namespace,
+                ):
+                    result["skipped"].append(
+                        {
+                            "task_id": task_id,
+                            "executor_name": name,
+                            "executor_namespace": namespace,
+                            "reason": "archive_failed",
+                        }
                     )
+                    continue
                 await executor_kinds_service.delete_executor_task_async(name, namespace)
                 await self._mark_executor_deleted(subtask_ids)
                 result["deleted"].append(
@@ -831,6 +839,7 @@ class JobService(BaseService[Kind, None, None]):
         await self._release_cleanup_read_transaction(db)
 
         deleted_executors: List[Dict[str, str]] = []
+        archive_failed_executors: List[Dict[str, str]] = []
 
         for (namespace, name), subtask in executor_subtasks.items():
             if self._is_device_executor_name(name):
@@ -840,19 +849,19 @@ class JobService(BaseService[Kind, None, None]):
                 )
                 continue
 
-            if task_type == "code":
-                try:
-                    await self._archive_workspace(
-                        task=task,
-                        executor_name=name,
-                        executor_namespace=namespace,
-                    )
-                except Exception as archive_error:
-                    logger.warning(
-                        f"[executor_job] Failed to archive workspace "
-                        f"task_id={task.id} "
-                        f"ns={namespace} name={name}: {archive_error}"
-                    )
+            if task_type == "code" and not await self._archive_workspace(
+                task=task,
+                executor_name=name,
+                executor_namespace=namespace,
+            ):
+                logger.warning(
+                    f"[executor_job] Skipping executor deletion after archive "
+                    f"failure task_id={task.id} ns={namespace} name={name}"
+                )
+                archive_failed_executors.append(
+                    {"executor_name": name, "executor_namespace": namespace}
+                )
+                continue
 
             logger.info(
                 f"[executor_job] Scheduled deleting executor task "
@@ -876,6 +885,14 @@ class JobService(BaseService[Kind, None, None]):
                     "executor_name": name,
                     "executor_namespace": namespace,
                 }
+            )
+
+        # When nothing was deleted because archiving failed, the pods were
+        # intentionally retained for a later retry - report the skip instead of
+        # falsely claiming a successful deletion.
+        if not deleted_executors and archive_failed_executors:
+            return self._build_cleanup_result(
+                task_id, "archive_failed", archive_failed_executors
             )
 
         return self._build_cleanup_result(
@@ -934,13 +951,27 @@ class JobService(BaseService[Kind, None, None]):
         task: TaskResource,
         executor_name: str,
         executor_namespace: str,
-    ) -> None:
+    ) -> bool:
         """Archive workspace files before Pod deletion.
 
         Uses a short-lived sync session because archive_service expects
         a sync Session for its DB writes.
+
+        Returns:
+            True when it is safe to proceed with executor deletion: either
+            the workspace was archived successfully, or archiving is disabled
+            so there is nothing to preserve. False when archiving was required
+            but failed for any reason - callers MUST skip pod deletion in that
+            case to avoid unrecoverable workspace loss.
         """
         from app.services.workspace_archive import archive_service
+
+        # With archiving disabled there is nothing to preserve, so cleanup may
+        # proceed. With archiving enabled, a None result from archive_workspace
+        # unambiguously signals failure (all skip/error paths return None) and
+        # must block deletion.
+        if not settings.WORKSPACE_ARCHIVE_ENABLED:
+            return True
 
         logger.info(
             f"[executor_job] Archiving workspace "
@@ -957,21 +988,33 @@ class JobService(BaseService[Kind, None, None]):
                 executor_namespace=executor_namespace,
             )
             sync_db.commit()
-
-            if archive_info:
-                logger.info(
-                    f"[executor_job] Workspace archived "
-                    f"task_id={task.id} "
-                    f"size={archive_info.sizeBytes} bytes"
-                )
-            else:
-                logger.info(
-                    f"[executor_job] Workspace archiving skipped "
-                    f"task_id={task.id} "
-                    f"(see ArchiveService logs for details)"
-                )
+        except Exception as archive_error:
+            sync_db.rollback()
+            logger.error(
+                f"[executor_job] Error archiving workspace "
+                f"task_id={task.id} "
+                f"executor={executor_namespace}/{executor_name}: {archive_error}",
+                exc_info=True,
+            )
+            return False
         finally:
             sync_db.close()
+
+        if archive_info:
+            logger.info(
+                f"[executor_job] Workspace archived "
+                f"task_id={task.id} "
+                f"size={archive_info.sizeBytes} bytes"
+            )
+            return True
+
+        logger.warning(
+            f"[executor_job] Workspace archiving failed, keeping executor to "
+            f"avoid unrecoverable workspace loss "
+            f"task_id={task.id} "
+            f"executor={executor_namespace}/{executor_name}"
+        )
+        return False
 
     async def _mark_executor_deleted(self, subtask_ids: List[int]) -> None:
         """Mark selected subtasks as deleted in a short-lived sync Store boundary."""

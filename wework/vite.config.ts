@@ -10,6 +10,11 @@ const configuredAppBasePath = process.env.VITE_APP_BASE_PATH || '/'
 const appBasePath = configuredAppBasePath.endsWith('/')
   ? configuredAppBasePath
   : `${configuredAppBasePath}/`
+const packageJson = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')
+) as {
+  version?: string
+}
 const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
 const extensionsDir = fs.existsSync(path.join(internalExtensionsDir, 'apps.tsx'))
   ? internalExtensionsDir
@@ -18,6 +23,9 @@ const extensionsDir = fs.existsSync(path.join(internalExtensionsDir, 'apps.tsx')
 export default defineConfig({
   base: appBasePath,
   plugins: [react()],
+  define: {
+    __WEWORK_APP_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),
+  },
   server: {
     host: '0.0.0.0',
     proxy: {

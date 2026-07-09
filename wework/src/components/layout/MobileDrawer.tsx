@@ -16,6 +16,7 @@ import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
 import { cn } from '@/lib/utils'
+import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   CreateGitWorkspaceProjectRequest,
@@ -58,6 +59,7 @@ interface MobileDrawerProps {
   runtimeWork?: RuntimeWorkListResponse | null
   currentProjectId?: number
   currentRuntimeTask?: RuntimeTaskAddress | null
+  unreadRuntimeTaskKeys?: ReadonlySet<string>
   activeItem?: 'chat' | 'plugins' | 'automation'
   onClose: () => void
   onNewChat?: () => void
@@ -92,6 +94,7 @@ export function MobileDrawer({
   runtimeWork,
   currentProjectId,
   currentRuntimeTask,
+  unreadRuntimeTaskKeys,
   onClose,
   onNewChat,
   onStartStandaloneChat,
@@ -114,6 +117,7 @@ export function MobileDrawer({
 }: MobileDrawerProps) {
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
+  const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? new Set<string>()
   const {
     scrollRef,
     pullDistance,
@@ -372,6 +376,15 @@ export function MobileDrawer({
                             renderRuntimeTaskRunningStatus(
                               `mobile-chat-runtime-task-running-${task.taskId}`
                             )
+                          ) : visibleUnreadRuntimeTaskKeys.has(
+                              getRuntimeTaskReminderItemKey(workspace, task)
+                            ) ? (
+                            <span
+                              data-testid={`mobile-chat-runtime-task-unread-dot-${task.taskId}`}
+                              aria-label={t('workbench.runtime_task_unread', '未读')}
+                              title={t('workbench.runtime_task_unread', '未读')}
+                              className="ml-2 h-2 w-2 shrink-0 rounded-full bg-primary"
+                            />
                           ) : (
                             <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
                               <span
@@ -530,6 +543,15 @@ export function MobileDrawer({
                                       renderRuntimeTaskRunningStatus(
                                         `mobile-runtime-task-running-${task.taskId}`
                                       )
+                                    ) : visibleUnreadRuntimeTaskKeys.has(
+                                        getRuntimeTaskReminderItemKey(workspace, task)
+                                      ) ? (
+                                      <span
+                                        data-testid={`mobile-runtime-task-unread-dot-${task.taskId}`}
+                                        aria-label={t('workbench.runtime_task_unread', '未读')}
+                                        title={t('workbench.runtime_task_unread', '未读')}
+                                        className="ml-2 h-2 w-2 shrink-0 rounded-full bg-primary"
+                                      />
                                     ) : (
                                       <span className="ml-2 flex shrink-0 items-center gap-1 text-sm text-[#6B7280]">
                                         <span

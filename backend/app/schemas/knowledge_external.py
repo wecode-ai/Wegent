@@ -6,7 +6,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -16,6 +16,14 @@ class ExternalKnowledgeNodeType(str, Enum):
 
     FOLDER = "folder"
     DOCUMENT = "document"
+
+
+class ExternalKnowledgeCreatorInfo(BaseModel):
+    """Creator information returned by the external knowledge MCP."""
+
+    user_id: int
+    user_name: str
+    attributes: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ExternalKnowledgeSpace(BaseModel):
@@ -28,6 +36,7 @@ class ExternalKnowledgeSpace(BaseModel):
     namespace_level: Literal["personal", "group", "organization"]
     namespace_display_name: str
     owner_user_id: int
+    creator: Optional[ExternalKnowledgeCreatorInfo] = None
     document_count: int = 0
     created_at: datetime
     updated_at: datetime
@@ -62,6 +71,7 @@ class ExternalKnowledgeNode(BaseModel):
     previewable: bool = False
     mime_type: Optional[str] = None
     file_size: Optional[int] = None
+    creator: Optional[ExternalKnowledgeCreatorInfo] = None
     created_at: datetime
     updated_at: datetime
     orphan: bool = False

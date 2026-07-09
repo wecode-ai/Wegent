@@ -11,7 +11,7 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use tokio::time::sleep;
+use tokio::{sync::broadcast, time::sleep};
 
 use crate::{
     agents::{resolve_codex_binary, AgentCommandPlanner, AgentProcessEngine},
@@ -66,6 +66,7 @@ const TERMINAL_INPUT_EVENT: &str = "terminal:input";
 const TERMINAL_RESIZE_EVENT: &str = "terminal:resize";
 const TERMINAL_CLOSE_EVENT: &str = "terminal:close";
 const RUNTIME_RPC_EVENT: &str = "runtime:rpc";
+const RUNTIME_EVENT_EVENT: &str = "runtime:event";
 const DEVICE_UPGRADE_EVENT: &str = "device:upgrade";
 const DEVICE_RUN_EXTENSION_EVENT: &str = "device:run_extension";
 const APP_IPC_DEVICE_ID_ENV: &str = "WEGENT_APP_IPC_DEVICE_ID";
@@ -137,10 +138,13 @@ where
         );
         let mut backend = Self::from_client_and_runner(client, runner.clone());
         backend.task_controller = Some(Arc::new(runner));
-        backend.runtime_work_handler = Some(Arc::new(RuntimeWorkRpcHandler::new(
+        let (runtime_event_tx, runtime_event_rx) = broadcast::channel(512);
+        backend.runtime_work_handler = Some(Arc::new(RuntimeWorkRpcHandler::with_event_sender(
             backend.client.config.device_id.clone(),
             resolve_codex_binary(),
+            runtime_event_tx,
         )));
+        backend.start_runtime_event_forwarder(runtime_event_rx);
         backend.capability_sync_handler = Some(Arc::new(default_capability_sync_handler(
             backend.client.config.as_ref(),
         )));
@@ -242,6 +246,36 @@ where
 
     pub fn cancellation_snapshot(&self) -> LocalCancellationSnapshot {
         self.cancellations.snapshot()
+    }
+
+    fn start_runtime_event_forwarder(&self, mut events: broadcast::Receiver<Value>) {
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            loop {
+                match events.recv().await {
+                    Ok(event) => {
+                        if let Err(error) = client.emit_raw_event(RUNTIME_EVENT_EVENT, event).await
+                        {
+                            write_executor_error_line(&format_executor_log(
+                                "runtime event relay failed",
+                                &[("error", error)],
+                            ));
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        let payload = json!({
+                            "type": "event",
+                            "event": "executor.event_lagged",
+                            "payload": {
+                                "skipped": skipped,
+                            },
+                        });
+                        let _ = client.emit_raw_event(RUNTIME_EVENT_EVENT, payload).await;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
     }
 
     pub fn is_cancel_requested(&self, task_id: &str, subtask_id: Option<&str>) -> bool {
@@ -692,9 +726,13 @@ pub fn local_backend_heartbeat_failure_log_line(backend_url: &str, error: &str) 
 pub async fn serve_local_backend_sidecar(config: DeviceConfig) -> Result<(), String> {
     let backend_config = LocalBackendConfig::from_device_config(config);
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
+    let runtime_instance_id = backend_config.runtime_instance_id.clone();
     let runner = LocalBackendRunner::new(backend_config, SocketIoTransport::default());
 
-    let ipc_task = tokio::spawn(async move { serve_app_ipc_sidecar(app_ipc_device_id).await });
+    let ipc_task =
+        tokio::spawn(
+            async move { serve_app_ipc_sidecar(app_ipc_device_id, runtime_instance_id).await },
+        );
     let backend_task = tokio::spawn(async move { runner.run_forever().await });
 
     tokio::select! {
@@ -776,6 +814,7 @@ mod tests {
             backend_url: "https://backend.example.com".to_string(),
             auth_token: "token".to_string(),
             device_id: device_id.to_string(),
+            runtime_instance_id: "runtime-1".to_string(),
             device_name: "Cloud Device".to_string(),
             device_type: "remote".to_string(),
             app_device_id: String::new(),

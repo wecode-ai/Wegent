@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_TEXT_FILE_EXTENSION = "txt"
 MAX_DOCUMENT_READ_LIMIT = 100000
 DEFAULT_KNOWLEDGE_LIST_LIMIT = 50
-MAX_KNOWLEDGE_LIST_LIMIT = 200
+MAX_KNOWLEDGE_LIST_LIMIT = 500
 REQUIRED_DOCUMENT_READ_KEYS = (
     "id",
     "name",
@@ -728,6 +728,10 @@ class KnowledgeOrchestrator:
         *,
         offset: int = 0,
         limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
+        include_subfolders: bool = False,
+        keyword: str | None = None,
+        sort_by: str = "createdAt",
+        sort_order: str = "desc",
     ) -> KnowledgeDocumentListResponse:
         """
         List documents in a knowledge base.
@@ -737,6 +741,10 @@ class KnowledgeOrchestrator:
             user: Current user
             knowledge_base_id: Knowledge base ID
             folder_id: Optional folder ID to filter by
+            include_subfolders: Whether to include descendant folders when folder_id is set
+            keyword: Optional document name keyword filter
+            sort_by: Sort field (name, size, createdAt, updatedAt)
+            sort_order: Sort order (asc or desc)
 
         Returns:
             KnowledgeDocumentListResponse with document list.
@@ -764,6 +772,10 @@ class KnowledgeOrchestrator:
             folder_id=folder_id,
             offset=offset,
             limit=limit,
+            include_subfolders=include_subfolders,
+            keyword=keyword,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
         # Batch query user names for created_by field

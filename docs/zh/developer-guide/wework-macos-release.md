@@ -87,16 +87,43 @@ scripts/release-mac-app.sh --target local --version 0.1.99 --notes "Local verifi
 python3 -m http.server 8787 --directory src-tauri/target/release/local-update-server
 ```
 
-## 无 Apple Developer 账号的 CI DMG
+## GitHub Release 自动更新
 
-仓库提供 `.github/workflows/wework-app.yml`，用于在 GitHub Actions 上生成无需 Apple Developer Program 的 macOS 测试 DMG。该 workflow 会对 `.app` 执行 ad-hoc codesign，但不会做 Apple notarization，因此首次打开仍会触发 Gatekeeper。这个模式适合内部测试和开发者分发，不应标记为正式已公证发布包。
+仓库提供 `.github/workflows/wework-app.yml`，用于在 GitHub Actions 上生成 macOS DMG、Tauri updater archive、签名文件和 `latest.json`。客户端内置的 updater endpoint 指向 GitHub Release latest asset：
 
-workflow 不需要配置 Apple signing secrets，会创建或更新 `wework-v<version>` GitHub prerelease，并分别上传两个 Release assets：
+```text
+https://github.com/<owner>/<repo>/releases/latest/download/latest.json
+```
+
+workflow 会创建或更新 `wework-v<version>` draft release。两个架构构建完成后，workflow 生成 `latest.json`，上传到同一个 Release，最后把 Release 发布为 GitHub latest。客户端启动后的自动检查或标题栏手动更新都会读取这个 manifest。
+
+GitHub Actions 需要配置这些 repository secrets：
+
+- `TAURI_SIGNING_PRIVATE_KEY`：Tauri updater 私钥。
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：私钥密码；如果私钥无密码可以留空。
+- `TAURI_UPDATER_PUBKEY`：与私钥匹配的 updater 公钥，会被注入到构建产物中。
+
+不要轮换 updater 私钥，除非可以接受旧客户端无法继续自动升级。Tauri 会用已安装客户端内置的公钥校验新版本签名。
+
+workflow 分别上传这些 Release assets：
 
 - `WeWork_<version>_macos_arm64_unsigned-adhoc.dmg`
 - `WeWork_<version>_macos_x64_unsigned-adhoc.dmg`
+- `WeWork_<version>_macos_arm64.app.tar.gz`
+- `WeWork_<version>_macos_arm64.app.tar.gz.sig`
+- `WeWork_<version>_macos_x64.app.tar.gz`
+- `WeWork_<version>_macos_x64.app.tar.gz.sig`
+- `latest.json`
 
-从 GitHub Release assets 下载时，下载链接本身就是 `.dmg` 文件，不会被 Actions artifact 额外套一层 `.zip`。手动触发 workflow 且未填写版本号时，release tag 会使用 `wework-v<package-version>-<short-sha>`。
+从 GitHub Release assets 下载时，下载链接本身就是 `.dmg` 文件，不会被 Actions artifact 额外套一层 `.zip`。手动触发 workflow 且未填写版本号时，release tag 会自动基于最新的 `wework-vX.Y.Z` tag 增加 patch 版本。
+
+正式发布时，workflow 会在构建前把 `wework/package.json`、`wework/src-tauri/tauri.conf.json`、`wework/src-tauri/Cargo.toml` 和 `wework/src-tauri/Cargo.lock` 同步到本次 release version，并直接提交回触发 workflow 的 `main` 分支。后续 macOS 构建和 GitHub Release 都会使用这个版本提交，确保关于页版本、Tauri 包版本和源码版本一致。
+
+手动触发但未勾选正式发布时只生成测试 artifacts，不会提交版本文件。通过 `wework-vX.Y.Z` tag 触发发布时，tag 已经指向固定提交，workflow 不会改写源码；如果 tag 指向的版本文件和 tag 版本不一致，发布会失败，需要先更新版本文件并重新打 tag。
+
+## 无 Apple Developer 账号的 CI DMG
+
+GitHub workflow 会对 `.app` 执行 ad-hoc codesign，但不会做 Apple notarization，因此首次打开仍会触发 Gatekeeper。这个模式适合内部测试和开发者分发，不应标记为正式已公证发布包。
 
 首次打开被拦截时，可以强制打开。macOS 15 之后的提示可能仍会出现 **Move to Trash / 移到废纸篓** 按钮；只要 CI 中 `codesign --verify --deep --strict` 通过，这通常仍属于未公证 app 的 Gatekeeper 拦截，不是包损坏：
 

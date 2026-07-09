@@ -702,6 +702,9 @@ export interface SubtaskContextBrief {
   knowledge_id?: number | null
   document_count?: number | null
   document_ids?: number[] | null
+  folder_ids?: number[] | null
+  folder_names?: string[] | null
+  include_subfolders?: boolean | null
   scope_restricted?: boolean | null
   // Table fields (from type_data)
   document_id?: number | null
@@ -865,8 +868,8 @@ export type {
 } from './knowledge'
 
 // Project Types
-export type ProjectExecutionTargetType = 'local' | 'cloud'
-export type ProjectWorkspaceSource = 'git' | 'local_path'
+export type ProjectExecutionTargetType = 'local' | 'cloud' | 'remote'
+export type ProjectWorkspaceSource = 'git' | 'local_path' | 'device_path'
 
 export interface ProjectWorkspaceRef {
   name: string
@@ -888,6 +891,7 @@ export interface ProjectWorkspaceConfig {
   source: ProjectWorkspaceSource
   localPath?: string | null
   checkoutPath?: string | null
+  devicePath?: string | null
   workspaceRef?: ProjectWorkspaceRef | null
 }
 

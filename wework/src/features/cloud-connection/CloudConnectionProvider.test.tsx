@@ -1,8 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, createHttpClient } from '@/api/http'
-import { ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE } from '@/features/auth/adminPasswordSetup'
+import { createHttpClient } from '@/api/http'
+import type { OpenCloudAuthorizationUrl } from './CloudConnectionContext'
 import { CloudConnectionProvider } from './CloudConnectionProvider'
 import { useCloudConnection } from './useCloudConnection'
 
@@ -24,7 +24,13 @@ vi.mock('@/api/http', async importOriginal => {
   }
 })
 
-function CloudConnectProbe({ onError }: { onError: (error: unknown) => void }) {
+function CloudConnectProbe({
+  onError,
+  openAuthorizationUrl = vi.fn(),
+}: {
+  onError: (error: unknown) => void
+  openAuthorizationUrl?: OpenCloudAuthorizationUrl
+}) {
   const cloud = useCloudConnection()
   return (
     <button
@@ -32,10 +38,7 @@ function CloudConnectProbe({ onError }: { onError: (error: unknown) => void }) {
       data-testid="connect-cloud-button"
       onClick={async () => {
         try {
-          await cloud.connectWithPassword('https://cloud.example.com', {
-            user_name: 'admin',
-            password: 'password',
-          })
+          await cloud.connectWithAuthorization('https://cloud.example.com', openAuthorizationUrl)
         } catch (error) {
           onError(error)
         }
@@ -78,26 +81,123 @@ describe('CloudConnectionProvider', () => {
     expect(httpMocks.post).not.toHaveBeenCalled()
   })
 
-  it('preserves the admin setup ApiError so the dialog can switch forms', async () => {
+  it('opens the cloud authorization page and stores the claimed token', async () => {
     const onError = vi.fn()
-    const setupRequiredError = new ApiError(
-      'Admin password setup required',
-      400,
-      ADMIN_PASSWORD_SETUP_REQUIRED_ERROR_CODE,
-      { admin_username: 'root' }
-    )
+    const closeAuthorizationWindow = vi.fn()
+    const openAuthorizationUrl = vi.fn(() => ({
+      close: closeAuthorizationWindow,
+    }))
+    const token = `header.${btoa(JSON.stringify({ exp: 2_000_000_000 })).replace(/=/g, '')}.sig`
     httpMocks.get.mockResolvedValueOnce({ status: 'healthy' })
-    httpMocks.post.mockRejectedValueOnce(setupRequiredError)
+    httpMocks.post.mockResolvedValueOnce({
+      session_id: 'session-1',
+      poll_token: 'poll-1',
+      authorize_url: 'https://cloud.example.com/wework/authorize?session_id=session-1',
+      expires_at: Math.floor(Date.now() / 1000) + 30,
+      poll_interval_seconds: 0.001,
+    })
+    httpMocks.get.mockResolvedValueOnce({
+      status: 'success',
+      access_token: token,
+      token_type: 'bearer',
+      username: 'alice',
+    })
+    httpMocks.get.mockResolvedValueOnce({
+      id: 7,
+      user_name: 'alice',
+      email: 'alice@example.com',
+    })
 
     render(
       <CloudConnectionProvider>
-        <CloudConnectProbe onError={onError} />
+        <CloudConnectProbe onError={onError} openAuthorizationUrl={openAuthorizationUrl} />
       </CloudConnectionProvider>
     )
 
     await userEvent.click(screen.getByTestId('connect-cloud-button'))
 
-    await waitFor(() => expect(onError).toHaveBeenCalledWith(setupRequiredError))
+    await waitFor(() => expect(onError).not.toHaveBeenCalled())
+    await waitFor(() => {
+      expect(
+        JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').user.user_name
+      ).toBe('alice')
+    })
     expect(createHttpClient).toHaveBeenCalled()
+    expect(httpMocks.post).toHaveBeenCalledWith('/auth/wework/sessions')
+    expect(closeAuthorizationWindow).toHaveBeenCalled()
+  })
+
+  it('keeps the cloud connection when closing the authorization window fails after success', async () => {
+    const onError = vi.fn()
+    const openAuthorizationUrl = vi.fn(() => ({
+      close: vi.fn(() => Promise.reject(new Error('close failed'))),
+    }))
+    const token = `header.${btoa(JSON.stringify({ exp: 2_000_000_000 })).replace(/=/g, '')}.sig`
+    httpMocks.get.mockResolvedValueOnce({ status: 'healthy' })
+    httpMocks.post.mockResolvedValueOnce({
+      session_id: 'session-1',
+      poll_token: 'poll-1',
+      authorize_url: 'https://cloud.example.com/wework/authorize?session_id=session-1',
+      expires_at: Math.floor(Date.now() / 1000) + 30,
+      poll_interval_seconds: 0.001,
+    })
+    httpMocks.get.mockResolvedValueOnce({
+      status: 'success',
+      access_token: token,
+      token_type: 'bearer',
+      username: 'alice',
+    })
+    httpMocks.get.mockResolvedValueOnce({
+      id: 7,
+      user_name: 'alice',
+      email: 'alice@example.com',
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudConnectProbe onError={onError} openAuthorizationUrl={openAuthorizationUrl} />
+      </CloudConnectionProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('connect-cloud-button'))
+
+    await waitFor(() => expect(onError).not.toHaveBeenCalled())
+    await waitFor(() => {
+      expect(
+        JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').user.user_name
+      ).toBe('alice')
+    })
+  })
+
+  it('cancels cloud authorization when the authorization window closes', async () => {
+    const onError = vi.fn()
+    let closeAuthorizationWindow: () => void = () => undefined
+    const openAuthorizationUrl = vi.fn(() => ({
+      closed: new Promise<void>(resolve => {
+        closeAuthorizationWindow = resolve
+      }),
+    }))
+    httpMocks.get.mockResolvedValueOnce({ status: 'healthy' })
+    httpMocks.post.mockResolvedValueOnce({
+      session_id: 'session-1',
+      poll_token: 'poll-1',
+      authorize_url: 'https://cloud.example.com/wework/authorize?session_id=session-1',
+      expires_at: Math.floor(Date.now() / 1000) + 30,
+      poll_interval_seconds: 30,
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudConnectProbe onError={onError} openAuthorizationUrl={openAuthorizationUrl} />
+      </CloudConnectionProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('connect-cloud-button'))
+    await waitFor(() => expect(openAuthorizationUrl).toHaveBeenCalledTimes(1))
+    closeAuthorizationWindow()
+
+    await waitFor(() => expect(onError).toHaveBeenCalledTimes(1))
+    expect((onError.mock.calls[0][0] as Error).message).toBe('云端授权窗口已关闭，请重新连接')
+    expect(httpMocks.get).toHaveBeenCalledTimes(1)
   })
 })

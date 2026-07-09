@@ -879,6 +879,79 @@ describe('workbenchReducer', () => {
     expect(refreshed.runtimeWork?.totalTasks).toBe(1)
   })
 
+  test('preserves a fresh failed optimistic runtime task across refresh', () => {
+    const state = workbenchReducer(initialWorkbenchState, {
+      type: 'lists_refreshed',
+      projects: [{ id: 7, name: 'Repo', tasks: [] }],
+      devices: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                workspaceKind: 'workspace',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                tasks: [
+                  {
+                    taskId: 'codex-failed',
+                    workspacePath: '/workspace/repo',
+                    title: 'Create cloud config',
+                    runtime: 'codex',
+                    status: 'failed',
+                    optimistic: true,
+                    error: 'executor-not-found:device-1',
+                    updatedAt: new Date().toISOString(),
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    const refreshed = workbenchReducer(state, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                workspaceKind: 'workspace',
+                projectId: 7,
+                available: true,
+                mapped: true,
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+
+    expect(refreshed.runtimeWork?.projects[0].deviceWorkspaces[0].tasks).toEqual([
+      expect.objectContaining({
+        taskId: 'codex-failed',
+        status: 'failed',
+        optimistic: true,
+        error: 'executor-not-found:device-1',
+      }),
+    ])
+    expect(refreshed.runtimeWork?.totalTasks).toBe(1)
+  })
+
   test('keeps chat and project workspace task ordering separate when paths overlap', () => {
     const state = workbenchReducer(initialWorkbenchState, {
       type: 'lists_refreshed',

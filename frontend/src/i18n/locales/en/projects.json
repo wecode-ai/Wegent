@@ -59,6 +59,7 @@
     "defaultPathHint": "If empty, defaults to ~/.wegent-executor/workspace/project{id}",
     "local": "Local device",
     "cloud": "Cloud device",
+    "remote": "Remote device",
     "deviceId": "Local device ID",
     "teamId": "Agent ID",
     "git": "Clone from Git",

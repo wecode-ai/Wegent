@@ -992,7 +992,7 @@ export function ModelSelector({
         }}
         disabled={disabled}
         className={[
-          'flex h-8 min-w-8 items-center gap-1 rounded-full px-2 text-[13px] font-medium leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-8 min-w-8 items-center gap-1 rounded-full px-2 text-[13px] font-light leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
           buttonClassName,
         ].join(' ')}
         aria-expanded={open}

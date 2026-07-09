@@ -15,6 +15,7 @@ from socketio.exceptions import TimeoutError as SocketTimeoutError
 
 from app.core.config import settings
 from app.core.socketio import get_sio
+from app.schemas.device import DeviceType
 from app.services.device.command_post_processor import (
     CommandPostProcessorError,
     apply_command_post_processor,
@@ -33,6 +34,8 @@ MAX_COMMAND_TIMEOUT_SECONDS = 600
 DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 5 * 1024 * 1024
 SOCKET_ACK_GRACE_SECONDS = 5
+REMOTE_DIRECTORY_COMMAND_KEYS = frozenset({"pwd", "ls_dirs"})
+LOCAL_COMMAND_DEVICE_TYPES = frozenset({DeviceType.LOCAL, DeviceType.APP})
 
 
 class DeviceCommandError(RuntimeError):
@@ -49,6 +52,84 @@ class DeviceCommandUnknownKeyError(DeviceCommandError):
 
 class DeviceCommandConfigurationError(DeviceCommandError):
     """Raised when configured command metadata is invalid."""
+
+
+def _device_kind_type(device_kind: Any) -> Optional[DeviceType]:
+    spec = getattr(device_kind, "json", None)
+    spec = spec.get("spec", {}) if isinstance(spec, dict) else {}
+    if "deviceType" not in spec:
+        return DeviceType.LOCAL
+    device_type = spec.get("deviceType")
+    if not isinstance(device_type, str):
+        return None
+    try:
+        return DeviceType(device_type)
+    except ValueError:
+        return None
+
+
+def _resolve_cloud_runtime_device_id(device_kind: Any) -> str:
+    spec = getattr(device_kind, "json", None)
+    spec = spec.get("spec", {}) if isinstance(spec, dict) else {}
+    cloud_config = spec.get("cloudConfig") or {}
+    if not isinstance(cloud_config, dict):
+        cloud_config = {}
+    return (
+        spec.get("deviceId")
+        or cloud_config.get("deviceId")
+        or getattr(device_kind, "name", "")
+    )
+
+
+async def _resolve_dispatch_device_id(
+    *,
+    user_id: int,
+    submitted_device_id: str,
+    command_key: str,
+    device_kind: Any,
+    device_type: Optional[DeviceType],
+) -> str:
+    if device_type is None:
+        raise DeviceCommandError(
+            "Device command RPC is not supported for unknown device type"
+        )
+
+    if device_type in LOCAL_COMMAND_DEVICE_TYPES:
+        return submitted_device_id
+
+    if device_type not in {DeviceType.CLOUD, DeviceType.REMOTE}:
+        raise DeviceCommandError(
+            f"Device command RPC is not supported for {device_type.value} devices"
+        )
+
+    if command_key not in REMOTE_DIRECTORY_COMMAND_KEYS:
+        raise DeviceCommandError(
+            f"Device command key '{command_key}' is not supported for "
+            f"{device_type.value} devices"
+        )
+
+    dispatch_device_id = (
+        _resolve_cloud_runtime_device_id(device_kind)
+        if device_type == DeviceType.CLOUD
+        else submitted_device_id
+    )
+    if not dispatch_device_id:
+        raise DeviceCommandError(
+            f"{device_type.value.title()} device '{submitted_device_id}' is unavailable"
+        )
+
+    online_info = await device_service.get_device_online_info_by_type(
+        user_id,
+        dispatch_device_id,
+        device_type,
+    )
+    if not online_info:
+        raise DeviceCommandError(
+            f"{device_type.value.title()} device '{submitted_device_id}' is offline "
+            "or unavailable"
+        )
+
+    return dispatch_device_id
 
 
 class LocalDeviceCommandService:
@@ -198,6 +279,7 @@ async def execute_configured_device_command(
     device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
     if not device_kind:
         raise DeviceCommandNotFoundError("Device not found or access denied")
+    device_type = _device_kind_type(device_kind)
 
     try:
         command_definition = resolve_local_device_command(
@@ -216,9 +298,17 @@ async def execute_configured_device_command(
             f"Device command key '{command_key}' is not configured"
         )
 
+    dispatch_device_id = await _resolve_dispatch_device_id(
+        user_id=user_id,
+        submitted_device_id=device_id,
+        command_key=command_key,
+        device_kind=device_kind,
+        device_type=device_type,
+    )
+
     result = await local_device_command_service.execute_command(
         user_id=user_id,
-        device_id=device_id,
+        device_id=dispatch_device_id,
         command=command_definition.command,
         path=path,
         args=args or [],

@@ -10,9 +10,11 @@ import {
   getSimpleBindModeOptions,
   getSimpleExecutorOptions,
   normalizeExecutorForBindMode,
+  resolveSimpleExecutorFromBot,
   resolveShellForExecutor,
   type SimpleExecutorMode,
 } from '@/features/settings/components/team-edit/simple-team-edit-utils'
+import type { Bot } from '@/types/api'
 
 const shells: UnifiedShell[] = [
   {
@@ -49,6 +51,20 @@ const shells: UnifiedShell[] = [
   },
 ]
 
+const bot: Bot = {
+  id: 10,
+  name: 'bot',
+  namespace: 'default',
+  shell_name: 'Chat',
+  shell_type: 'Chat',
+  agent_config: {},
+  system_prompt: '',
+  mcp_servers: {},
+  is_active: true,
+  created_at: '2026-05-01T00:00:00Z',
+  updated_at: '2026-05-01T00:00:00Z',
+}
+
 describe('simple team edit utils', () => {
   it('defaults simple bind mode to chat only', () => {
     expect(getDefaultSimpleBindMode()).toEqual(['chat'])
@@ -76,6 +92,38 @@ describe('simple team edit utils', () => {
 
   it('resolves custom executor by selected custom shell name', () => {
     expect(resolveShellForExecutor(shells, 'custom', 'custom-code')?.name).toBe('custom-code')
+  })
+
+  it('resolves built-in executor mode from shell name', () => {
+    expect(
+      resolveSimpleExecutorFromBot({ ...bot, shell_name: 'Chat', shell_type: 'Chat' })
+    ).toEqual({
+      mode: 'simple',
+      customShellName: '',
+    })
+    expect(
+      resolveSimpleExecutorFromBot({
+        ...bot,
+        shell_name: 'ClaudeCode',
+        shell_type: 'ClaudeCode',
+      })
+    ).toEqual({
+      mode: 'complex',
+      customShellName: '',
+    })
+  })
+
+  it('keeps custom ClaudeCode shell selected as a custom executor', () => {
+    expect(
+      resolveSimpleExecutorFromBot({
+        ...bot,
+        shell_name: 'custom-code',
+        shell_type: 'ClaudeCode',
+      })
+    ).toEqual({
+      mode: 'custom',
+      customShellName: 'custom-code',
+    })
   })
 
   it('excludes Agno custom shells from custom executor choices', () => {

@@ -156,6 +156,30 @@ button:disabled {
     animation: waiting-thinking-text 1.6s linear infinite;
   }
 
+  @keyframes sidebar-update-download-float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+
+    42% {
+      transform: translateY(2px);
+    }
+
+    72% {
+      transform: translateY(-0.5px);
+    }
+  }
+
+  .sidebar-update-download-icon {
+    transform-origin: center;
+    transition: transform 180ms ease-out;
+  }
+
+  .group:hover .sidebar-update-download-icon {
+    animation: sidebar-update-download-float 1.6s ease-in-out infinite;
+  }
+
   .file-change-delta-number {
     position: relative;
     display: inline-flex;

@@ -4,10 +4,13 @@ import {
   BellOff,
   ChevronDown,
   ChevronRight,
+  Download,
   Edit3,
+  FolderOpen,
   FolderPlus,
   Globe2,
   GitCompareArrows,
+  Grid3X3,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -28,7 +31,9 @@ import { createPortal } from 'react-dom'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
+import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
+import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { CloudConnectionSidebarButton } from '@/features/cloud-connection/CloudConnectionSidebarButton'
 import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
@@ -41,7 +46,13 @@ import {
 } from '@/components/projects/StandaloneProjectDialogs'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
+import {
+  canUseForProjectCreation,
+  isCloudDevice,
+  isClaudeCodeDevice,
+  isRemoteDevice,
+} from '@/lib/device-capabilities'
+import { openLocalWorkspace } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
@@ -64,6 +75,8 @@ import type {
   ArchiveRuntimeTaskResult,
 } from '@/features/workbench/workbenchContextTypes'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
+import { DesktopWindowControls } from './DesktopWindowControls'
+import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import {
   getRuntimeChatSidebarTaskItems,
   getNextRuntimeSidebarTaskVisibleLimit,
@@ -92,6 +105,7 @@ interface DesktopSidebarProps {
   standaloneDeviceId?: string | null
   standaloneWorkspacePath?: string | null
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
+  unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
   activeItem?: 'chat' | 'plugins' | 'automation'
   collapsed?: boolean
@@ -101,11 +115,15 @@ interface DesktopSidebarProps {
   onResizeStateChange?: (resizing: boolean) => void
   onPointerEnter?: PointerEventHandler<HTMLElement>
   onPointerLeave?: PointerEventHandler<HTMLElement>
+  onToggleSidebar?: () => void
+  onOpenWorkbench?: () => void
+  onOpenApps?: () => void
   onNewChat: () => void
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onMarkRuntimeTaskRead?: (address: RuntimeTaskAddress) => void
   onRenameRuntimeTask?: (address: RuntimeTaskAddress, title: string) => Promise<void> | void
   onArchiveRuntimeTask?: (
     address: RuntimeTaskAddress,
@@ -131,6 +149,11 @@ interface DesktopSidebarProps {
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
+  onOpenBlankStandaloneProject?: () => void
+  onOpenStandaloneFolderProject?: (
+    mode: StandaloneWorkspaceDialogMode,
+    intent?: StandaloneRemoteDialogIntent
+  ) => void
   onOpenStandaloneWorkspace?: (
     deviceId: string,
     workspacePath: string,
@@ -143,8 +166,13 @@ interface DesktopSidebarProps {
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   onCreateDeviceDirectory: (deviceId: string, path: string) => Promise<void>
-  onOpenSettings: (options?: { autoOpenAddCloudDeviceDialog?: boolean }) => void
+  onOpenSettings: (options?: OpenSettingsOptions) => void
   onLogout: () => void
+}
+
+interface OpenSettingsOptions {
+  autoOpenAddCloudDeviceDialog?: boolean
+  settingsPage?: 'connections'
 }
 
 type ProjectCreateMenuPosition = {
@@ -167,6 +195,11 @@ interface ArchiveConversationsConfirmDialogProps {
 const PROJECT_CREATE_MENU_WIDTH = 248
 const PROJECT_CREATE_MENU_MARGIN = 8
 const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 2200
+const MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS = 'left-[92px]'
+const SIDEBAR_CHROME_TAB_BUTTON_CLASS =
+  'group relative flex h-8 w-8 min-w-0 items-center justify-center rounded-lg px-0 text-center text-[13px] font-medium leading-none transition-colors'
+const SIDEBAR_CHROME_TAB_TOOLTIP_CLASS =
+  'pointer-events-none absolute left-1/2 top-[calc(100%+0.375rem)] z-popover -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-background px-2 py-1 text-xs font-medium leading-none text-text-primary opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.14)] transition-opacity group-hover:opacity-100'
 
 function getAccountInitials(label: string): string {
   const normalizedLabel = label.trim()
@@ -462,11 +495,6 @@ function writeStoredStringSet(key: string, values: Set<string>) {
   }
 }
 
-function readStoredStringSetForVersion(key: string, version: number): Set<string> {
-  void version
-  return readStoredStringSet(key)
-}
-
 function pruneProjectIdSet(values: Set<number>, projects: ProjectWithTasks[]): Set<number> {
   if (projects.length === 0) return values
   const projectIds = new Set(projects.map(project => project.id))
@@ -571,6 +599,24 @@ function getDeviceNetworkLabel(device?: DeviceInfo): string | null {
   return getDisplayableNetworkHost(device?.client_ip)
 }
 
+function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
+  return Boolean(
+    device?.runtime_routes?.some(
+      route => route.kind === 'cloud-relay' || route.kind === 'remote-relay'
+    )
+  )
+}
+
+function getDeviceRouteLabel(deviceState: SidebarDeviceState): string {
+  return getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+}
+
+function getDeviceRouteTitle(deviceState: SidebarDeviceState): string {
+  const routes = deviceState.device?.runtime_routes
+  if (!routes?.length) return getDeviceRouteLabel(deviceState)
+  return routes.map(route => `${route.kind}: ${route.device_id}`).join('\n')
+}
+
 function getDisplayableNetworkHost(value?: string | null): string | null {
   if (!value) return null
   const host = extractNetworkHost(value.trim())
@@ -614,17 +660,55 @@ function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefin
   )
 }
 
+function isLocalProjectFinderDevice(device: DeviceInfo | undefined): device is DeviceInfo {
+  if (!device) return false
+
+  return (
+    !isCloudDevice(device) &&
+    !isRemoteDevice(device) &&
+    isClaudeCodeDevice(device) &&
+    canUseForProjectCreation(device)
+  )
+}
+
+function getProjectFinderWorkspacePath(
+  project: ProjectWithTasks,
+  runtimeProjectWork: RuntimeProjectWork | undefined,
+  devices: DeviceInfo[]
+): string | null {
+  const runtimeWorkspace = runtimeProjectWork?.deviceWorkspaces.find(workspace => {
+    const workspacePath = workspace.workspacePath.trim()
+    const device = devices.find(item => item.device_id === workspace.deviceId)
+    return Boolean(workspacePath) && isLocalProjectFinderDevice(device)
+  })
+  if (runtimeWorkspace) return runtimeWorkspace.workspacePath.trim()
+
+  const projectWorkspacePath = project.config?.workspace?.localPath?.trim()
+  const projectDevice = devices.find(item => item.device_id === getProjectDeviceId(project))
+  if (projectWorkspacePath && isLocalProjectFinderDevice(projectDevice)) {
+    return projectWorkspacePath
+  }
+
+  return null
+}
+
 function shouldShowRuntimeProject(runtimeProjectWork: RuntimeProjectWork): boolean {
   const workspaces = runtimeProjectWork.deviceWorkspaces
   if (workspaces.length === 0) return true
-  return workspaces.some(workspace => workspace.workspaceSource !== 'remote')
+  return workspaces.some(
+    workspace => workspace.workspaceSource !== 'remote' || workspace.tasks.length > 0
+  )
 }
 
 function shouldShowProjectDeviceStatus(
   deviceState: SidebarDeviceState | null,
   devices: DeviceInfo[]
 ): deviceState is SidebarDeviceState {
-  if (!deviceState || devices.length <= 1) return false
+  if (!deviceState) return false
+  if (hasCloudRuntimeRoute(deviceState.device) && deviceState.device?.device_type !== 'local') {
+    return true
+  }
+  if (devices.length <= 1) return false
   return Boolean(
     deviceState.device && (isCloudDevice(deviceState.device) || isRemoteDevice(deviceState.device))
   )
@@ -655,13 +739,6 @@ function getRuntimeNotificationKey(address: RuntimeTaskAddress): string {
 }
 
 function getRuntimeTaskPinKey(workspace: RuntimeDeviceWorkspace, task: RuntimeTaskSummary): string {
-  return getRuntimeNotificationKey(getRuntimeTaskAddress(workspace, task))
-}
-
-function getRuntimeTaskUnreadKey(
-  workspace: RuntimeDeviceWorkspace,
-  task: RuntimeTaskSummary
-): string {
   return getRuntimeNotificationKey(getRuntimeTaskAddress(workspace, task))
 }
 
@@ -955,6 +1032,99 @@ function GlobalImNotificationBell({
   )
 }
 
+function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => void }) {
+  const { t } = useTranslation('common')
+  const appUpdate = useOptionalAppUpdate()
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const [errorTooltipPosition, setErrorTooltipPosition] = useState<{
+    left: number
+    top: number
+  } | null>(null)
+  const availableUpdate = appUpdate?.availableUpdate ?? null
+  const status = appUpdate?.status ?? 'idle'
+  const error = appUpdate?.error ?? null
+  const busy = status === 'checking' || status === 'installing'
+  const visibleForDebug = import.meta.env.DEV
+
+  const showErrorTooltip = () => {
+    if (!error || !buttonRef.current) return
+    const rect = buttonRef.current.getBoundingClientRect()
+    setErrorTooltipPosition({
+      left: Math.min(rect.right + 8, Math.max(8, window.innerWidth - 268)),
+      top: Math.min(Math.max(8, rect.top + rect.height / 2), window.innerHeight - 8),
+    })
+  }
+
+  if (!appUpdate || (!availableUpdate && !visibleForDebug)) return null
+
+  const title = availableUpdate
+    ? formatSidebarTemplate(
+        t('workbench.app_update_install', {
+          defaultValue: '更新到 {{version}}',
+          version: availableUpdate.version,
+        }),
+        { version: availableUpdate.version }
+      )
+    : t('workbench.app_update_check', '检查更新')
+
+  return (
+    <div
+      className="group/update relative shrink-0"
+      onPointerEnter={showErrorTooltip}
+      onPointerLeave={() => setErrorTooltipPosition(null)}
+      onFocus={showErrorTooltip}
+      onBlur={() => setErrorTooltipPosition(null)}
+    >
+      <button
+        ref={buttonRef}
+        type="button"
+        data-testid="sidebar-app-update-button"
+        disabled={busy}
+        onClick={() => {
+          onBeforeInstall?.()
+          if (availableUpdate) {
+            void appUpdate.installUpdate()
+            return
+          }
+          void appUpdate.checkNow()
+        }}
+        title={error ?? title}
+        aria-label={error ?? title}
+        className={cn(
+          'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+          error
+            ? 'text-red-500 hover:bg-red-500/10'
+            : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
+        )}
+      >
+        {busy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Download className="sidebar-update-download-icon h-4 w-4" />
+        )}
+        {availableUpdate && (
+          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
+        )}
+        {error && (
+          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
+        )}
+      </button>
+      {error && errorTooltipPosition
+        ? createPortal(
+            <div
+              data-testid="sidebar-app-update-error"
+              style={errorTooltipPosition}
+              className="fixed z-system-popover w-[260px] -translate-y-1/2 rounded-lg border border-red-500/20 bg-popover px-3 py-2 text-xs font-medium leading-5 text-red-500 shadow-[0_12px_28px_rgba(0,0,0,0.18)] [overflow-wrap:anywhere]"
+            >
+              {error}
+            </div>,
+            document.body
+          )
+        : null}
+    </div>
+  )
+}
+
 function ProjectDeviceInlineStatus({
   deviceState,
   testId,
@@ -964,13 +1134,14 @@ function ProjectDeviceInlineStatus({
   testId: string
   className?: string
 }) {
-  const label = getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+  const label = getDeviceRouteLabel(deviceState)
+  const title = getDeviceRouteTitle(deviceState)
   const online = deviceState.status === 'online'
 
   return (
     <span
       data-testid={testId}
-      title={label}
+      title={title}
       aria-label={label}
       className={cn(
         'ml-auto flex min-w-0 shrink-0 items-center gap-2 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-muted))]',
@@ -1145,7 +1316,7 @@ function RuntimeTaskRow({
       aria-pressed={notificationsSubscribed}
       onClick={handleToggleNotification}
       className={cn(
-        'flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
+        'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45',
         notificationsSubscribed && 'text-primary'
       )}
       title={notificationActionLabel}
@@ -1153,7 +1324,7 @@ function RuntimeTaskRow({
     >
       <NotificationIcon
         data-testid={iconTestId}
-        className={cn('h-4 w-4', notificationsSubscribed && 'fill-current')}
+        className={cn('h-[15px] w-[15px]', notificationsSubscribed && 'fill-current')}
       />
     </button>
   )
@@ -1190,7 +1361,7 @@ function RuntimeTaskRow({
         </span>
         <span
           data-testid={`runtime-local-task-trailing-${task.taskId}`}
-          className="relative ml-1 flex h-8 min-w-[32px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[104px]"
+          className="relative ml-1 flex h-8 min-w-[32px] shrink-0 items-center justify-end transition-[width] group-hover/task:w-[72px]"
         >
           <span
             data-testid={`runtime-local-task-time-${task.taskId}`}
@@ -1242,7 +1413,7 @@ function RuntimeTaskRow({
           </span>
           <span
             data-testid={`runtime-local-task-hover-actions-${task.taskId}`}
-            className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[104px] -translate-y-1/2 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+            className="pointer-events-none absolute right-0 top-1/2 z-[70] flex w-[72px] -translate-y-1/2 items-center justify-end gap-1 opacity-0 transition-opacity group-hover/task:pointer-events-auto group-hover/task:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
           >
             {renderNotificationButton(
               notificationsSubscribed
@@ -1257,7 +1428,7 @@ function RuntimeTaskRow({
               data-testid={`runtime-local-task-mark-${task.taskId}`}
               onClick={handleToggleMark}
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
+                'flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))]',
                 marked && 'text-[rgb(var(--color-sidebar-marked-accent))]'
               )}
               title={
@@ -1273,7 +1444,7 @@ function RuntimeTaskRow({
             >
               <Pin
                 data-testid={`runtime-local-task-pin-icon-${task.taskId}`}
-                className={cn('h-4 w-4', marked && 'fill-current')}
+                className={cn('h-[15px] w-[15px]', marked && 'fill-current')}
               />
             </button>
             <button
@@ -1281,7 +1452,7 @@ function RuntimeTaskRow({
               data-testid={`runtime-local-task-archive-${task.taskId}`}
               disabled={archiveDisabled}
               onClick={handleArchive}
-              className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-muted))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
+              className="flex h-5 w-5 items-center justify-center text-[rgb(var(--color-sidebar-text-muted))] hover:text-[rgb(var(--color-sidebar-text-primary))] disabled:cursor-not-allowed disabled:opacity-45"
               title={t('workbench.archive_runtime_task', '归档')}
               aria-label={t('workbench.archive_runtime_task', '归档')}
             >
@@ -1290,7 +1461,7 @@ function RuntimeTaskRow({
               ) : (
                 <Archive
                   data-testid={`runtime-local-task-archive-icon-${task.taskId}`}
-                  className="h-4 w-4"
+                  className="h-[15px] w-[15px]"
                 />
               )}
             </button>
@@ -1451,6 +1622,7 @@ function ProjectItem({
     runtimeTaskItems.length > 0 &&
     Boolean(onArchiveProjectConversations) &&
     !projectArchiving
+  const finderWorkspacePath = getProjectFinderWorkspacePath(project, runtimeProjectWork, devices)
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
       ? getDeviceUnavailableActionTitle(t, projectDeviceState)
@@ -1527,7 +1699,7 @@ function ProjectItem({
     <div data-testid="project-item" className="space-y-0.5">
       <div
         data-testid={`project-row-${project.id}`}
-        className="group/project relative flex h-8 min-w-0 items-center gap-1 rounded-md pl-2.5 pr-[58px] text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
+        className="group/project relative flex h-8 min-w-0 items-center gap-1 rounded-md pl-2.5 pr-1 text-[13px] leading-[18px] text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))]"
       >
         <button
           type="button"
@@ -1537,7 +1709,10 @@ function ProjectItem({
             onSelectProject?.(project.id)
           }}
           aria-expanded={expanded}
-          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          className={cn(
+            'flex min-w-0 flex-1 items-center gap-2.5 text-left',
+            showProjectDeviceStatus ? 'pr-[132px]' : 'pr-[58px]'
+          )}
         >
           <span className="flex h-4 w-4 shrink-0 items-center justify-center">
             <ProjectFolderIcon
@@ -1571,14 +1746,14 @@ function ProjectItem({
               )}
             />
           </span>
-          {showProjectDeviceStatus && (
-            <ProjectDeviceInlineStatus
-              deviceState={projectDeviceState}
-              testId={`project-device-status-${project.id}`}
-              className="ml-auto justify-end text-right group-hover/project:invisible group-focus-within/project:invisible"
-            />
-          )}
         </button>
+        {showProjectDeviceStatus && (
+          <ProjectDeviceInlineStatus
+            deviceState={projectDeviceState}
+            testId={`project-device-status-${project.id}`}
+            className="pointer-events-none absolute right-2 top-1/2 max-w-[124px] -translate-y-1/2 justify-end text-right group-hover/project:invisible group-focus-within/project:invisible"
+          />
+        )}
         <div className="pointer-events-none absolute right-1 top-1/2 z-[70] flex w-[58px] shrink-0 -translate-y-1/2 items-center justify-end opacity-0 transition-opacity group-hover/project:pointer-events-auto group-hover/project:opacity-100 hover:pointer-events-auto hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
           <ActionMenu
             ariaLabel={t('workbench.project_actions', '项目操作')}
@@ -1590,6 +1765,20 @@ function ProjectItem({
                 testId: `rename-project-${project.id}`,
                 onSelect: () => onRenameProject(project),
               },
+              ...(finderWorkspacePath
+                ? [
+                    {
+                      label: t('workbench.show_in_finder', '在 Finder 中显示'),
+                      icon: FolderOpen,
+                      testId: `show-project-in-finder-${project.id}`,
+                      onSelect: () =>
+                        openLocalWorkspace({
+                          opener: 'finder',
+                          path: finderWorkspacePath,
+                        }),
+                    },
+                  ]
+                : []),
               {
                 label: projectArchiving
                   ? t('workbench.archiving_conversations', '归档中...')
@@ -1651,7 +1840,7 @@ function ProjectItem({
                     workspace={workspace}
                     task={task}
                     selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
-                    unread={unreadTaskKeys.has(getRuntimeTaskUnreadKey(workspace, task))}
+                    unread={unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))}
                     marked={pinnedRuntimeTaskKeys.has(getRuntimeTaskPinKey(workspace, task))}
                     indentClassName="pl-9"
                     imNotificationSettings={imNotificationSettings}
@@ -1759,6 +1948,7 @@ export function DesktopSidebar({
   standaloneDeviceId,
   standaloneWorkspacePath,
   imNotificationSettings,
+  unreadRuntimeTaskKeys,
   preferredDeviceId,
   activeItem = 'chat',
   onNewChat,
@@ -1766,6 +1956,7 @@ export function DesktopSidebar({
   onSelectProject,
   onStartNewProjectChat,
   onOpenRuntimeTask,
+  onMarkRuntimeTaskRead,
   onRenameRuntimeTask,
   onArchiveRuntimeTask,
   onArchiveProjectConversations,
@@ -1776,6 +1967,8 @@ export function DesktopSidebar({
   onOpenGlobalImNotificationSettings,
   onOpenPlugins,
   onRefreshDevices,
+  onOpenBlankStandaloneProject,
+  onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
   onSelectStandaloneDevice,
   onGetRemoteDeviceStartupCommand,
@@ -1793,6 +1986,9 @@ export function DesktopSidebar({
   onResizeStateChange,
   onPointerEnter,
   onPointerLeave,
+  onToggleSidebar,
+  onOpenWorkbench,
+  onOpenApps,
 }: DesktopSidebarProps) {
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
@@ -1803,6 +1999,8 @@ export function DesktopSidebar({
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
   const usesOverlayTitlebar = isTauriRuntime()
   const sidebarAccount = getSidebarAccountSummary(user, t('workbench.account_fallback', '当前账号'))
+  const workbenchAppLabel = t('workbench.app_wework')
+  const appsAppLabel = t('workbench.apps')
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -1810,14 +2008,6 @@ export function DesktopSidebar({
   const expandedProjectIdsStorageKey = getDesktopSidebarStorageKey(
     storageScope,
     'expandedProjectIds'
-  )
-  const unreadRuntimeTaskKeysStorageKey = getDesktopSidebarStorageKey(
-    storageScope,
-    'unreadRuntimeTaskKeys'
-  )
-  const runningRuntimeTaskKeysStorageKey = getDesktopSidebarStorageKey(
-    storageScope,
-    'runningRuntimeTaskKeys'
   )
   const storageScopeRef = useRef(storageScope)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
@@ -1849,7 +2039,7 @@ export function DesktopSidebar({
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<number>>(() =>
     readStoredNumberSet(expandedProjectIdsStorageKey)
   )
-  const [runtimeTaskReadVersion, setRuntimeTaskReadVersion] = useState(0)
+  const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? new Set<string>()
   const standaloneProjectWork = useMemo(
     () =>
       standaloneRuntimeProjectWork(
@@ -1882,60 +2072,6 @@ export function DesktopSidebar({
     () => getRuntimeChatSidebarTaskItems(chatWorkspaces),
     [chatWorkspaces]
   )
-  const allRuntimeTaskItems = useMemo(
-    () => [
-      ...filteredRuntimeProjects.flatMap(projectWork =>
-        getRuntimeSidebarTaskItems(projectWork.deviceWorkspaces)
-      ),
-      ...chatTaskItems,
-    ],
-    [chatTaskItems, filteredRuntimeProjects]
-  )
-  const storedUnreadRuntimeTaskKeys = useMemo(
-    () => readStoredStringSetForVersion(unreadRuntimeTaskKeysStorageKey, runtimeTaskReadVersion),
-    [runtimeTaskReadVersion, unreadRuntimeTaskKeysStorageKey]
-  )
-  const runtimeTaskReadState = useMemo(() => {
-    const previousRunningKeys = readStoredStringSet(runningRuntimeTaskKeysStorageKey)
-    const currentTaskKeys = new Set<string>()
-    const currentRunningKeys = new Set<string>()
-    const selectedKeys = new Set<string>()
-    const completedFromPreviousRunKeys = new Set<string>()
-
-    allRuntimeTaskItems.forEach(({ workspace, task }) => {
-      const taskKey = getRuntimeTaskUnreadKey(workspace, task)
-      currentTaskKeys.add(taskKey)
-
-      if (task.running) {
-        currentRunningKeys.add(taskKey)
-      } else if (previousRunningKeys.has(taskKey)) {
-        completedFromPreviousRunKeys.add(taskKey)
-      }
-
-      if (isRuntimeTaskSelected(currentRuntimeTask, workspace, task)) {
-        selectedKeys.add(taskKey)
-      }
-    })
-
-    const unreadKeys = new Set(
-      [...storedUnreadRuntimeTaskKeys].filter(key => currentTaskKeys.has(key))
-    )
-    completedFromPreviousRunKeys.forEach(taskKey => {
-      if (!selectedKeys.has(taskKey)) {
-        unreadKeys.add(taskKey)
-      }
-    })
-    selectedKeys.forEach(taskKey => {
-      unreadKeys.delete(taskKey)
-    })
-
-    return { currentRunningKeys, unreadKeys }
-  }, [
-    allRuntimeTaskItems,
-    currentRuntimeTask,
-    runningRuntimeTaskKeysStorageKey,
-    storedUnreadRuntimeTaskKeys,
-  ])
   const projectSectionArchiveItems = useMemo(() => {
     return filteredRuntimeProjects
       .map(projectWork => ({
@@ -2086,14 +2222,6 @@ export function DesktopSidebar({
     })
   }
 
-  const markRuntimeTaskRead = (address: RuntimeTaskAddress) => {
-    const taskKey = getRuntimeNotificationKey(address)
-    const nextKeys = readStoredStringSet(unreadRuntimeTaskKeysStorageKey)
-    nextKeys.delete(taskKey)
-    writeStoredStringSet(unreadRuntimeTaskKeysStorageKey, nextKeys)
-    setRuntimeTaskReadVersion(version => version + 1)
-  }
-
   useEffect(() => {
     if (selectedRuntimeProjectId === null || !selectedRuntimeProjectAutoExpandKey) return
 
@@ -2148,25 +2276,11 @@ export function DesktopSidebar({
     setProjectsExpanded(readStoredBoolean(projectsExpandedStorageKey, true))
     setChatsExpanded(readStoredBoolean(chatsExpandedStorageKey, true))
     setExpandedProjectIds(readStoredNumberSet(expandedProjectIdsStorageKey))
-    setRuntimeTaskReadVersion(version => version + 1)
   }, [
     chatsExpandedStorageKey,
     expandedProjectIdsStorageKey,
     projectsExpandedStorageKey,
     storageScope,
-  ])
-
-  useEffect(() => {
-    if (!runtimeWork && !standaloneProjectWork) return
-
-    writeStoredStringSet(unreadRuntimeTaskKeysStorageKey, runtimeTaskReadState.unreadKeys)
-    writeStoredStringSet(runningRuntimeTaskKeysStorageKey, runtimeTaskReadState.currentRunningKeys)
-  }, [
-    runningRuntimeTaskKeysStorageKey,
-    runtimeWork,
-    runtimeTaskReadState,
-    standaloneProjectWork,
-    unreadRuntimeTaskKeysStorageKey,
   ])
 
   useEffect(() => {
@@ -2251,11 +2365,59 @@ export function DesktopSidebar({
       <div className="h-full overflow-hidden">
         <div
           className={cn(
-            'relative flex h-full flex-col px-1.5 pb-4',
+            'relative flex h-full flex-col px-1.5',
             usesOverlayTitlebar ? 'pt-[44px]' : 'pt-1.5'
           )}
           style={{ width: sidebarWidth }}
         >
+          {usesOverlayTitlebar && (
+            <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
+          )}
+          {usesOverlayTitlebar && onToggleSidebar && (
+            <div
+              data-testid="desktop-sidebar-chrome-controls"
+              className={cn(
+                'absolute top-0 z-chrome flex h-[38px] items-center gap-1',
+                MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS
+              )}
+            >
+              <DesktopWindowControls
+                sidebarCollapsed={false}
+                onToggleSidebar={onToggleSidebar}
+                className="gap-1"
+              />
+              <button
+                type="button"
+                data-testid="chrome-tab-wework"
+                onClick={onOpenWorkbench}
+                title={workbenchAppLabel}
+                aria-label={workbenchAppLabel}
+                className={cn(
+                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
+                  'bg-black/[0.045] text-text-primary'
+                )}
+              >
+                <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
+                <span className="sr-only">{workbenchAppLabel}</span>
+                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{workbenchAppLabel}</span>
+              </button>
+              <button
+                type="button"
+                data-testid="chrome-tab-apps"
+                onClick={onOpenApps}
+                title={appsAppLabel}
+                aria-label={appsAppLabel}
+                className={cn(
+                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
+                  'text-text-secondary hover:bg-black/[0.04]'
+                )}
+              >
+                <Grid3X3 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
+                <span className="sr-only">{appsAppLabel}</span>
+                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{appsAppLabel}</span>
+              </button>
+            </div>
+          )}
           <nav className="space-y-0.5">
             <SidebarButton
               icon={Plus}
@@ -2275,11 +2437,15 @@ export function DesktopSidebar({
               <CloudConnectionSidebarButton
                 devices={devices}
                 cloudWorkStatus={cloudWorkStatus}
-                onOpenSettings={() => onOpenSettings()}
+                onOpenSettings={() => onOpenSettings({ settingsPage: 'connections' })}
                 onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
                 onAddDevice={() => {
-                  setStandaloneRemoteDialogIntent('add-device')
-                  setStandaloneWorkspaceDialogMode('remote')
+                  if (onOpenStandaloneFolderProject) {
+                    onOpenStandaloneFolderProject('remote', 'add-device')
+                  } else {
+                    setStandaloneRemoteDialogIntent('add-device')
+                    setStandaloneWorkspaceDialogMode('remote')
+                  }
                 }}
               />
             )}
@@ -2296,7 +2462,7 @@ export function DesktopSidebar({
 
           <div
             data-testid="sidebar-worklists-scroll"
-            className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
+            className="scrollbar-none my-3 min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
           >
             <section>
               <div ref={projectCreateMenuRef}>
@@ -2361,7 +2527,11 @@ export function DesktopSidebar({
                       data-testid="project-create-blank-option"
                       onClick={() => {
                         setProjectCreateMenuOpen(false)
-                        setBlankProjectDialogOpen(true)
+                        if (onOpenBlankStandaloneProject) {
+                          onOpenBlankStandaloneProject()
+                        } else {
+                          setBlankProjectDialogOpen(true)
+                        }
                       }}
                       className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
                     >
@@ -2375,7 +2545,11 @@ export function DesktopSidebar({
                       data-testid="project-create-existing-option"
                       onClick={() => {
                         setProjectCreateMenuOpen(false)
-                        setStandaloneWorkspaceDialogMode('existing')
+                        if (onOpenStandaloneFolderProject) {
+                          onOpenStandaloneFolderProject('existing')
+                        } else {
+                          setStandaloneWorkspaceDialogMode('existing')
+                        }
                       }}
                       className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
                     >
@@ -2390,8 +2564,12 @@ export function DesktopSidebar({
                       data-testid="project-create-remote-option"
                       onClick={() => {
                         setProjectCreateMenuOpen(false)
-                        setStandaloneRemoteDialogIntent('project')
-                        setStandaloneWorkspaceDialogMode('remote')
+                        if (onOpenStandaloneFolderProject) {
+                          onOpenStandaloneFolderProject('remote', 'project')
+                        } else {
+                          setStandaloneRemoteDialogIntent('project')
+                          setStandaloneWorkspaceDialogMode('remote')
+                        }
                       }}
                       className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
                     >
@@ -2415,7 +2593,7 @@ export function DesktopSidebar({
                         `pinnedRuntimeTaskKeys.${project.id}`
                       )}
                       currentRuntimeTask={currentRuntimeTask}
-                      unreadTaskKeys={runtimeTaskReadState.unreadKeys}
+                      unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
                       imNotificationSettings={imNotificationSettings}
                       showDeviceMarker={false}
                       onToggleProject={handleToggleProject}
@@ -2424,7 +2602,7 @@ export function DesktopSidebar({
                       onRemoveProject={onRemoveProject}
                       onRenameProject={setRenamingProject}
                       onOpenRuntimeTask={onOpenRuntimeTask}
-                      onMarkRuntimeTaskRead={markRuntimeTaskRead}
+                      onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
                       onRenameRuntimeTask={onRenameRuntimeTask}
                       onArchiveRuntimeTask={onArchiveRuntimeTask}
                       onArchiveProjectConversations={onArchiveProjectConversations}
@@ -2492,14 +2670,14 @@ export function DesktopSidebar({
                         workspace={workspace}
                         task={task}
                         selected={isRuntimeTaskSelected(currentRuntimeTask, workspace, task)}
-                        unread={runtimeTaskReadState.unreadKeys.has(
-                          getRuntimeTaskUnreadKey(workspace, task)
+                        unread={visibleUnreadRuntimeTaskKeys.has(
+                          getRuntimeTaskReminderItemKey(workspace, task)
                         )}
                         indentClassName="pl-2.5"
                         imNotificationSettings={imNotificationSettings}
                         showDeviceMarker={false}
                         onOpenRuntimeTask={onOpenRuntimeTask}
-                        onMarkRuntimeTaskRead={markRuntimeTaskRead}
+                        onMarkRuntimeTaskRead={onMarkRuntimeTaskRead}
                         onRenameRuntimeTask={onRenameRuntimeTask}
                         onArchiveRuntimeTask={onArchiveRuntimeTask}
                         onToggleRuntimeTaskNotification={onToggleRuntimeTaskNotification}
@@ -2511,8 +2689,8 @@ export function DesktopSidebar({
             </section>
           </div>
 
-          <div ref={settingsMenuRef} className="mt-4 flex shrink-0 flex-col gap-1">
-            <div className="flex items-center gap-1">
+          <div ref={settingsMenuRef} className="group/account relative shrink-0">
+            <div className="relative flex h-[60px] items-center rounded-[10px] transition-colors group-hover/account:bg-[rgb(var(--color-sidebar-hover))] group-focus-within/account:bg-[rgb(var(--color-sidebar-hover))]">
               <button
                 type="button"
                 data-testid="settings-button"
@@ -2520,12 +2698,12 @@ export function DesktopSidebar({
                   setImNotificationMenuOpen(false)
                   setSettingsMenuOpen(open => !open)
                 }}
-                className="flex h-14 min-w-0 flex-1 items-center gap-3 rounded-xl px-2.5 text-left text-[rgb(var(--color-sidebar-text-primary))] transition-colors hover:bg-[rgb(var(--color-sidebar-hover))]"
+                className="flex h-[60px] min-w-0 flex-1 items-center gap-3 rounded-[10px] py-2 pl-1.5 pr-10 text-left text-[rgb(var(--color-sidebar-text-primary))] transition-[padding] group-hover/account:pr-[72px] group-focus-within/account:pr-[72px]"
                 title={t('workbench.settings', '设置')}
                 aria-label={t('workbench.settings', '设置')}
                 aria-expanded={settingsMenuOpen}
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[11px] font-semibold leading-none text-primary">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[12px] font-semibold leading-none text-primary">
                   {sidebarAccount.initials}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -2537,22 +2715,36 @@ export function DesktopSidebar({
                   </span>
                 </span>
               </button>
-              <GlobalImNotificationBell
-                devices={devices}
-                imNotificationSettings={imNotificationSettings}
-                menuOpen={imNotificationMenuOpen}
-                onMenuOpenChange={open => {
-                  if (open) setSettingsMenuOpen(false)
-                  setImNotificationMenuOpen(open)
-                }}
-                onToggleGlobalImNotification={onToggleGlobalImNotification}
-                onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
-                onOpenSettings={() => onOpenSettings()}
-                onAddCloudDevice={() => {
-                  setStandaloneRemoteDialogIntent('add-device')
-                  setStandaloneWorkspaceDialogMode('remote')
-                }}
-              />
+              <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+                <div className="max-w-0 translate-x-1 overflow-hidden opacity-0 transition-[max-width,opacity,transform] duration-150 group-hover/account:max-w-8 group-hover/account:translate-x-0 group-hover/account:opacity-100 group-focus-within/account:max-w-8 group-focus-within/account:translate-x-0 group-focus-within/account:opacity-100">
+                  <SidebarAppUpdateButton
+                    onBeforeInstall={() => {
+                      setSettingsMenuOpen(false)
+                      setImNotificationMenuOpen(false)
+                    }}
+                  />
+                </div>
+                <GlobalImNotificationBell
+                  devices={devices}
+                  imNotificationSettings={imNotificationSettings}
+                  menuOpen={imNotificationMenuOpen}
+                  onMenuOpenChange={open => {
+                    if (open) setSettingsMenuOpen(false)
+                    setImNotificationMenuOpen(open)
+                  }}
+                  onToggleGlobalImNotification={onToggleGlobalImNotification}
+                  onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
+                  onOpenSettings={() => onOpenSettings()}
+                  onAddCloudDevice={() => {
+                    if (onOpenStandaloneFolderProject) {
+                      onOpenStandaloneFolderProject('remote', 'add-device')
+                    } else {
+                      setStandaloneRemoteDialogIntent('add-device')
+                      setStandaloneWorkspaceDialogMode('remote')
+                    }
+                  }}
+                />
+              </div>
               {settingsMenuOpen && (
                 <DesktopSettingsMenu
                   user={user}

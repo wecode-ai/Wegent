@@ -15,7 +15,11 @@ Cloud connection state is owned by the frontend `cloud-connection` layer and is 
 - Cloud login token, expiry, cloud user, and connection time.
 - Current status: disconnected, connecting, connected, expired, or error.
 
-Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then reuses the WeWork login form against `/auth/login`; when admin password initialization is required, it reuses the same admin setup form.
+Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the embedded authorization browser and polls the session result with the client-only `poll_token`.
+
+Local Wework does not render cloud username/password forms and does not call `/auth/login` or `/auth/admin-password/setup`. Cloud login, OIDC, and admin initialization all happen on the cloud Wegent Web authorization page. After login, the user must explicitly approve Wework access; only then does Backend store a one-time claimable cloud JWT in the authorization session. Local Wework claims it, verifies the user through `/users/me`, and persists the cloud connection state.
+
+Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when unset, it falls back to `FRONTEND_URL`. Deployments with separate API and Web origins must configure the Web root URL explicitly. The Wework client only opens the complete `authorize_url` returned by Backend and does not infer the Web address itself.
 
 ## Interaction Entry
 
@@ -30,7 +34,7 @@ Settings are grouped by capability:
 - Default features: local Codex, local model configs, local executor, local workspaces, and local conversations.
 - After connecting cloud: server models, cloud devices, cloud Codex `auth.json` sync, proxy, and remote device management.
 
-"Model Settings" is the shared entry for local models and Codex `auth.json`. Local model configs are always available; cloud Codex auth sync, upload, import, and proxy switches must use the cloud connection. When disconnected, the page only shows local auth status and cloud feature guidance and does not write local state to the server.
+"Models" is the shared entry for local models and Codex `auth.json`. Local model configs are always available; cloud Codex auth sync, upload, import, and proxy switches must use the cloud connection. When disconnected, the page only shows local auth status and cloud feature guidance and does not write local state to the server.
 
 ## Service Merge
 
@@ -42,11 +46,31 @@ Workbench services have three layers:
 
 When disconnected, Wework continues to use local services only. When connected, models, devices, and runtime work lists are merged; execution and stream subscriptions route to local IPC or Backend relay by device or source.
 
+## Cloud Runtime IPC Relay
+
+Wework cloud runtime execution uses the same app IPC protocol as local mode. The frontend connects to the Backend `/wework-runtime` Socket.IO namespace and wraps `runtime.*` requests as `{ id, method, params, device_id }` frames. Backend only authenticates the user, verifies the online target device, and forwards the request to the matching executor; it does not translate this Wework runtime path into `chat:*` events.
+
+Cloud executors still connect to Backend through the `/local-executor` namespace. Inside the executor, the same local `RuntimeWorkRpcHandler` handles `runtime.tasks.create`, `runtime.tasks.send`, `runtime.tasks.list`, `runtime.tasks.transcript`, and related methods. Responses API-style app IPC events are relayed back through `runtime:event` to `/wework-runtime`. The Wework frontend reuses the local streaming event mapper, so local and cloud runtime execution share the same runtime flow.
+
 ## Local Executor Lifecycle
 
 Packaged release builds of Wework must keep one active app paired with one local executor. On release startup, only one Wework instance may stay active; repeated launches focus the existing window. Before starting the local executor for the first time, the app cleans up stale `wegent-executor` processes that use the release fixed `WEGENT_EXECUTOR_APP_IPC_SOCKET` and removes the stale socket, then starts the executor owned by the current app. This prevents a new app from attaching to an executor left by an older app instance.
 
 Debug builds do not enable this single-instance or cleanup policy. Local development may run multiple Wework debug instances at the same time, each with its own `app-runtime/wework-.../app-ipc.sock` socket. Release cleanup must also inspect each candidate executor process environment and terminate only executors using the release fixed socket, so it does not kill executors owned by debug instances.
+
+## Local CLI Entry
+
+On macOS, the Wework desktop app installs a user-level `wework` launcher at `~/.local/bin/wework` during startup. Wework generates and owns this file instead of symlinking it to build output or app resources, so debug target cleanup, release app updates, and bundle path changes do not leave a broken command. If that path already exists and is not a Wework-managed launcher, Wework leaves it untouched and writes an explicit warning to the app log.
+
+Users can run:
+
+```bash
+wework
+wework .
+wework /path/to/project
+```
+
+`wework` and `wework .` resolve the current directory to an absolute path and ask Wework to open it as a local workspace. Release builds forward the request to the existing window through the macOS app single-instance path; debug builds still allow multiple instances, so the CLI starts the current debug executable with `--open-workspace <path>`.
 
 ## Model Naming
 
@@ -68,11 +92,27 @@ Local model configs are stored in local browser storage. They are not written to
 
 - Display name.
 - Model ID.
-- OpenAI Responses-compatible model URL.
+- OpenAI Responses-compatible base URL and request path. The default request path is `/responses`; custom providers can use their own path.
 - Optional API Key.
+- Optional context window size.
 - Enabled state and update time.
 
 When API Key is blank, local runtime sends a `dummy` bearer token to the Codex provider config so no-auth local OpenAI-compatible services can run. Local model configs and the built-in local Codex model enter the existing model selector as `UnifiedModel(type: "runtime")`.
+
+The context window size only accepts positive integers. After the frontend saves it, the value is exposed as `config.model_context_window` on the local model. Local IPC writes it into `model_config.model_context_window` when creating a Codex task, and executor forwards it as the Codex launch override `model_context_window`. The Wework background-context indicator must also resolve the model config from the current task's own `modelSelection`, so Codex's default catalog cap for unknown models does not make the UI display the default window instead of the user-configured value.
+
+When creating a runtime task, the selected model must be stored as part of task state in `runtimeHandle.modelSelection` and also copied into the optimistic task summary. The `runtime.tasks.create` response must return the same runtime handle. This keeps the model selection available even when the runtime work list refresh has not returned the new task yet but stream context-usage events have already arrived, without inferring from the global currently selected model.
+
+## Proxy Configuration Boundaries
+
+The Proxy page manages local device proxy and cloud device proxy separately. These settings do not reuse each other:
+
+- Local device proxy is stored in Wework local browser storage and only affects new Codex tasks created by the current Wework App through the local executor. It is not written to Backend, is not synced to cloud devices, and does not modify system proxy or user shell environment.
+- Cloud device proxy is stored in cloud account configuration and only affects Codex tasks on cloud executors. Local devices do not use that URL.
+
+Saving a local device proxy does not immediately interrupt running Codex tasks. The UI asks the user to restart Codex manually. After confirmation, Wework restarts only the persistent Codex app-server maintained by the current App's local executor; it does not terminate other Codex processes on the machine. The new Codex app-server receives proxy-related environment variables, and later new chats use that proxy.
+
+Codex Responses-compatible models may be routed through the executor's built-in `codex responses proxy` before reaching the upstream model service. That proxy must also use the same local device proxy; otherwise model requests would bypass the Codex app-server process environment. Logs record only whether a proxy is configured and do not print the proxy URL.
 
 ## Local Auth Status
 
@@ -84,7 +124,7 @@ Local Codex `auth.json` status is read through the executor's read-only `runtime
 - File size.
 - SHA-256 digest.
 
-It never returns plaintext contents. Wework also does not upload the local auth file by default. Auth contents enter encrypted server storage and device sync only after the user explicitly uploads the file or imports it from an online device on the cloud-connected "Model Settings" page.
+It never returns plaintext contents. Wework also does not upload the local auth file by default. Auth contents enter encrypted server storage and device sync only after the user explicitly uploads the file or imports it from an online device on the cloud-connected "Models" page.
 
 Wework's remaining-usage display also follows the local Codex account. The frontend first reads the local `auth.json` status; if no Codex account exists, the menu and tray show none. When a local account exists, the frontend reads the Codex app-server `account/rateLimits/read` snapshot through the local executor command `runtime.codex.rate_limits.read` and displays the remaining percentages for the 5-hour and 7-day windows. The desktop system tray refreshes these two values every 60 seconds, shows only usage percentages, does not upload auth contents, and does not substitute Backend Claude quota.
 

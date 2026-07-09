@@ -1222,6 +1222,43 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('attachment-file-input')).not.toHaveAttribute('accept')
   })
 
+  test('renders desktop context usage indicator when usage is available', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          contextUsage: {
+            total: {
+              totalTokens: 15_000,
+              inputTokens: 12_000,
+              cachedInputTokens: 2_000,
+              outputTokens: 3_000,
+              reasoningOutputTokens: 0,
+            },
+            last: {
+              totalTokens: 8_000,
+              inputTokens: 7_000,
+              cachedInputTokens: 1_000,
+              outputTokens: 1_000,
+              reasoningOutputTokens: 0,
+            },
+            modelContextWindow: 258_000,
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('context-usage-indicator')).toBeInTheDocument()
+    expect(screen.getByTestId('context-usage-indicator')).toHaveAttribute(
+      'aria-label',
+      'workbench.context_usage_aria'
+    )
+  })
+
   test('uploads pasted images from the desktop message textbox', () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const image = new File(['image'], 'clipboard.png', { type: 'image/png' })

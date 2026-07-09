@@ -163,7 +163,9 @@ describe('useMessageSendQueue', () => {
       'first',
       'second',
     ])
-    expect(result.current.activeTaskQueue).toEqual([])
+    await waitFor(() => {
+      expect(result.current.activeTaskQueue).toEqual([])
+    })
   })
 
   it('updates a queued message snapshot before it is dispatched', async () => {

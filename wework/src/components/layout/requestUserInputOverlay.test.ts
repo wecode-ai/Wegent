@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   applyRequestUserInputResponseToMessages,
+  isImplementationPlanConfirmationResponse,
   requestUserInputPayloadKey,
   requestUserInputResponseKey,
 } from '@/components/chat/requestUserInputMessages'
@@ -8,6 +9,26 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 describe('pendingRequestUserInputPayload', () => {
+  test('detects only explicit implementation plan confirmation responses', () => {
+    expect(
+      isImplementationPlanConfirmationResponse({
+        answers: {
+          implement: { answers: ['是的，执行此计划'] },
+        },
+      })
+    ).toBe(true)
+
+    expect(
+      isImplementationPlanConfirmationResponse({
+        answers: {
+          adjustment: { answers: ['先缩小范围'] },
+        },
+      })
+    ).toBe(false)
+
+    expect(isImplementationPlanConfirmationResponse({ answers: {} })).toBe(false)
+  })
+
   test('returns the latest pending request_user_input payload', () => {
     const messages = [
       {

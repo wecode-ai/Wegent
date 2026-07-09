@@ -126,6 +126,10 @@ pub(crate) fn raw_string_field(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
+pub(crate) fn raw_string_field_ref<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
+}
+
 pub(crate) fn integer_field(value: &Value, key: &str) -> Option<i64> {
     value.get(key).and_then(|value| {
         value
