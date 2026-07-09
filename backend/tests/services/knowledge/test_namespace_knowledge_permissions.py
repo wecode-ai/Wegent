@@ -751,6 +751,79 @@ def test_admin_can_manage_organization_knowledge_base_without_namespace_membersh
 
 
 @pytest.mark.unit
+def test_developer_can_manage_own_documents_but_not_folder_structure(
+    test_db: Session,
+) -> None:
+    owner = _create_user(test_db, "owner-folder-structure")
+    developer = _create_user(test_db, "developer-folder-structure")
+
+    knowledge_base_id = KnowledgeService.create_knowledge_base(
+        test_db,
+        owner.id,
+        KnowledgeBaseCreate(name="folder-structure-kb", namespace="default"),
+    )
+    _add_kb_member(
+        test_db,
+        knowledge_base_id,
+        developer,
+        ResourceRole.Developer,
+        owner.id,
+    )
+
+    assert KnowledgeService.can_manage_knowledge_base_documents(
+        test_db, knowledge_base_id, developer.id
+    )
+    assert not KnowledgeService.can_manage_knowledge_base(
+        test_db, knowledge_base_id, developer.id
+    )
+
+    developer_document = KnowledgeService.create_document(
+        test_db,
+        knowledge_base_id,
+        developer.id,
+        KnowledgeDocumentCreate(
+            name="developer-owned-doc",
+            file_extension="md",
+            file_size=12,
+            source_type=DocumentSourceType.TEXT,
+        ),
+    )
+    assert developer_document.user_id == developer.id
+
+    owner_folder = KnowledgeFolderService.create_folder(
+        test_db,
+        knowledge_base_id,
+        owner.id,
+        KnowledgeFolderCreate(name="owner-folder", parent_id=0),
+    )
+
+    with pytest.raises(ValueError, match="permission to modify"):
+        KnowledgeFolderService.create_folder(
+            test_db,
+            knowledge_base_id,
+            developer.id,
+            KnowledgeFolderCreate(name="developer-folder", parent_id=0),
+        )
+
+    with pytest.raises(ValueError, match="permission to modify"):
+        KnowledgeFolderService.update_folder(
+            test_db,
+            owner_folder.id,
+            developer.id,
+            KnowledgeFolderUpdate(name="renamed-by-developer"),
+            knowledge_base_id=knowledge_base_id,
+        )
+
+    with pytest.raises(ValueError, match="permission to modify"):
+        KnowledgeFolderService.delete_folder(
+            test_db,
+            owner_folder.id,
+            developer.id,
+            knowledge_base_id=knowledge_base_id,
+        )
+
+
+@pytest.mark.unit
 def test_org_admin_share_permission_matches_manage_permission(
     test_db: Session,
 ) -> None:
