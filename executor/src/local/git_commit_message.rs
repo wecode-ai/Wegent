@@ -237,10 +237,7 @@ fn sanitize_message(raw: &str) -> String {
 }
 
 fn clean_candidate(line: &str) -> String {
-    let value = line
-        .trim()
-        .trim_start_matches(['-', '*', ' '])
-        .trim();
+    let value = line.trim().trim_start_matches(['-', '*', ' ']).trim();
     let lowered = value.to_lowercase();
     let mut result = value;
     for prefix in ["commit message:", "message:", "subject:"] {
@@ -249,10 +246,7 @@ fn clean_candidate(line: &str) -> String {
             break;
         }
     }
-    result
-        .trim_matches(['"', '\'', '`'])
-        .trim()
-        .to_owned()
+    result.trim_matches(['"', '\'', '`']).trim().to_owned()
 }
 
 fn truncate_utf8(data: &[u8], max_bytes: usize) -> (String, bool) {
@@ -324,10 +318,7 @@ mod tests {
     #[test]
     fn sanitize_message_takes_first_meaningful_line() {
         let raw = "```\nfeat: add commit message generator\nsecond line ignored\n```";
-        assert_eq!(
-            sanitize_message(raw),
-            "feat: add commit message generator"
-        );
+        assert_eq!(sanitize_message(raw), "feat: add commit message generator");
     }
 
     #[test]

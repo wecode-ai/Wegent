@@ -78,10 +78,9 @@ impl SkillEntry {
 /// deduplicated, sorted JSON array of skills.
 pub async fn list_local_skills() -> CommandResult {
     let started_at = Instant::now();
-    let skills =
-        tokio::task::spawn_blocking(collect_skills)
-            .await
-            .unwrap_or_default();
+    let skills = tokio::task::spawn_blocking(collect_skills)
+        .await
+        .unwrap_or_default();
     let stdout = Value::Array(skills.iter().map(SkillEntry::to_json).collect());
     CommandResult {
         success: true,
@@ -156,7 +155,11 @@ fn prefer_skill(left: SkillEntry, right: SkillEntry) -> SkillEntry {
     let left_mtime = left.mtime.unwrap_or(0.0);
     let right_mtime = right.mtime.unwrap_or(0.0);
     if left_mtime != right_mtime {
-        return if left_mtime > right_mtime { left } else { right };
+        return if left_mtime > right_mtime {
+            left
+        } else {
+            right
+        };
     }
     if left.path <= right.path {
         left
@@ -165,7 +168,12 @@ fn prefer_skill(left: SkillEntry, right: SkillEntry) -> SkillEntry {
     }
 }
 
-fn scan_skill_dir(root: &Path, source: &'static str, scope: &'static str, priority: i64) -> Vec<SkillEntry> {
+fn scan_skill_dir(
+    root: &Path,
+    source: &'static str,
+    scope: &'static str,
+    priority: i64,
+) -> Vec<SkillEntry> {
     let mut children = match sorted_dir_entries(root) {
         Some(children) => children,
         None => return Vec::new(),
@@ -254,10 +262,7 @@ fn skill_entry(
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default()
         });
-    let description = metadata
-        .get("description")
-        .cloned()
-        .unwrap_or_default();
+    let description = metadata.get("description").cloned().unwrap_or_default();
     let mtime = file_mtime(&skill_md);
 
     Some(SkillEntry {
@@ -356,7 +361,11 @@ fn parse_frontmatter(path: &Path) -> HashMap<String, String> {
             continue;
         }
 
-        if raw_value == "|" || raw_value == ">" || raw_value.starts_with('|') || raw_value.starts_with('>') {
+        if raw_value == "|"
+            || raw_value == ">"
+            || raw_value.starts_with('|')
+            || raw_value.starts_with('>')
+        {
             let style = raw_value.chars().next().unwrap_or('|');
             let mut block_lines = Vec::new();
             index += 1;
@@ -445,7 +454,9 @@ fn split_once_colon(line: &str) -> (&str, &str) {
 }
 
 fn leading_spaces(line: &str) -> usize {
-    line.chars().take_while(|character| *character == ' ').count()
+    line.chars()
+        .take_while(|character| *character == ' ')
+        .count()
 }
 
 fn char_len(line: &str) -> usize {
@@ -523,7 +534,10 @@ mod tests {
         .unwrap();
 
         let metadata = parse_frontmatter(&path);
-        assert_eq!(metadata.get("name").map(String::as_str), Some("Example Skill"));
+        assert_eq!(
+            metadata.get("name").map(String::as_str),
+            Some("Example Skill")
+        );
         assert_eq!(
             metadata.get("description").map(String::as_str),
             Some("Quoted value")
