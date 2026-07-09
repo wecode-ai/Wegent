@@ -25,7 +25,7 @@
     },
     "target": {
       "knowledgeBase": "知识库",
-      "folder": "目录",
+      "folder": "文件夹",
       "document": "文档"
     },
     "count": {
@@ -44,6 +44,8 @@
     "selectWholeKb": "选择知识库",
     "selected": "已选择",
     "selectedDocuments": "已选 {{count}} 个文档",
+    "selectedFolders": "已选 {{count}} 个文件夹（含子文件夹）",
+    "selectedScope": "已选 {{folderCount}} 个文件夹 + {{documentCount}} 个文档",
     "externalDocumentBrowseOnly": "该来源当前仅支持选择整个知识库，文档可浏览和预览。",
     "externalSelectionLimit": "{{source}} 最多可选择 {{count}} 个知识库。",
     "previewUnavailable": "预览地址不可用"
@@ -240,22 +242,25 @@
       "selectGroup": "选择分组"
     },
     "folder": {
+      "folderType": "文件夹",
+      "expand": "展开文件夹",
+      "collapse": "收起文件夹",
       "docCount": "{{count}} 个文档",
       "create": "新建文件夹",
       "createTitle": "新建文件夹",
       "createPlaceholder": "输入文件夹名称",
       "delete": "删除文件夹",
       "deleteTitle": "删除文件夹",
-      "deleteConfirm": "确定要删除 \"{{name}}\" 及其所有子文件夹吗？其中的文档将移至根目录。",
+      "deleteConfirm": "确定要删除 \"{{name}}\" 及其所有子文件夹吗？其中的文档将移至根文件夹。",
       "rename": "重命名文件夹",
       "renameTitle": "重命名文件夹",
       "renamePlaceholder": "输入新文件夹名称",
       "moveDocument": "移动到文件夹",
       "selectFolder": "选择目标文件夹",
-      "rootLevel": "根目录",
+      "rootLevel": "根文件夹",
       "createdToast": "文件夹 \"{{name}}\" 已创建",
       "updatedToast": "文件夹 \"{{name}}\" 已更新",
-      "deletedToast": "文件夹已删除，{{count}} 个文档已移至根目录",
+      "deletedToast": "文件夹已删除，{{count}} 个文档已移至根文件夹",
       "createFailed": "创建文件夹失败",
       "updateFailed": "更新文件夹失败",
       "deleteFailed": "删除文件夹失败",
@@ -318,6 +323,7 @@
         "web": "网页"
       },
       "search": "搜索文档",
+      "searchInFolder": "在 {{folder}} 中搜索文档",
       "empty": "暂无文档",
       "emptyHint": "上传您的第一个文档开始使用",
       "noResults": "没有匹配的文档",
@@ -340,6 +346,9 @@
       "batch": {
         "selected": "已选择 {{count}} 项",
         "selectedWithFolders": "已选择 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
+        "selectedDocuments": "已选择 {{docCount}} 个文档",
+        "selectedFolders": "已选择 {{folderCount}} 个文件夹（含子文件夹）",
+        "selectedMixed": "已选择 {{folderCount}} 个文件夹和 {{docCount}} 个文档",
         "selectAll": "选择所有",
         "selectCurrentPage": "选择本页",
         "enable": "批量启用",
@@ -347,13 +356,20 @@
         "delete": "批量删除",
         "move": "移动",
         "transfer": "转移到知识库",
+        "folderScopeTransferOnly": "文件夹选择仅支持转移到知识库；移动或删除请只选择文档。",
         "transferTitle": "转移到其他知识库",
         "transferHint": "将 {{docCount}} 个文档和 {{folderCount}} 个文件夹转移到允许的目标知识库，文件夹结构将被保留。",
+        "transferHintDocuments": "将 {{docCount}} 个文档转移到允许的目标知识库。",
+        "transferHintFolders": "将 {{folderCount}} 个文件夹转移到允许的目标知识库，文件夹结构将被保留。",
+        "transferHintMixed": "将 {{folderCount}} 个文件夹和 {{docCount}} 个文档转移到允许的目标知识库，文件夹结构将被保留。",
         "selectTargetKb": "选择目标知识库",
         "targetKbRequired": "请选择目标知识库",
         "transferring": "转移中...",
         "transferringProgress": "正在转移 {{current}}/{{total}} 项...",
         "transferSuccess": "已成功转移 {{docCount}} 个文档和 {{folderCount}} 个文件夹",
+        "transferSuccessDocuments": "已成功转移 {{docCount}} 个文档",
+        "transferSuccessFolders": "已成功转移 {{folderCount}} 个文件夹",
+        "transferSuccessMixed": "已成功转移 {{folderCount}} 个文件夹和 {{docCount}} 个文档",
         "transferFailed": "转移失败",
         "noOtherKbs": "没有符合转移规则的目标知识库",
         "errors": {
@@ -741,7 +757,7 @@
     "pagination": {
       "totalCount": "共 {{count}} 条",
       "pageSize": "每页",
-      "searchHint": "搜索范围仅限当前页文档"
+      "searchHint": "搜索和排序已应用到完整查询结果"
     },
     "multimodal": {
       "enableLabel": "启用多模态分析",

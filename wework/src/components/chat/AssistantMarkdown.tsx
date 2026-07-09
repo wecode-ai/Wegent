@@ -58,17 +58,17 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         urlTransform={url => url}
         components={{
           h1: ({ children }) => (
-            <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold">
+            <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold text-text-primary">
               {children}
             </h1>
           ),
           h2: ({ children }) => (
-            <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold">
+            <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold text-text-primary">
               {children}
             </h2>
           ),
           h3: ({ children }) => (
-            <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold">
+            <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold text-text-primary">
               {children}
             </h3>
           ),

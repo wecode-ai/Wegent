@@ -14,6 +14,11 @@ import {
   AppUpdateContext,
   type AppUpdateContextValue,
 } from '@/features/app-update/app-update-context'
+import { openLocalWorkspace } from '@/lib/local-terminal'
+
+vi.mock('@/lib/local-terminal', () => ({
+  openLocalWorkspace: vi.fn(),
+}))
 
 function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -107,8 +112,7 @@ function renderSidebar(
       ...DISCONNECTED_STATE,
       isConnected: false,
       serviceKey: 'test-disconnected',
-      connectWithPassword: vi.fn(),
-      setupAdminPassword: vi.fn(),
+      connectWithAuthorization: vi.fn(),
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
       ...cloudConnection,
@@ -132,6 +136,7 @@ describe('DesktopSidebar', () => {
     localStorage.clear()
     enableTauri()
     Element.prototype.scrollIntoView = vi.fn()
+    vi.mocked(openLocalWorkspace).mockReset()
   })
 
   afterEach(() => {
@@ -156,7 +161,7 @@ describe('DesktopSidebar', () => {
   test('keeps the account settings trigger and notification bell inside the sidebar width', () => {
     renderSidebar()
 
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-14', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice@example.com')
@@ -330,9 +335,38 @@ describe('DesktopSidebar', () => {
     })
 
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
+    const statusLabel = screen.getByTestId('sidebar-cloud-status-label')
+    const settingsButton = screen.getByTestId('sidebar-cloud-management-button')
 
     expect(cloudButton).toHaveTextContent('云端工作')
     expect(cloudButton).toHaveTextContent('可用')
+    expect(cloudButton).toHaveClass('pr-2')
+    expect(cloudButton).not.toHaveClass('pr-8')
+    expect(statusLabel).toHaveClass(
+      'ml-auto',
+      'group-hover/cloud:invisible',
+      'group-focus-within/cloud:invisible'
+    )
+    expect(settingsButton).toHaveClass(
+      'pointer-events-none',
+      'group-hover/cloud:pointer-events-auto',
+      'group-hover/cloud:opacity-100',
+      'group-focus-within/cloud:pointer-events-auto',
+      'group-focus-within/cloud:opacity-100'
+    )
+  })
+
+  test('opens cloud connection settings from the sidebar cloud management button', async () => {
+    const onOpenSettings = vi.fn()
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
+      onOpenSettings,
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-management-button'))
+
+    expect(onOpenSettings).toHaveBeenCalledWith({ settingsPage: 'connections' })
   })
 
   test('shows cloud work unavailable when background cloud reads fail', () => {
@@ -1684,6 +1718,96 @@ describe('DesktopSidebar', () => {
     })
 
     confirmSpy.mockRestore()
+  })
+
+  test('opens a local runtime project folder in Finder from the project row menu', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/Users/alice/dev/Wegent',
+                workspaceKind: 'workspace',
+                workspaceSource: 'local',
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('show-project-in-finder-7'))
+
+    expect(openLocalWorkspace).toHaveBeenCalledWith({
+      opener: 'finder',
+      path: '/Users/alice/dev/Wegent',
+    })
+  })
+
+  test('hides the Finder action for remote runtime project folders', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar({
+      projects: [],
+      devices: [
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Box',
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'remote-device',
+                deviceName: 'Remote Box',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/home/alice/Wegent',
+                workspaceKind: 'workspace',
+                workspaceSource: 'remote',
+                tasks: [
+                  {
+                    taskId: 'codex-1',
+                    workspacePath: '/home/alice/Wegent',
+                    title: 'Remote work',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+
+    expect(screen.queryByTestId('show-project-in-finder-7')).not.toBeInTheDocument()
+    expect(openLocalWorkspace).not.toHaveBeenCalled()
   })
 
   test('opens away reminder controls from the account notification bell', async () => {

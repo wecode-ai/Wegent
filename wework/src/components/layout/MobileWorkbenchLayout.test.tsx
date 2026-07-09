@@ -51,7 +51,7 @@ function createPaneStatus({
     isAssistantStreaming,
     isResponseActive,
     isBusy,
-    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant,
+    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant || taskRunning,
     canSendQueuedMessage: !isBusy,
   }
 }
@@ -929,7 +929,7 @@ describe('MobileWorkbenchLayout', () => {
     await new Promise(resolve => window.setTimeout(resolve, 0))
     expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
     expect(onListEnvironmentBranches).not.toHaveBeenCalled()
-    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-branch-button')).toBeInTheDocument()
     expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
     const controls = screen.getByTestId('project-work-button').parentElement?.parentElement
     expect(controls).toHaveClass('flex-col')

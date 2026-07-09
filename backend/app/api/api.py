@@ -40,6 +40,7 @@ from app.api.endpoints import (
     users,
     utils,
     web_scraper,
+    wework_auth,
     wiki,
     wizard,
     work_queue,
@@ -102,6 +103,9 @@ from app.api.router import api_router
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"])
+api_router.include_router(
+    wework_auth.router, prefix="/auth/wework", tags=["auth", "wework"]
+)
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(pet.router, prefix="/users/me/pet", tags=["pet"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])

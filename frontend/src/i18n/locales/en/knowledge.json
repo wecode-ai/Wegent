@@ -44,6 +44,8 @@
     "selectWholeKb": "Select KB",
     "selected": "Selected",
     "selectedDocuments": "{{count}} documents selected",
+    "selectedFolders": "{{count}} folders selected, including subfolders",
+    "selectedScope": "{{folderCount}} folders + {{documentCount}} documents selected",
     "externalDocumentBrowseOnly": "This source currently supports whole-knowledge-base selection only. Documents can be browsed and previewed.",
     "externalSelectionLimit": "{{source}} supports up to {{count}} selected knowledge bases.",
     "previewUnavailable": "Preview URL is unavailable"
@@ -240,6 +242,9 @@
       "selectGroup": "Select Group"
     },
     "folder": {
+      "folderType": "Folder",
+      "expand": "Expand folder",
+      "collapse": "Collapse folder",
       "docCount": "{{count}} docs",
       "create": "Create Folder",
       "createTitle": "New Folder",
@@ -318,6 +323,7 @@
         "web": "Web Page"
       },
       "search": "Search documents",
+      "searchInFolder": "Search documents in {{folder}}",
       "empty": "No documents yet",
       "emptyHint": "Upload your first document to get started",
       "noResults": "No matching documents",
@@ -340,6 +346,9 @@
       "batch": {
         "selected": "{{count}} selected",
         "selectedWithFolders": "{{docCount}} document(s) and {{folderCount}} folder(s) selected",
+        "selectedDocuments": "{{docCount}} document(s) selected",
+        "selectedFolders": "{{folderCount}} folder(s) selected, including subfolders",
+        "selectedMixed": "{{folderCount}} folder(s) and {{docCount}} document(s) selected",
         "selectAll": "Select All",
         "selectCurrentPage": "Select Current Page",
         "enable": "Enable",
@@ -347,13 +356,20 @@
         "delete": "Delete",
         "move": "Move",
         "transfer": "Transfer to KB",
+        "folderScopeTransferOnly": "Folder selections can only be transferred to another knowledge base. Select documents only to move or delete.",
         "transferTitle": "Transfer to Knowledge Base",
         "transferHint": "Transfer {{docCount}} document(s) and {{folderCount}} folder(s) to an allowed target knowledge base. The folder structure will be preserved.",
+        "transferHintDocuments": "Transfer {{docCount}} document(s) to an allowed target knowledge base.",
+        "transferHintFolders": "Transfer {{folderCount}} folder(s) to an allowed target knowledge base. The folder structure will be preserved.",
+        "transferHintMixed": "Transfer {{folderCount}} folder(s) and {{docCount}} document(s) to an allowed target knowledge base. The folder structure will be preserved.",
         "selectTargetKb": "Select target knowledge base",
         "targetKbRequired": "Please select a target knowledge base",
         "transferring": "Transferring...",
         "transferringProgress": "Transferring {{current}}/{{total}} item(s)...",
         "transferSuccess": "Transferred {{docCount}} document(s) and {{folderCount}} folder(s) successfully",
+        "transferSuccessDocuments": "Transferred {{docCount}} document(s) successfully",
+        "transferSuccessFolders": "Transferred {{folderCount}} folder(s) successfully",
+        "transferSuccessMixed": "Transferred {{folderCount}} folder(s) and {{docCount}} document(s) successfully",
         "transferFailed": "Transfer failed",
         "noOtherKbs": "No target knowledge bases match the transfer rules",
         "errors": {
@@ -741,7 +757,7 @@
     "pagination": {
       "totalCount": "{{count}} items",
       "pageSize": "Per page",
-      "searchHint": "Search applies to current page only"
+      "searchHint": "Search and sort apply to the full query result"
     },
     "multimodal": {
       "enableLabel": "Enable multimodal analysis",

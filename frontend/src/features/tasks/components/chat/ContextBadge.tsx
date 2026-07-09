@@ -12,9 +12,26 @@ import type {
   ContextItem,
   DingTalkDocContext,
   ExternalKnowledgeContext,
+  KnowledgeBaseContext,
   QueueMessageContext,
 } from '@/types/context'
 import { formatDocumentCount } from '@/lib/i18n-helpers'
+
+function formatKnowledgeScopeLabel(
+  context: KnowledgeBaseContext,
+  t: (key: string, options?: Record<string, unknown>) => string
+) {
+  const documentCount = context.document_ids?.length ?? 0
+  const folderCount = context.folder_ids?.length ?? 0
+
+  if (folderCount > 0 && documentCount > 0) {
+    return t('picker.selectedScope', { folderCount, documentCount })
+  }
+  if (folderCount > 0) {
+    return t('picker.selectedFolders', { count: folderCount })
+  }
+  return t('picker.selectedDocuments', { count: documentCount })
+}
 
 interface ContextBadgeProps {
   context: ContextItem
@@ -127,9 +144,7 @@ export default function ContextBadge({
           {context.name}
         </span>
         {context.type === 'knowledge_base' && context.scope_restricted ? (
-          <span className="text-xs opacity-70">
-            {t('picker.selectedDocuments', { count: context.document_ids?.length ?? 0 })}
-          </span>
+          <span className="text-xs opacity-70">{formatKnowledgeScopeLabel(context, t)}</span>
         ) : context.type === 'knowledge_base' && context.document_count !== undefined ? (
           <span className="text-xs opacity-70">
             {formatDocumentCount(context.document_count, t)}

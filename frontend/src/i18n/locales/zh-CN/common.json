@@ -612,7 +612,24 @@
     "login_subtitle": "您的 AI 助手",
     "oidc_login_failed": "OIDC 登录失败：",
     "login_success": "登录成功",
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "wework_authorize": {
+      "invalid_title": "授权链接无效",
+      "invalid_description": "缺少授权会话，请回到 Wework 重新发起云端连接。",
+      "loading_title": "正在确认登录状态",
+      "loading_description": "如果尚未登录，将自动跳转到 Wegent 登录页。",
+      "approved_title": "已授权 Wework",
+      "approved_description": "可以回到 Wework，本地客户端会自动完成云端连接。",
+      "declined_title": "已取消授权",
+      "declined_description": "Wework 不会连接此云端账号。",
+      "title": "授权 Wework 连接 Wegent",
+      "description": "Wework 正在请求连接此云端工作台。授权后，本地 Wework 将可以读取你的云端模型、设备和运行时配置。",
+      "cloud_label": "云端",
+      "account_label": "账号",
+      "cancel": "取消",
+      "approve": "授权",
+      "authorization_failed": "授权失败"
+    }
   },
   "branches": {
     "load_failed": "加载分支失败",

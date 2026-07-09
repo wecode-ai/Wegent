@@ -46,7 +46,7 @@ impl Drop for EnvGuard {
 }
 
 #[tokio::test]
-async fn runtime_task_list_maps_native_running_thread_statuses() {
+async fn runtime_task_list_trusts_native_thread_status_without_rollout_probe() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
         "WEGENT_EXECUTOR_HOME",
@@ -127,7 +127,7 @@ async fn runtime_task_list_maps_native_running_thread_statuses() {
         .unwrap();
 
     assert_eq!(running_by_rollout["status"], "active");
-    assert_eq!(running_by_rollout["running"], true);
+    assert_eq!(running_by_rollout["running"], false);
     assert_eq!(idle["status"], "active");
     assert_eq!(idle["running"], false);
     assert_eq!(active_completed["status"], "active");

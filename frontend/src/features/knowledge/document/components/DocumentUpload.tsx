@@ -104,7 +104,7 @@ interface DocumentUploadProps {
   kbType?: string
   /** Deprecated compatibility prop. kb_type no longer limits uploads. */
   currentDocumentCount?: number
-  /** Currently selected folder ID for upload destination (0 = root level) */
+  /** Currently selected folder ID for upload destination (0 = root) */
   folderId?: number
   /** Flat list of folder names with IDs for the selector */
   folderOptions?: Array<{ id: number; name: string; depth: number }>

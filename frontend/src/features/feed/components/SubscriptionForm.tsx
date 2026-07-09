@@ -38,6 +38,7 @@ import type {
   SubscriptionBindingUpdatePayload,
   SubscriptionCreateRequest,
   SubscriptionExecutionTarget,
+  SubscriptionExecutionTargetType,
   SubscriptionGroupInfoPayload,
   SubscriptionKnowledgeBaseRef,
   SubscriptionSkillRef,
@@ -259,8 +260,15 @@ const normalizeExecutionTarget = (
   ...(target?.device_id ? { device_id: target.device_id } : {}),
 })
 
-const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
-  [...devices].sort((left, right) => {
+type SubscriptionDeviceType = Extract<DeviceInfo['device_type'], SubscriptionExecutionTargetType>
+type SubscriptionDeviceInfo = DeviceInfo & { device_type: SubscriptionDeviceType }
+
+function isSubscriptionDevice(device: DeviceInfo): device is SubscriptionDeviceInfo {
+  return device.device_type === 'local' || device.device_type === 'cloud'
+}
+
+const sortDevicesForSelection = (devices: DeviceInfo[]): SubscriptionDeviceInfo[] =>
+  devices.filter(isSubscriptionDevice).sort((left, right) => {
     if (left.device_type !== right.device_type) {
       return left.device_type === 'local' ? -1 : 1
     }
@@ -270,7 +278,7 @@ const sortDevicesForSelection = (devices: DeviceInfo[]): DeviceInfo[] =>
     return left.name.localeCompare(right.name)
   })
 
-const getPreferredDevice = (devices: DeviceInfo[]): DeviceInfo | null => {
+const getPreferredDevice = (devices: DeviceInfo[]): SubscriptionDeviceInfo | null => {
   const sortedDevices = sortDevicesForSelection(devices)
   return sortedDevices[0] || null
 }
@@ -527,7 +535,7 @@ export function SubscriptionForm({
     const matchedDevice = availableDevices.find(
       device => device.device_id === executionTarget.device_id
     )
-    if (matchedDevice) {
+    if (matchedDevice && isSubscriptionDevice(matchedDevice)) {
       if (matchedDevice.device_type !== executionTarget.type) {
         setExecutionTarget({
           type: matchedDevice.device_type,

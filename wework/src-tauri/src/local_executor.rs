@@ -61,6 +61,7 @@ struct LocalExecutorInner {
     running: bool,
     ready: bool,
     device_id: Option<String>,
+    runtime_instance_id: Option<String>,
     version: Option<String>,
     error: Option<String>,
     generation: u64,
@@ -325,6 +326,8 @@ pub struct LocalExecutorStatus {
     ready: bool,
     #[serde(rename = "deviceId")]
     device_id: Option<String>,
+    #[serde(rename = "runtimeInstanceId")]
+    runtime_instance_id: Option<String>,
     version: Option<String>,
     error: Option<String>,
 }
@@ -800,6 +803,7 @@ fn status_from_inner(inner: &LocalExecutorInner) -> LocalExecutorStatus {
         running: inner.running,
         ready: inner.ready,
         device_id: inner.device_id.clone(),
+        runtime_instance_id: inner.runtime_instance_id.clone(),
         version: inner.version.clone(),
         error: inner.error.clone(),
     }
@@ -1131,12 +1135,21 @@ fn update_ready_event_inner(inner: &SharedExecutorInner, event: &ExecutorEvent) 
         .get("version")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let runtime_instance_id = event
+        .payload
+        .get("runtime_instance_id")
+        .or_else(|| event.payload.get("runtimeInstanceId"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
 
     if let Ok(mut inner) = inner.lock() {
         inner.running = true;
         inner.ready = ready;
         if device_id.is_some() {
             inner.device_id = device_id;
+        }
+        if runtime_instance_id.is_some() {
+            inner.runtime_instance_id = runtime_instance_id;
         }
         if version.is_some() {
             inner.version = version;

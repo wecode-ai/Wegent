@@ -6,7 +6,12 @@ type DeviceLike = Pick<DeviceInfo, 'device_type' | 'bind_shell' | 'status'> &
   Partial<
     Pick<
       DeviceInfo,
-      'executor_version' | 'update_available' | 'slot_used' | 'running_tasks' | 'running_task_ids'
+      | 'executor_version'
+      | 'update_available'
+      | 'slot_used'
+      | 'running_tasks'
+      | 'running_task_ids'
+      | 'runtime_routes'
     >
   >
 
@@ -94,6 +99,21 @@ export function canUseForProjectCreation(device: DeviceLike): boolean {
     isClaudeCodeDevice(device) &&
     isUsableDevice(device) &&
     isWeWorkExecutorVersionCompatible(device.executor_version)
+  )
+}
+
+export function hasLocalRuntimeRoute(device: DeviceLike): boolean {
+  if (!isCloudDevice(device) && !isRemoteDevice(device)) return true
+  return Boolean(
+    device.runtime_routes?.some(route => route.kind === 'local-ipc' || route.kind === 'app-ipc')
+  )
+}
+
+export function canUseForRemoteProjectCreation(device: DeviceLike): boolean {
+  return (
+    (isCloudDevice(device) || isRemoteDevice(device)) &&
+    !hasLocalRuntimeRoute(device) &&
+    canUseForProjectCreation(device)
   )
 }
 

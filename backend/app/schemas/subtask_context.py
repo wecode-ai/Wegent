@@ -106,6 +106,9 @@ class SubtaskContextBrief(BaseModel):
     knowledge_id: Optional[int] = None
     document_count: Optional[int] = None
     document_ids: Optional[list[int]] = None
+    folder_ids: Optional[list[int]] = None
+    folder_names: Optional[list[str]] = None
+    include_subfolders: Optional[bool] = None
     scope_restricted: Optional[bool] = None
     # Table fields (from type_data) - nested structure to match frontend expectation
     document_id: Optional[int] = None

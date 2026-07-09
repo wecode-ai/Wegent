@@ -31,6 +31,10 @@ export interface LoginResponse {
   token_type: string
 }
 
+export interface WeworkAuthSessionActionResponse {
+  status: string
+}
+
 export interface UpdateUserRequest {
   user_name?: string
   email?: string
@@ -180,6 +184,14 @@ export const userApis = {
 
   async getCurrentUserWithoutAuthRedirect(): Promise<User> {
     return apiClient.get('/users/me', { redirectOnUnauthorized: false })
+  },
+
+  async approveWeworkAuthSession(sessionId: string): Promise<WeworkAuthSessionActionResponse> {
+    return apiClient.post(`/auth/wework/sessions/${encodeURIComponent(sessionId)}/approve`)
+  },
+
+  async declineWeworkAuthSession(sessionId: string): Promise<WeworkAuthSessionActionResponse> {
+    return apiClient.post(`/auth/wework/sessions/${encodeURIComponent(sessionId)}/decline`)
   },
 
   async updateUser(data: UpdateUserRequest): Promise<User> {

@@ -162,7 +162,7 @@ By default, the device image only starts `wegent-executor` and the code-server s
 
 Terminal sessions work for local and cloud devices. Backend records the `session_id`, user, device, and executor socket binding; the frontend connects to the `/terminal` namespace with the existing login JWT; Backend then relays input, resize, and close events to the device through the `/local-executor` namespace, while Executor manages the PTY directly. Code-server is a persistent in-container process, and the gateway opens the requested project path through it. Local devices do not support code-server project sessions.
 
-When a project configures `workspace.localPath` or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server. If the request includes a task ID and that task records an execution workspace path, such as a Git worktree, terminal or code-server starts directly in the task workspace path and does not fall back to the project directory.
+When a project configures `workspace.localPath`, `workspace.devicePath`, or `workspace.checkoutPath`, the device creates that directory before starting terminal or code-server. `localPath` is for the user's local executor, while `devicePath` is a sandbox directory bound to a specific cloud or remote device. If the request includes a task ID and that task records an execution workspace path, such as a Git worktree, terminal or code-server starts directly in the task workspace path and does not fall back to the project directory.
 
 ### Standalone Chat Workspaces
 
@@ -170,7 +170,7 @@ For new Wework conversations with no selected project (`project_id=0`) that are 
 
 The first task creates a directory in the Chats workspace tree, using the date and user request to name the directory. The default root is `~/.wecode/wegent-executor/workspace/chats`. To use another location, set `WEGENT_EXECUTOR_CHATS_DIR` in the device runtime environment. Backend stores the final path in the task metadata label `standaloneChatWorkspacePath`, so continuing the conversation or opening it from history reuses the same directory.
 
-Project chats do not use the Chats workspace path. They use the project's configured `workspace.localPath` or `workspace.checkoutPath` by default. If the current task uses a Git worktree, project tools use the worktree path recorded on that task.
+Project chats do not use the Chats workspace path. They use the project's configured `workspace.localPath`, `workspace.devicePath`, or `workspace.checkoutPath` by default. `workspace.devicePath` must be bound to the cloud or remote device selected for the project. If the current task uses a Git worktree, project tools use the worktree path recorded on that task.
 
 #### Installing a Specific Version
 

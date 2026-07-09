@@ -552,7 +552,7 @@ describe('ProjectWorkBar', () => {
     expect(onExecutionModeChange).not.toHaveBeenCalled()
   })
 
-  test('does not show a branch selector in local execution mode', () => {
+  test('shows a branch selector in local execution mode', () => {
     render(
       <ProjectWorkBar
         projects={[project]}
@@ -574,8 +574,98 @@ describe('ProjectWorkBar', () => {
     )
 
     expect(screen.getByTestId('execution-mode-button')).toHaveTextContent('本地模式')
-    expect(screen.queryByTestId('project-branch-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('project-branch-button')).toHaveTextContent('main')
     expect(screen.queryByTestId('project-worktree-branch-button')).not.toBeInTheDocument()
+  })
+
+  test('checks out a selected branch in local execution mode', async () => {
+    const onListBranches = vi.fn().mockResolvedValue(['main', 'develop'])
+    const onCheckoutBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={onListBranches}
+        onCheckoutBranch={onCheckoutBranch}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+
+    const menu = await screen.findByTestId('project-branch-menu')
+    await waitFor(() => expect(onListBranches).toHaveBeenCalledTimes(1))
+    await userEvent.click(within(menu).getByText('develop'))
+
+    expect(onCheckoutBranch).toHaveBeenCalledWith('develop')
+  })
+
+  test('does not checkout again when selecting the current local branch', async () => {
+    const onCheckoutBranch = vi.fn()
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main', 'develop'])}
+        onCheckoutBranch={onCheckoutBranch}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+    const menu = await screen.findByTestId('project-branch-menu')
+    await userEvent.click(within(menu).getByText('main'))
+
+    expect(onCheckoutBranch).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByTestId('project-branch-menu')).not.toBeInTheDocument())
+  })
+
+  test('creates and checks out a new branch in local execution mode', async () => {
+    const onCreateBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <ProjectWorkBar
+        projects={[project]}
+        devices={[localDevice]}
+        currentProject={project}
+        currentProjectId={project.id}
+        currentStandaloneDeviceId={null}
+        executionMode="current_workspace"
+        onSelectProject={vi.fn()}
+        onSelectStandaloneDevice={vi.fn()}
+        onExecutionModeChange={vi.fn()}
+        branchName="main"
+        branchLoading={false}
+        onListBranches={vi.fn().mockResolvedValue(['main'])}
+        onCheckoutBranch={vi.fn()}
+        onCreateBranch={onCreateBranch}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('project-branch-button'))
+    await userEvent.click(await screen.findByTestId('project-open-new-branch-button'))
+    await userEvent.type(screen.getByTestId('project-new-branch-input'), 'feature/local')
+    await userEvent.click(screen.getByTestId('project-confirm-new-branch-button'))
+
+    expect(onCreateBranch).toHaveBeenCalledWith('feature/local')
   })
 
   test('does not invent a worktree branch when the current branch is unavailable', async () => {

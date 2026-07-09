@@ -612,7 +612,24 @@
     "login_subtitle": "your AI assistant for developers",
     "oidc_login_failed": "OIDC login failed:",
     "login_success": "Login success",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "wework_authorize": {
+      "invalid_title": "Invalid authorization link",
+      "invalid_description": "The authorization session is missing. Return to Wework and start cloud connection again.",
+      "loading_title": "Checking login status",
+      "loading_description": "If you are not signed in, Wegent will redirect you to the login page.",
+      "approved_title": "Wework authorized",
+      "approved_description": "You can return to Wework. The local client will finish the cloud connection automatically.",
+      "declined_title": "Authorization canceled",
+      "declined_description": "Wework will not connect to this cloud account.",
+      "title": "Authorize Wework to connect to Wegent",
+      "description": "Wework is requesting access to this cloud workspace. After authorization, local Wework can read your cloud models, devices, and runtime settings.",
+      "cloud_label": "Cloud",
+      "account_label": "Account",
+      "cancel": "Cancel",
+      "approve": "Authorize",
+      "authorization_failed": "Authorization failed"
+    }
   },
   "branches": {
     "load_failed": "Failed to load branches",

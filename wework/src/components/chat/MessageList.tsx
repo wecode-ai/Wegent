@@ -37,6 +37,7 @@ import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
+import { isImeEnterEvent } from '@/lib/ime'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -52,6 +53,7 @@ import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
+import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -74,7 +76,7 @@ interface MessageListProps {
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
@@ -152,8 +154,11 @@ export const MessageList = memo(function MessageList({
     editingMessageId === editableLastUserMessageId ? editingMessageId : null
   const activeSubmittingEditMessageId =
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
+  const lastVisibleMessage = visibleMessages.at(-1)
+  const waitingForAssistantTurn = !lastVisibleMessage || lastVisibleMessage.role === 'user'
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
+    waitingForAssistantTurn &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
   const disableMessageContentVisibility =
     disableContentVisibility || isTextSelectionActive || isTauri
@@ -844,7 +849,7 @@ function UserMessageEditForm({
         disabled={submitting}
         onChange={event => setDraft(event.target.value)}
         onKeyDown={event => {
-          if (event.nativeEvent.isComposing) return
+          if (isImeEnterEvent(event)) return
           if (event.key === 'Enter' && event.shiftKey) return
           if (event.key === 'Enter') {
             event.preventDefault()
@@ -1407,7 +1412,7 @@ function AssistantMessage({
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }) {

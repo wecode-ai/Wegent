@@ -209,3 +209,29 @@ class CLIPollResponse(BaseModel):
     access_token: Optional[str] = None
     username: Optional[str] = None
     error: Optional[str] = None
+
+
+class WeworkAuthSessionCreateResponse(BaseModel):
+    """Response model for Wework desktop cloud authorization initialization."""
+
+    session_id: str
+    poll_token: str
+    authorize_url: str
+    expires_at: int
+    poll_interval_seconds: int
+
+
+class WeworkAuthSessionPollResponse(BaseModel):
+    """Response model for Wework desktop authorization polling."""
+
+    status: str
+    access_token: Optional[str] = None
+    token_type: Optional[str] = None
+    username: Optional[str] = None
+    error: Optional[str] = None
+
+
+class WeworkAuthSessionActionResponse(BaseModel):
+    """Response model for Web authorization approve/decline actions."""
+
+    status: str

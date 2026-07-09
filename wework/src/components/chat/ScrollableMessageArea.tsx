@@ -1,5 +1,6 @@
 import { ArrowDown } from 'lucide-react'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -13,6 +14,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
+import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
 const BOTTOM_THRESHOLD = 48
 const STABLE_SCROLL_DELAYS = [0, 50]
@@ -46,6 +48,8 @@ interface ScrollableMessageAreaProps {
   className?: string
   scrollerClassName?: string
   messageListClassName?: string
+  stickyFooter?: ReactNode
+  stickyFooterClassName?: string
   scrollButtonClassName?: string
   scrollTestId?: string
   conversationKey?: string | number | null
@@ -64,7 +68,7 @@ interface ScrollableMessageAreaProps {
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
@@ -98,6 +102,8 @@ function areScrollableMessageAreaPropsEqual(
     previous.className !== next.className ? 'className' : null,
     previous.scrollerClassName !== next.scrollerClassName ? 'scrollerClassName' : null,
     previous.messageListClassName !== next.messageListClassName ? 'messageListClassName' : null,
+    previous.stickyFooter !== next.stickyFooter ? 'stickyFooter' : null,
+    previous.stickyFooterClassName !== next.stickyFooterClassName ? 'stickyFooterClassName' : null,
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
     previous.scrollTestId !== next.scrollTestId ? 'scrollTestId' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
@@ -150,6 +156,8 @@ function ScrollableMessagePaneContent({
   className,
   scrollerClassName,
   messageListClassName,
+  stickyFooter,
+  stickyFooterClassName,
   scrollButtonClassName,
   scrollTestId = 'chat-message-scroll-area',
   conversationKey,
@@ -175,6 +183,7 @@ function ScrollableMessagePaneContent({
   const { t } = useTranslation('common')
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const stickyFooterRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
   const turnNavigationLoadingRef = useRef(false)
   const previousConversationKeyRef = useRef<string | number | null | undefined>(undefined)
@@ -547,6 +556,7 @@ function ScrollableMessagePaneContent({
 
   useEffect(() => {
     const content = contentRef.current
+    const footer = stickyFooterRef.current
     if (!content || typeof ResizeObserver === 'undefined') return
 
     const resizeObserver = new ResizeObserver(() => {
@@ -566,6 +576,9 @@ function ScrollableMessagePaneContent({
     })
 
     resizeObserver.observe(content)
+    if (footer) {
+      resizeObserver.observe(footer)
+    }
     return () => resizeObserver.disconnect()
   }, [
     currentScrollKey,
@@ -573,6 +586,7 @@ function ScrollableMessagePaneContent({
     isTurnNavigationAutoScrollSuspended,
     restoreSavedScrollPosition,
     scrollToBottom,
+    stickyFooter,
   ])
 
   useEffect(() => clearScheduledScrolls, [clearScheduledScrolls])
@@ -586,6 +600,21 @@ function ScrollableMessagePaneContent({
     userScrollPausedAutoFollowRef.current = true
     clearScheduledScrolls()
   }, [clearScheduledScrolls])
+
+  const scrollToBottomButton = showScrollButton ? (
+    <button
+      type="button"
+      data-testid="scroll-to-bottom-button"
+      onClick={handleScrollToBottom}
+      className={cn(
+        'absolute bottom-4 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-text-primary shadow-sm hover:bg-muted',
+        scrollButtonClassName
+      )}
+      aria-label={t('workbench.scroll_to_bottom', '下拉到底')}
+    >
+      <ArrowDown className="h-4 w-4" />
+    </button>
+  ) : null
 
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>
@@ -611,6 +640,7 @@ function ScrollableMessagePaneContent({
         data-testid={scrollTestId}
         className={cn(
           'h-full overflow-y-auto',
+          stickyFooter && 'flex flex-col',
           (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]',
           scrollerClassName
         )}
@@ -638,6 +668,7 @@ function ScrollableMessagePaneContent({
           data-testid={`${scrollTestId}-content`}
           className={cn(
             'min-w-0',
+            stickyFooter && 'flex-1 shrink-0',
             (turnNavigationLoading || autoScrollSuspended) && '[overflow-anchor:none]'
           )}
         >
@@ -707,21 +738,18 @@ function ScrollableMessagePaneContent({
             </>
           )}
         </div>
+        {stickyFooter ? (
+          <div
+            ref={stickyFooterRef}
+            data-testid={`${scrollTestId}-sticky-footer`}
+            className={cn('sticky bottom-0 z-10 w-full shrink-0', stickyFooterClassName)}
+          >
+            <div className="relative h-0">{scrollToBottomButton}</div>
+            {stickyFooter}
+          </div>
+        ) : null}
       </div>
-      {showScrollButton && (
-        <button
-          type="button"
-          data-testid="scroll-to-bottom-button"
-          onClick={handleScrollToBottom}
-          className={cn(
-            'absolute bottom-4 left-1/2 z-10 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-border bg-surface text-text-primary shadow-sm hover:bg-muted',
-            scrollButtonClassName
-          )}
-          aria-label={t('workbench.scroll_to_bottom', '下拉到底')}
-        >
-          <ArrowDown className="h-4 w-4" />
-        </button>
-      )}
+      {!stickyFooter ? scrollToBottomButton : null}
     </div>
   )
 }

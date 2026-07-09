@@ -57,6 +57,9 @@ export interface KnowledgeBaseContext extends BaseContextItem {
   document_count?: number
   document_ids?: number[]
   document_names?: string[]
+  folder_ids?: number[]
+  folder_names?: string[]
+  include_subfolders?: boolean
   scope_restricted?: boolean
 }
 

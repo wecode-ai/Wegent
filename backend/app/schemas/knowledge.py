@@ -507,6 +507,22 @@ class KnowledgeDocumentListResponse(BaseModel):
     items: list[KnowledgeDocumentResponse]
 
 
+class KnowledgeDocumentSortField(str, Enum):
+    """Supported sort fields for document list queries."""
+
+    NAME = "name"
+    SIZE = "size"
+    CREATED_AT = "createdAt"
+    UPDATED_AT = "updatedAt"
+
+
+class SortOrder(str, Enum):
+    """Supported sort order values."""
+
+    ASC = "asc"
+    DESC = "desc"
+
+
 # ============== Knowledge Folder Schemas ==============
 
 
@@ -594,6 +610,12 @@ class KnowledgeFolderResponse(BaseModel):
     children: list["KnowledgeFolderResponse"] = Field(default_factory=list)
     document_count: int = Field(
         default=0, description="Number of documents in this folder"
+    )
+    direct_document_count: int = Field(
+        default=0, description="Number of documents directly in this folder"
+    )
+    total_document_count: int = Field(
+        default=0, description="Number of documents in this folder subtree"
     )
     created_at: datetime
     updated_at: datetime

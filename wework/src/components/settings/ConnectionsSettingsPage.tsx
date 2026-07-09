@@ -38,10 +38,12 @@ import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnecti
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import { buildVncPageUrl } from '@/lib/vnc'
@@ -801,6 +803,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   value={editName}
                   onChange={e => setEditName(e.target.value)}
                   onKeyDown={e => {
+                    if (isImeEnterEvent(e)) return
                     if (e.key === 'Enter') handleSaveEdit()
                     if (e.key === 'Escape') handleCancelEdit()
                   }}
@@ -1433,7 +1436,7 @@ export function ConnectionsSettingsPage({
   return (
     <div
       data-testid="wework-settings-page"
-      className="flex h-screen min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
+      className="relative flex h-screen min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
     >
       <aside
         className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
@@ -1503,6 +1506,16 @@ export function ConnectionsSettingsPage({
           aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
         />
       </aside>
+
+      {usesOverlayTitlebar && (
+        <div
+          data-testid="settings-main-titlebar-drag-region"
+          className="absolute right-0 top-0 z-titlebar h-[52px]"
+          style={{ left: sidebarWidth }}
+        >
+          <MacOSTitleBarDragRegion className="h-full w-full" />
+        </div>
+      )}
 
       <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
         {activeNav === 'general' ? (

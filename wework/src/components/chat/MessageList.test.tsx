@@ -634,13 +634,17 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('assistant-plan-copy-success')).toHaveTextContent('已复制')
     expect(onOpenAssistantPlan).not.toHaveBeenCalled()
     await user.click(planCard)
-    expect(onOpenAssistantPlan).toHaveBeenCalledWith(
-      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
-    )
+    expect(onOpenAssistantPlan).toHaveBeenCalledWith({
+      blockId: 'plan-1',
+      subtaskId: '11',
+      content: expect.stringContaining('Wegent 代码质量与前端一致性巡检计划'),
+    })
     await user.click(screen.getByTestId('assistant-plan-expand-button'))
-    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith(
-      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
-    )
+    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith({
+      blockId: 'plan-1',
+      subtaskId: '11',
+      content: expect.stringContaining('Wegent 代码质量与前端一致性巡检计划'),
+    })
     expect(onOpenAssistantPlan).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
   })
@@ -1531,6 +1535,26 @@ describe('MessageList', () => {
     const orderedList = container.querySelector('.assistant-markdown ol')
     expect(orderedList).toHaveClass('pl-8')
     expect(orderedList).not.toHaveClass('pl-5')
+  })
+
+  test('renders assistant markdown headings with the semantic theme color', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-headings',
+            role: 'assistant',
+            content: ['# Heading 1', '## Heading 2', '### Heading 3'].join('\n\n'),
+            status: 'done',
+            createdAt: '2026-07-09T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveClass('text-text-primary')
+    expect(screen.getByRole('heading', { level: 2 })).toHaveClass('text-text-primary')
+    expect(screen.getByRole('heading', { level: 3 })).toHaveClass('text-text-primary')
   })
 
   test('renders assistant markdown links as reference-style inline links', () => {

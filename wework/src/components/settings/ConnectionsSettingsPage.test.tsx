@@ -329,6 +329,11 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[76px]', 'pt-6', 'mb-1')
     expect(screen.getByTestId('settings-back-button')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('settings-main-titlebar-drag-region')).getByTestId(
+        'macos-titlebar-drag-region'
+      )
+    ).toHaveAttribute('data-tauri-drag-region')
   })
 
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
@@ -524,8 +529,7 @@ describe('ConnectionsSettingsPage', () => {
       ...DISCONNECTED_STATE,
       isConnected: false,
       serviceKey: 'disconnected',
-      connectWithPassword: vi.fn(),
-      setupAdminPassword: vi.fn(),
+      connectWithAuthorization: vi.fn(),
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
     }
@@ -602,8 +606,7 @@ describe('ConnectionsSettingsPage', () => {
       ...DISCONNECTED_STATE,
       isConnected: false,
       serviceKey: 'disconnected',
-      connectWithPassword: vi.fn(),
-      setupAdminPassword: vi.fn(),
+      connectWithAuthorization: vi.fn(),
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
     }

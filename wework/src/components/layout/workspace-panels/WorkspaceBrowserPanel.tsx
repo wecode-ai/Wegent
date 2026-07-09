@@ -359,7 +359,7 @@ function browserAnnotationInjectionScript() {
       publish();
     });
     input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.isComposing) {
+      if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault();
         event.stopPropagation();
         publish();

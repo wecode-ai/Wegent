@@ -906,6 +906,8 @@ export interface KnowledgeFolder {
   name: string
   children: KnowledgeFolder[]
   document_count: number
+  direct_document_count?: number
+  total_document_count?: number
   created_at: string
   updated_at: string
 }
