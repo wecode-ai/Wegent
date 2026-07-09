@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties } from 'react'
 import { ArrowLeftRight, MessageCircle } from 'lucide-react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
@@ -86,18 +85,13 @@ const DESKTOP_CHAT_CONTENT_BASE_CLASS =
 const DESKTOP_CHAT_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
 const DESKTOP_MESSAGE_LIST_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_6rem))] max-w-[calc(100%_-_6rem)]`
 const DESKTOP_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} -translate-y-12`
-const DESKTOP_FLOATING_COMPOSER_CLASS =
-  'pointer-events-none absolute bottom-2 left-1/2 z-chrome -translate-x-1/2'
-const DESKTOP_FLOATING_COMPOSER_LAYER_CLASS = `${DESKTOP_FLOATING_COMPOSER_CLASS} ${DESKTOP_CHAT_CONTENT_WIDTH_CLASS}`
 const DESKTOP_MESSAGE_LIST_CLASS = `${DESKTOP_MESSAGE_LIST_WIDTH_CLASS} px-0`
-const DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS =
-  'pointer-events-none absolute left-0 right-8 bottom-0 z-10 h-32 bg-gradient-to-t from-background via-background to-transparent'
-const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS =
-  'bottom-[var(--desktop-floating-composer-clearance)] z-popover bg-background/95 shadow-md'
-const DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS = 'pb-[var(--desktop-floating-composer-clearance)]'
-const DEFAULT_FLOATING_COMPOSER_HEIGHT_PX = 112
-const FLOATING_COMPOSER_BOTTOM_OFFSET_PX = 8
-const FLOATING_COMPOSER_MESSAGE_GAP_PX = 16
+const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS =
+  'pt-6 pb-2 bg-gradient-to-t from-background via-background to-transparent'
+const DESKTOP_STICKY_COMPOSER_LAYER_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} relative`
+const DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS =
+  'pointer-events-none absolute inset-x-0 bottom-0 h-full bg-gradient-to-t from-background via-background to-transparent'
+const DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS = 'bottom-4 z-popover bg-background/95 shadow-md'
 const RIGHT_PANEL_WIDTH_TRANSITION_CLASS =
   'transition-[width] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width]'
 const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
@@ -356,13 +350,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
   const [forkDialogOpen, setForkDialogOpen] = useState(false)
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
-  const [composerPointerActive, setComposerPointerActive] = useState(false)
   const isTauri = isTauriRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
-  const floatingComposerCardRef = useRef<HTMLDivElement | null>(null)
-  const [floatingComposerHeight, setFloatingComposerHeight] = useState(
-    DEFAULT_FLOATING_COMPOSER_HEIGHT_PX
-  )
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
@@ -398,8 +387,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [rightPanelTabs, rightPanelView])
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
   const chatContentResizing = sidebarResizing || rightSplitResizing
-  const floatingComposerClearance =
-    floatingComposerHeight + FLOATING_COMPOSER_BOTTOM_OFFSET_PX + FLOATING_COMPOSER_MESSAGE_GAP_PX
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
     ? `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(currentRuntimeTask.taskId)}`
     : `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(paneKey)}`
@@ -589,7 +576,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
-  const hasQueuedComposerRows = paneQueuedMessages.length > 0 || paneGuidanceMessages.length > 0
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(
     activeDevice?.device_type === 'local' || activeDeviceId === 'local-device'
@@ -1146,47 +1132,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     })
   }, [rightPanelSessionKey])
 
-  useLayoutEffect(() => {
-    if (!hasConversation) return
-
-    const element = floatingComposerCardRef.current
-    if (!element) return
-
-    const updateComposerHeight = () => {
-      const nextHeight = Math.ceil(element.getBoundingClientRect().height)
-      if (nextHeight <= 0) return
-      setFloatingComposerHeight(current => (current === nextHeight ? current : nextHeight))
-    }
-
-    updateComposerHeight()
-
-    if (typeof ResizeObserver === 'undefined') return
-
-    const observer = new ResizeObserver(updateComposerHeight)
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [
-    hasConversation,
-    hasQueuedComposerRows,
-    showConversationDeviceBanner,
-    noStandaloneCompatibleDevice,
-    activeDeviceUnavailable,
-  ])
-
-  useLayoutEffect(() => {
-    if (!composerPointerActive) return
-
-    const clearComposerPointerActive = () => setComposerPointerActive(false)
-    window.addEventListener('pointerup', clearComposerPointerActive)
-    window.addEventListener('pointercancel', clearComposerPointerActive)
-    window.addEventListener('blur', clearComposerPointerActive)
-    return () => {
-      window.removeEventListener('pointerup', clearComposerPointerActive)
-      window.removeEventListener('pointercancel', clearComposerPointerActive)
-      window.removeEventListener('blur', clearComposerPointerActive)
-    }
-  }, [composerPointerActive])
-
   return (
     <main
       ref={workbenchMainRef}
@@ -1246,13 +1191,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
-          style={
-            {
-              width: chatColumnWidth,
-              '--desktop-floating-composer-height': `${floatingComposerHeight}px`,
-              '--desktop-floating-composer-clearance': `${floatingComposerClearance}px`,
-            } as CSSProperties
-          }
+          style={{ width: chatColumnWidth }}
         >
           {isBootstrapping ? (
             <div className="flex flex-1" data-testid="desktop-workbench-loading" />
@@ -1275,11 +1214,113 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 }
                 className="h-full"
                 scrollTestId="desktop-chat-scroll"
-                scrollerClassName={cn('scrollbar-soft', DESKTOP_FLOATING_COMPOSER_SCROLL_CLASS)}
+                scrollerClassName="scrollbar-soft"
                 messageListClassName={cn(
                   DESKTOP_MESSAGE_LIST_CLASS,
                   chatContentResizing && 'transition-none'
                 )}
+                stickyFooterClassName={cn(
+                  DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
+                  chatContentResizing && 'transition-none'
+                )}
+                stickyFooter={
+                  <>
+                    <div
+                      className={DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS}
+                      data-testid="desktop-floating-composer-backdrop"
+                    />
+                    <div
+                      className={cn(
+                        DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
+                        chatContentResizing && 'transition-none'
+                      )}
+                      data-testid="desktop-floating-composer-layer"
+                    >
+                      <div
+                        className="pointer-events-auto"
+                        data-testid="desktop-floating-composer-card"
+                      >
+                        {showConversationDeviceBanner ? (
+                          <ConversationDeviceOfflineBanner
+                            device={activeDevice}
+                            deviceId={activeDeviceId}
+                            className="mb-2"
+                          />
+                        ) : (
+                          <DeviceStatusPrompt
+                            devices={devices}
+                            upgradingDevices={upgradingDevices}
+                            onUpgradeDevice={upgradeDevice}
+                            onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
+                            activeDeviceId={activeDeviceId}
+                            requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                            hideAvailableUpdates
+                            className="mb-2"
+                          />
+                        )}
+                        {pendingRequestUserInput ? (
+                          <RequestUserInputCard
+                            key={
+                              requestUserInputPayloadKey(pendingRequestUserInput) ??
+                              'implementation-plan'
+                            }
+                            payload={pendingRequestUserInput}
+                            onSubmit={response => {
+                              const isImplementationPlanRequest =
+                                isImplementationPlanRequestUserInput(pendingRequestUserInput)
+                              const shouldImplementPlan =
+                                isImplementationPlanRequest &&
+                                isImplementationPlanConfirmationResponse(response)
+                              return paneSession.sendRequestUserInputResponse(response, {
+                                appendUserMessage: isImplementationPlanRequest,
+                                forceDefaultCollaborationMode: shouldImplementPlan,
+                              })
+                            }}
+                            onIgnore={() =>
+                              paneSession.ignoreRequestUserInput(pendingRequestUserInput)
+                            }
+                          />
+                        ) : (
+                          <BufferedChatInput
+                            value={paneSession.input}
+                            onChange={paneSession.setInput}
+                            onSubmit={paneSession.send}
+                            disabled={composerDisabled}
+                            error={paneSession.error}
+                            disabledReason={inlineComposerDisabledReason}
+                            placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
+                            variant="desktop"
+                            projectChat={projectChatWithModelSelectorSignal}
+                            projectWork={paneProjectWork}
+                            showProjectWorkBar={false}
+                            queuedMessages={paneQueuedMessages}
+                            guidanceMessages={paneGuidanceMessages}
+                            codeComments={paneSession.codeCommentContexts}
+                            isStreaming={paneIsResponseStreaming}
+                            onPause={() => void paneSession.pauseCurrentResponse()}
+                            goal={paneSession.goal}
+                            goalDraftActive={paneSession.goalDraftActive}
+                            onSetGoal={
+                              composerSupportsGoal
+                                ? () => void paneSession.setCurrentGoal()
+                                : undefined
+                            }
+                            onCancelGoalDraft={paneSession.cancelGoalDraft}
+                            onEditGoal={paneSession.editCurrentGoal}
+                            onPauseGoal={() => void paneSession.pauseCurrentGoal()}
+                            onResumeGoal={() => void paneSession.resumeCurrentGoal()}
+                            onClearGoal={() => void paneSession.clearCurrentGoal()}
+                            onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                            onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                            onEditQueuedMessage={paneSession.editQueuedMessage}
+                            onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                            onClearCodeComments={paneSession.clearCodeComments}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </>
+                }
                 scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
                 devices={devices}
                 onRetryFailedMessage={message => {
@@ -1318,99 +1359,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 canEditLastUserMessage={canEditLastUserMessage}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
-                autoScrollSuspended={composerPointerActive}
               />
-              <div
-                className={DESKTOP_FLOATING_COMPOSER_BACKDROP_CLASS}
-                data-testid="desktop-floating-composer-backdrop"
-              />
-              <div
-                className={cn(
-                  DESKTOP_FLOATING_COMPOSER_LAYER_CLASS,
-                  chatContentResizing && 'transition-none'
-                )}
-                data-testid="desktop-floating-composer-layer"
-              >
-                <div
-                  ref={floatingComposerCardRef}
-                  className="pointer-events-auto"
-                  data-testid="desktop-floating-composer-card"
-                  onPointerDownCapture={() => setComposerPointerActive(true)}
-                >
-                  {showConversationDeviceBanner ? (
-                    <ConversationDeviceOfflineBanner
-                      device={activeDevice}
-                      deviceId={activeDeviceId}
-                      className="mb-2"
-                    />
-                  ) : (
-                    <DeviceStatusPrompt
-                      devices={devices}
-                      upgradingDevices={upgradingDevices}
-                      onUpgradeDevice={upgradeDevice}
-                      onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
-                      activeDeviceId={activeDeviceId}
-                      requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                      hideAvailableUpdates
-                      className="mb-2"
-                    />
-                  )}
-                  {pendingRequestUserInput ? (
-                    <RequestUserInputCard
-                      key={
-                        requestUserInputPayloadKey(pendingRequestUserInput) ?? 'implementation-plan'
-                      }
-                      payload={pendingRequestUserInput}
-                      onSubmit={response => {
-                        const isImplementationPlanRequest =
-                          isImplementationPlanRequestUserInput(pendingRequestUserInput)
-                        const shouldImplementPlan =
-                          isImplementationPlanRequest &&
-                          isImplementationPlanConfirmationResponse(response)
-                        return paneSession.sendRequestUserInputResponse(response, {
-                          appendUserMessage: isImplementationPlanRequest,
-                          forceDefaultCollaborationMode: shouldImplementPlan,
-                        })
-                      }}
-                      onIgnore={() => paneSession.ignoreRequestUserInput(pendingRequestUserInput)}
-                    />
-                  ) : (
-                    <BufferedChatInput
-                      value={paneSession.input}
-                      onChange={paneSession.setInput}
-                      onSubmit={paneSession.send}
-                      disabled={composerDisabled}
-                      error={paneSession.error}
-                      disabledReason={inlineComposerDisabledReason}
-                      placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
-                      variant="desktop"
-                      projectChat={projectChatWithModelSelectorSignal}
-                      projectWork={paneProjectWork}
-                      showProjectWorkBar={false}
-                      queuedMessages={paneQueuedMessages}
-                      guidanceMessages={paneGuidanceMessages}
-                      codeComments={paneSession.codeCommentContexts}
-                      isStreaming={paneIsResponseStreaming}
-                      onPause={() => void paneSession.pauseCurrentResponse()}
-                      goal={paneSession.goal}
-                      goalDraftActive={paneSession.goalDraftActive}
-                      onSetGoal={
-                        composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
-                      }
-                      onCancelGoalDraft={paneSession.cancelGoalDraft}
-                      onEditGoal={paneSession.editCurrentGoal}
-                      onPauseGoal={() => void paneSession.pauseCurrentGoal()}
-                      onResumeGoal={() => void paneSession.resumeCurrentGoal()}
-                      onClearGoal={() => void paneSession.clearCurrentGoal()}
-                      onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                      onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                      onEditQueuedMessage={paneSession.editQueuedMessage}
-                      onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                      onClearCodeComments={paneSession.clearCodeComments}
-                    />
-                  )}
-                </div>
-              </div>
             </div>
           ) : (
             <div className="flex flex-1 items-center justify-center px-10">

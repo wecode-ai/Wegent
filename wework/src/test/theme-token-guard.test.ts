@@ -54,6 +54,13 @@ describe('theme token guard', () => {
     expect(source).toContain("popover: 'rgb(var(--color-popover) / <alpha-value>)'")
   })
 
+  test('tailwind dark variants follow the application theme class', () => {
+    const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
+    const source = readFileSync(tailwindConfigPath, 'utf8')
+
+    expect(source).toContain("darkMode: 'class'")
+  })
+
   test('tailwind exposes semantic z-index layers', () => {
     const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
     const source = readFileSync(tailwindConfigPath, 'utf8')

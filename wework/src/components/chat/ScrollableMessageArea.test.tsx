@@ -130,6 +130,34 @@ describe('ScrollableMessageArea', () => {
     expect(screen.getByTestId('message-assistant').parentElement).not.toHaveClass('layout-width-a')
   })
 
+  test('renders an optional sticky footer inside the scroll flow', () => {
+    render(
+      <ScrollableMessageArea
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: 'Ready',
+            status: 'done',
+            createdAt: '2026-05-29T00:00:00.000Z',
+          },
+        ]}
+        stickyFooterClassName="footer-shell"
+        stickyFooter={<div data-testid="composer-footer">Composer</div>}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const content = screen.getByTestId('chat-message-scroll-area-content')
+    const footer = screen.getByTestId('chat-message-scroll-area-sticky-footer')
+
+    expect(scroller).toHaveClass('flex', 'flex-col')
+    expect(content).toHaveClass('flex-1', 'shrink-0')
+    expect(footer).toHaveClass('sticky', 'bottom-0', 'z-10', 'footer-shell')
+    expect(footer).toContainElement(screen.getByTestId('composer-footer'))
+    expect(scroller.lastElementChild).toBe(footer)
+  })
+
   test('keeps older transcript loading controls at the top of the message flow', () => {
     render(
       <ScrollableMessageArea
