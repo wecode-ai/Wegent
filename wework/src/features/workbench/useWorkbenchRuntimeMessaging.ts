@@ -986,10 +986,14 @@ export function useWorkbenchRuntimeMessaging({
   )
 
   const loadTurnFileChangesDiff = useCallback(
-    async (subtaskId: string, messagesOverride?: WorkbenchMessage[]) => {
+    async (
+      subtaskId: string,
+      messagesOverride?: WorkbenchMessage[],
+      fileChangesOverride?: TurnFileChangesSummary
+    ) => {
       const messageSource = messagesOverride ?? []
       const runtimeFileChanges = state.currentRuntimeTask
-        ? findFileChangesBySubtaskId(messageSource, subtaskId)
+        ? (fileChangesOverride ?? findFileChangesBySubtaskId(messageSource, subtaskId))
         : undefined
       if (runtimeFileChanges?.diff) return runtimeFileChanges.diff
       if (runtimeFileChanges) {
@@ -1033,11 +1037,12 @@ export function useWorkbenchRuntimeMessaging({
   const revertTurnFileChanges = useCallback(
     async (
       subtaskId: string,
-      messagesOverride?: WorkbenchMessage[]
+      messagesOverride?: WorkbenchMessage[],
+      fileChangesOverride?: TurnFileChangesSummary
     ): Promise<TurnFileChangesSummary> => {
       const messageSource = messagesOverride ?? []
       const runtimeFileChanges = state.currentRuntimeTask
-        ? findFileChangesBySubtaskId(messageSource, subtaskId)
+        ? (fileChangesOverride ?? findFileChangesBySubtaskId(messageSource, subtaskId))
         : undefined
       if (runtimeFileChanges && state.currentRuntimeTask) {
         try {

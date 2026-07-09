@@ -22,8 +22,11 @@ interface FileChangesCardProps {
   subtaskId: string
   summary: TurnFileChangesSummary
   deviceOnline: boolean
-  onLoadDiff: (subtaskId: string) => Promise<string>
-  onRevert: (subtaskId: string) => Promise<TurnFileChangesSummary>
+  onLoadDiff: (subtaskId: string, fileChanges: TurnFileChangesSummary) => Promise<string>
+  onRevert: (
+    subtaskId: string,
+    fileChanges: TurnFileChangesSummary
+  ) => Promise<TurnFileChangesSummary>
   onOpenReview?: (request: {
     subtaskId: string
     loadDiff: () => Promise<string>
@@ -612,7 +615,7 @@ export function FileChangesCard({
   const openReview = (focusFilePath?: string) => {
     onOpenReview?.({
       subtaskId,
-      loadDiff: () => onLoadDiff(subtaskId),
+      loadDiff: () => onLoadDiff(subtaskId, summary),
       reviewTitle: t('file_changes.previous_turn_label'),
       defaultFileTreeVisible: false,
       focusFilePath,
@@ -623,7 +626,7 @@ export function FileChangesCard({
     setReverting(true)
     setActionError(undefined)
     try {
-      await onRevert(subtaskId)
+      await onRevert(subtaskId, summary)
       setConfirmOpen(false)
     } catch (error) {
       setActionError(getErrorMessage(error, t('file_changes.revert_failed')))

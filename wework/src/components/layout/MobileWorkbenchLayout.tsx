@@ -320,8 +320,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 void retryFailedMessage(message.id, paneMessages)
               }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
-              onLoadFileChangesDiff={subtaskId => loadTurnFileChangesDiff(subtaskId, paneMessages)}
-              onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
+              onLoadFileChangesDiff={(subtaskId, fileChanges) =>
+                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
+              }
+              onRevertFileChanges={(subtaskId, fileChanges) =>
+                revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+              }
               onEditLastUserMessage={paneSession.editLastUserMessage}
               canEditLastUserMessage={canEditLastUserMessage}
               onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}

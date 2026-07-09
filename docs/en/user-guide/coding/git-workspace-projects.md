@@ -74,6 +74,8 @@ For a project bound to the local macOS device, the project row menu includes **S
 
 The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
 
+When an assistant response, Codex reference, or memory citation includes a file link with line numbers, clicking the link opens the right-side file preview and scrolls to and highlights that line range. File links without line numbers still open the file without selecting code lines.
+
 ## Use the Right-Side Browser
 
 In the macOS desktop Wework app, the right workspace panel can also open a browser tab. Click the new-tab button in the right panel, choose **Browser**, then enter an `http` or `https` URL in the address bar to open the page in app. The right panel keeps at most one browser tab; after the browser is open, the new-tab menu does not offer a second browser entry.

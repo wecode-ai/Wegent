@@ -19,7 +19,11 @@ import {
   isRemoteDevice,
 } from '@/lib/device-capabilities'
 import type { EnvironmentDiffMode } from '@/api/environment'
-import type { WorkspaceFileOpenRequest, WorkspaceTarget } from '@/types/workspace-files'
+import type {
+  WorkspaceFileOpenOptions,
+  WorkspaceFileOpenRequest,
+  WorkspaceTarget,
+} from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
@@ -800,12 +804,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [openRightPanelTab])
 
   const openWorkspaceFileFromMessage = useCallback(
-    (path: string) => {
+    (path: string, options?: WorkspaceFileOpenOptions) => {
       const trimmedPath = path.trim()
       if (!trimmedPath) return
       setOpenFileRequest(current => ({
         id: (current?.id ?? 0) + 1,
         path: trimmedPath,
+        lineStart: options?.lineStart,
+        lineEnd: options?.lineEnd,
       }))
       openRightPanelTab('files')
     },
@@ -1329,10 +1335,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onSwitchModelForFailedMessage={() =>
                   setModelSelectorOpenSignal(signal => signal + 1)
                 }
-                onLoadFileChangesDiff={subtaskId =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages)
+                onLoadFileChangesDiff={(subtaskId, fileChanges) =>
+                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
                 }
-                onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
+                onRevertFileChanges={(subtaskId, fileChanges) =>
+                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+                }
                 onOpenFileChangesReview={({
                   loadDiff,
                   reviewTitle,

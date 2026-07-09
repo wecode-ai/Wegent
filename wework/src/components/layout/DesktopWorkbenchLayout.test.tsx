@@ -152,6 +152,16 @@ function getWorkspaceCodeViewText() {
     .join('\n')
 }
 
+function getWorkspaceCodeViewSelectedLineNumbers() {
+  return Array.from(
+    document.querySelectorAll('[data-testid="workspace-file-preview-code-view"] diffs-container')
+  ).flatMap(container =>
+    Array.from(container.shadowRoot?.querySelectorAll('[data-line][data-selected-line]') ?? []).map(
+      line => line.getAttribute('data-line')
+    )
+  )
+}
+
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
   stripAppBasePath: (path: string) => path,
@@ -482,6 +492,7 @@ describe('DesktopWorkbenchLayout', () => {
       },
     })
     Element.prototype.scrollIntoView = vi.fn()
+    Element.prototype.scrollTo = vi.fn()
     isLocalTerminalAvailableMock.mockReturnValue(false)
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
@@ -5051,6 +5062,28 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('workspace-file-preview-code-view').querySelector('div')
     ).toBeInTheDocument()
     await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('repeat'))
+  })
+
+  test('workspace file preview selects the requested target line', async () => {
+    render(
+      <WorkspaceFilePreview
+        file={{
+          path: '/workspace/project/repeat.txt',
+          name: 'repeat.txt',
+          content: 'first\nsecond\nthird',
+          truncated: false,
+          size: 18,
+          modifiedAt: null,
+        }}
+        loading={false}
+        targetLineStart={2}
+        onRetry={vi.fn()}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(getWorkspaceCodeViewSelectedLineNumbers()).toContain('2'))
+    expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
   })
 
   test('workspace file preview swaps Pierre viewer when file changes', async () => {

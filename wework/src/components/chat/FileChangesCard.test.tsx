@@ -402,7 +402,7 @@ describe('FileChangesCard', () => {
     expect(onLoadDiff).not.toHaveBeenCalled()
 
     await request.loadDiff()
-    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
+    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21, summary))
   })
 
   test('opens the shared review panel when a file row is clicked', async () => {
@@ -438,7 +438,7 @@ describe('FileChangesCard', () => {
     expect(onLoadDiff).not.toHaveBeenCalled()
 
     await request.loadDiff()
-    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21))
+    await waitFor(() => expect(onLoadDiff).toHaveBeenCalledWith(21, summary))
   })
 
   test('disables review and revert while the owning device is offline', () => {
