@@ -961,7 +961,9 @@ function RuntimeOpenProbe() {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
   const [fileChangesDiff, setFileChangesDiff] = useState('')
   const [fileChangesStatus, setFileChangesStatus] = useState('')
-  const fileChangesSubtaskId = paneSession.messages.find(message => message.fileChanges)?.subtaskId
+  const fileChangesMessage = paneSession.messages.find(message => message.fileChanges)
+  const fileChangesSubtaskId = fileChangesMessage?.subtaskId
+  const fileChangesSummary = fileChangesMessage?.fileChanges
   return (
     <div>
       <span data-testid="current-runtime-task-address">
@@ -1037,6 +1039,18 @@ function RuntimeOpenProbe() {
         }}
       >
         review runtime file changes
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (fileChangesSubtaskId && fileChangesSummary) {
+            void workbench
+              .loadTurnFileChangesDiff(fileChangesSubtaskId, [], fileChangesSummary)
+              .then(setFileChangesDiff)
+          }
+        }}
+      >
+        review runtime file changes from stale messages
       </button>
       <button
         type="button"
@@ -4320,6 +4334,59 @@ describe('WorkbenchProvider runtime tasks', () => {
       fileChanges: expect.objectContaining(fileChanges),
     })
     expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('1:6:4')
+  })
+
+  test('reviews runtime file changes from the provided summary when messages are stale', async () => {
+    window.history.pushState({}, '', '/runtime-tasks?deviceId=device-1&taskId=runtime-restored')
+    const fileChanges = createTurnFileChanges()
+    const getRuntimeTranscript = vi.fn().mockResolvedValue({
+      taskId: 'runtime-restored',
+      workspacePath: '/workspace/project-alpha',
+      runtime: 'codex',
+      messages: [
+        { id: 'user-1', role: 'user', content: '修复搜索' },
+        {
+          id: 'assistant-1',
+          role: 'assistant',
+          content: '已修复',
+          subtaskId: '902',
+          fileChanges,
+        },
+      ],
+    } satisfies RuntimeTranscriptResponse)
+    const executeCommand = vi.fn().mockResolvedValueOnce({
+      success: true,
+      stdout: { success: true, diff: 'diff --git a/stale b/stale' },
+      stderr: '',
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: createRuntimeWorkApiMock({
+        getRuntimeTranscript,
+      }) as WorkbenchServices['runtimeWorkApi'],
+      deviceApi: {
+        executeCommand,
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-file-changes')).toHaveTextContent('1:6:4')
+    )
+    await userEvent.click(screen.getByText('review runtime file changes from stale messages'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-file-changes-diff')).toHaveTextContent(
+        'diff --git a/stale b/stale'
+      )
+    )
+
+    expect(executeCommand).toHaveBeenCalledWith('device-1', {
+      command_key: 'turn_file_changes_review',
+      path: fileChanges.workspace_path,
+      args: [fileChanges.artifact_id],
+      timeout_seconds: 30,
+      max_output_bytes: 5 * 1024 * 1024,
+    })
   })
 
   test('switches the selected runtime task before transcript loading finishes', async () => {

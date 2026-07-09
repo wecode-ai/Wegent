@@ -4,6 +4,7 @@ import type {
   CodeCommentContext,
   WorkspaceFileApi,
   WorkspaceFileOpenRequest,
+  WorkspaceFileOpenOptions,
   WorkspaceFileEntry,
   WorkspaceTarget,
   WorkspaceTextFileResponse,
@@ -16,6 +17,12 @@ interface FileWorkspacePanelProps {
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   onAddCodeComment: (context: CodeCommentContext) => void
+}
+
+interface PreviewLineTarget {
+  filePath: string
+  lineStart: number
+  lineEnd?: number
 }
 
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
@@ -36,6 +43,18 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
   return root === '/' ? `/${child}` : `${root}/${child}`
 }
 
+function createPreviewLineTarget(
+  filePath: string,
+  options?: WorkspaceFileOpenOptions
+): PreviewLineTarget | null {
+  if (typeof options?.lineStart !== 'number') return null
+  return {
+    filePath,
+    lineStart: options.lineStart,
+    lineEnd: options.lineEnd,
+  }
+}
+
 export function FileWorkspacePanel({
   target,
   workspaceFileApi,
@@ -49,6 +68,7 @@ export function FileWorkspacePanel({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
   const [preview, setPreview] = useState<WorkspaceTextFileResponse | null>(null)
+  const [previewLineTarget, setPreviewLineTarget] = useState<PreviewLineTarget | null>(null)
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(new Set())
   const [treeError, setTreeError] = useState<string | null>(null)
   const [treeRetryPath, setTreeRetryPath] = useState<string | null>(null)
@@ -121,11 +141,13 @@ export function FileWorkspacePanel({
   )
 
   const openFile = useCallback(
-    async (entry: WorkspaceFileEntry) => {
+    async (entry: WorkspaceFileEntry, options?: WorkspaceFileOpenOptions) => {
       if (!target || entry.isDirectory) return
       const requestId = fileRequestSequence.current + 1
+      const nextLineTarget = createPreviewLineTarget(entry.path, options)
       fileRequestSequence.current = requestId
       setSelectedFilePath(entry.path)
+      setPreviewLineTarget(nextLineTarget)
       setPreviewLoading(true)
       setPreviewError(null)
       try {
@@ -135,6 +157,7 @@ export function FileWorkspacePanel({
       } catch (error) {
         if (fileRequestSequence.current !== requestId) return
         setPreview(null)
+        setPreviewLineTarget(null)
         setPreviewError(
           error instanceof Error
             ? error.message
@@ -150,17 +173,20 @@ export function FileWorkspacePanel({
   )
 
   const openFilePath = useCallback(
-    (path: string) => {
+    (path: string, options?: WorkspaceFileOpenOptions) => {
       if (!target) return
       const resolvedPath = resolveWorkspaceFilePath(target, path)
       if (!resolvedPath) return
 
-      void openFile({
-        name: resolvedPath.split('/').pop() ?? resolvedPath,
-        path: resolvedPath,
-        isDirectory: false,
-        size: 0,
-      })
+      void openFile(
+        {
+          name: resolvedPath.split('/').pop() ?? resolvedPath,
+          path: resolvedPath,
+          isDirectory: false,
+          size: 0,
+        },
+        options
+      )
     },
     [openFile, target]
   )
@@ -183,13 +209,22 @@ export function FileWorkspacePanel({
     let cancelled = false
     void Promise.resolve().then(() => {
       if (!cancelled) {
-        openFilePath(openFileRequest.path)
+        openFilePath(openFileRequest.path, {
+          lineStart: openFileRequest.lineStart,
+          lineEnd: openFileRequest.lineEnd,
+        })
       }
     })
     return () => {
       cancelled = true
     }
-  }, [openFilePath, openFileRequest?.id, openFileRequest?.path])
+  }, [
+    openFilePath,
+    openFileRequest?.id,
+    openFileRequest?.lineEnd,
+    openFileRequest?.lineStart,
+    openFileRequest?.path,
+  ])
 
   if (!target) {
     return (
@@ -199,6 +234,9 @@ export function FileWorkspacePanel({
     )
   }
 
+  const activePreviewLineTarget =
+    previewLineTarget && previewLineTarget.filePath === preview?.path ? previewLineTarget : null
+
   return (
     <div className="flex min-h-0 flex-1 overflow-hidden">
       <WorkspaceFilePreview
@@ -206,6 +244,8 @@ export function FileWorkspacePanel({
         loading={previewLoading}
         error={previewError}
         onRetry={() => selectedFilePath && openFilePath(selectedFilePath)}
+        targetLineStart={activePreviewLineTarget?.lineStart}
+        targetLineEnd={activePreviewLineTarget?.lineEnd}
         onAddCodeComment={onAddCodeComment}
       />
       <WorkspaceFileTree

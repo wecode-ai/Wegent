@@ -264,11 +264,13 @@ export interface WorkbenchContextValue {
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
     subtaskId: string,
-    messagesOverride?: WorkbenchMessage[]
+    messagesOverride?: WorkbenchMessage[],
+    fileChangesOverride?: TurnFileChangesSummary
   ) => Promise<string>
   revertTurnFileChanges: (
     subtaskId: string,
-    messagesOverride?: WorkbenchMessage[]
+    messagesOverride?: WorkbenchMessage[],
+    fileChangesOverride?: TurnFileChangesSummary
   ) => Promise<TurnFileChangesSummary>
 }
 

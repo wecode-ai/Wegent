@@ -116,7 +116,7 @@ export function EnvironmentInfoPopover({
   async function handleSubmitCommit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const trimmedMessage = commitMessage.trim()
-    if (!trimmedMessage || !onCommitChanges) {
+    if (!onCommitChanges) {
       return
     }
 
@@ -354,7 +354,7 @@ export function EnvironmentInfoPopover({
                             value={commitMessage}
                             onChange={event => setCommitMessage(event.target.value)}
                             className="h-8 w-full rounded-md border border-border bg-background px-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-text-primary"
-                            placeholder={t('workbench.environment_commit_message', '提交说明')}
+                            placeholder={t('workbench.environment_commit_message_placeholder')}
                             autoFocus
                           />
                           <div className="flex items-center justify-end gap-2">
@@ -372,7 +372,7 @@ export function EnvironmentInfoPopover({
                             <button
                               type="submit"
                               data-testid="environment-confirm-commit-button"
-                              disabled={!commitMessage.trim() || commitStatus === 'committing'}
+                              disabled={commitStatus === 'committing'}
                               className="h-7 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                               {commitStatus === 'committing'

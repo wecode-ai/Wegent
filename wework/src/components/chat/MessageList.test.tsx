@@ -409,6 +409,80 @@ describe('MessageList', () => {
     expect(screen.getByTestId('file-changes-card')).toHaveTextContent('查看更改')
   })
 
+  test('does not show file change hover diff for the turn currently open in review', () => {
+    vi.useFakeTimers()
+    try {
+      const onOpenFileChangesReview = vi.fn()
+      render(
+        <MessageList
+          fileChangesDiffPreviewDisabledSubtaskId="42"
+          devices={[
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'Device 1',
+              status: 'online',
+              is_default: false,
+            },
+          ]}
+          onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+          onRevertFileChanges={vi.fn()}
+          onOpenFileChangesReview={onOpenFileChangesReview}
+          messages={[
+            {
+              id: 'assistant-42',
+              subtaskId: '42',
+              role: 'assistant',
+              content: 'Done',
+              status: 'done',
+              createdAt: '2026-06-11T10:00:00Z',
+              fileChanges: {
+                version: 1,
+                status: 'active',
+                artifact_id: 'turn-42',
+                device_id: 'device-1',
+                workspace_path: '/workspace/project',
+                file_count: 1,
+                additions: 1,
+                deletions: 1,
+                files: [
+                  {
+                    path: 'wework/src/components/chat/FileChangesCard.tsx',
+                    change_type: 'modified',
+                    additions: 1,
+                    deletions: 1,
+                    binary: false,
+                  },
+                ],
+                diff: [
+                  'diff --git a/wework/src/components/chat/FileChangesCard.tsx b/wework/src/components/chat/FileChangesCard.tsx',
+                  '--- a/wework/src/components/chat/FileChangesCard.tsx',
+                  '+++ b/wework/src/components/chat/FileChangesCard.tsx',
+                  '@@ -1 +1 @@',
+                  '-old component',
+                  '+new component',
+                ].join('\n'),
+              },
+            },
+          ]}
+        />
+      )
+
+      fireEvent.pointerEnter(screen.getByTestId('file-change-trigger'))
+      act(() => vi.advanceTimersByTime(500))
+      expect(screen.queryByTestId('file-change-diff-preview')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /FileChangesCard\.tsx/ }))
+      expect(onOpenFileChangesReview).toHaveBeenCalledTimes(1)
+      expect(onOpenFileChangesReview.mock.calls[0][0].subtaskId).toBe('42')
+      expect(onOpenFileChangesReview.mock.calls[0][0].focusFilePath).toBe(
+        'wework/src/components/chat/FileChangesCard.tsx'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('renders cancelled assistant turns like stopped Codex turns', () => {
     const commandBlock: ProcessingBlock = {
       id: 'call-1',
@@ -1611,7 +1685,7 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
   })
 
-  test('renders assistant file link line numbers without passing them to open-file actions', async () => {
+  test('passes assistant file link line numbers to open-file actions', async () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
       <MessageList
@@ -1638,7 +1712,10 @@ describe('MessageList', () => {
       'break-all'
     )
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md')
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md', {
+      lineStart: 18,
+      lineEnd: undefined,
+    })
   })
 
   test('renders assistant file links with extension-specific Codex-style icons', () => {
@@ -1691,7 +1768,7 @@ describe('MessageList', () => {
     expect(inlineCodes[1]).toHaveClass('rounded', 'bg-muted')
   })
 
-  test('routes assistant file links to the turn diff review focused on that file', async () => {
+  test('routes assistant file links from changed turns to the workspace file panel', async () => {
     const onOpenFileChangesReview = vi.fn()
     const onLoadFileChangesDiff = vi.fn().mockResolvedValue('')
     const onOpenWorkspaceFile = vi.fn()
@@ -1704,9 +1781,9 @@ describe('MessageList', () => {
         messages={[
           {
             id: 'assistant-changed-file-link',
-            subtaskId: 42,
+            subtaskId: '42',
             role: 'assistant',
-            content: '[managing-tasks.md](docs/zh/user-guide/chat/managing-tasks.md)',
+            content: '[managing-tasks.md](docs/zh/user-guide/chat/managing-tasks.md:18)',
             status: 'done',
             createdAt: '2026-06-24T08:00:01.000Z',
             fileChanges: {
@@ -1734,15 +1811,12 @@ describe('MessageList', () => {
     )
 
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
-    expect(onOpenFileChangesReview).toHaveBeenCalledTimes(1)
-    const request = onOpenFileChangesReview.mock.calls[0][0]
-    expect(request.subtaskId).toBe(42)
-    expect(request.focusFilePath).toBe('docs/zh/user-guide/chat/managing-tasks.md')
-    expect(request.defaultFileTreeVisible).toBe(false)
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('docs/zh/user-guide/chat/managing-tasks.md', {
+      lineStart: 18,
+      lineEnd: undefined,
+    })
+    expect(onOpenFileChangesReview).not.toHaveBeenCalled()
     expect(onLoadFileChangesDiff).not.toHaveBeenCalled()
-    await request.loadDiff()
-    expect(onLoadFileChangesDiff).toHaveBeenCalledWith(42)
   })
 
   test('renders Codex memory citations and one-column deduped file references', async () => {
@@ -1811,7 +1885,11 @@ describe('MessageList', () => {
 
     await userEvent.click(referenceCards[1])
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
-      '/workspace/project/references/github-pr-flow.md'
+      '/workspace/project/references/github-pr-flow.md',
+      {
+        lineStart: 18,
+        lineEnd: undefined,
+      }
     )
 
     expect(screen.getByTestId('codex-memory-citations-toggle')).toHaveTextContent('1 条记忆引用')
@@ -1829,7 +1907,10 @@ describe('MessageList', () => {
 
     onOpenWorkspaceFile.mockClear()
     await userEvent.click(memoryEntry)
-    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('MEMORY.md')
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('MEMORY.md', {
+      lineStart: 10,
+      lineEnd: 12,
+    })
   })
 
   test('waits until streaming finishes before rendering final answer artifacts', () => {
@@ -3820,6 +3901,31 @@ describe('MessageList', () => {
     expect(screen.getByTestId('markdown-code-block')).toHaveTextContent('.collapsible')
     expect(screen.getByTestId('markdown-code-block-language')).toHaveTextContent('css')
     expect(screen.getByTestId('markdown-code-block')).toHaveClass('overflow-hidden')
+  })
+
+  test('limits highlighted code selection to the code body', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-code-selection',
+            role: 'assistant',
+            content: ['```bash', 'git push origin feature/example', '```'].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T00:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const block = screen.getByTestId('markdown-code-block')
+    const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
+    const code = block.querySelector('code')
+
+    expect(block).toHaveClass('select-none')
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveClass('select-none')
+    expect(scrollContainer).toHaveClass('select-none')
+    expect(code).toHaveClass('select-text')
   })
 
   test('renders local skill markdown links in user messages', () => {
