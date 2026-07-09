@@ -52,6 +52,7 @@ import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
+import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -74,7 +75,7 @@ interface MessageListProps {
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
@@ -152,8 +153,11 @@ export const MessageList = memo(function MessageList({
     editingMessageId === editableLastUserMessageId ? editingMessageId : null
   const activeSubmittingEditMessageId =
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
+  const lastVisibleMessage = visibleMessages.at(-1)
+  const waitingForAssistantTurn = !lastVisibleMessage || lastVisibleMessage.role === 'user'
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
+    waitingForAssistantTurn &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
   const disableMessageContentVisibility =
     disableContentVisibility || isTextSelectionActive || isTauri
@@ -611,8 +615,9 @@ function UserMessage({
   const hasImagePreviews = imagePreviewAttachments.length > 0
   const hasMultipleImagePreviews = imagePreviewAttachments.length > 1
   const shouldCollapse =
-    displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
-    displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES
+    message.runtimeGuidance !== true &&
+    (displayContent.length > USER_MESSAGE_COLLAPSE_CHARACTERS ||
+      displayContent.split('\n').length > USER_MESSAGE_COLLAPSE_LINES)
   const showSourceBadge = isIMSource(message.source)
   const showGoalRequestBadge = message.runtimeGoalRequest === true
   const codeCommentCount = message.codeComments?.length ?? 0
@@ -1406,7 +1411,7 @@ function AssistantMessage({
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }) {
@@ -1486,7 +1491,7 @@ function AssistantMessage({
               blocks={displayBlocks}
               isStreaming={isStreaming}
               startedAt={getProcessingSummaryStartMs(message, displayBlocks, isStreaming)}
-              forceExpanded={isCancelled}
+              forceExpanded={isCancelled || message.runtimeGuidanceSplitBefore === true}
               hasFinalContent={hasVisibleContent}
               showSummary={!isCancelled}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}
@@ -1500,7 +1505,11 @@ function AssistantMessage({
           )}
           {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
           {hasVisibleContent ? (
-            <AssistantMarkdown content={visibleContent} onOpenFile={openFileFromLink} />
+            <AssistantMarkdown
+              content={visibleContent}
+              isStreaming={isStreaming}
+              onOpenFile={openFileFromLink}
+            />
           ) : null}
           {shouldShowThinking && hasVisibleContent && <AssistantThinkingIndicator />}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (

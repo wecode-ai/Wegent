@@ -4,12 +4,15 @@ import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
+import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { getActiveWorkbenchDeviceId } from '@/lib/workbench-device'
+import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import type {
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
   ProjectExecutionMode,
+  RuntimeContextUsage,
   RuntimeTaskAddress,
   RuntimeGlobalIMNotificationUpdateRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
@@ -26,6 +29,7 @@ import { useWorkbenchSkills } from './useWorkbenchSkills'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
+import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
 import type {
   WorkbenchContextValue,
@@ -40,10 +44,15 @@ import {
 } from './workbenchProviderHelpers'
 import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
 import {
+  applyModelContextWindowOverride,
+  findModelForSelection,
+  modelSelectionFromRuntimeHandle,
+} from './runtimeContextUsage'
+import {
   findSelectableProject,
-  findProjectDeviceWorkspace,
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
+  getRuntimeTaskRouteKey,
   getSingleProjectDeviceWorkspaceId,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -140,6 +149,9 @@ export function WorkbenchProvider({
   const [projectExecutionMode, setProjectExecutionMode] =
     useState<ProjectExecutionMode>('current_workspace')
   const [projectWorktreeBranch, setProjectWorktreeBranchState] = useState<string | null>(null)
+  const [contextUsageByRuntimeTask, setContextUsageByRuntimeTask] = useState<
+    Record<string, RuntimeContextUsage>
+  >({})
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
@@ -148,6 +160,14 @@ export function WorkbenchProvider({
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
   )
+  const runtimeTaskReminders = useRuntimeTaskReminders({
+    userId: user.id,
+    runtimeWork: state.runtimeWork,
+    currentRuntimeTask: state.currentRuntimeTask,
+  })
+  const currentContextUsage = state.currentRuntimeTask
+    ? contextUsageByRuntimeTask[getRuntimeTaskRouteKey(state.currentRuntimeTask)]
+    : undefined
 
   const currentUser = state.user ?? user
   const activeProject = state.currentProject
@@ -173,35 +193,10 @@ export function WorkbenchProvider({
       standaloneDeviceId: state.standaloneDeviceId,
     })
   const activeDeviceIdRef = useRef(activeDeviceId)
-  const activeAttachmentWorkspacePath = useMemo(() => {
-    if (state.currentRuntimeTask?.workspacePath) return state.currentRuntimeTask.workspacePath
-    const selectedProjectWorkspace = findProjectDeviceWorkspace(
-      state.runtimeWork,
-      activeProject?.id,
-      state.selectedDeviceWorkspaceId
-    )
-    return (
-      selectedProjectWorkspace?.workspacePath ??
-      state.standaloneWorkspacePath ??
-      activeProject?.config?.workspace?.localPath ??
-      null
-    )
-  }, [
-    activeProject,
-    state.currentRuntimeTask?.workspacePath,
-    state.runtimeWork,
-    state.selectedDeviceWorkspaceId,
-    state.standaloneWorkspacePath,
-  ])
-  const activeAttachmentWorkspacePathRef = useRef(activeAttachmentWorkspacePath)
 
   useEffect(() => {
     activeDeviceIdRef.current = activeDeviceId
   }, [activeDeviceId])
-
-  useEffect(() => {
-    activeAttachmentWorkspacePathRef.current = activeAttachmentWorkspacePath
-  }, [activeAttachmentWorkspacePath])
 
   useEffect(() => {
     const socketClient = resolvedServices.socketClient
@@ -284,7 +279,11 @@ export function WorkbenchProvider({
   )
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
-      return findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)?.modelSelection ?? null
+      return (
+        findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle) ??
+        null
+      )
     }
     return getNewChatModelSelection(currentUser) ?? null
   }, [currentUser, state.currentRuntimeTask, state.runtimeWork])
@@ -355,9 +354,7 @@ export function WorkbenchProvider({
   const uploadWorkbenchAttachment = useMemo(() => {
     if (!resolvedServices.attachmentApi?.uploadAttachment) return undefined
     return (file: File, onProgress?: (progress: number) => void) =>
-      resolvedServices.attachmentApi!.uploadAttachment(file, onProgress, {
-        workspacePath: activeAttachmentWorkspacePathRef.current,
-      })
+      resolvedServices.attachmentApi!.uploadAttachment(file, onProgress)
   }, [resolvedServices.attachmentApi])
   const attachmentSelection = useWorkbenchAttachments({
     uploadAttachment: uploadWorkbenchAttachment,
@@ -386,12 +383,16 @@ export function WorkbenchProvider({
           Object.entries(draftInputByScope).map(([scopeKey, value]) => [scopeKey, value.length])
         ),
         attachmentCount: attachmentSelection.attachments.length,
+        contextUsagePercent: currentContextUsage
+          ? (runtimeContextUsageMetrics(currentContextUsage)?.usedPercent ?? undefined)
+          : undefined,
       },
     })
   }, [
     attachmentSelection.attachments.length,
     cloudWorkStatus,
     currentRuntimeTaskRunning,
+    currentContextUsage,
     draftInput.length,
     draftInputByScope,
     projectChatScopeKey,
@@ -668,9 +669,52 @@ export function WorkbenchProvider({
   const stableStartNewProjectChat = useStableEvent(startNewProjectChat)
   const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
   const stableSearchRuntimeWork = useStableEvent(runtimeTasks.searchRuntimeWork)
-  const stableLoadRuntimeTranscriptForPane = useStableEvent(
-    runtimeTasks.loadRuntimeTranscriptForPane
+  const resolveRuntimeContextUsage = useCallback(
+    (address: RuntimeTaskAddress, usage: RuntimeContextUsage): RuntimeContextUsage => {
+      const taskSelection =
+        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
+        null
+      const selectedModel = modelSelection.selectedModel
+      const taskModel = findModelForSelection(modelSelection.models, taskSelection)
+      const matchingSelectedModel =
+        taskSelection?.modelName &&
+        selectedModel?.name === taskSelection.modelName &&
+        (!taskSelection.modelType || selectedModel.type === taskSelection.modelType)
+          ? selectedModel
+          : null
+
+      return applyModelContextWindowOverride(usage, taskModel ?? matchingSelectedModel)
+    },
+    [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
   )
+  const stableLoadRuntimeTranscriptForPane = useStableEvent(
+    async (
+      address: RuntimeTaskAddress,
+      options?: Parameters<typeof runtimeTasks.loadRuntimeTranscriptForPane>[1]
+    ) => {
+      const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, options)
+      if (transcript.contextUsage) {
+        const contextUsage = resolveRuntimeContextUsage(address, transcript.contextUsage)
+        setContextUsageByRuntimeTask(current => ({
+          ...current,
+          [getRuntimeTaskRouteKey(address)]: contextUsage,
+        }))
+      }
+      return transcript
+    }
+  )
+
+  useEffect(() => {
+    const listener = installLocalWorkspaceOpenListener(
+      stableOpenStandaloneWorkspace,
+      stableSetWorkbenchError
+    )
+
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [stableOpenStandaloneWorkspace, stableSetWorkbenchError])
   const stableSubscribeRuntimeTaskStream = useStableEvent(
     (
       address: RuntimeTaskAddress,
@@ -678,6 +722,14 @@ export function WorkbenchProvider({
     ) =>
       runtimeTasks.subscribeRuntimeTaskStream(address, {
         ...handlers,
+        onContextUsageUpdated: usage => {
+          const contextUsage = resolveRuntimeContextUsage(address, usage)
+          setContextUsageByRuntimeTask(current => ({
+            ...current,
+            [getRuntimeTaskRouteKey(address)]: contextUsage,
+          }))
+          handlers.onContextUsageUpdated?.(contextUsage)
+        },
         onAssistantSettled: () => {
           dispatch({ type: 'runtime_task_settled', address })
           handlers.onAssistantSettled?.()
@@ -799,6 +851,7 @@ export function WorkbenchProvider({
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
       errors: attachmentSelection.errors,
+      contextUsage: currentContextUsage,
       isOptionsLocked,
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
@@ -826,6 +879,7 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       draftInput,
       handleBlockedModelSelect,
+      currentContextUsage,
       isOptionsLocked,
       listLocalSkills,
       modelSelection.isSelectionReady,
@@ -855,6 +909,7 @@ export function WorkbenchProvider({
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
       errors: attachmentSelection.errors,
+      contextUsage: currentContextUsage,
       isOptionsLocked: false,
       isAttachmentReadyToSend: attachmentSelection.isAttachmentReadyToSend,
       setSelectedModel: modelSelection.setSelectedModel,
@@ -882,6 +937,7 @@ export function WorkbenchProvider({
       attachmentSelection.uploadingFiles,
       draftInput,
       handleBlockedModelSelect,
+      currentContextUsage,
       listLocalSkills,
       modelSelection.isSelectionReady,
       modelSelection.models,
@@ -904,6 +960,7 @@ export function WorkbenchProvider({
     isStartupReady,
     workspaceFileApi,
     currentRuntimeTaskRunning,
+    runtimeTaskReminders,
     cloudWorkStatus,
     upgradingDevices,
     projectExecutionMode,
@@ -977,6 +1034,7 @@ export function WorkbenchProvider({
       state: paneState,
       isStartupReady,
       workspaceFileApi,
+      runtimeTaskReminders,
       projectChat: paneProjectChatValue,
       upgradingDevices,
       projectExecutionMode,
@@ -1050,6 +1108,7 @@ export function WorkbenchProvider({
       paneState,
       projectExecutionMode,
       projectWorktreeBranch,
+      runtimeTaskReminders,
       stableArchiveChatConversations,
       stableArchiveProjectConversations,
       stableArchiveProjectsConversations,

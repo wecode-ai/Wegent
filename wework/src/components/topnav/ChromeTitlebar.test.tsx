@@ -73,7 +73,13 @@ describe('ChromeTitlebar', () => {
       'shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
     )
     expect(screen.getByTestId('chrome-titlebar')).toHaveClass('h-[38px]', 'bg-surface')
-    expect(screen.getByTestId('titlebar-actions')).toHaveClass('gap-1', 'pr-3')
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass(
+      'top-0',
+      'h-full',
+      'items-center'
+    )
+    expect(screen.getByTestId('titlebar-center')).toHaveClass('h-full', 'flex-1')
+    expect(screen.getByTestId('titlebar-actions')).toHaveClass('h-full', 'gap-1', 'pr-3')
   })
 
   test('renders app tabs as icon-only controls with hover labels', () => {
@@ -168,8 +174,8 @@ describe('ChromeTitlebar', () => {
     enableTauri()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
 
-    const dragRegion = screen.getByTestId('chrome-titlebar-window-drag-region')
-    expect(dragRegion).toHaveClass('self-stretch')
+    const dragRegion = screen.getByTestId('titlebar-center')
+    expect(dragRegion).toHaveClass('h-full', 'flex-1')
     fireEvent.mouseDown(within(dragRegion).getByTestId('macos-titlebar-drag-region'), {
       button: 0,
     })

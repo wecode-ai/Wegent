@@ -14,7 +14,7 @@ import { apiClient } from './client'
 export type DeviceStatus = 'online' | 'offline' | 'busy'
 
 // Device type enum matching backend DeviceType
-export type DeviceType = 'local' | 'cloud'
+export type DeviceType = 'local' | 'app' | 'cloud' | 'remote'
 
 // Bind shell type enum matching backend BindShell
 export type BindShell = 'claudecode' | 'openclaw'
@@ -36,9 +36,16 @@ export interface CloudDeviceConfig {
   createdAt: string
 }
 
+export interface RemoteDeviceConfig {
+  host?: string
+  port?: number
+  username?: string
+}
+
 export interface DeviceInfo {
   id: number
   device_id: string
+  socket_device_id?: string | null
   name: string
   status: DeviceStatus
   is_default: boolean
@@ -58,6 +65,8 @@ export interface DeviceInfo {
   runtime_transfer_host?: string | null
   // Cloud device specific config
   cloud_config?: CloudDeviceConfig
+  // Remote device specific config
+  remote_config?: RemoteDeviceConfig
   // Shell binding type
   bind_shell?: BindShell
 }

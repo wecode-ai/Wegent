@@ -9,6 +9,10 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeWorkListResponse,
 } from '@/types/api'
+import {
+  getRuntimeTaskReminderItemKey,
+  type RuntimeTaskReminderState,
+} from '@/features/workbench/runtimeTaskReminders'
 import { createTrayTaskMenuId } from './trayTaskMenuId'
 
 export interface TrayMenuTaskItem {
@@ -20,6 +24,12 @@ export interface TrayMenuTaskItem {
 export interface TrayMenuTaskGroups {
   running: TrayMenuTaskItem[]
   runningMore: TrayMenuTaskItem[]
+  unread: TrayMenuTaskItem[]
+  unreadMore: TrayMenuTaskItem[]
+  hasRunningTasks: boolean
+  showRunningStatus: boolean
+  runningCount: number
+  unreadCount: number
   pinned: TrayMenuTaskItem[]
   pinnedMore: TrayMenuTaskItem[]
   recent: TrayMenuTaskItem[]
@@ -33,10 +43,22 @@ const PINNED_TASK_FIELDS = ['pinned', 'isPinned', 'is_pinned', 'marked'] as cons
 export const EMPTY_TRAY_MENU_TASK_GROUPS: TrayMenuTaskGroups = {
   running: [],
   runningMore: [],
+  unread: [],
+  unreadMore: [],
+  hasRunningTasks: false,
+  showRunningStatus: false,
+  runningCount: 0,
+  unreadCount: 0,
   pinned: [],
   pinnedMore: [],
   recent: [],
   recentMore: [],
+}
+
+export interface TrayMenuTaskGroupOptions {
+  reminders?: Pick<RuntimeTaskReminderState, 'unreadTaskKeys' | 'unreadCount' | 'hasRunningTasks'>
+  showUnread?: boolean
+  showRunning?: boolean
 }
 
 interface TrayRuntimeTaskItem {
@@ -122,18 +144,33 @@ function splitTrayMenuTasks(items: TrayRuntimeTaskItem[]) {
 }
 
 export function buildTrayMenuTaskGroups(
-  runtimeWork: RuntimeWorkListResponse | null | undefined
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  options: TrayMenuTaskGroupOptions = {}
 ): TrayMenuTaskGroups {
+  const { reminders, showUnread = true, showRunning = true } = options
   const items = collectRuntimeTaskItems(runtimeWork)
-  const running = items.filter(({ task }) => task.running)
+  const running = showRunning ? items.filter(({ task }) => task.running) : []
+  const unread =
+    showUnread && reminders
+      ? items.filter(({ workspace, task }) =>
+          reminders.unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
+        )
+      : []
   const pinned = items.filter(({ task }) => isPinnedRuntimeTask(task))
   const runningTasks = splitTrayMenuTasks(running)
+  const unreadTasks = splitTrayMenuTasks(unread)
   const pinnedTasks = splitTrayMenuTasks(pinned)
   const recentTasks = splitTrayMenuTasks(items)
 
   return {
     running: runningTasks.visible,
     runningMore: runningTasks.more,
+    unread: unreadTasks.visible,
+    unreadMore: unreadTasks.more,
+    hasRunningTasks: showRunning ? (reminders?.hasRunningTasks ?? running.length > 0) : false,
+    showRunningStatus: showRunning,
+    runningCount: running.length,
+    unreadCount: showUnread ? (reminders?.unreadCount ?? unread.length) : 0,
     pinned: pinnedTasks.visible,
     pinnedMore: pinnedTasks.more,
     recent: recentTasks.visible,

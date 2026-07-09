@@ -2756,9 +2756,11 @@ Response template:
         if workspace:
             if workspace.source == "git" and workspace.checkoutPath:
                 project_workspace_path = f"projects/{workspace.checkoutPath}"
+            elif workspace.source == "device_path":
+                project_workspace_path = workspace.devicePath
             else:
                 project_workspace_path = workspace.localPath or workspace.checkoutPath
-            workspace_data["project"] = {
+            project_workspace = {
                 "project_id": project_id,
                 "workspace_source": workspace.source,
                 "project_workspace_path": project_workspace_path,
@@ -2767,6 +2769,9 @@ Response template:
                 "checkout_path": workspace.checkoutPath,
                 "local_path": workspace.localPath,
             }
+            if workspace.source == "device_path":
+                project_workspace["device_path"] = workspace.devicePath
+            workspace_data["project"] = project_workspace
         else:
             # Default workspace: use project{id} directory under workspace root
             default_path = f"project{project_id}"

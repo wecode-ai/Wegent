@@ -118,15 +118,25 @@ interface InternalTreeNode {
   folderId?: number
   document?: KnowledgeDocument
   path: string[]
+  folderPathIds: number[]
   documentCount: number
   children: InternalTreeNode[]
 }
 
+interface KnowledgeContextScopeInput {
+  documents?: KnowledgeDocument[]
+  folderIds?: number[]
+  folderNames?: string[]
+  includeSubfolders?: boolean
+}
+
 function toKnowledgeContext(
   kb: KnowledgeBase,
-  documents?: KnowledgeDocument[]
+  scope: KnowledgeContextScopeInput = {}
 ): KnowledgeBaseContext {
-  const documentIds = documents?.map(doc => doc.id) ?? []
+  const documentIds = scope.documents?.map(doc => doc.id) ?? []
+  const folderIds = scope.folderIds ?? []
+  const scopeRestricted = documentIds.length > 0 || folderIds.length > 0
   return {
     id: kb.id,
     name: kb.name,
@@ -136,8 +146,14 @@ function toKnowledgeContext(
     retriever_namespace: kb.retrieval_config?.retriever_namespace,
     document_count: kb.document_count,
     document_ids: documentIds.length > 0 ? documentIds : undefined,
-    document_names: documents && documents.length > 0 ? documents.map(doc => doc.name) : undefined,
-    scope_restricted: documentIds.length > 0,
+    document_names:
+      scope.documents && scope.documents.length > 0
+        ? scope.documents.map(doc => doc.name)
+        : undefined,
+    folder_ids: folderIds.length > 0 ? folderIds : undefined,
+    folder_names: scope.folderNames && scope.folderNames.length > 0 ? scope.folderNames : undefined,
+    include_subfolders: folderIds.length > 0 ? (scope.includeSubfolders ?? true) : undefined,
+    scope_restricted: scopeRestricted,
   }
 }
 
@@ -234,23 +250,33 @@ function buildInternalTree(
 
   const consumedFolderIds = new Set<number>()
 
-  const buildDocument = (doc: KnowledgeDocument, path: string[]): InternalTreeNode => ({
+  const buildDocument = (
+    doc: KnowledgeDocument,
+    path: string[],
+    folderPathIds: number[]
+  ): InternalTreeNode => ({
     id: `document-${doc.id}`,
     name: doc.name,
     type: 'document',
     document: doc,
     path,
+    folderPathIds,
     documentCount: 1,
     children: [],
   })
 
-  const buildFolder = (folder: KnowledgeFolder, parentPath: string[]): InternalTreeNode => {
+  const buildFolder = (
+    folder: KnowledgeFolder,
+    parentPath: string[],
+    parentFolderPathIds: number[]
+  ): InternalTreeNode => {
     const path = [...parentPath, folder.name]
+    const folderPathIds = [...parentFolderPathIds, folder.id]
     const folderDocs = docsByFolder.get(folder.id) ?? []
     consumedFolderIds.add(folder.id)
     const children = [
-      ...(folder.children ?? []).map(child => buildFolder(child, path)),
-      ...folderDocs.map(doc => buildDocument(doc, path)),
+      ...(folder.children ?? []).map(child => buildFolder(child, path, folderPathIds)),
+      ...folderDocs.map(doc => buildDocument(doc, path, folderPathIds)),
     ]
     return {
       id: `folder-${folder.id}`,
@@ -258,12 +284,13 @@ function buildInternalTree(
       type: 'folder',
       folderId: folder.id,
       path,
+      folderPathIds,
       documentCount: children.reduce((total, child) => total + child.documentCount, 0),
       children,
     }
   }
 
-  const folderNodes = folders.map(folder => buildFolder(folder, []))
+  const folderNodes = folders.map(folder => buildFolder(folder, [], []))
   const rootDocs = docsByFolder.get(0) ?? []
   const orphanDocs = Array.from(docsByFolder.entries())
     .filter(([folderId]) => folderId !== 0 && !consumedFolderIds.has(folderId))
@@ -271,18 +298,17 @@ function buildInternalTree(
 
   return [
     ...folderNodes,
-    ...rootDocs.map(doc => buildDocument(doc, [])),
-    ...orphanDocs.map(doc => buildDocument(doc, [])),
+    ...rootDocs.map(doc => buildDocument(doc, [], [])),
+    ...orphanDocs.map(doc => buildDocument(doc, [], [])),
   ]
 }
 
-function flattenInternalDocuments(nodes: InternalTreeNode[]) {
-  const result: Array<{ document: KnowledgeDocument; path: string[] }> = []
+function flattenInternalSearchResults(nodes: InternalTreeNode[]) {
+  const result: Array<{ node: InternalTreeNode; path: string[] }> = []
 
   const walk = (node: InternalTreeNode) => {
-    if (node.document) {
-      result.push({ document: node.document, path: node.path })
-      return
+    if (node.type === 'folder' || node.document) {
+      result.push({ node, path: node.path })
     }
     node.children.forEach(walk)
   }
@@ -350,6 +376,29 @@ function hasSelectedInternalDocument(node: InternalTreeNode, selectedDocIds: Set
     return selectedDocIds.has(node.document.id)
   }
   return node.children.some(child => hasSelectedInternalDocument(child, selectedDocIds))
+}
+
+function hasSelectedInternalFolder(
+  node: InternalTreeNode,
+  selectedFolderIds: Set<number>
+): boolean {
+  if (
+    node.type === 'folder' &&
+    node.folderId !== undefined &&
+    selectedFolderIds.has(node.folderId)
+  ) {
+    return true
+  }
+  return node.children.some(child => hasSelectedInternalFolder(child, selectedFolderIds))
+}
+
+function isCoveredBySelectedAncestorFolder(
+  node: InternalTreeNode,
+  selectedFolderIds: Set<number>
+): boolean {
+  const ancestorFolderIds =
+    node.type === 'folder' ? node.folderPathIds.slice(0, -1) : node.folderPathIds
+  return ancestorFolderIds.some(folderId => selectedFolderIds.has(folderId))
 }
 
 function hasSelectedExternalDocument(node: ExternalKbNode, selectedNodeIds: Set<string>): boolean {
@@ -638,10 +687,12 @@ export function KnowledgeSourcePicker({
   const toggleInternalDocument = (kb: KnowledgeBase, doc: KnowledgeDocument) => {
     const existing = getKnowledgeContext(selectedContexts, kb.id)
     const existingIds = existing?.scope_restricted ? (existing.document_ids ?? []) : []
+    const existingFolderIds = existing?.scope_restricted ? (existing.folder_ids ?? []) : []
+    const existingFolderNames = existing?.scope_restricted ? (existing.folder_names ?? []) : []
     const selected = existingIds.includes(doc.id)
     const nextIds = selected ? existingIds.filter(id => id !== doc.id) : [...existingIds, doc.id]
 
-    if (nextIds.length === 0) {
+    if (nextIds.length === 0 && existingFolderIds.length === 0) {
       if (existing) onDeselect(existing.id)
       return
     }
@@ -652,7 +703,52 @@ export function KnowledgeSourcePicker({
       .map(id => (id === doc.id ? doc : documentsById.get(id)))
       .filter((item): item is KnowledgeDocument => Boolean(item))
 
-    replaceContexts(existing ? [existing.id] : [], [toKnowledgeContext(kb, nextDocuments)])
+    replaceContexts(existing ? [existing.id] : [], [
+      toKnowledgeContext(kb, {
+        documents: nextDocuments,
+        folderIds: existingFolderIds,
+        folderNames: existingFolderNames,
+        includeSubfolders: existing?.include_subfolders ?? true,
+      }),
+    ])
+  }
+
+  const toggleInternalFolder = (kb: KnowledgeBase, node: InternalTreeNode) => {
+    if (node.type !== 'folder' || node.folderId === undefined) {
+      return
+    }
+
+    const existing = getKnowledgeContext(selectedContexts, kb.id)
+    const existingFolderIds = existing?.scope_restricted ? (existing.folder_ids ?? []) : []
+    const existingFolderNames = existing?.scope_restricted ? (existing.folder_names ?? []) : []
+    const existingDocumentIds = existing?.scope_restricted ? (existing.document_ids ?? []) : []
+    const selected = existingFolderIds.includes(node.folderId)
+    const nextFolderIds = selected
+      ? existingFolderIds.filter(id => id !== node.folderId)
+      : [...existingFolderIds, node.folderId]
+    const nextFolderNames = selected
+      ? existingFolderNames.filter((_, index) => existingFolderIds[index] !== node.folderId)
+      : [...existingFolderNames, node.name]
+
+    if (nextFolderIds.length === 0 && existingDocumentIds.length === 0) {
+      if (existing) onDeselect(existing.id)
+      return
+    }
+
+    const treeState = internalTreeByKb.get(kb.id)
+    const documentsById = new Map((treeState?.documents ?? []).map(item => [item.id, item]))
+    const nextDocuments = existingDocumentIds
+      .map(id => documentsById.get(id))
+      .filter((item): item is KnowledgeDocument => Boolean(item))
+
+    replaceContexts(existing ? [existing.id] : [], [
+      toKnowledgeContext(kb, {
+        documents: nextDocuments,
+        folderIds: nextFolderIds,
+        folderNames: nextFolderNames,
+        includeSubfolders: true,
+      }),
+    ])
   }
 
   const toggleExternalKnowledgeBase = (
@@ -1269,14 +1365,17 @@ export function KnowledgeSourcePicker({
       const selectedDocIds = new Set(
         existing?.scope_restricted ? (existing.document_ids ?? []) : []
       )
+      const selectedFolderIds = new Set(
+        existing?.scope_restricted ? (existing.folder_ids ?? []) : []
+      )
       const query = searchValue.trim()
-      const documentResults = query
-        ? flattenInternalDocuments(state?.tree ?? []).filter(item =>
-            matchesPathSearch(item.document.name, item.path, query)
+      const searchResults = query
+        ? flattenInternalSearchResults(state?.tree ?? []).filter(item =>
+            matchesPathSearch(item.node.name, item.path, query)
           )
         : []
       return (
-        <div className="flex min-h-0 flex-col">
+        <div className="flex h-full min-h-0 flex-col">
           <DocumentColumnHeader title={kb.name} documentCount={kb.document_count} />
           {state?.loading ? (
             <PickerLoading label={t('picker.loadingDocuments')} />
@@ -1286,9 +1385,11 @@ export function KnowledgeSourcePicker({
             <PickerEmpty label={t('picker.emptyDocuments')} />
           ) : query ? (
             <InternalDocumentSearchResults
-              items={documentResults}
+              items={searchResults}
               selectedDocIds={selectedDocIds}
+              selectedFolderIds={selectedFolderIds}
               onToggleDocument={doc => toggleInternalDocument(kb, doc)}
+              onToggleFolder={node => toggleInternalFolder(kb, node)}
             />
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -1299,7 +1400,9 @@ export function KnowledgeSourcePicker({
                   depth={0}
                   disabled={false}
                   selectedDocIds={selectedDocIds}
+                  selectedFolderIds={selectedFolderIds}
                   onToggleDocument={doc => toggleInternalDocument(kb, doc)}
+                  onToggleFolder={node => toggleInternalFolder(kb, node)}
                 />
               ))}
             </div>
@@ -1537,11 +1640,15 @@ function PathLabel({ path }: { path: string[] }) {
 function InternalDocumentSearchResults({
   items,
   selectedDocIds,
+  selectedFolderIds,
   onToggleDocument,
+  onToggleFolder,
 }: {
-  items: Array<{ document: KnowledgeDocument; path: string[] }>
+  items: Array<{ node: InternalTreeNode; path: string[] }>
   selectedDocIds: Set<number>
+  selectedFolderIds: Set<number>
   onToggleDocument: (doc: KnowledgeDocument) => void
+  onToggleFolder: (node: InternalTreeNode) => void
 }) {
   const { t } = useTranslation('knowledge')
   if (items.length === 0) {
@@ -1550,27 +1657,53 @@ function InternalDocumentSearchResults({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
-      {items.map(({ document, path }) => {
-        const selected = selectedDocIds.has(document.id)
+      {items.map(({ node, path }) => {
+        const isFolder = node.type === 'folder'
+        const document = node.document
+        const inheritedSelected = isCoveredBySelectedAncestorFolder(node, selectedFolderIds)
+        const selected =
+          isFolder && node.folderId !== undefined
+            ? inheritedSelected || selectedFolderIds.has(node.folderId)
+            : inheritedSelected || Boolean(document && selectedDocIds.has(document.id))
+        const Icon = isFolder ? Folder : FileText
         return (
           <button
-            key={document.id}
+            key={node.id}
             type="button"
+            disabled={inheritedSelected}
+            aria-disabled={inheritedSelected}
             className={cn(
               'flex min-h-11 w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-surface',
-              selected ? 'bg-primary/10 text-primary' : ''
+              selected ? 'bg-primary/10 text-primary' : '',
+              inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
             )}
-            onClick={() => onToggleDocument(document)}
-            data-testid={`knowledge-picker-document-node-document-${document.id}`}
+            onClick={() => {
+              if (isFolder) {
+                onToggleFolder(node)
+              } else if (document && !inheritedSelected) {
+                onToggleDocument(document)
+              }
+            }}
+            data-testid={
+              isFolder
+                ? `knowledge-picker-search-folder-${node.folderId}`
+                : `knowledge-picker-document-node-document-${document?.id}`
+            }
           >
             <span className="flex min-w-0 items-start gap-2">
-              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
               <span className="min-w-0">
-                <span className="block truncate text-text-primary">{document.name}</span>
+                <span className="block truncate text-text-primary">{node.name}</span>
                 <PathLabel path={path} />
               </span>
             </span>
-            {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+            {isFolder && !selected ? (
+              <Badge variant="secondary" size="sm">
+                {node.documentCount}
+              </Badge>
+            ) : selected ? (
+              <Check className="h-4 w-4 shrink-0 text-primary" />
+            ) : null}
           </button>
         )
       })}
@@ -1632,69 +1765,124 @@ function InternalDocumentNode({
   depth,
   disabled,
   selectedDocIds,
+  selectedFolderIds,
   onToggleDocument,
+  onToggleFolder,
 }: {
   node: InternalTreeNode
   depth: number
   disabled: boolean
   selectedDocIds: Set<number>
+  selectedFolderIds: Set<number>
   onToggleDocument: (doc: KnowledgeDocument) => void
+  onToggleFolder: (node: InternalTreeNode) => void
 }) {
   const isFolder = node.type === 'folder'
-  const containsSelected = hasSelectedInternalDocument(node, selectedDocIds)
+  const inheritedSelected = isCoveredBySelectedAncestorFolder(node, selectedFolderIds)
+  const folderSelected = Boolean(
+    isFolder && (inheritedSelected || (node.folderId && selectedFolderIds.has(node.folderId)))
+  )
+  const containsSelected =
+    hasSelectedInternalDocument(node, selectedDocIds) ||
+    (isFolder && hasSelectedInternalFolder(node, selectedFolderIds))
   const [open, setOpen] = useState(depth < 1 || containsSelected)
   useEffect(() => {
     if (containsSelected) {
       setOpen(true)
     }
   }, [containsSelected])
-  const selected = Boolean(node.document && selectedDocIds.has(node.document.id))
+  const selected =
+    inheritedSelected || Boolean(node.document && selectedDocIds.has(node.document.id))
   const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
 
   return (
     <div>
-      <button
-        type="button"
-        className={cn(
-          'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
-          !isFolder && selected ? 'bg-primary/10 text-primary' : '',
-          disabled && !isFolder ? 'opacity-50' : ''
-        )}
-        style={{ paddingLeft: 8 + depth * 16 }}
-        onClick={() => {
-          if (isFolder) {
-            setOpen(!open)
-          } else if (node.document && !disabled) {
-            onToggleDocument(node.document)
-          }
-        }}
-        data-testid={`knowledge-picker-document-node-${node.id}`}
-      >
-        <span className="flex min-w-0 items-start gap-2">
-          {isFolder ? (
+      {isFolder ? (
+        <div
+          className={cn(
+            'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
+            folderSelected ? 'bg-primary/10 text-primary' : ''
+          )}
+          style={{ paddingLeft: 8 + depth * 16 }}
+          data-testid={`knowledge-picker-document-node-${node.id}`}
+        >
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-start gap-2 text-left"
+            onClick={() => setOpen(!open)}
+          >
             <ChevronRight
               className={cn(
                 'mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted transition-transform',
                 open ? 'rotate-90' : ''
               )}
             />
-          ) : (
-            <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          )}
-          <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
-          <span className="min-w-0">
-            <span className="block truncate text-text-primary">{node.name}</span>
-            {!isFolder ? <PathLabel path={node.path} /> : null}
+            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+            <span className="min-w-0">
+              <span className="block truncate text-text-primary">{node.name}</span>
+            </span>
+          </button>
+          <span className="flex shrink-0 items-center gap-2">
+            <Badge variant="secondary" size="sm">
+              {node.documentCount}
+            </Badge>
+            <button
+              type="button"
+              className={cn(
+                'flex h-11 w-11 items-center justify-center rounded text-text-muted hover:text-primary',
+                inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
+              )}
+              disabled={inheritedSelected}
+              aria-disabled={inheritedSelected}
+              onClick={() => {
+                if (!inheritedSelected) {
+                  onToggleFolder(node)
+                }
+              }}
+              data-testid={`knowledge-picker-folder-scope-${node.folderId}`}
+              aria-label={node.name}
+            >
+              <span
+                className={cn(
+                  'flex h-6 w-6 items-center justify-center rounded border border-border hover:border-primary/60 hover:bg-primary/10',
+                  folderSelected ? 'border-primary bg-primary/10 text-primary' : ''
+                )}
+              >
+                {folderSelected ? <Check className="h-3.5 w-3.5" /> : null}
+              </span>
+            </button>
           </span>
-        </span>
-        {isFolder ? (
-          <Badge variant="secondary" size="sm">
-            {node.documentCount}
-          </Badge>
-        ) : selected ? (
-          <Check className="h-4 w-4 shrink-0 text-primary" />
-        ) : null}
-      </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={cn(
+            'flex min-h-11 w-full items-center justify-between gap-2 rounded-md py-2 pr-2 text-left text-sm hover:bg-surface',
+            selected ? 'bg-primary/10 text-primary' : '',
+            disabled ? 'opacity-50' : '',
+            inheritedSelected ? 'cursor-not-allowed opacity-70' : ''
+          )}
+          disabled={inheritedSelected}
+          aria-disabled={inheritedSelected}
+          style={{ paddingLeft: 8 + depth * 16 }}
+          onClick={() => {
+            if (node.document && !disabled && !inheritedSelected) {
+              onToggleDocument(node.document)
+            }
+          }}
+          data-testid={`knowledge-picker-document-node-${node.id}`}
+        >
+          <span className="flex min-w-0 items-start gap-2">
+            <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+            <span className="min-w-0">
+              <span className="block truncate text-text-primary">{node.name}</span>
+              <PathLabel path={node.path} />
+            </span>
+          </span>
+          {selected ? <Check className="h-4 w-4 shrink-0 text-primary" /> : null}
+        </button>
+      )}
       {isFolder && open
         ? node.children.map(child => (
             <InternalDocumentNode
@@ -1703,7 +1891,9 @@ function InternalDocumentNode({
               depth={depth + 1}
               disabled={disabled}
               selectedDocIds={selectedDocIds}
+              selectedFolderIds={selectedFolderIds}
               onToggleDocument={onToggleDocument}
+              onToggleFolder={onToggleFolder}
             />
           ))
         : null}

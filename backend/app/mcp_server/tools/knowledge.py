@@ -30,6 +30,7 @@ from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.server import EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
+from app.services.knowledge import KnowledgeFolderService
 from app.services.knowledge.external_document_access import (
     DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
     DOWNLOAD_TOKEN_HEADER,
@@ -141,6 +142,8 @@ def _build_download_command_notes() -> str:
         "query": "Search query text",
         "max_results": "Maximum number of results to return (default: 10, max: 50)",
         "document_ids": "Optional list of document IDs to restrict search scope",
+        "folder_ids": "Optional list of folder IDs to restrict search scope",
+        "include_subfolders": "Whether folder_ids include descendant folders",
     },
 )
 async def search_knowledge_base(
@@ -149,6 +152,8 @@ async def search_knowledge_base(
     query: str,
     max_results: int = 10,
     document_ids: Optional[list[int]] = None,
+    folder_ids: Optional[list[int]] = None,
+    include_subfolders: bool = True,
 ) -> Dict[str, Any]:
     """
     Search knowledge base using RAG retrieval.
@@ -159,6 +164,8 @@ async def search_knowledge_base(
         query: Search query text
         max_results: Maximum number of results (default: 10, max: 50)
         document_ids: Optional document IDs to filter search scope
+        folder_ids: Optional folder IDs to filter search scope
+        include_subfolders: Whether folder_ids include descendant folders
 
     Returns:
         Dict with search results including chunks and sources
@@ -186,13 +193,35 @@ async def search_knowledge_base(
                 "total": 0,
             }
 
+        scope_specified = folder_ids is not None or document_ids is not None
+        resolved_document_ids = document_ids
+        if scope_specified:
+            resolved_document_ids = (
+                KnowledgeFolderService.resolve_document_ids_for_scope(
+                    db=db,
+                    knowledge_base_id=knowledge_base_id,
+                    user_id=user.id,
+                    folder_ids=folder_ids,
+                    document_ids=document_ids,
+                    include_subfolders=include_subfolders,
+                )
+            )
+            if not resolved_document_ids:
+                return {
+                    "query": query,
+                    "chunks": [],
+                    "sources": [],
+                    "total": 0,
+                    "mode": "rag_retrieval",
+                }
+
         result = await knowledge_orchestrator.retrieve_knowledge(
             db=db,
             user=user,
             knowledge_base_id=knowledge_base_id,
             query=query,
             max_results=max_results,
-            document_ids=document_ids,
+            document_ids=resolved_document_ids if scope_specified else None,
             route_mode="rag_retrieval",
         )
 
@@ -331,6 +360,10 @@ def list_knowledge_bases(
     param_descriptions={
         "knowledge_base_id": "Knowledge base ID to list documents from",
         "folder_id": "Optional folder ID to filter documents by (0 or omit for root/all documents)",
+        "include_subfolders": "Whether folder_id includes descendant folders",
+        "keyword": "Optional keyword to search document names",
+        "sort_by": "Sort field: name, size, createdAt, or updatedAt",
+        "sort_order": "Sort order: asc or desc",
         "limit": "Maximum number of documents to return",
         "offset": "Start offset for paginated listing",
     },
@@ -339,6 +372,10 @@ def list_documents(
     token_info: TaskTokenInfo,
     knowledge_base_id: int,
     folder_id: Optional[int] = None,
+    include_subfolders: bool = False,
+    keyword: Optional[str] = None,
+    sort_by: str = "createdAt",
+    sort_order: str = "desc",
     limit: int = DEFAULT_KNOWLEDGE_LIST_LIMIT,
     offset: int = 0,
 ) -> Dict[str, Any]:
@@ -349,6 +386,10 @@ def list_documents(
         token_info: Task token information containing user context
         knowledge_base_id: Knowledge base ID
         folder_id: Optional folder ID to filter documents by
+        include_subfolders: Whether folder_id includes descendant folders
+        keyword: Optional keyword to search document names
+        sort_by: Sort field
+        sort_order: Sort order
 
     Returns:
         Dict with total count and list of documents
@@ -378,6 +419,10 @@ def list_documents(
             folder_id=folder_id,
             limit=limit,
             offset=offset,
+            include_subfolders=include_subfolders,
+            keyword=keyword,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
         return {

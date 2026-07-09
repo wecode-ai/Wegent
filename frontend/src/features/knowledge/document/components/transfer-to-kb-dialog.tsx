@@ -27,6 +27,7 @@ import { getOrganizationNamespace, listKnowledgeBases } from '@/apis/knowledge'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { toast } from '@/hooks/use-toast'
+import { formatSelectionSummary } from '../utils/selection-summary'
 
 interface TransferToKbDialogProps {
   open: boolean
@@ -182,10 +183,7 @@ export function TransferToKbDialog({
 
         <div className="py-4 space-y-4">
           <p className="text-sm text-text-secondary">
-            {t('document.document.batch.transferHint', {
-              docCount: selectedDocumentCount,
-              folderCount: selectedFolderCount,
-            })}
+            {formatSelectionSummary(t, 'transferHint', selectedDocumentCount, selectedFolderCount)}
           </p>
 
           {/* Target KB selector */}

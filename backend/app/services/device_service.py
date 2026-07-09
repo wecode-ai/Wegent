@@ -316,6 +316,7 @@ class DeviceService:
         device_type: Optional[str] = None,
         bind_shell: Optional[str] = None,
         runtime_transfer_host: Optional[str] = None,
+        runtime_instance_id: Optional[str] = None,
         app_device_id: Optional[str] = None,
     ) -> Kind:
         """Create or update a Device CRD record.
@@ -335,6 +336,7 @@ class DeviceService:
                         If None, defaults to 'claudecode' for new devices or
                         preserves existing value.
             runtime_transfer_host: Host peers should use for direct transfers
+            runtime_instance_id: Stable runtime installation ID shared by all routes
             app_device_id: Desktop app IPC device ID for app registrations
 
         Returns:
@@ -372,6 +374,8 @@ class DeviceService:
                 device_json["spec"]["clientIp"] = client_ip
             if runtime_transfer_host is not None:
                 device_json["spec"]["runtimeTransferHost"] = runtime_transfer_host
+            if runtime_instance_id is not None:
+                device_json["spec"]["runtimeInstanceId"] = runtime_instance_id
             if app_device_id is not None:
                 device_json["spec"]["appDeviceId"] = app_device_id
             # Update bind_shell if provided, otherwise preserve existing value
@@ -432,6 +436,7 @@ class DeviceService:
                     "capabilities": None,
                     "clientIp": client_ip,
                     "runtimeTransferHost": runtime_transfer_host,
+                    "runtimeInstanceId": runtime_instance_id,
                     "appDeviceId": app_device_id,
                 },
                 "status": {

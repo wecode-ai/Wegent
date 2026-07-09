@@ -1,7 +1,10 @@
-import { getCurrentWindow } from '@tauri-apps/api/window'
+import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 
 type ConfirmClose = () => boolean
+
+export const CLOSE_TO_TRAY_HINT_REQUESTED_EVENT = 'wework-close-to-tray-hint-requested'
 
 function workspaceHasRunningTask(workspace: RuntimeDeviceWorkspace): boolean {
   return workspace.tasks.some(task => task.running === true)
@@ -28,21 +31,15 @@ export function shouldPreventRuntimeTaskClose(
 }
 
 export async function installRuntimeTaskCloseGuard(
-  getRuntimeWork: () => RuntimeWorkListResponse | null | undefined,
-  onRunningTaskCloseRequest: () => void
+  onCloseToTrayHintRequest: () => void
 ): Promise<() => void> {
-  const currentWindow = getCurrentWindow()
-
-  return currentWindow.onCloseRequested(event => {
-    if (!hasRunningRuntimeTasks(getRuntimeWork())) {
-      return
-    }
-
-    event.preventDefault()
-    onRunningTaskCloseRequest()
+  const unlisten: UnlistenFn = await listen(CLOSE_TO_TRAY_HINT_REQUESTED_EVENT, () => {
+    onCloseToTrayHintRequest()
   })
+
+  return unlisten
 }
 
-export async function destroyCurrentWindow(): Promise<void> {
-  await getCurrentWindow().destroy()
+export async function closeMainWindowToTray(): Promise<void> {
+  await invoke('close_main_window_to_tray')
 }

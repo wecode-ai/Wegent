@@ -1,13 +1,23 @@
 import { createContext } from 'react'
-import type { LoginRequest } from '@/api/auth'
 import type { User } from '@/types/api'
 import type { CloudConnectionSnapshot } from './cloudConnectionStorage'
+
+export interface CloudAuthorizationHandle {
+  closed?: Promise<void>
+  close?: () => Promise<void> | void
+}
+
+export type OpenCloudAuthorizationUrl = (
+  url: string
+) => Promise<CloudAuthorizationHandle | void> | CloudAuthorizationHandle | void
 
 export interface CloudConnectionContextValue extends CloudConnectionSnapshot {
   isConnected: boolean
   serviceKey: string
-  connectWithPassword: (backendUrl: string, credentials: LoginRequest) => Promise<User>
-  setupAdminPassword: (backendUrl: string, password: string) => Promise<User>
+  connectWithAuthorization: (
+    backendUrl: string,
+    openAuthorizationUrl?: OpenCloudAuthorizationUrl
+  ) => Promise<User>
   refreshUser: () => Promise<User | null>
   disconnect: () => void
 }

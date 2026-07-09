@@ -10,6 +10,10 @@ import {
   DISCONNECTED_STATE,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
+import {
+  AppUpdateContext,
+  type AppUpdateContextValue,
+} from '@/features/app-update/app-update-context'
 
 function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -80,18 +84,30 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
 
 function renderSidebar(
   overrides: Partial<Parameters<typeof DesktopSidebar>[0]> = {},
-  cloudConnection?: Partial<CloudConnectionContextValue>
+  cloudConnection?: Partial<CloudConnectionContextValue>,
+  appUpdate?: Partial<AppUpdateContextValue>
 ) {
   const props: Parameters<typeof DesktopSidebar>[0] = createSidebarProps(overrides)
 
-  const tree = <DesktopSidebar {...props} />
+  let tree = <DesktopSidebar {...props} />
+  if (appUpdate) {
+    const value: AppUpdateContextValue = {
+      availableUpdate: null,
+      status: 'idle',
+      message: null,
+      error: null,
+      checkNow: vi.fn().mockResolvedValue(null),
+      installUpdate: vi.fn().mockResolvedValue(undefined),
+      ...appUpdate,
+    }
+    tree = <AppUpdateContext.Provider value={value}>{tree}</AppUpdateContext.Provider>
+  }
   if (cloudConnection) {
     const value: CloudConnectionContextValue = {
       ...DISCONNECTED_STATE,
       isConnected: false,
       serviceKey: 'test-disconnected',
-      connectWithPassword: vi.fn(),
-      setupAdminPassword: vi.fn(),
+      connectWithAuthorization: vi.fn(),
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
       ...cloudConnection,
@@ -139,7 +155,7 @@ describe('DesktopSidebar', () => {
   test('keeps the account settings trigger and notification bell inside the sidebar width', () => {
     renderSidebar()
 
-    expect(screen.getByTestId('settings-button')).toHaveClass('h-14', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice@example.com')
@@ -147,6 +163,52 @@ describe('DesktopSidebar', () => {
       'h-8',
       'w-8',
       'shrink-0'
+    )
+  })
+
+  test('shows an exposed update button in the account row when an app update is available', async () => {
+    const installUpdate = vi.fn().mockResolvedValue(undefined)
+    renderSidebar({}, undefined, {
+      availableUpdate: { currentVersion: '0.1.0', version: '0.1.1' },
+      status: 'available',
+      installUpdate,
+    })
+
+    const button = screen.getByTestId('sidebar-app-update-button')
+    expect(button).toHaveClass('h-8', 'w-8')
+    expect(button).toHaveAttribute('title', '更新到 0.1.1')
+
+    await userEvent.click(button)
+
+    expect(installUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps the account-row update icon visible in debug mode for checking updates', async () => {
+    const checkNow = vi.fn().mockResolvedValue(null)
+    renderSidebar({}, undefined, { availableUpdate: null, checkNow })
+
+    const button = screen.getByTestId('sidebar-app-update-button')
+    expect(button).toHaveAttribute('title', '检查更新')
+
+    await userEvent.click(button)
+
+    expect(checkNow).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows the app update error near the account-row update icon', async () => {
+    renderSidebar({}, undefined, {
+      availableUpdate: null,
+      status: 'error',
+      error: 'updater does not have any endpoints set',
+    })
+
+    const button = screen.getByTestId('sidebar-app-update-button')
+    expect(button).toHaveAttribute('title', 'updater does not have any endpoints set')
+    expect(screen.queryByTestId('sidebar-app-update-error')).not.toBeInTheDocument()
+    await userEvent.hover(button)
+
+    expect(await screen.findByTestId('sidebar-app-update-error')).toHaveTextContent(
+      'updater does not have any endpoints set'
     )
   })
 
@@ -267,9 +329,38 @@ describe('DesktopSidebar', () => {
     })
 
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
+    const statusLabel = screen.getByTestId('sidebar-cloud-status-label')
+    const settingsButton = screen.getByTestId('sidebar-cloud-management-button')
 
     expect(cloudButton).toHaveTextContent('云端工作')
     expect(cloudButton).toHaveTextContent('可用')
+    expect(cloudButton).toHaveClass('pr-2')
+    expect(cloudButton).not.toHaveClass('pr-8')
+    expect(statusLabel).toHaveClass(
+      'ml-auto',
+      'group-hover/cloud:invisible',
+      'group-focus-within/cloud:invisible'
+    )
+    expect(settingsButton).toHaveClass(
+      'pointer-events-none',
+      'group-hover/cloud:pointer-events-auto',
+      'group-hover/cloud:opacity-100',
+      'group-focus-within/cloud:pointer-events-auto',
+      'group-focus-within/cloud:opacity-100'
+    )
+  })
+
+  test('opens cloud connection settings from the sidebar cloud management button', async () => {
+    const onOpenSettings = vi.fn()
+    renderSidebar({
+      devices: [localDevice()],
+      cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
+      onOpenSettings,
+    })
+
+    await userEvent.click(screen.getByTestId('sidebar-cloud-management-button'))
+
+    expect(onOpenSettings).toHaveBeenCalledWith({ settingsPage: 'connections' })
   })
 
   test('shows cloud work unavailable when background cloud reads fail', () => {
@@ -791,9 +882,10 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 
-  test('persists unread dot when a runtime task finishes while the app is closed', async () => {
+  test('shows unread dot from shared runtime task reminder state', async () => {
     const onOpenRuntimeTask = vi.fn()
-    const runningRuntimeWork = {
+    const onMarkRuntimeTaskRead = vi.fn()
+    const completedRuntimeWork = {
       projects: [
         {
           project: { id: 7, name: 'Wegent' },
@@ -812,7 +904,7 @@ describe('DesktopSidebar', () => {
                   workspacePath: '/repo/Wegent',
                   title: 'Background task',
                   runtime: 'codex' as const,
-                  running: true,
+                  running: false,
                   updatedAt: '2026-06-20T03:00:00Z',
                 },
               ],
@@ -823,41 +915,12 @@ describe('DesktopSidebar', () => {
       chats: [],
       totalTasks: 1,
     }
-    const completedRuntimeWork = {
-      ...runningRuntimeWork,
-      projects: [
-        {
-          ...runningRuntimeWork.projects[0],
-          deviceWorkspaces: [
-            {
-              ...runningRuntimeWork.projects[0].deviceWorkspaces[0],
-              tasks: [
-                {
-                  ...runningRuntimeWork.projects[0].deviceWorkspaces[0].tasks[0],
-                  running: false,
-                  updatedAt: '2026-06-20T03:02:00Z',
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    }
-
-    const firstRender = renderSidebar({
-      runtimeWork: runningRuntimeWork,
-      onOpenRuntimeTask,
-    })
-    await waitFor(() => {
-      expect(localStorage.getItem('wework.desktop.sidebar.runningRuntimeTaskKeys.1')).toContain(
-        'codex-background'
-      )
-    })
-    firstRender.unmount()
 
     renderSidebar({
       runtimeWork: completedRuntimeWork,
       onOpenRuntimeTask,
+      onMarkRuntimeTaskRead,
+      unreadRuntimeTaskKeys: new Set(['local-device\0codex-background']),
     })
 
     await userEvent.click(screen.getByTestId('project-item-button'))
@@ -871,11 +934,7 @@ describe('DesktopSidebar', () => {
     await userEvent.click(screen.getByTestId('runtime-local-task-row-codex-background'))
 
     expect(onOpenRuntimeTask).toHaveBeenCalledTimes(1)
-    await waitFor(() => {
-      expect(
-        screen.queryByTestId('runtime-local-task-unread-dot-codex-background')
-      ).not.toBeInTheDocument()
-    })
+    expect(onMarkRuntimeTaskRead).toHaveBeenCalledTimes(1)
   })
 
   test('does not render online devices section and keeps all runtime tasks visible', async () => {
@@ -1300,8 +1359,8 @@ describe('DesktopSidebar', () => {
 
     expect(title).toHaveClass('min-w-0', 'flex-1', 'truncate')
     expect(title).not.toHaveClass('group-hover/task:pr-20')
-    expect(trailing).toHaveClass('min-w-[32px]', 'group-hover/task:w-[104px]')
-    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[104px]')
+    expect(trailing).toHaveClass('min-w-[32px]', 'group-hover/task:w-[72px]')
+    expect(hoverActions).toHaveClass('absolute', 'right-0', 'w-[72px]')
   })
 
   test('moves pinned runtime tasks to the top of the project task list', async () => {

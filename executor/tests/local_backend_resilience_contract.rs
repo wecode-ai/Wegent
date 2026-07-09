@@ -272,6 +272,7 @@ fn local_backend_config() -> LocalBackendConfig {
         backend_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),
         device_id: "device-1".to_owned(),
+        runtime_instance_id: "runtime-1".to_owned(),
         device_name: "Device One".to_owned(),
         device_type: "local".to_owned(),
         app_device_id: String::new(),

@@ -43,6 +43,7 @@ impl Drop for EnvGuard {
 fn missing_config_creates_stable_local_device_identity() {
     let _lock = lock_env();
     let _mode = EnvGuard::remove("EXECUTOR_MODE");
+    let _runtime_instance_id = EnvGuard::remove("WEGENT_RUNTIME_INSTANCE_ID");
     let path = temp_path("missing-device-config.json");
     let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
 
@@ -54,11 +55,43 @@ fn missing_config_creates_stable_local_device_identity() {
     assert!(config
         .device_name
         .contains(&config.device_id[config.device_id.len() - 12..]));
+    assert!(config.runtime_instance_id.starts_with("runtime-"));
     assert!(path.is_file());
 
     let reloaded = load_device_config(Some(path.to_str().unwrap())).unwrap();
     assert_eq!(reloaded.device_id, config.device_id);
+    assert_eq!(reloaded.runtime_instance_id, config.runtime_instance_id);
     assert_eq!(reloaded.device_name, config.device_name);
+}
+
+#[test]
+fn device_id_override_does_not_change_runtime_instance_identity() {
+    let _lock = lock_env();
+    let _runtime_instance_id = EnvGuard::remove("WEGENT_RUNTIME_INSTANCE_ID");
+    let _device_id = EnvGuard::set("DEVICE_ID", "route-device");
+    let path = temp_path("runtime-instance-device-config.json");
+    fs::write(
+        &path,
+        r#"{"device_id":"stored-device","runtime_instance_id":"runtime-stable"}"#,
+    )
+    .unwrap();
+
+    let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
+
+    assert_eq!(config.device_id, "route-device");
+    assert_eq!(config.runtime_instance_id, "runtime-stable");
+}
+
+#[test]
+fn runtime_instance_id_has_a_dedicated_environment_override() {
+    let _lock = lock_env();
+    let _runtime_instance_id = EnvGuard::set("WEGENT_RUNTIME_INSTANCE_ID", "runtime-env");
+    let path = temp_path("runtime-instance-env-config.json");
+    fs::write(&path, r#"{"device_id":"stored-device"}"#).unwrap();
+
+    let config = load_device_config(Some(path.to_str().unwrap())).unwrap();
+
+    assert_eq!(config.runtime_instance_id, "runtime-env");
 }
 
 #[test]

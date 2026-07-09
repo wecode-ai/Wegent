@@ -486,7 +486,7 @@ describe('local executor management page', () => {
   })
 
   test('opens local management from the startup indicator', async () => {
-    window.history.pushState({}, '', '/')
+    window.history.pushState({}, '', '/apps')
 
     render(<App />)
 

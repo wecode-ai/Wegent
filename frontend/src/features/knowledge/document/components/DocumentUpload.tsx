@@ -98,8 +98,6 @@ interface DocumentUploadProps {
   onWebAdd?: (url: string, name?: string) => Promise<void>
   /** Deprecated compatibility prop. kb_type no longer limits uploads. */
   kbType?: string
-  /** Deprecated compatibility prop. kb_type no longer limits uploads. */
-  currentDocumentCount?: number
   /** Currently selected folder ID for upload destination (0 = root) */
   folderId?: number
   /** Flat list of folder names with IDs for the selector */

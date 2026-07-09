@@ -616,6 +616,7 @@ describe('MessageList', () => {
 
     const planCard = screen.getByTestId('assistant-plan-card')
     expect(planCard).toHaveTextContent('计划')
+    expect(screen.queryByTestId('assistant-plan-streaming-indicator')).not.toBeInTheDocument()
     expect(planCard).toHaveAttribute('role', 'button')
     expect(screen.getByTestId('assistant-plan-card-preview').className).toContain('max-h-[168px]')
     expect(screen.getByTestId('assistant-plan-card-content').className).toContain('text-sm')
@@ -633,13 +634,17 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('assistant-plan-copy-success')).toHaveTextContent('已复制')
     expect(onOpenAssistantPlan).not.toHaveBeenCalled()
     await user.click(planCard)
-    expect(onOpenAssistantPlan).toHaveBeenCalledWith(
-      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
-    )
+    expect(onOpenAssistantPlan).toHaveBeenCalledWith({
+      blockId: 'plan-1',
+      subtaskId: '11',
+      content: expect.stringContaining('Wegent 代码质量与前端一致性巡检计划'),
+    })
     await user.click(screen.getByTestId('assistant-plan-expand-button'))
-    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith(
-      expect.stringContaining('Wegent 代码质量与前端一致性巡检计划')
-    )
+    expect(onOpenAssistantPlan).toHaveBeenLastCalledWith({
+      blockId: 'plan-1',
+      subtaskId: '11',
+      content: expect.stringContaining('Wegent 代码质量与前端一致性巡检计划'),
+    })
     expect(onOpenAssistantPlan).toHaveBeenCalledTimes(2)
     expect(screen.queryByTestId('assistant-plan-reading-panel')).not.toBeInTheDocument()
   })
@@ -709,6 +714,7 @@ describe('MessageList', () => {
 
     expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('流式计划')
     expect(screen.getByTestId('assistant-plan-card')).toHaveTextContent('正在生成第一步')
+    expect(screen.getByTestId('assistant-plan-streaming-indicator')).toHaveTextContent('正在生成')
   })
 
   test('renders untagged streaming plan-shaped markdown as regular assistant markdown', () => {
@@ -1340,6 +1346,50 @@ describe('MessageList', () => {
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
   })
 
+  test('keeps processing expanded for the assistant segment before runtime guidance', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'process-1',
+        subtaskId: 11,
+        type: 'text',
+        content: '我正在检查项目结构。',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'tool-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/workspace/project\n',
+        status: 'done',
+        createdAt: 1770000001000,
+      },
+    ]
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-before-guidance',
+            role: 'assistant',
+            content: '先看一下当前目录。',
+            status: 'done',
+            blocks,
+            runtimeGuidanceSplitBefore: true,
+            createdAt: '2026-06-24T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const collapseContent = screen.getByTestId('processing-collapse-content')
+    expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
+    expect(screen.getByText('我正在检查项目结构。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
+  })
+
   test('renders final answer web search sources as a Codex-style source chip', async () => {
     const user = userEvent.setup()
     const openWindowMock = vi.fn()
@@ -1485,6 +1535,26 @@ describe('MessageList', () => {
     const orderedList = container.querySelector('.assistant-markdown ol')
     expect(orderedList).toHaveClass('pl-8')
     expect(orderedList).not.toHaveClass('pl-5')
+  })
+
+  test('renders assistant markdown headings with the semantic theme color', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-headings',
+            role: 'assistant',
+            content: ['# Heading 1', '## Heading 2', '### Heading 3'].join('\n\n'),
+            status: 'done',
+            createdAt: '2026-07-09T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveClass('text-text-primary')
+    expect(screen.getByRole('heading', { level: 2 })).toHaveClass('text-text-primary')
+    expect(screen.getByRole('heading', { level: 3 })).toHaveClass('text-text-primary')
   })
 
   test('renders assistant markdown links as reference-style inline links', () => {
@@ -2791,7 +2861,7 @@ describe('MessageList', () => {
       created_at: '2026-05-25T15:09:00.000+08:00',
       text_preview: '{ "event_type": "http_exchange", "id": "e9972aac" }',
       local_path:
-        '/Users/me/project/.wegent/attachments/draft/-45/clipboard-text-1783070360990.txt',
+        '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt',
     }
 
     render(
@@ -2825,7 +2895,7 @@ describe('MessageList', () => {
 
     await waitFor(() =>
       expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
-        '/Users/me/project/.wegent/attachments/draft/-45/clipboard-text-1783070360990.txt'
+        '/Users/me/.wegent-executor/workspace/attachments/draft/-45/clipboard-text-1783070360990.txt'
       )
     )
   })
@@ -3053,6 +3123,28 @@ describe('MessageList', () => {
             role: 'user',
             content: '短消息',
             status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('toggle-user-message-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('user-message-content')).not.toHaveClass('max-h-44')
+  })
+
+  test('does not collapse long runtime guidance messages', () => {
+    const content = Array.from({ length: 12 }, (_, index) => `第 ${index + 1} 行引导`).join('\n')
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'guidance-user',
+            role: 'user',
+            content,
+            status: 'done',
+            runtimeGuidance: true,
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
         ]}

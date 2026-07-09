@@ -19,16 +19,14 @@ import { DocumentItem } from './DocumentItem'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 
-/** A node in the merged tree: folder, document, or a synthetic folder from document names */
+/** A node in the document browser: real folder or current document result */
 interface FolderNode {
-  type: 'folder' | 'api-folder'
+  type: 'api-folder'
   id: number
   name: string
   path: string
   children: TreeNode[]
   documentCount: number
-  /** Whether this is a real folder from the API (enables CRUD operations) */
-  isApiFolder: boolean
   created_at?: string
   updated_at?: string
 }
@@ -59,258 +57,106 @@ interface FolderTreeProps {
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
   selectedIds?: Set<number>
+  includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
   nameColumnWidth?: number
+  showActionsColumn?: boolean
   /** Folder CRUD handlers */
   onCreateFolder?: (parentId: number) => void
   onRenameFolder?: (folderId: number, currentName: string) => void
   onDeleteFolder?: (folderId: number, folderName: string) => void
   /** Whether the user can manage folders (permission from KB) */
   canManageFolders?: boolean
-  /** Sort field for mixed folder/document sorting (required) */
-  sortField: SortField
-  /** Sort order (required) */
-  sortOrder: SortOrder
   /** Whether folders can be selected for batch operations (e.g., transfer) */
   canSelectFolders?: boolean
   /** Set of selected folder IDs (only API folders with isApiFolder=true) */
   selectedFolderIds?: Set<number>
   /** Callback when a folder is selected or deselected */
   onSelectFolder?: (folderId: number, selected: boolean) => void
+  activeFolderId?: number
+  onActivateFolder?: (folderId: number) => void
 }
 
 export type SortField = 'name' | 'size' | 'createdAt' | 'updatedAt'
 export type SortOrder = 'asc' | 'desc'
 
-/** Get display name for a tree node */
-function getNodeName(node: TreeNode): string {
-  return node.type === 'document' ? (node as DocumentNode).displayName : (node as FolderNode).name
-}
-
-/** Get sortable value from a tree node based on sort field */
-function getNodeSortValue(node: TreeNode, field: SortField): string | number {
-  if (node.type === 'document') {
-    const doc = (node as DocumentNode).document
-    switch (field) {
-      case 'name':
-        return doc.name
-      case 'size':
-        return doc.file_size
-      case 'createdAt':
-        return new Date(doc.created_at).getTime()
-      case 'updatedAt':
-        return new Date(doc.updated_at).getTime()
-    }
-  }
-  // Folders: use created_at/updated_at when available, fallback to name for size
-  const folder = node as FolderNode
-  switch (field) {
-    case 'createdAt':
-      return folder.created_at ? new Date(folder.created_at).getTime() : 0
-    case 'updatedAt':
-      return folder.updated_at ? new Date(folder.updated_at).getTime() : 0
-    default:
-      return folder.name
+function toDocumentNode(doc: KnowledgeDocument): DocumentNode {
+  return {
+    type: 'document',
+    displayName: doc.name,
+    document: doc,
   }
 }
 
-/**
- * Sort tree nodes: folders and documents mixed together.
- * For name/createdAt/updatedAt: mixed comparison by field value.
- * For size: folders first (folders lack size), then documents by size.
- */
-function sortTreeNodes(nodes: TreeNode[], field: SortField, order: SortOrder): TreeNode[] {
-  const sorted = [...nodes]
-  sorted.sort((a, b) => {
-    const aVal = getNodeSortValue(a, field)
-    const bVal = getNodeSortValue(b, field)
-
-    // For name/createdAt/updatedAt: mixed comparison by field value
-    if (field !== 'size') {
-      const cmp =
-        typeof aVal === 'number' && typeof bVal === 'number'
-          ? aVal - bVal
-          : String(aVal).localeCompare(String(bVal))
-      return order === 'asc' ? cmp : -cmp
-    }
-
-    // For size: folders first, then documents by field value
-    const aIsFolder = a.type !== 'document'
-    const bIsFolder = b.type !== 'document'
-    if (aIsFolder !== bIsFolder) {
-      return aIsFolder ? -1 : 1
-    }
-    if (aIsFolder && bIsFolder) {
-      // Folders always sorted by name ascending, consistent with macOS behavior
-      return getNodeName(a).localeCompare(getNodeName(b))
-    }
-    // Both are documents: compare by file_size (guaranteed number for document nodes)
-    const cmp = Number(aVal) - Number(bVal)
-    return order === 'asc' ? cmp : -cmp
-  })
-  return sorted
-}
-
-/**
- * Convert API folder nodes to TreeNode structure recursively.
- * Does NOT sort children — sorting is handled uniformly by sortTreeRecursive
- * after the full tree is built.
- */
+/** Convert API folder nodes to visible nodes and attach current query results by folder_id. */
 function convertFolderToNode(
   folder: KnowledgeFolder,
-  docsByFolderId: Map<number, KnowledgeDocument[]>
+  documentsByFolderId: Map<number, KnowledgeDocument[]>
 ): FolderNode {
-  const folderDocs = docsByFolderId.get(folder.id) || []
-
-  // Build child folder nodes first so we can use their documentCount
-  const childFolderNodes = folder.children.map(child => convertFolderToNode(child, docsByFolderId))
-
-  const children: TreeNode[] = [
-    ...folderDocs.map(doc => ({
-      type: 'document' as const,
-      displayName: doc.name,
-      document: doc,
-    })),
-    ...childFolderNodes,
-  ]
-
-  // Count total documents recursively.
-  // Use folder.document_count (server-computed accurate count) for the current
-  // folder's direct documents instead of folderDocs.length, which only reflects
-  // current-page documents when server-side pagination is active.
-  // Use childFolderNodes' documentCount for recursive accuracy.
-  const totalDocs =
-    folder.document_count + childFolderNodes.reduce((sum, c) => sum + c.documentCount, 0)
+  const childFolderNodes = folder.children.map(child =>
+    convertFolderToNode(child, documentsByFolderId)
+  )
+  const directDocumentNodes = (documentsByFolderId.get(folder.id) ?? []).map(toDocumentNode)
 
   return {
     type: 'api-folder',
     id: folder.id,
     name: folder.name,
     path: `folder:${folder.id}`,
-    children,
-    documentCount: totalDocs,
-    isApiFolder: true,
+    children: [...childFolderNodes, ...directDocumentNodes],
+    documentCount: folder.total_document_count ?? folder.document_count,
     created_at: folder.created_at,
     updated_at: folder.updated_at,
   }
 }
 
 /**
- * Build a merged tree from API folders and documents.
- *
- * Documents with folder_id = 0 go to root level.
- * Documents with folder_id > 0 go under the matching folder.
- * API folders form the hierarchy, and documents are leaf nodes within them.
- *
- * When no API folders exist, falls back to building a virtual tree
- * from document name paths (backward compatible '/' splitting).
+ * Build the visible tree from stable API folders and current document results.
+ * Legacy "/" splitting is intentionally not used; "/" remains part of the file name.
  */
-function buildMergedTree(
+function buildMergedTree(folders: KnowledgeFolder[], documents: KnowledgeDocument[]): TreeNode[] {
+  const documentsByFolderId = new Map<number, KnowledgeDocument[]>()
+  for (const doc of documents) {
+    const folderId = doc.folder_id ?? 0
+    documentsByFolderId.set(folderId, [...(documentsByFolderId.get(folderId) ?? []), doc])
+  }
+
+  const folderNodes = folders.map(folder => convertFolderToNode(folder, documentsByFolderId))
+  const knownFolderIds = new Set<number>()
+  const collectFolderIds = (items: KnowledgeFolder[]) => {
+    for (const folder of items) {
+      knownFolderIds.add(folder.id)
+      collectFolderIds(folder.children)
+    }
+  }
+  collectFolderIds(folders)
+
+  const rootDocuments = (documentsByFolderId.get(0) ?? []).map(toDocumentNode)
+  const orphanDocuments = documents
+    .filter(doc => doc.folder_id !== 0 && !knownFolderIds.has(doc.folder_id))
+    .map(toDocumentNode)
+
+  return [...folderNodes, ...rootDocuments, ...orphanDocuments]
+}
+
+function findFolderPathIds(
   folders: KnowledgeFolder[],
-  documents: KnowledgeDocument[],
-  sortField: SortField,
-  sortOrder: SortOrder
-): TreeNode[] {
-  // Group documents: root (folder_id=0) vs folder-specific
-  const rootDocs: KnowledgeDocument[] = []
-  const docsByFolderId = new Map<number, KnowledgeDocument[]>()
-  let hasAnyRealFolder = folders.length > 0
-
-  for (const doc of documents) {
-    if (doc.folder_id === 0) {
-      rootDocs.push(doc)
-    } else {
-      const arr = docsByFolderId.get(doc.folder_id) || []
-      arr.push(doc)
-      docsByFolderId.set(doc.folder_id, arr)
-      hasAnyRealFolder = true
+  targetId: number | undefined,
+  path: number[] = []
+): number[] {
+  if (targetId === undefined) return []
+  for (const folder of folders) {
+    const nextPath = [...path, folder.id]
+    if (folder.id === targetId) {
+      return nextPath
+    }
+    const childPath = findFolderPathIds(folder.children, targetId, nextPath)
+    if (childPath.length > 0) {
+      return childPath
     }
   }
-
-  // If there are real folders from the API, use them to build the tree
-  if (hasAnyRealFolder) {
-    const tree: TreeNode[] = [
-      ...rootDocs.map(doc => ({
-        type: 'document' as const,
-        displayName: doc.name,
-        document: doc,
-      })),
-      ...folders.map(folder => convertFolderToNode(folder, docsByFolderId)),
-    ]
-    return sortTreeRecursive(tree, sortField, sortOrder)
-  }
-
-  // Fallback: build virtual tree from document names (backward compat)
-  return buildFallbackTree(documents, sortField, sortOrder)
-}
-
-/**
- * Build virtual tree by splitting document names on '/'.
- * This is the backward-compatible fallback when no real folders exist.
- */
-function buildFallbackTree(
-  documents: KnowledgeDocument[],
-  sortField: SortField,
-  sortOrder: SortOrder
-): TreeNode[] {
-  const root: TreeNode[] = []
-  const folderMap = new Map<string, FolderNode>()
-
-  const getOrCreateFolder = (segments: string[], parentChildren: TreeNode[]): FolderNode => {
-    const path = segments.join('/')
-    if (folderMap.has(path)) {
-      return folderMap.get(path)!
-    }
-    const folderNode: FolderNode = {
-      type: 'folder',
-      id: 0,
-      name: segments[segments.length - 1],
-      path,
-      children: [],
-      documentCount: 0,
-      isApiFolder: false,
-    }
-    folderMap.set(path, folderNode)
-    parentChildren.push(folderNode)
-    return folderNode
-  }
-
-  for (const doc of documents) {
-    const parts = doc.name.split('/')
-    if (parts.length === 1) {
-      root.push({
-        type: 'document',
-        displayName: doc.name,
-        document: doc,
-      })
-    } else {
-      let currentChildren = root
-      for (let i = 0; i < parts.length - 1; i++) {
-        const pathSegments = parts.slice(0, i + 1)
-        const folder = getOrCreateFolder(pathSegments, currentChildren)
-        folder.documentCount++
-        currentChildren = folder.children
-      }
-      currentChildren.push({
-        type: 'document',
-        displayName: parts[parts.length - 1],
-        document: doc,
-      })
-    }
-  }
-
-  return sortTreeRecursive(root, sortField, sortOrder)
-}
-
-/** Recursively sort tree nodes and their children */
-function sortTreeRecursive(nodes: TreeNode[], field: SortField, order: SortOrder): TreeNode[] {
-  return sortTreeNodes(nodes, field, order).map(node => {
-    if (node.type !== 'document' && (node as FolderNode).children.length > 0) {
-      return { ...node, children: sortTreeRecursive((node as FolderNode).children, field, order) }
-    }
-    return node
-  })
+  return []
 }
 
 /** Generate a stable key for a tree node based on its type */
@@ -319,22 +165,6 @@ function treeNodeKey(node: TreeNode): string {
     return `doc:${(node as DocumentNode).document.id}`
   }
   return `folder:${node.path}`
-}
-
-/**
- * Collect all document IDs within a folder node recursively.
- * Used to determine which documents are affected when a folder is selected/deselected.
- */
-function collectDocumentIdsInNode(node: FolderNode): number[] {
-  const ids: number[] = []
-  for (const child of node.children) {
-    if (child.type === 'document') {
-      ids.push((child as DocumentNode).document.id)
-    } else {
-      ids.push(...collectDocumentIdsInNode(child as FolderNode))
-    }
-  }
-  return ids
 }
 
 interface FolderRowProps {
@@ -350,7 +180,10 @@ interface FolderRowProps {
   /** Folder selection props */
   canSelectFolders?: boolean
   folderChecked?: boolean | 'indeterminate'
+  folderSelectionDisabled?: boolean
   onFolderCheck?: (checked: boolean) => void
+  active?: boolean
+  onActivate?: (folderId: number) => void
 }
 
 function FolderRow({
@@ -365,95 +198,117 @@ function FolderRow({
   canManageFolders,
   canSelectFolders,
   folderChecked,
+  folderSelectionDisabled,
   onFolderCheck,
+  active,
+  onActivate,
 }: FolderRowProps) {
   const { t } = useTranslation('knowledge')
   const indent = depth * (compact ? 12 : 16)
-  const isApiFolder = node.isApiFolder
 
-  const folderActions =
-    isApiFolder && canManageFolders ? (
-      <span
-        className="flex items-center gap-1 ml-auto flex-shrink-0"
-        onClick={e => e.stopPropagation()}
-      >
-        {onCreateFolder && (
-          <button
-            className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
-            title={t('document.folder.create')}
-            onClick={() => onCreateFolder(node.id)}
-            data-testid={`create-subfolder-${node.id}`}
-          >
-            <FolderPlus className="w-3.5 h-3.5" />
-          </button>
-        )}
-        {onRenameFolder && (
-          <button
-            className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
-            title={t('document.folder.rename')}
-            onClick={() => onRenameFolder(node.id, node.name)}
-            data-testid={`rename-folder-${node.id}`}
-          >
-            <Pencil className="w-3.5 h-3.5" />
-          </button>
-        )}
-        {onDeleteFolder && (
-          <button
-            className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
-            title={t('document.folder.delete')}
-            onClick={() => onDeleteFolder(node.id, node.name)}
-            data-testid={`delete-folder-${node.id}`}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </span>
-    ) : null
+  const folderActions = canManageFolders ? (
+    <span
+      className="flex items-center gap-1 ml-auto flex-shrink-0"
+      onClick={e => e.stopPropagation()}
+    >
+      {onCreateFolder && (
+        <button
+          className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+          title={t('document.folder.create')}
+          onClick={() => onCreateFolder(node.id)}
+          data-testid={`create-subfolder-${node.id}`}
+        >
+          <FolderPlus className="w-3.5 h-3.5" />
+        </button>
+      )}
+      {onRenameFolder && (
+        <button
+          className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+          title={t('document.folder.rename')}
+          onClick={() => onRenameFolder(node.id, node.name)}
+          data-testid={`rename-folder-${node.id}`}
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+      )}
+      {onDeleteFolder && (
+        <button
+          className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
+          title={t('document.folder.delete')}
+          onClick={() => onDeleteFolder(node.id, node.name)}
+          data-testid={`delete-folder-${node.id}`}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </span>
+  ) : null
 
-  // Folder checkbox for batch selection (only for API folders with documents when canSelectFolders is enabled)
-  // Empty folders cannot be selected because the backend skips transfer when there are no documents
-  const folderCheckbox =
-    canSelectFolders && node.isApiFolder ? (
-      <Checkbox
-        checked={folderChecked}
-        disabled={node.documentCount === 0}
-        onCheckedChange={checked => {
-          onFolderCheck?.(checked === true)
-        }}
-        onClick={e => e.stopPropagation()}
-        className="data-[state=checked]:bg-primary data-[state=checked]:border-primary flex-shrink-0"
-        data-testid={`folder-checkbox-${node.id}`}
-      />
-    ) : null
+  // Folder checkbox represents a backend-resolved folder scope, not current-page docs.
+  const folderCheckbox = canSelectFolders ? (
+    <Checkbox
+      checked={folderChecked}
+      disabled={folderSelectionDisabled || node.documentCount === 0}
+      onCheckedChange={checked => {
+        onFolderCheck?.(checked === true)
+      }}
+      onClick={e => e.stopPropagation()}
+      className="data-[state=checked]:bg-primary data-[state=checked]:border-primary flex-shrink-0 disabled:opacity-60"
+      data-testid={`folder-checkbox-${node.id}`}
+    />
+  ) : null
+  const canActivate = Boolean(onActivate)
 
   if (compact) {
     return (
       <div
-        role="button"
-        tabIndex={0}
-        className="flex items-center gap-2 w-full px-2 py-2 hover:bg-surface rounded-lg transition-colors text-left cursor-pointer"
+        role={canActivate ? 'button' : undefined}
+        tabIndex={canActivate ? 0 : undefined}
+        aria-pressed={canActivate ? active : undefined}
+        className={`flex items-center gap-2 w-full px-2 py-2 rounded-lg transition-colors text-left ${
+          canActivate ? 'cursor-pointer' : ''
+        } ${active ? 'bg-primary/10 text-primary' : 'hover:bg-surface'}`}
         style={{ paddingLeft: `${8 + indent}px` }}
-        onClick={() => onToggle(node.path)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            onToggle(node.path)
-          }
-        }}
+        onClick={canActivate ? () => onActivate?.(node.id) : undefined}
+        onKeyDown={
+          canActivate
+            ? e => {
+                if (e.currentTarget !== e.target) {
+                  return
+                }
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onActivate?.(node.id)
+                }
+              }
+            : undefined
+        }
         title={node.name}
       >
         {folderCheckbox}
         {expanded ? (
-          <ChevronDown className="w-3 h-3 text-text-muted flex-shrink-0" />
+          <ChevronDown
+            className="w-3 h-3 text-text-muted flex-shrink-0"
+            onClick={e => {
+              e.stopPropagation()
+              onToggle(node.path)
+            }}
+          />
         ) : (
-          <ChevronRight className="w-3 h-3 text-text-muted flex-shrink-0" />
+          <ChevronRight
+            className="w-3 h-3 text-text-muted flex-shrink-0"
+            onClick={e => {
+              e.stopPropagation()
+              onToggle(node.path)
+            }}
+          />
         )}
         {expanded ? (
           <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
         ) : (
           <Folder className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
         )}
-        <span className="text-xs font-medium text-text-primary truncate">{node.name}</span>
+        <span className="min-w-0 truncate text-xs font-medium text-text-primary">{node.name}</span>
         <span className="text-[10px] text-text-muted flex-shrink-0">
           {t('document.folder.docCount', { count: node.documentCount })}
         </span>
@@ -464,23 +319,53 @@ function FolderRow({
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 bg-surface/50 hover:bg-surface transition-colors cursor-pointer border-b border-border min-w-[880px]"
+      className={`flex items-center gap-3 px-4 py-3 transition-colors border-b border-border min-w-[880px] ${
+        canActivate ? 'cursor-pointer' : ''
+      } ${active ? 'bg-primary/10 text-primary' : 'bg-surface/50 hover:bg-surface'}`}
       style={{ paddingLeft: `${16 + indent}px` }}
-      onClick={() => onToggle(node.path)}
+      onClick={canActivate ? () => onActivate?.(node.id) : undefined}
+      role={canActivate ? 'button' : undefined}
+      tabIndex={canActivate ? 0 : undefined}
+      aria-pressed={canActivate ? active : undefined}
+      onKeyDown={
+        canActivate
+          ? e => {
+              if (e.currentTarget !== e.target) {
+                return
+              }
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onActivate?.(node.id)
+              }
+            }
+          : undefined
+      }
     >
       {folderCheckbox}
       {expanded ? (
-        <ChevronDown className="w-4 h-4 text-text-muted flex-shrink-0" />
+        <ChevronDown
+          className="w-4 h-4 text-text-muted flex-shrink-0"
+          onClick={e => {
+            e.stopPropagation()
+            onToggle(node.path)
+          }}
+        />
       ) : (
-        <ChevronRight className="w-4 h-4 text-text-muted flex-shrink-0" />
+        <ChevronRight
+          className="w-4 h-4 text-text-muted flex-shrink-0"
+          onClick={e => {
+            e.stopPropagation()
+            onToggle(node.path)
+          }}
+        />
       )}
       {expanded ? (
         <FolderOpen className="w-4 h-4 text-amber-500 flex-shrink-0" />
       ) : (
         <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />
       )}
-      <span className="text-sm font-medium text-text-primary">{node.name}</span>
-      <span className="text-xs text-text-muted">
+      <span className="min-w-0 truncate text-sm font-medium text-text-primary">{node.name}</span>
+      <span className="flex-shrink-0 text-xs text-text-muted">
         {t('document.folder.docCount', { count: node.documentCount })}
       </span>
       {folderActions}
@@ -511,14 +396,18 @@ interface FolderTreeNodeProps {
   canManage?: (doc: KnowledgeDocument) => boolean
   canSelect?: (doc: KnowledgeDocument) => boolean
   selected?: (docId: number) => boolean
+  includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
   nameColumnWidth?: number
+  showActionsColumn?: boolean
   // Folder selection props
   canSelectFolders?: boolean
   selectedFolderIds?: Set<number>
-  selectedIds?: Set<number>
+  coveredBySelectedAncestorFolder?: boolean
   onSelectFolder?: (folderId: number, selected: boolean) => void
+  activeFolderId?: number
+  onActivateFolder?: (folderId: number) => void
 }
 
 function FolderTreeNode({
@@ -542,18 +431,22 @@ function FolderTreeNode({
   canManage,
   canSelect,
   selected,
+  includedInFolderScope,
   onSelect,
   ragConfigured,
   nameColumnWidth,
+  showActionsColumn,
   canSelectFolders,
   selectedFolderIds,
-  selectedIds,
+  coveredBySelectedAncestorFolder = false,
   onSelectFolder,
+  activeFolderId,
+  onActivateFolder,
 }: FolderTreeNodeProps) {
   // Hooks must be called unconditionally (before any early returns)
   const handleFolderCheck = useCallback(
     (checked: boolean) => {
-      if (node.type !== 'document' && (node as FolderNode).isApiFolder) {
+      if (node.type !== 'document') {
         onSelectFolder?.((node as FolderNode).id, checked)
       }
     },
@@ -563,6 +456,7 @@ function FolderTreeNode({
   if (node.type === 'document') {
     const doc = node.document
     const docWithDisplayName = { ...doc, name: node.displayName }
+    const includedByFolder = includedInFolderScope?.(doc) ?? false
 
     if (compact) {
       return (
@@ -581,9 +475,11 @@ function FolderTreeNode({
             canSelect={canSelect?.(doc) ?? false}
             showBorder={false}
             selected={selected?.(doc.id) ?? false}
+            includedInFolderScope={includedByFolder}
             onSelect={onSelect}
             compact={true}
             ragConfigured={ragConfigured}
+            showActionsColumn={showActionsColumn}
           />
         </div>
       )
@@ -606,30 +502,22 @@ function FolderTreeNode({
         canSelect={canSelect?.(doc) ?? false}
         showBorder={true}
         selected={selected?.(doc.id) ?? false}
+        includedInFolderScope={includedByFolder}
         onSelect={onSelect}
         compact={false}
         ragConfigured={ragConfigured}
         nameColumnWidth={nameColumnWidth}
+        showActionsColumn={showActionsColumn}
       />
     )
   }
 
   // Folder node
   const isExpanded = expandedFolders.has(node.path)
-
-  // Compute folder checkbox state based on selected documents within this folder
-  let folderChecked: boolean | 'indeterminate' = false
-  if (canSelectFolders && node.isApiFolder) {
-    const docIdsInFolder = collectDocumentIdsInNode(node)
-    const selectedCount = docIdsInFolder.filter(id => selectedIds?.has(id)).length
-    if (selectedCount === 0) {
-      folderChecked = selectedFolderIds?.has(node.id) ?? false
-    } else if (selectedCount === docIdsInFolder.length) {
-      folderChecked = true
-    } else {
-      folderChecked = 'indeterminate'
-    }
-  }
+  const directlySelectedFolder = selectedFolderIds?.has(node.id) ?? false
+  const folderChecked = coveredBySelectedAncestorFolder || directlySelectedFolder
+  const folderSelectionDisabled = coveredBySelectedAncestorFolder
+  const childCoveredBySelectedFolder = coveredBySelectedAncestorFolder || directlySelectedFolder
 
   return (
     <div>
@@ -645,7 +533,10 @@ function FolderTreeNode({
         canManageFolders={canManageFolders}
         canSelectFolders={canSelectFolders}
         folderChecked={folderChecked}
+        folderSelectionDisabled={folderSelectionDisabled}
         onFolderCheck={handleFolderCheck}
+        active={activeFolderId === node.id}
+        onActivate={onActivateFolder}
       />
       {isExpanded && (
         <div>
@@ -672,13 +563,16 @@ function FolderTreeNode({
               canManage={canManage}
               canSelect={canSelect}
               selected={selected}
+              includedInFolderScope={includedInFolderScope}
               onSelect={onSelect}
               ragConfigured={ragConfigured}
               nameColumnWidth={nameColumnWidth}
               canSelectFolders={canSelectFolders}
               selectedFolderIds={selectedFolderIds}
-              selectedIds={selectedIds}
+              coveredBySelectedAncestorFolder={childCoveredBySelectedFolder}
               onSelectFolder={onSelectFolder}
+              activeFolderId={activeFolderId}
+              onActivateFolder={onActivateFolder}
             />
           ))}
         </div>
@@ -688,11 +582,7 @@ function FolderTreeNode({
 }
 
 /**
- * FolderTree renders documents grouped into folders.
- *
- * When folders are provided from the API, it uses the real folder hierarchy.
- * When no folders exist, it falls back to building virtual folders from
- * document name paths (backward compatible '/' splitting).
+ * FolderTree renders stable folder navigation and current document results.
  */
 export function FolderTree({
   folders = [],
@@ -710,67 +600,75 @@ export function FolderTree({
   canManage,
   canSelect,
   selectedIds,
+  includedInFolderScope,
   onSelect,
   ragConfigured,
   nameColumnWidth,
+  showActionsColumn,
   onCreateFolder,
   onRenameFolder,
   onDeleteFolder,
   canManageFolders = false,
-  sortField,
-  sortOrder,
   canSelectFolders = false,
   selectedFolderIds,
   onSelectFolder,
+  activeFolderId,
+  onActivateFolder,
 }: FolderTreeProps) {
-  const tree = useMemo(
-    () => buildMergedTree(folders, documents, sortField, sortOrder),
-    [folders, documents, sortField, sortOrder]
+  const tree = useMemo(() => buildMergedTree(folders, documents), [folders, documents])
+
+  const defaultExpandedFolderPaths = useMemo(
+    () => folders.map(folder => `folder:${folder.id}`),
+    [folders]
   )
-
-  // Collect all folder paths for default-expand (from source data, independent of sort)
-  const allFolderPaths = useMemo(() => {
-    const paths: string[] = []
-
-    // API folder paths: folder:${id}
-    const collectApiPaths = (items: KnowledgeFolder[]) => {
-      for (const f of items) {
-        paths.push(`folder:${f.id}`)
-        if (f.children) collectApiPaths(f.children)
+  const activeFolderPaths = useMemo(
+    () => findFolderPathIds(folders, activeFolderId).map(id => `folder:${id}`),
+    [folders, activeFolderId]
+  )
+  const resultDocumentFolderPaths = useMemo(() => {
+    const paths = new Set<string>()
+    for (const document of documents) {
+      for (const id of findFolderPathIds(folders, document.folder_id)) {
+        paths.add(`folder:${id}`)
       }
     }
-    collectApiPaths(folders)
-
-    // Fallback virtual folder paths from document names containing '/'
-    if (folders.length === 0) {
-      const seen = new Set<string>()
-      for (const doc of documents) {
-        const parts = doc.name.split('/')
-        for (let i = 1; i < parts.length; i++) {
-          const path = parts.slice(0, i).join('/')
-          if (!seen.has(path)) {
-            seen.add(path)
-            paths.push(path)
-          }
-        }
-      }
-    }
-
-    return paths
+    return Array.from(paths)
   }, [folders, documents])
 
-  // Default: all folders expanded; sync when new folders are added
+  // Default: expand root-level folders only; active/result paths are expanded separately.
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     setExpandedFolders(prev => {
       const next = new Set(prev)
-      for (const path of allFolderPaths) {
+      for (const path of defaultExpandedFolderPaths) {
         next.add(path)
       }
       return next
     })
-  }, [allFolderPaths])
+  }, [defaultExpandedFolderPaths])
+
+  useEffect(() => {
+    if (activeFolderPaths.length === 0) return
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      for (const path of activeFolderPaths) {
+        next.add(path)
+      }
+      return next
+    })
+  }, [activeFolderPaths])
+
+  useEffect(() => {
+    if (resultDocumentFolderPaths.length === 0) return
+    setExpandedFolders(prev => {
+      const next = new Set(prev)
+      for (const path of resultDocumentFolderPaths) {
+        next.add(path)
+      }
+      return next
+    })
+  }, [resultDocumentFolderPaths])
 
   const handleToggleFolder = (path: string) => {
     setExpandedFolders(prev => {
@@ -810,12 +708,15 @@ export function FolderTree({
             canManage={canManage}
             canSelect={canSelect}
             selected={id => selectedIds?.has(id) ?? false}
+            includedInFolderScope={includedInFolderScope}
             onSelect={onSelect}
             ragConfigured={ragConfigured}
+            showActionsColumn={showActionsColumn}
             canSelectFolders={canSelectFolders}
             selectedFolderIds={selectedFolderIds}
-            selectedIds={selectedIds}
             onSelectFolder={onSelectFolder}
+            activeFolderId={activeFolderId}
+            onActivateFolder={onActivateFolder}
           />
         ))}
       </div>
@@ -846,13 +747,16 @@ export function FolderTree({
       canManage={canManage}
       canSelect={canSelect}
       selected={id => selectedIds?.has(id) ?? false}
+      includedInFolderScope={includedInFolderScope}
       onSelect={onSelect}
       ragConfigured={ragConfigured}
       nameColumnWidth={nameColumnWidth}
+      showActionsColumn={showActionsColumn}
       canSelectFolders={canSelectFolders}
       selectedFolderIds={selectedFolderIds}
-      selectedIds={selectedIds}
       onSelectFolder={onSelectFolder}
+      activeFolderId={activeFolderId}
+      onActivateFolder={onActivateFolder}
     />
   ))
 

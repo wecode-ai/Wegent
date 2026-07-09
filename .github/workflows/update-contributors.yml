@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   update-contributors:
@@ -18,13 +17,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - name: Update Contributors in README
-        uses: akhilmhdh/contributors-readme-action@v2.3.2
+        uses: akhilmhdh/contributors-readme-action@v2.3.11
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          auto_detect_branch_protection: false
           image_size: 80
           columns_per_row: 8
           readme_path: README.md
@@ -33,10 +34,11 @@ jobs:
           commit_message: 'docs: update contributors list'
 
       - name: Update Contributors in Chinese README
-        uses: akhilmhdh/contributors-readme-action@v2.3.2
+        uses: akhilmhdh/contributors-readme-action@v2.3.11
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          auto_detect_branch_protection: false
           image_size: 80
           columns_per_row: 8
           readme_path: README_zh.md

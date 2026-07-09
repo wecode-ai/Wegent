@@ -5,6 +5,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   canUseForProjectCreation,
+  canUseForRemoteProjectCreation,
   isCloudDevice,
   isClaudeCodeDevice,
   isRemoteDevice,
@@ -64,7 +65,9 @@ function getUsableStandaloneDevices(
   const isTargetDevice = mode === 'remote' ? isRemoteProjectDevice : isLocalDevice
   return devices
     .filter(device => isClaudeCodeDevice(device) && isTargetDevice(device))
-    .filter(canUseForProjectCreation)
+    .filter(device =>
+      mode === 'remote' ? canUseForRemoteProjectCreation(device) : canUseForProjectCreation(device)
+    )
     .sort((left, right) => {
       const leftLabel =
         mode === 'remote' ? getRemoteDeviceLabel(left) : getStandaloneDeviceLabel(left)

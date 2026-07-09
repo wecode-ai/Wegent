@@ -9,12 +9,14 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use chrono::Local;
+use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
 use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::time::sleep;
 
 use crate::{
     agents::{
@@ -34,10 +36,11 @@ use super::{
     },
     codex_notifications::codex_notification,
     codex_rollout::{
-        append_rollout_turns_from_offset, rollout_turns, thread_with_rollout_running_status,
+        append_rollout_turns_from_offset, rollout_context_usage, rollout_turns,
         thread_with_rollout_turns, thread_with_turns,
     },
     events::{emit_response_event, CodexNotificationEventMapper},
+    notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, search_result_item, workspace_response, RuntimeTaskLink,
         RuntimeWorkspaceLink, SearchResultMatch,
@@ -53,8 +56,8 @@ use super::{
     transcript_page::transcript_page,
     util::{
         apply_runtime_payload_metadata, bool_field, execution_request, id_field,
-        infer_workspace_kind, integer_field, normalize_device_id, now_ms, prompt_text,
-        runtime_task_id, string_field, workspace_group_path, workspace_path,
+        infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
+        prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
     },
 };
 
@@ -68,6 +71,8 @@ const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const TRANSCRIPT_NAVIGATION_PREVIEW_CHARS: usize = 96;
 const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
 const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
+const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
+const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
@@ -237,6 +242,7 @@ pub struct RuntimeWorkRpcHandler {
     active_request_user_inputs: Arc<Mutex<HashMap<String, mpsc::Sender<Value>>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     store: RuntimeWorkStore,
     transcript_cache: TranscriptCache,
     thread_list_cache: CodexThreadListCache,
@@ -281,7 +287,8 @@ impl RuntimeThreadEventRoute {
 impl RuntimeWorkRpcHandler {
     pub fn new(device_id: impl Into<String>, codex_binary: impl Into<String>) -> Self {
         let codex_binary = codex_binary.into();
-        Self {
+        let (archived_delete_tx, archived_delete_rx) = mpsc::unbounded_channel();
+        let handler = Self {
             device_id: normalize_device_id(device_id.into()),
             codex_app_server: CodexAppServerClient::new(codex_binary),
             event_tx: None,
@@ -291,10 +298,13 @@ impl RuntimeWorkRpcHandler {
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             thread_event_routes: Arc::new(Mutex::new(HashMap::new())),
             notification_router: Arc::new(Mutex::new(None)),
+            archived_delete_tx,
             store: RuntimeWorkStore::from_env(),
             transcript_cache: TranscriptCache::default(),
             thread_list_cache: CodexThreadListCache::default(),
-        }
+        };
+        handler.spawn_archived_delete_worker(archived_delete_rx);
+        handler
     }
 
     pub fn with_event_sender(
@@ -329,6 +339,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
+            "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
+            "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
+            "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.archived_conversations.list" => {
                 self.list_archived_conversations(payload).await
             }
@@ -336,6 +349,12 @@ impl RuntimeWorkRpcHandler {
             "runtime.archived_conversations.delete" => self.delete_archived_task(payload).await,
             "runtime.archived_conversations.delete_bulk" => {
                 self.delete_archived_tasks_bulk(payload).await
+            }
+            "runtime.archived_conversations.cleanup_preview" => {
+                self.preview_archived_conversation_cleanup(payload).await
+            }
+            "runtime.archived_conversations.cleanup" => {
+                self.cleanup_archived_conversations(payload).await
             }
             "runtime.archived_conversations.archive_project" => {
                 self.archive_project_conversations(payload).await
@@ -369,6 +388,27 @@ impl RuntimeWorkRpcHandler {
             ));
         }
         Ok(json!({ "keybindings": keybindings }))
+    }
+
+    async fn get_codex_stream_debug(&self) -> Result<Value, AppIpcError> {
+        Ok(json!({ "enabled": codex_stream_debug_enabled() }))
+    }
+
+    async fn restart_codex_app_server(&self) -> Result<Value, AppIpcError> {
+        self.codex_app_server.restart().await;
+        self.thread_list_cache.invalidate();
+        Ok(json!({ "restarted": true }))
+    }
+
+    async fn set_codex_stream_debug(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let Some(enabled) = bool_field(&payload, "enabled") else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "enabled must be a boolean",
+            ));
+        };
+        set_codex_stream_debug_enabled(enabled);
+        Ok(json!({ "enabled": codex_stream_debug_enabled() }))
     }
 
     async fn update_keybindings(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -469,15 +509,53 @@ impl RuntimeWorkRpcHandler {
 
     async fn list_tasks(&self) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
+        log_runtime_work_list_diagnostic("started", started_at, started_at, &[]);
+        let stage_started_at = Instant::now();
         let project_index = CodexGlobalProjectIndex::load();
-        let links =
-            self.visible_links_for_projects(self.collect_links(false).await, &project_index);
+        log_runtime_work_list_diagnostic(
+            "project_index_loaded",
+            started_at,
+            stage_started_at,
+            &[
+                ("projects", project_index.projects().len().to_string()),
+                (
+                    "project_state_loaded",
+                    project_index.has_project_state().to_string(),
+                ),
+            ],
+        );
+        let stage_started_at = Instant::now();
+        let collected_links = self.collect_links(false).await;
+        log_runtime_work_list_diagnostic(
+            "links_collected",
+            started_at,
+            stage_started_at,
+            &[("links", collected_links.len().to_string())],
+        );
+        let stage_started_at = Instant::now();
+        let links = self.visible_links_for_projects(collected_links, &project_index);
+        log_runtime_work_list_diagnostic(
+            "project_filter_applied",
+            started_at,
+            stage_started_at,
+            &[("visible_links", links.len().to_string())],
+        );
+        let stage_started_at = Instant::now();
         let workspaces = workspace_response(links, codex_project_workspaces(&project_index));
         let task_count = workspaces
             .iter()
             .filter_map(|workspace| workspace.get("tasks").and_then(Value::as_array))
             .map(Vec::len)
             .sum::<usize>();
+        log_runtime_work_list_diagnostic(
+            "response_built",
+            started_at,
+            stage_started_at,
+            &[
+                ("workspaces", workspaces.len().to_string()),
+                ("tasks", task_count.to_string()),
+            ],
+        );
         log_executor_event(
             "runtime work list finished",
             &[
@@ -618,6 +696,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(cached_transcript_response(
                 link,
                 messages,
+                None,
                 limit,
                 before_cursor.as_deref(),
                 after_cursor.as_deref(),
@@ -640,15 +719,16 @@ impl RuntimeWorkRpcHandler {
                 message_count: 0,
                 running: false,
             });
-            return Ok(transcript_response(
-                &local_task_id,
+            return Ok(transcript_response(TranscriptResponseInput {
+                local_task_id,
                 workspace_path,
                 runtime,
-                Vec::new(),
+                messages: Vec::new(),
+                context_usage: None,
                 limit,
-                before_cursor.as_deref(),
-                after_cursor.as_deref(),
-            ));
+                before_cursor,
+                after_cursor,
+            }));
         };
 
         if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
@@ -679,15 +759,16 @@ impl RuntimeWorkRpcHandler {
                 message_count: messages.len(),
                 running,
             });
-            return Ok(transcript_response(
-                &local_task_id,
-                cached.workspace_path,
-                cached.runtime,
+            return Ok(transcript_response(TranscriptResponseInput {
+                local_task_id,
+                workspace_path: cached.workspace_path,
+                runtime: cached.runtime,
                 messages,
+                context_usage: cached.context_usage,
                 limit,
-                before_cursor.as_deref(),
-                after_cursor.as_deref(),
-            ));
+                before_cursor,
+                after_cursor,
+            }));
         }
 
         let mut source = "thread_read";
@@ -723,6 +804,7 @@ impl RuntimeWorkRpcHandler {
                     &workspace_path,
                 ) {
                     let messages = updated.messages.clone();
+                    let context_usage = updated.context_usage.clone();
                     let running = updated.running;
                     self.transcript_cache.insert(thread_id.clone(), updated);
                     log_runtime_transcript_finished(RuntimeTranscriptLog {
@@ -738,20 +820,22 @@ impl RuntimeWorkRpcHandler {
                         message_count: messages.len(),
                         running,
                     });
-                    return Ok(transcript_response(
-                        &local_task_id,
+                    return Ok(transcript_response(TranscriptResponseInput {
+                        local_task_id,
                         workspace_path,
-                        "codex".to_owned(),
+                        runtime: "codex".to_owned(),
                         messages,
+                        context_usage,
                         limit,
-                        before_cursor.as_deref(),
-                        after_cursor.as_deref(),
-                    ));
+                        before_cursor,
+                        after_cursor,
+                    }));
                 }
             }
         }
 
         let transcript_thread = codex_thread_state(&thread);
+        let context_usage = transcript_context_usage(&transcript_thread);
         let transcript_messages = transcript_messages(&transcript_thread, &self.device_id);
         let messages = local_link
             .as_ref()
@@ -773,6 +857,7 @@ impl RuntimeWorkRpcHandler {
                 running,
                 transcript_source_signature(&thread),
             )
+            .with_context_usage(context_usage.clone())
             .with_rollout_turns(rollout_turns(&transcript_thread)),
         );
         log_runtime_transcript_finished(RuntimeTranscriptLog {
@@ -789,33 +874,130 @@ impl RuntimeWorkRpcHandler {
             running,
         });
 
-        Ok(transcript_response(
-            &local_task_id,
+        Ok(transcript_response(TranscriptResponseInput {
+            local_task_id,
             workspace_path,
-            "codex".to_owned(),
+            runtime: "codex".to_owned(),
             messages,
+            context_usage,
             limit,
-            before_cursor.as_deref(),
-            after_cursor.as_deref(),
-        ))
+            before_cursor,
+            after_cursor,
+        }))
     }
 
     async fn archive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        log_executor_event(
+            "runtime task archive requested",
+            &[
+                (
+                    "payload_task_id",
+                    runtime_task_id(&payload).unwrap_or_else(|| "none".to_owned()),
+                ),
+                (
+                    "payload_workspace_path",
+                    workspace_path(&payload).unwrap_or_else(|| "none".to_owned()),
+                ),
+                (
+                    "payload_address_task_id",
+                    payload
+                        .get("address")
+                        .and_then(runtime_task_id)
+                        .unwrap_or_else(|| "none".to_owned()),
+                ),
+            ],
+        );
         let mut link = self.task_link_from_payload(&payload, false).await?;
-        if let Some(thread_id) = link.thread_id.as_deref() {
+        let archive_thread_id = runtime_session_id_from_link(&link);
+        log_runtime_archive_link("runtime task archive resolved link", &link, false);
+        if let Some(thread_id) = archive_thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method("thread/archive", json!({"threadId": thread_id}))
                 .await
             {
+                log_executor_event(
+                    "runtime task archive codex failed",
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        ("thread_id", thread_id.to_owned()),
+                        ("error", error.clone()),
+                    ],
+                );
+                if codex_error_is_missing_rollout(&error, thread_id) {
+                    return Ok(self
+                        .cleanup_missing_rollout_task(&link, thread_id, error)
+                        .await);
+                }
                 return Ok(task_action_failure(&link, error));
             }
+            log_executor_event(
+                "runtime task archive codex accepted",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.to_owned()),
+                ],
+            );
+        } else {
+            log_executor_event(
+                "runtime task archive skipped codex",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("reason", "missing_thread_id".to_owned()),
+                ],
+            );
         }
 
         link.status = "archived".to_owned();
         link.running = false;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
+        log_runtime_archive_link("runtime task archive stored link", &link, true);
         Ok(task_action_success(&link))
+    }
+
+    async fn cleanup_missing_rollout_task(
+        &self,
+        link: &RuntimeTaskLink,
+        thread_id: &str,
+        archive_error: String,
+    ) -> Value {
+        let started_at = Instant::now();
+        let delete_result = self
+            .call_codex_thread_method_without_list_invalidation(
+                "thread/delete",
+                json!({"threadId": thread_id}),
+            )
+            .await;
+        match &delete_result {
+            Ok(_) => log_executor_event(
+                "runtime task archive missing rollout deleted codex thread",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.to_owned()),
+                    ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                ],
+            ),
+            Err(error) => log_executor_event(
+                "runtime task archive missing rollout codex delete failed",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.to_owned()),
+                    ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                    ("error", error.clone()),
+                ],
+            ),
+        }
+
+        self.mark_archived_link_deleted(link);
+        self.store.delete_task(&link.local_task_id);
+        let mut response = task_action_success(link);
+        response["cleaned"] = json!(true);
+        response["cleanupReason"] = json!("missing_rollout");
+        response["archiveError"] = json!(archive_error);
+        if let Err(error) = delete_result {
+            response["deleteError"] = json!(error);
+        }
+        response
     }
 
     async fn archive_project_conversations(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -989,36 +1171,130 @@ impl RuntimeWorkRpcHandler {
 
     async fn delete_archived_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, true).await?;
+        Ok(self.delete_archived_link(link).await)
+    }
+
+    async fn delete_archived_link(&self, link: RuntimeTaskLink) -> Value {
+        self.mark_archived_link_deleted(&link);
+        if let Err(error) = self.archived_delete_tx.send(link.clone()) {
+            log_executor_event(
+                "runtime archived conversation background enqueue failed",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("error", error.to_string()),
+                ],
+            );
+        }
+
+        let mut response = task_action_success(&link);
+        response["deleted"] = json!(true);
+        response["cleanup"] = json!({
+            "background": true,
+            "taskId": link.local_task_id,
+            "workspacePath": link.workspace_path,
+        });
+        response
+    }
+
+    fn spawn_archived_delete_worker(&self, mut rx: mpsc::UnboundedReceiver<RuntimeTaskLink>) {
+        let handler = self.clone();
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        handle.spawn(async move {
+            while let Some(link) = rx.recv().await {
+                handler.delete_archived_link_background(link).await;
+                sleep(ARCHIVED_BACKGROUND_DELETE_INTERVAL).await;
+            }
+        });
+    }
+
+    async fn delete_archived_link_background(&self, link: RuntimeTaskLink) {
         if let Some(thread_id) = link.thread_id.as_deref() {
-            if let Err(error) = self
-                .call_codex_thread_method("thread/delete", json!({"threadId": thread_id}))
+            let started_at = Instant::now();
+            match self
+                .call_codex_thread_method_without_list_invalidation(
+                    "thread/delete",
+                    json!({"threadId": thread_id}),
+                )
                 .await
             {
-                return Ok(task_action_failure(&link, error));
+                Ok(_) => {
+                    let elapsed = started_at.elapsed();
+                    if elapsed >= ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD {
+                        log_executor_event(
+                            "runtime archived conversation background thread delete slow",
+                            &[
+                                ("local_task_id", link.local_task_id.clone()),
+                                ("thread_id", thread_id.to_owned()),
+                                ("elapsed_ms", elapsed.as_millis().to_string()),
+                            ],
+                        );
+                    }
+                }
+                Err(error) => {
+                    log_executor_event(
+                        "runtime archived conversation background thread delete failed",
+                        &[
+                            ("local_task_id", link.local_task_id.clone()),
+                            ("thread_id", thread_id.to_owned()),
+                            ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                            ("error", error),
+                        ],
+                    );
+                }
             }
         }
 
         self.store.delete_task(&link.local_task_id);
-        let mut response = task_action_success(&link);
-        response["deleted"] = json!(true);
-        Ok(response)
+        let cleanup_link = link.clone();
+        let cleanup = tokio::task::spawn_blocking(move || {
+            cleanup_task_files_response(&cleanup_link, true, false)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            json!({
+                "taskId": link.local_task_id,
+                "workspacePath": link.workspace_path,
+                "targetCount": 0,
+                "cleanableCount": 0,
+                "skippedCount": 0,
+                "errorCount": 1,
+                "bytes": 0,
+                "items": [],
+                "error": error.to_string(),
+            })
+        });
+        log_executor_event(
+            "runtime archived conversation background cleanup finished",
+            &[
+                ("local_task_id", link.local_task_id.clone()),
+                (
+                    "error_count",
+                    cleanup
+                        .get("errorCount")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                        .to_string(),
+                ),
+            ],
+        );
     }
 
     async fn delete_archived_tasks_bulk(&self, payload: Value) -> Result<Value, AppIpcError> {
-        let items = payload
-            .get("items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut results = Vec::new();
-        let mut deleted_count = 0;
-        for item in items {
-            let result = self.delete_archived_task(item).await?;
-            if result["deleted"] == true {
-                deleted_count += 1;
-            }
-            results.push(result);
-        }
+        let links = self.archived_cleanup_links(&payload).await?;
+        let results = stream::iter(links)
+            .map(|link| {
+                let handler = self.clone();
+                async move { handler.delete_archived_link(link).await }
+            })
+            .buffer_unordered(8)
+            .collect::<Vec<_>>()
+            .await;
+        let deleted_count = results
+            .iter()
+            .filter(|result| result["deleted"] == true)
+            .count();
 
         Ok(json!({
             "success": true,
@@ -1028,6 +1304,27 @@ impl RuntimeWorkRpcHandler {
             "deletedCount": deleted_count,
             "results": results,
         }))
+    }
+
+    async fn preview_archived_conversation_cleanup(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let links = self.archived_cleanup_links(&payload).await?;
+        let previews = links
+            .iter()
+            .map(cleanup_task_files_preview)
+            .collect::<Vec<_>>();
+        Ok(cleanup_summary_response(previews, false))
+    }
+
+    async fn cleanup_archived_conversations(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let links = self.archived_cleanup_links(&payload).await?;
+        let results = links
+            .iter()
+            .map(|link| cleanup_task_files_response(link, true, false))
+            .collect::<Vec<_>>();
+        Ok(cleanup_summary_response(results, true))
     }
 
     async fn create_task(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1059,6 +1356,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
+        let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
         let mut side_source = side_source_thread(&payload);
@@ -1085,6 +1383,7 @@ impl RuntimeWorkRpcHandler {
             "taskId": local_task_id,
             "workspacePath": workspace_path,
             "runtime": "codex",
+            "runtimeHandle": runtime_handle,
         }))
     }
 
@@ -2154,14 +2453,41 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn collect_links(&self, archived: bool) -> Vec<RuntimeTaskLink> {
+        let started_at = Instant::now();
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
         let mut discovered_codex_task_signatures = HashSet::new();
 
-        for thread in self.codex_threads(archived).await {
+        let threads = self.codex_threads(archived).await;
+        let stage_started_at = Instant::now();
+        for thread in threads {
+            let thread_started_at = Instant::now();
+            let thread_id = string_field(&thread, "id").unwrap_or_else(|| "none".to_owned());
             if let Some(mut link) = self.link_from_thread(&thread) {
+                log_slow_runtime_collect_thread(
+                    archived,
+                    &thread_id,
+                    thread_started_at,
+                    &thread,
+                    &link,
+                );
                 if link.ephemeral {
+                    continue;
+                }
+                if self.archived_link_is_deleted(&link) {
+                    log_executor_event(
+                        "runtime work codex link hidden by deleted marker",
+                        &[
+                            ("archived_query", archived.to_string()),
+                            ("local_task_id", link.local_task_id.clone()),
+                            (
+                                "thread_id",
+                                link.thread_id.as_deref().unwrap_or("none").to_owned(),
+                            ),
+                            ("workspace_path", link.workspace_path.clone()),
+                        ],
+                    );
                     continue;
                 }
                 if archived {
@@ -2179,10 +2505,31 @@ impl RuntimeWorkRpcHandler {
                     discovered_codex_task_signatures.insert(signature);
                 }
                 links.push(link);
+            } else {
+                log_slow_runtime_collect_thread_missing(
+                    archived,
+                    &thread_id,
+                    thread_started_at,
+                    &thread,
+                );
             }
         }
+        log_runtime_collect_diagnostic(
+            "threads_linked",
+            archived,
+            started_at,
+            stage_started_at,
+            &[
+                ("links", links.len().to_string()),
+                ("threads", discovered_thread_ids.len().to_string()),
+            ],
+        );
 
+        let stage_started_at = Instant::now();
         for mut link in self.local_task_links(true) {
+            if self.archived_link_is_deleted(&link) {
+                continue;
+            }
             if link.ephemeral {
                 continue;
             }
@@ -2206,12 +2553,21 @@ impl RuntimeWorkRpcHandler {
             if is_unmapped_pending_codex_shadow(&link, &discovered_codex_task_signatures) {
                 continue;
             }
-            if !self.is_active_local_task(&link.local_task_id) {
-                normalize_unmapped_pending_codex_task(&mut link);
+            if !self.is_active_local_task(&link.local_task_id)
+                && normalize_inactive_running_codex_task(&mut link)
+            {
+                self.store.upsert_task(link.clone());
             }
             link.list_order = Some(links.len());
             links.push(link);
         }
+        log_runtime_collect_diagnostic(
+            "local_links_merged",
+            archived,
+            started_at,
+            stage_started_at,
+            &[("links", links.len().to_string())],
+        );
 
         links
     }
@@ -2508,13 +2864,30 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = runtime_task_id(payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         if let Some(link) = self.local_task_link(&local_task_id) {
-            return Ok(link);
+            if (link.status == "archived") == archived {
+                log_runtime_archive_link(
+                    "runtime task payload matched local link",
+                    &link,
+                    archived,
+                );
+                return Ok(link);
+            }
+            log_runtime_archive_link(
+                "runtime task payload skipped local link status mismatch",
+                &link,
+                archived,
+            );
         }
 
         for link in self.collect_links(archived).await {
             if link.local_task_id == local_task_id
                 || link.thread_id.as_deref() == Some(local_task_id.as_str())
             {
+                log_runtime_archive_link(
+                    "runtime task payload matched collected link",
+                    &link,
+                    archived,
+                );
                 return Ok(link);
             }
         }
@@ -2526,6 +2899,7 @@ impl RuntimeWorkRpcHandler {
         link.thread_id = Some(link.local_task_id.clone());
         link.status = if archived { "archived" } else { "active" }.to_owned();
         link.running = false;
+        log_runtime_archive_link("runtime task payload created pending link", &link, archived);
         Ok(link)
     }
 
@@ -2535,6 +2909,7 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(thread) = self.cached_codex_thread_for_transcript(thread_id) {
             let transcript_thread = codex_thread_state(&thread);
+            let context_usage = transcript_context_usage(&transcript_thread);
             let messages = transcript_messages(&transcript_thread, &self.device_id);
             let workspace_path = string_field(&thread, "cwd").unwrap_or_default();
             self.transcript_cache.insert(
@@ -2546,6 +2921,7 @@ impl RuntimeWorkRpcHandler {
                     messages.iter().any(runtime_message_running),
                     transcript_source_signature(&thread),
                 )
+                .with_context_usage(context_usage)
                 .with_rollout_turns(rollout_turns(&transcript_thread)),
             );
             return messages;
@@ -2561,6 +2937,7 @@ impl RuntimeWorkRpcHandler {
             Ok(response) => {
                 let thread = response.get("thread").unwrap_or(&response);
                 let transcript_thread = codex_thread_state(thread);
+                let context_usage = transcript_context_usage(&transcript_thread);
                 let messages = transcript_messages(&transcript_thread, &self.device_id);
                 let workspace_path = string_field(thread, "cwd").unwrap_or_default();
                 self.transcript_cache.insert(
@@ -2572,6 +2949,7 @@ impl RuntimeWorkRpcHandler {
                         messages.iter().any(runtime_message_running),
                         transcript_source_signature(thread),
                     )
+                    .with_context_usage(context_usage)
                     .with_rollout_turns(rollout_turns(&transcript_thread)),
                 );
                 messages
@@ -2610,6 +2988,8 @@ impl RuntimeWorkRpcHandler {
         }
         let turns = cached.rollout_turns?;
         let append = append_rollout_turns_from_offset(thread, turns, previous_signature.len())?;
+        let updated_thread = thread_with_turns(thread, append.turns.clone());
+        let context_usage = transcript_context_usage(&updated_thread).or(cached.context_usage);
         let messages = local_link
             .map(|link| {
                 merge_cached_messages(
@@ -2641,20 +3021,31 @@ impl RuntimeWorkRpcHandler {
                 running,
                 Some(current_signature),
             )
+            .with_context_usage(context_usage)
             .with_rollout_turns(Some(append.turns)),
         )
     }
 
     async fn call_codex_thread_method(&self, method: &str, params: Value) -> Result<Value, String> {
-        if let Some(thread_id) = codex_stream_thread_id(&params) {
-            self.register_thread_event_route_from_store(&thread_id);
-        }
-        self.ensure_notification_router().await;
-        let result = self.codex_app_server.request(method, params).await;
+        let result = self
+            .call_codex_thread_method_without_list_invalidation(method, params)
+            .await;
         if result.is_ok() {
             self.thread_list_cache.invalidate();
         }
         result
+    }
+
+    async fn call_codex_thread_method_without_list_invalidation(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        if let Some(thread_id) = codex_stream_thread_id(&params) {
+            self.register_thread_event_route_from_store(&thread_id);
+        }
+        self.ensure_notification_router().await;
+        self.codex_app_server.request(method, params).await
     }
 
     fn link_from_thread(&self, thread: &Value) -> Option<RuntimeTaskLink> {
@@ -2664,16 +3055,15 @@ impl RuntimeWorkRpcHandler {
             .as_ref()
             .is_some_and(|link| self.is_active_local_task(&link.local_task_id));
         if let Some(link) = &mut local_link {
-            if link.running && !local_active {
-                link.running = false;
+            if !local_active && normalize_inactive_running_codex_task(link) {
+                self.store.upsert_task(link.clone());
             }
         }
         let workspace_path = string_field(thread, "cwd")
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());
-        let codex_thread = thread_with_rollout_running_status(thread);
-        let mut link = RuntimeTaskLink::from_thread(&codex_thread, local_link, workspace_path);
-        if let Some(path) = string_field(&codex_thread, "path") {
+        let mut link = RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path);
+        if let Some(path) = string_field(thread, "path") {
             let mut runtime_handle = link
                 .runtime_handle
                 .as_object()
@@ -2690,15 +3080,59 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn local_task_links(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
-        self.store.list_tasks(include_archived)
+        self.store.list_task_summaries(include_archived)
     }
 
     fn local_task_link(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
         self.store.get_task(local_task_id)
     }
 
+    fn archived_link_is_deleted(&self, link: &RuntimeTaskLink) -> bool {
+        self.store.is_deleted_archived_task_id(&link.local_task_id)
+            || link
+                .thread_id
+                .as_deref()
+                .is_some_and(|thread_id| self.store.is_deleted_archived_task_id(thread_id))
+    }
+
+    fn mark_archived_link_deleted(&self, link: &RuntimeTaskLink) {
+        let mut ids = vec![link.local_task_id.clone()];
+        if let Some(thread_id) = &link.thread_id {
+            ids.push(thread_id.clone());
+        }
+        self.store.mark_deleted_archived_task_ids(ids);
+        self.thread_list_cache.invalidate();
+    }
+
+    async fn archived_cleanup_links(
+        &self,
+        payload: &Value,
+    ) -> Result<Vec<RuntimeTaskLink>, AppIpcError> {
+        let items = payload
+            .get("items")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if items.is_empty() {
+            return Ok(self.collect_links(true).await);
+        }
+
+        let mut links = Vec::new();
+        let mut seen = HashSet::new();
+        for item in items {
+            let local_task_id = runtime_task_id(&item)
+                .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+            let payload_thread_id = runtime_session_id_from_payload(&item);
+            let link = archived_link_from_payload_item(&item, local_task_id, payload_thread_id);
+            if seen.insert(link.local_task_id.clone()) {
+                links.push(link);
+            }
+        }
+        Ok(links)
+    }
+
     fn local_task_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
-        self.store.find_by_thread_id(thread_id)
+        self.store.find_summary_by_thread_id(thread_id)
     }
 
     fn upsert_local_task(&self, link: RuntimeTaskLink) {
@@ -2840,19 +3274,32 @@ fn is_unmapped_pending_codex_shadow(
             .is_some_and(|signature| discovered_codex_task_signatures.contains(signature))
 }
 
-fn normalize_unmapped_pending_codex_task(link: &mut RuntimeTaskLink) {
-    if !is_unmapped_pending_codex_task(link) {
-        return;
+fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
+    if !is_inactive_running_codex_task(link) {
+        return false;
     }
     link.status = "active".to_owned();
     link.running = false;
+    link.updated_at = now_ms();
+    true
+}
+
+fn is_inactive_running_codex_task(link: &RuntimeTaskLink) -> bool {
+    if !link.running || !is_codex_runtime(&link.runtime) {
+        return false;
+    }
+    let status = link.status.replace(['_', '-'], "").to_ascii_lowercase();
+    matches!(
+        status.as_str(),
+        "running" | "inprogress" | "busy" | "pending"
+    )
 }
 
 fn is_unmapped_pending_codex_task(link: &RuntimeTaskLink) -> bool {
+    if !is_inactive_running_codex_task(link) {
+        return false;
+    }
     link.thread_id.is_none()
-        && link.running
-        && link.status == "running"
-        && is_codex_runtime(&link.runtime)
 }
 
 fn codex_task_signature(link: &RuntimeTaskLink) -> Option<String> {
@@ -2940,6 +3387,28 @@ fn log_runtime_project_filter_item(link: &RuntimeTaskLink, details: RuntimeProje
             ("project_name", optional_str(details.project_name)),
             ("thread_hint", optional_str(details.thread_hint)),
             ("project_count", details.project_count.to_string()),
+        ],
+    );
+}
+
+fn log_runtime_archive_link(event: &str, link: &RuntimeTaskLink, archived_query: bool) {
+    log_executor_event(
+        event,
+        &[
+            ("archived_query", archived_query.to_string()),
+            ("local_task_id", link.local_task_id.clone()),
+            (
+                "thread_id",
+                link.thread_id.as_deref().unwrap_or("none").to_owned(),
+            ),
+            ("workspace_path", link.workspace_path.clone()),
+            ("runtime", link.runtime.clone()),
+            ("status", link.status.clone()),
+            ("running", link.running.to_string()),
+            (
+                "session_id",
+                runtime_session_id_from_link(link).unwrap_or_else(|| "none".to_owned()),
+            ),
         ],
     );
 }
@@ -3308,38 +3777,59 @@ fn byte_index_for_char(text: &str, char_index: usize) -> usize {
 fn cached_transcript_response(
     link: &RuntimeTaskLink,
     messages: Vec<Value>,
+    context_usage: Option<Value>,
     limit: Option<usize>,
     before_cursor: Option<&str>,
     after_cursor: Option<&str>,
 ) -> Value {
-    transcript_response(
-        &link.local_task_id,
-        link.workspace_path.clone(),
-        link.runtime.clone(),
+    transcript_response(TranscriptResponseInput {
+        local_task_id: link.local_task_id.clone(),
+        workspace_path: link.workspace_path.clone(),
+        runtime: link.runtime.clone(),
         messages,
+        context_usage,
         limit,
-        before_cursor,
-        after_cursor,
-    )
+        before_cursor: before_cursor.map(ToOwned::to_owned),
+        after_cursor: after_cursor.map(ToOwned::to_owned),
+    })
 }
 
-fn transcript_response(
-    local_task_id: &str,
+struct TranscriptResponseInput {
+    local_task_id: String,
     workspace_path: String,
     runtime: String,
     messages: Vec<Value>,
+    context_usage: Option<Value>,
     limit: Option<usize>,
-    before_cursor: Option<&str>,
-    after_cursor: Option<&str>,
-) -> Value {
+    before_cursor: Option<String>,
+    after_cursor: Option<String>,
+}
+
+fn transcript_response(input: TranscriptResponseInput) -> Value {
+    let TranscriptResponseInput {
+        local_task_id,
+        workspace_path,
+        runtime,
+        messages,
+        context_usage,
+        limit,
+        before_cursor,
+        after_cursor,
+    } = input;
     let turn_navigation = transcript_turn_navigation(&messages);
-    let page = transcript_page(messages, limit, before_cursor, after_cursor);
+    let page = transcript_page(
+        messages,
+        limit,
+        before_cursor.as_deref(),
+        after_cursor.as_deref(),
+    );
     json!({
         "success": true,
         "taskId": local_task_id,
         "workspacePath": workspace_path,
         "runtime": runtime,
         "messages": page.messages,
+        "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
         "rangeStart": page.range_start,
         "rangeEnd": page.range_end,
@@ -3354,6 +3844,10 @@ fn transcript_response(
             .map(Value::String)
             .unwrap_or(Value::Null),
     })
+}
+
+fn transcript_context_usage(thread: &Value) -> Option<Value> {
+    rollout_context_usage(thread)
 }
 
 fn transcript_turn_navigation(messages: &[Value]) -> Vec<Value> {
@@ -3666,12 +4160,39 @@ fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
         .or_else(|| runtime_session_id_from_handle(&link.runtime_handle))
 }
 
+fn archived_link_from_payload_item(
+    item: &Value,
+    local_task_id: String,
+    thread_id: Option<String>,
+) -> RuntimeTaskLink {
+    let workspace_path = workspace_path(item).unwrap_or_default();
+    let title = string_field(item, "title").unwrap_or_else(|| local_task_id.clone());
+    let mut link = RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path, title);
+    link.thread_id = thread_id;
+    if let Some(runtime_handle) = item
+        .get("runtimeHandle")
+        .or_else(|| item.get("runtime_handle"))
+        .cloned()
+    {
+        link.runtime_handle = runtime_handle;
+    }
+    link.status = "archived".to_owned();
+    link.running = false;
+    link
+}
+
 fn runtime_session_id_from_payload(payload: &Value) -> Option<String> {
     let address = payload.get("address");
-    payload
-        .get("runtimeHandle")
-        .or_else(|| payload.get("runtime_handle"))
-        .and_then(runtime_session_id_from_handle)
+    string_field(payload, "threadId")
+        .or_else(|| string_field(payload, "thread_id"))
+        .or_else(|| address.and_then(|address| string_field(address, "threadId")))
+        .or_else(|| address.and_then(|address| string_field(address, "thread_id")))
+        .or_else(|| {
+            payload
+                .get("runtimeHandle")
+                .or_else(|| payload.get("runtime_handle"))
+                .and_then(runtime_session_id_from_handle)
+        })
         .or_else(|| {
             address.and_then(|address| {
                 address
@@ -3767,6 +4288,332 @@ fn fork_error_response(code: &str, error: String) -> Value {
     })
 }
 
+fn cleanup_task_files_preview(link: &RuntimeTaskLink) -> Value {
+    cleanup_task_files_response(link, false, true)
+}
+
+fn cleanup_task_files_response(link: &RuntimeTaskLink, delete: bool, measure_bytes: bool) -> Value {
+    let targets = cleanup_targets_for_task(link);
+    let mut cleaned_count = 0_u64;
+    let mut skipped_count = 0_u64;
+    let mut error_count = 0_u64;
+    let mut total_bytes = 0_u64;
+    let mut items = Vec::new();
+
+    for target in targets {
+        let exists = target.path.exists();
+        let bytes = if measure_bytes {
+            path_size(&target.path).unwrap_or(0)
+        } else {
+            0
+        };
+        total_bytes = total_bytes.saturating_add(bytes);
+        let mut item = json!({
+            "kind": target.kind,
+            "path": target.path.to_string_lossy(),
+            "exists": exists,
+            "bytes": bytes,
+        });
+
+        if !exists {
+            skipped_count += 1;
+            item["status"] = json!("missing");
+            items.push(item);
+            continue;
+        }
+
+        if delete {
+            match remove_cleanup_target(&target) {
+                Ok(()) => {
+                    cleaned_count += 1;
+                    item["status"] = json!("cleaned");
+                }
+                Err(error) => {
+                    error_count += 1;
+                    item["status"] = json!("failed");
+                    item["error"] = json!(error);
+                }
+            }
+        } else {
+            cleaned_count += 1;
+            item["status"] = json!("preview");
+        }
+        items.push(item);
+    }
+
+    json!({
+        "taskId": link.local_task_id,
+        "workspacePath": link.workspace_path,
+        "targetCount": items.len(),
+        "cleanableCount": cleaned_count,
+        "skippedCount": skipped_count,
+        "errorCount": error_count,
+        "bytes": total_bytes,
+        "items": items,
+    })
+}
+
+fn cleanup_summary_response(results: Vec<Value>, deleted: bool) -> Value {
+    let target_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("targetCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let cleanable_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("cleanableCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let skipped_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("skippedCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let error_count = results
+        .iter()
+        .map(|result| {
+            result
+                .get("errorCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        })
+        .sum::<u64>();
+    let total_bytes = results
+        .iter()
+        .map(|result| result.get("bytes").and_then(Value::as_u64).unwrap_or(0))
+        .sum::<u64>();
+
+    json!({
+        "success": error_count == 0,
+        "deleted": deleted,
+        "taskCount": results.len(),
+        "targetCount": target_count,
+        "cleanableCount": cleanable_count,
+        "skippedCount": skipped_count,
+        "errorCount": error_count,
+        "bytes": total_bytes,
+        "results": results,
+    })
+}
+
+struct CleanupTarget {
+    kind: &'static str,
+    path: PathBuf,
+}
+
+fn cleanup_targets_for_task(link: &RuntimeTaskLink) -> Vec<CleanupTarget> {
+    let mut targets = Vec::new();
+    let mut seen = HashSet::new();
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        worktree_cleanup_target(&link.workspace_path),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        standalone_chat_cleanup_target(&link.local_task_id, &link.workspace_path),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        workspace_attachment_cleanup_target(link, ".wegent/attachments"),
+    );
+    push_cleanup_target(
+        &mut targets,
+        &mut seen,
+        workspace_attachment_cleanup_target(
+            link,
+            &format!("{}:executor:attachments", link.local_task_id),
+        ),
+    );
+
+    for path in local_attachment_paths(&link.runtime_handle) {
+        push_cleanup_target(
+            &mut targets,
+            &mut seen,
+            local_attachment_cleanup_target(&path),
+        );
+    }
+    if let Some(parent) = &link.parent {
+        for path in local_attachment_paths(parent) {
+            push_cleanup_target(
+                &mut targets,
+                &mut seen,
+                local_attachment_cleanup_target(&path),
+            );
+        }
+    }
+
+    targets
+}
+
+fn push_cleanup_target(
+    targets: &mut Vec<CleanupTarget>,
+    seen: &mut HashSet<String>,
+    target: Option<CleanupTarget>,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    let key = normalize_workspace_path(&target.path.to_string_lossy());
+    if seen.insert(key) {
+        targets.push(target);
+    }
+}
+
+fn worktree_cleanup_target(path: &str) -> Option<CleanupTarget> {
+    let normalized = normalize_workspace_path(path);
+    if !is_managed_worktree_path(&normalized) {
+        return None;
+    }
+    Some(CleanupTarget {
+        kind: "worktree",
+        path: PathBuf::from(normalized),
+    })
+}
+
+fn standalone_chat_cleanup_target(local_task_id: &str, path: &str) -> Option<CleanupTarget> {
+    let normalized = normalize_workspace_path(path);
+    if !normalized.contains("/Documents/Codex/") {
+        return None;
+    }
+    let segment = workspace_segment(local_task_id);
+    if Path::new(&normalized)
+        .file_name()
+        .and_then(|name| name.to_str())
+        != Some(segment.as_str())
+    {
+        return None;
+    }
+    Some(CleanupTarget {
+        kind: "standalone_workspace",
+        path: PathBuf::from(normalized),
+    })
+}
+
+fn workspace_attachment_cleanup_target(
+    link: &RuntimeTaskLink,
+    relative: &str,
+) -> Option<CleanupTarget> {
+    let workspace = PathBuf::from(normalize_workspace_path(&link.workspace_path));
+    if workspace.as_os_str().is_empty() {
+        return None;
+    }
+    let path = if relative == ".wegent/attachments" {
+        workspace.join(relative).join(&link.local_task_id)
+    } else {
+        workspace.join(relative)
+    };
+    Some(CleanupTarget {
+        kind: "workspace_attachment",
+        path,
+    })
+}
+
+fn local_attachment_cleanup_target(path: &str) -> Option<CleanupTarget> {
+    let normalized = normalize_workspace_path(path);
+    if !is_local_attachment_draft_path(&normalized) {
+        return None;
+    }
+    Some(CleanupTarget {
+        kind: "local_attachment",
+        path: PathBuf::from(normalized),
+    })
+}
+
+fn local_attachment_paths(value: &Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    collect_local_attachment_paths(value, &mut paths);
+    paths
+}
+
+fn collect_local_attachment_paths(value: &Value, paths: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_local_attachment_paths(item, paths);
+            }
+        }
+        Value::Object(map) => {
+            for (key, value) in map {
+                if matches!(
+                    key.as_str(),
+                    "local_path" | "localPath" | "local_preview_url" | "localPreviewUrl"
+                ) {
+                    if let Some(path) = value
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|path| !path.is_empty())
+                    {
+                        paths.push(path.to_owned());
+                    }
+                }
+                collect_local_attachment_paths(value, paths);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn remove_cleanup_target(target: &CleanupTarget) -> Result<(), String> {
+    if target.kind == "worktree" {
+        remove_git_worktree_best_effort(&target.path);
+    }
+    if target.path.is_dir() {
+        fs::remove_dir_all(&target.path)
+            .map_err(|error| format!("failed to remove directory: {error}"))?;
+    } else if target.path.is_file() {
+        fs::remove_file(&target.path).map_err(|error| format!("failed to remove file: {error}"))?;
+    }
+    Ok(())
+}
+
+fn remove_git_worktree_best_effort(path: &Path) {
+    let path = path.to_string_lossy().to_string();
+    let _ = std::process::Command::new("git")
+        .args(["-C", &path, "worktree", "remove", "--force", &path])
+        .output();
+}
+
+fn path_size(path: &Path) -> Option<u64> {
+    let metadata = fs::metadata(path).ok()?;
+    if metadata.is_file() {
+        return Some(metadata.len());
+    }
+    if !metadata.is_dir() {
+        return Some(0);
+    }
+    let mut size = 0_u64;
+    for entry in fs::read_dir(path).ok()? {
+        let entry = entry.ok()?;
+        size = size.saturating_add(path_size(&entry.path()).unwrap_or(0));
+    }
+    Some(size)
+}
+
+fn is_managed_worktree_path(path: &str) -> bool {
+    path.contains("/.wecode/wegent-executor/workspace/worktrees/")
+        || path.contains("/.wegent-executor/workspace/worktrees/")
+}
+
+fn is_local_attachment_draft_path(path: &str) -> bool {
+    path.contains("/.wegent-executor/workspace/attachments/draft/")
+        || path.contains("/.wecode/wegent-executor/workspace/attachments/draft/")
+}
+
 fn task_action_success(link: &RuntimeTaskLink) -> Value {
     json!({
         "success": true,
@@ -3786,6 +4633,12 @@ fn task_action_failure(link: &RuntimeTaskLink, error: String) -> Value {
         "runtime": link.runtime,
         "error": error,
     })
+}
+
+fn codex_error_is_missing_rollout(error: &str, thread_id: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("no rollout found for thread id")
+        && error.contains(&thread_id.to_ascii_lowercase())
 }
 
 fn task_goal_missing_session(link: &RuntimeTaskLink) -> Value {
@@ -3815,6 +4668,159 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 .unwrap_or_else(|| json!({}));
             self.dispatch(&method, payload).await
         })
+    }
+}
+
+#[cfg(debug_assertions)]
+const SLOW_RUNTIME_COLLECT_THREAD_MS: u128 = 100;
+
+#[cfg(debug_assertions)]
+fn log_runtime_collect_diagnostic(
+    stage: &str,
+    archived: bool,
+    started_at: Instant,
+    stage_started_at: Instant,
+    fields: &[(&str, String)],
+) {
+    let mut diagnostic_fields = vec![
+        ("stage", stage.to_owned()),
+        ("archived", archived.to_string()),
+        ("elapsed_ms", elapsed_ms(started_at)),
+        ("stage_elapsed_ms", elapsed_ms(stage_started_at)),
+    ];
+    if let Some(rss_kb) = current_process_max_rss_kb() {
+        diagnostic_fields.push(("max_rss_kb", rss_kb.to_string()));
+    }
+    diagnostic_fields.extend(fields.iter().map(|(key, value)| (*key, value.clone())));
+    log_executor_event("runtime work collect diagnostic", &diagnostic_fields);
+}
+
+#[cfg(not(debug_assertions))]
+fn log_runtime_collect_diagnostic(
+    _stage: &str,
+    _archived: bool,
+    _started_at: Instant,
+    _stage_started_at: Instant,
+    _fields: &[(&str, String)],
+) {
+}
+
+#[cfg(debug_assertions)]
+fn log_slow_runtime_collect_thread(
+    archived: bool,
+    thread_id: &str,
+    started_at: Instant,
+    thread: &Value,
+    link: &RuntimeTaskLink,
+) {
+    let elapsed = started_at.elapsed().as_millis();
+    if elapsed < SLOW_RUNTIME_COLLECT_THREAD_MS {
+        return;
+    }
+    log_executor_event(
+        "runtime work collect slow thread",
+        &[
+            ("archived", archived.to_string()),
+            ("elapsed_ms", elapsed.to_string()),
+            ("thread_id", thread_id.to_owned()),
+            ("thread_json_bytes", debug_json_len(thread).to_string()),
+            ("local_task_id", link.local_task_id.clone()),
+            ("workspace_path", link.workspace_path.clone()),
+            ("status", link.status.clone()),
+        ],
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_slow_runtime_collect_thread(
+    _archived: bool,
+    _thread_id: &str,
+    _started_at: Instant,
+    _thread: &Value,
+    _link: &RuntimeTaskLink,
+) {
+}
+
+#[cfg(debug_assertions)]
+fn log_slow_runtime_collect_thread_missing(
+    archived: bool,
+    thread_id: &str,
+    started_at: Instant,
+    thread: &Value,
+) {
+    let elapsed = started_at.elapsed().as_millis();
+    if elapsed < SLOW_RUNTIME_COLLECT_THREAD_MS {
+        return;
+    }
+    log_executor_event(
+        "runtime work collect slow skipped thread",
+        &[
+            ("archived", archived.to_string()),
+            ("elapsed_ms", elapsed.to_string()),
+            ("thread_id", thread_id.to_owned()),
+            ("thread_json_bytes", debug_json_len(thread).to_string()),
+        ],
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_slow_runtime_collect_thread_missing(
+    _archived: bool,
+    _thread_id: &str,
+    _started_at: Instant,
+    _thread: &Value,
+) {
+}
+
+#[cfg(debug_assertions)]
+fn debug_json_len(value: &Value) -> usize {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .unwrap_or_default()
+}
+
+#[cfg(debug_assertions)]
+fn log_runtime_work_list_diagnostic(
+    stage: &str,
+    started_at: Instant,
+    stage_started_at: Instant,
+    fields: &[(&str, String)],
+) {
+    let mut diagnostic_fields = vec![
+        ("stage", stage.to_owned()),
+        ("elapsed_ms", elapsed_ms(started_at)),
+        ("stage_elapsed_ms", elapsed_ms(stage_started_at)),
+    ];
+    if let Some(rss_kb) = current_process_max_rss_kb() {
+        diagnostic_fields.push(("max_rss_kb", rss_kb.to_string()));
+    }
+    diagnostic_fields.extend(fields.iter().map(|(key, value)| (*key, value.clone())));
+    log_executor_event("runtime work list diagnostic", &diagnostic_fields);
+}
+
+#[cfg(not(debug_assertions))]
+fn log_runtime_work_list_diagnostic(
+    _stage: &str,
+    _started_at: Instant,
+    _stage_started_at: Instant,
+    _fields: &[(&str, String)],
+) {
+}
+
+#[cfg(debug_assertions)]
+fn current_process_max_rss_kb() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let max_rss = unsafe { usage.assume_init().ru_maxrss };
+    #[cfg(target_os = "macos")]
+    {
+        Some((max_rss as u64).saturating_div(1024))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Some(max_rss as u64)
     }
 }
 
@@ -4046,6 +5052,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn codex_stream_debug_rpc_toggles_runtime_flag() {
+        set_codex_stream_debug_enabled(false);
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let initial = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.stream_debug.get",
+                "payload": {}
+            }))
+            .await
+            .expect("debug state should return");
+        assert_eq!(initial["enabled"], false);
+
+        let updated = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.stream_debug.set",
+                "payload": {"enabled": true}
+            }))
+            .await
+            .expect("debug state should update");
+        assert_eq!(updated["enabled"], true);
+        assert!(codex_stream_debug_enabled());
+
+        set_codex_stream_debug_enabled(false);
+    }
+
+    #[tokio::test]
+    async fn codex_app_server_restart_rpc_returns_success() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.app_server.restart",
+                "payload": {}
+            }))
+            .await
+            .expect("restart should return success");
+
+        assert_eq!(result["restarted"], true);
+    }
+
+    #[tokio::test]
     async fn transcript_without_runtime_link_returns_empty_local_transcript() {
         let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
@@ -4149,7 +5197,7 @@ mod tests {
         let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
         handler.store = RuntimeWorkStore::new(index_path.clone());
 
-        handler
+        let response = handler
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.create",
                 "payload": {
@@ -4166,6 +5214,16 @@ mod tests {
             }))
             .await
             .expect("runtime task should be created");
+        assert_eq!(
+            response["runtimeHandle"]["modelSelection"],
+            json!({
+                "modelName": "local-model:mimo",
+                "modelType": "runtime",
+                "options": {
+                    "collaborationMode": "plan"
+                }
+            })
+        );
 
         let link = handler
             .local_task_link("local-task-1")
@@ -4384,6 +5442,57 @@ mod tests {
         assert!(result.is_none());
         let _ = std::fs::remove_file(old_path);
         let _ = std::fs::remove_file(new_path);
+    }
+
+    #[test]
+    fn archived_cleanup_targets_include_managed_worktree_and_local_attachment() {
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned(),
+            "Task".to_owned(),
+        );
+        link.runtime_handle = json!({
+            "messages": [
+                {
+                    "attachments": [
+                        {
+                            "local_path": "/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png"
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let targets = cleanup_targets_for_task(&link);
+        let target_paths = targets
+            .iter()
+            .map(|target| target.path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(target_paths
+            .contains(&"/Users/me/.wegent-executor/workspace/worktrees/task-1/Wegent".to_owned()));
+        assert!(target_paths.contains(
+            &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
+        ));
+    }
+
+    #[test]
+    fn archived_cleanup_targets_do_not_delete_regular_project_root() {
+        let link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/Users/me/project".to_owned(),
+            "Task".to_owned(),
+        );
+
+        let targets = cleanup_targets_for_task(&link);
+        let target_paths = targets
+            .iter()
+            .map(|target| target.path.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+
+        assert!(!target_paths.contains(&"/Users/me/project".to_owned()));
+        assert!(target_paths.contains(&"/Users/me/project/.wegent/attachments/task-1".to_owned()));
+        assert!(target_paths.contains(&"/Users/me/project/task-1:executor:attachments".to_owned()));
     }
 
     fn temp_runtime_work_index_path(label: &str) -> PathBuf {

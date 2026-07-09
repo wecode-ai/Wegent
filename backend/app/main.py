@@ -784,6 +784,7 @@ def create_socketio_asgi_app():
     from app.api.ws import register_chat_namespace
     from app.api.ws.device_namespace import register_device_namespace
     from app.api.ws.terminal_namespace import register_terminal_namespace
+    from app.api.ws.wework_runtime_namespace import register_wework_runtime_namespace
     from app.core.socketio import get_sio
 
     sio = get_sio()
@@ -800,6 +801,10 @@ def create_socketio_asgi_app():
     # Register terminal namespace for browser terminal clients
     register_terminal_namespace(sio)
     _logger.info("Terminal namespace registered during ASGI app creation")
+
+    # Register Wework runtime relay namespace for app IPC over WebSocket
+    register_wework_runtime_namespace(sio)
+    _logger.info("Wework runtime namespace registered during ASGI app creation")
 
     # Create VNC interceptor wrapper for FastAPI
     # This intercepts VNC WebSocket connections before they reach FastAPI

@@ -60,18 +60,22 @@ class ProjectTaskResponse(BaseModel):
 class ProjectExecutionConfig(BaseModel):
     """Execution target for a workspace project."""
 
-    targetType: Literal["local", "cloud"] = Field(..., description="Execution target")
-    deviceId: Optional[str] = Field(None, description="Local device ID")
+    targetType: Literal["local", "cloud", "remote"] = Field(
+        ..., description="Execution target"
+    )
+    deviceId: Optional[str] = Field(
+        None, description="Bound device ID for local, cloud, or remote execution"
+    )
 
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
     def validate_device(self) -> "ProjectExecutionConfig":
-        """Ensure deviceId is present for local and absent for cloud."""
+        """Ensure concrete device targets have a bound device ID."""
         if self.targetType == "local" and not self.deviceId:
             raise ValueError("deviceId is required when targetType is local")
-        if self.targetType == "cloud" and self.deviceId:
-            raise ValueError("deviceId must be empty when targetType is cloud")
+        if self.targetType == "remote" and not self.deviceId:
+            raise ValueError("deviceId is required when targetType is remote")
         return self
 
 
@@ -104,9 +108,14 @@ class ProjectWorkspaceRef(BaseModel):
 class ProjectWorkspaceConfig(BaseModel):
     """Workspace source configuration for a workspace project."""
 
-    source: Literal["git", "local_path"] = Field(..., description="Workspace source")
+    source: Literal["git", "local_path", "device_path"] = Field(
+        ..., description="Workspace source"
+    )
     localPath: Optional[str] = Field(None, description="Local directory path")
     checkoutPath: Optional[str] = Field(None, description="Optional checkout path")
+    devicePath: Optional[str] = Field(
+        None, description="Directory path on a bound cloud or remote device"
+    )
     workspaceRef: Optional[ProjectWorkspaceRef] = Field(
         None, description="Workspace CRD reference"
     )
@@ -202,6 +211,24 @@ class ProjectConfig(BaseModel):
                 )
             if self.git:
                 raise ValueError("git config must be empty for local_path source")
+        elif workspace.source == "device_path":
+            if not self.execution or self.execution.targetType not in (
+                "cloud",
+                "remote",
+            ):
+                raise ValueError(
+                    "device_path source is only supported for cloud or remote target"
+                )
+            if not self.execution.deviceId:
+                raise ValueError(
+                    "execution.deviceId is required for device_path source"
+                )
+            if not workspace.devicePath:
+                raise ValueError(
+                    "workspace.devicePath is required for device_path source"
+                )
+            if self.git:
+                raise ValueError("git config must be empty for device_path source")
 
         return self
 

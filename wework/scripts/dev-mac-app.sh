@@ -47,6 +47,8 @@ Environment:
                         Executor sidecar path. Defaults to source reload sidecar.
   WEGENT_EXECUTOR_DEV_RELOAD
                         Set to 0 to run executor source once without reload.
+  WEWORK_MALLOC_STACK_LOGGING
+                        Set to 1 to enable macOS malloc stack logging for WebKit diagnostics.
   MACOS_BUILD_TARGET    Default macOS Rust/Tauri target when --target is not provided.
 
 Examples:
@@ -185,6 +187,7 @@ if [ "$AVAILABLE_WEWORK_PORT" != "$WEWORK_PORT" ]; then
 fi
 WEWORK_PORT="$AVAILABLE_WEWORK_PORT"
 
+export SKIP_FONT_DOWNLOAD="${SKIP_FONT_DOWNLOAD:-1}"
 export VITE_API_PROXY_TARGET="$(wework_normalize_api_proxy_target "${VITE_API_PROXY_TARGET:-$BACKEND_BASE_URL}")"
 export VITE_SOCKET_PROXY_TARGET="${VITE_SOCKET_PROXY_TARGET:-${WEGENT_SOCKET_URL:-$VITE_API_PROXY_TARGET}}"
 if [ -z "${WEWORK_EXECUTOR_SIDECAR:-}" ]; then
@@ -250,6 +253,13 @@ echo "  VITE_API_PROXY_TARGET=$VITE_API_PROXY_TARGET"
 echo "  VITE_SOCKET_PROXY_TARGET=$VITE_SOCKET_PROXY_TARGET"
 echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
+
+if [ "${WEWORK_MALLOC_STACK_LOGGING:-}" = "1" ]; then
+  export MallocStackLogging=1
+  export MallocStackLoggingNoCompact=1
+  echo "  MallocStackLogging=1"
+  echo "  MallocStackLoggingNoCompact=1"
+fi
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
   echo "  TAURI_DEV_CONFIG=$TAURI_DEV_CONFIG"

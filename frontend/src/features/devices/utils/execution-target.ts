@@ -7,6 +7,8 @@ import type { DeviceInfo } from '@/apis/devices'
 const DEVICE_TYPE_PRIORITY: Record<DeviceInfo['device_type'], number> = {
   local: 0,
   cloud: 1,
+  remote: 2,
+  app: 3,
 }
 
 export function isDeviceAtCapacity(slotUsed: number, slotMax: number) {

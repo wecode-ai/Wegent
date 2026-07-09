@@ -111,6 +111,34 @@ def enterprise_auth_handler(token, request):
 set_external_knowledge_auth_handler(enterprise_auth_handler)
 ```
 
+### 创建者信息解析
+
+`wegent_kb_list_knowledge_bases` 和 `wegent_kb_list_nodes` 会在知识库和文档节点上返回 `creator`。默认解析器从 Wegent `users` 表读取 `user_id` 和 `user_name`，并返回空 `attributes`。文件夹节点没有独立创建者信息，`creator` 为 `null`。
+
+内部部署如果需要把用户映射为员工、组织或外部账号信息，可以替换 creator resolver。resolver 收到当前数据库 session 和已经去重的正整数用户 ID 列表，返回以 `user_id` 为 key 的 `ExternalKnowledgeCreatorInfo` 映射。resolver 异常时主响应不会失败，系统会记录日志并回退到默认用户表解析。
+
+```python
+from app.schemas.knowledge_external import ExternalKnowledgeCreatorInfo
+from app.services.knowledge.external_creator import (
+    set_external_knowledge_creator_resolver,
+)
+
+
+def enterprise_creator_resolver(db, user_ids):
+    employees = load_employees_by_user_ids(user_ids)
+    return {
+        user_id: ExternalKnowledgeCreatorInfo(
+            user_id=user_id,
+            user_name=employee.display_name,
+            attributes={"employee_id": employee.employee_id},
+        )
+        for user_id, employee in employees.items()
+    }
+
+
+set_external_knowledge_creator_resolver(enterprise_creator_resolver)
+```
+
 ## 工具
 
 ### `wegent_kb_list_knowledge_bases`
@@ -124,6 +152,7 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 | `scope` | `string` | `all` | 可见范围，取值与内部知识库列表一致，例如 `all`、`personal`、`group`、`organization` |
 | `group_name` | `string \| null` | `null` | 可选的空间或分组名称。`scope=group` 时必填，空字符串会被视为缺失 |
 | `query` | `string \| null` | `null` | 可选关键字，按知识库名称和描述做大小写不敏感过滤 |
+| `owner_user_ids` | `list[int] \| null` | `null` | 可选创建者用户 ID 过滤，最多 `100` 个；空列表按未过滤处理 |
 | `limit` | `int` | `50` | 返回数量，范围 `1..100` |
 | `offset` | `int` | `0` | 偏移量，必须大于等于 `0` |
 
@@ -131,6 +160,7 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 
 - 结果按 `created_at` 倒序排序，业务方展示时不需要再次排序。
 - `document_count` 统计知识库下的全部文档，包括 inactive 文档，保持与内部知识库列表口径一致。
+- 每个 `items[]` 会返回 `owner_user_id` 和 `creator`；`creator` 包含 `user_id`、`user_name` 和部署方可扩展的 `attributes`。
 - 每个 `items[]` 会返回 `namespace_level` 和 `namespace_display_name`：个人知识库为 `personal` / `personal`，群组知识库为 `group` / 群组展示名，公司知识库为 `organization` / 公司展示名。`namespace_display_name` 只表达空间展示名，不表达分享或创建者关系。
 - 只对当前页知识库统计 `document_count`，避免一次请求放大成大量统计查询。
 - 响应中的 `total` 表示过滤后的总知识库数量，`total_returned` 表示当前页返回数量，`has_more` 表示是否还有下一页。调用方应使用 `limit`/`offset` 翻页。
@@ -155,6 +185,7 @@ set_external_knowledge_auth_handler(enterprise_auth_handler)
 - 同一层级内先返回文件夹，再返回文档；同类型节点按 `created_at` 倒序排序。
 - `recursive` 和 `include_inactive` 必须是严格 boolean；字符串 `"false"` 不会被接受。
 - `include_inactive` 默认是 `true`，因此 inactive 文档会展示给业务方，与内部 MCP 保持一致。调用方可根据返回的 `index_status` 判断文档是否可用于搜索。
+- 文档节点会返回 `creator`；文件夹节点没有独立创建者信息，`creator` 为 `null`。
 - 非递归模式返回 `total_available` 和 `has_more`，调用方应使用 `limit`/`offset` 翻页。
 - `total_returned` 统计响应树中的全部节点，包括嵌套 children。
 - 根目录递归会先统计候选文件夹和文档数量，超过 `MAX_RECURSIVE_NODES` 时直接返回 `result_too_large`，避免先加载整棵大树。
