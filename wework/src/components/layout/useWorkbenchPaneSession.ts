@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import i18n from '@/i18n'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import type { WorkbenchPaneContextValue } from '@/features/workbench/workbenchContextTypes'
 import {
   compareMessageStyles,
   summarizeRuntimePaneMemory,
@@ -103,6 +104,14 @@ interface GuidanceSplitBoundary {
 const runtimePaneMessageSeeds = new Map<string, WorkbenchMessage[]>()
 const runtimePaneMessageSnapshots = new Map<string, WorkbenchMessage[]>()
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
+type RuntimeTaskStreamSubscriber = WorkbenchPaneContextValue['subscribeRuntimeTaskStream']
+const runtimePaneStreamSubscriptions = new Map<
+  string,
+  {
+    subscribe: RuntimeTaskStreamSubscriber
+    unsubscribe: () => void
+  }
+>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const MAX_CACHED_RUNTIME_PANE_MESSAGES = 3
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
@@ -465,8 +474,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       return
     }
 
-    const { address } = target
-    const unsubscribe = subscribeRuntimeTaskStreamRef.current(address, {
+    const { address, identityKey } = target
+    const subscribeRuntimeTaskStream = subscribeRuntimeTaskStreamRef.current
+    const existingSubscription = runtimePaneStreamSubscriptions.get(identityKey)
+    if (existingSubscription?.subscribe === subscribeRuntimeTaskStream) {
+      return
+    }
+    if (existingSubscription) {
+      existingSubscription.unsubscribe()
+      runtimePaneStreamSubscriptions.delete(identityKey)
+    }
+
+    const unsubscribe = subscribeRuntimeTaskStream(address, {
       onMessageAction: dispatchMessages,
       onAssistantStart: () => setSendPhase('idle'),
       onAssistantSettled: () => {
@@ -518,7 +537,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
       },
     })
-    return unsubscribe
+    runtimePaneStreamSubscriptions.set(identityKey, {
+      subscribe: subscribeRuntimeTaskStream,
+      unsubscribe,
+    })
   }, [dispatchMessages, runtimeTaskStreamTargetKey])
 
   const loadMoreTranscriptBefore = useCallback(async () => {

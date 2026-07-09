@@ -16,6 +16,7 @@ import {
 } from '@/lib/xterm-theme'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { createXtermWebLinksAddon } from './xtermLinks'
+import { appendTerminalOutput, readTerminalOutput } from './terminalOutputBuffer'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -84,6 +85,10 @@ export function EmbeddedLocalTerminal({
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(webLinksAddon)
     terminal.open(container)
+    const bufferedOutput = readTerminalOutput(sessionId)
+    if (bufferedOutput) {
+      terminal.write(bufferedOutput)
+    }
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {
@@ -125,6 +130,7 @@ export function EmbeddedLocalTerminal({
 
     void listenLocalTerminalOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
+        appendTerminalOutput(sessionId, payload.data)
         terminal.write(payload.data)
         scheduleThemeSync()
       }

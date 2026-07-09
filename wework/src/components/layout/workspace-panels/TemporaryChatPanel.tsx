@@ -14,6 +14,11 @@ import type {
 } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
+import {
+  getTemporaryChatStreamSubscription,
+  setTemporaryChatStreamSubscription,
+  temporaryChatAddressKey,
+} from './temporaryChatPanelLifecycle'
 
 const SIDE_CHAT_MESSAGE_LIST_CLASS = 'w-full max-w-none px-5 pb-4 pt-5 lg:pl-14'
 
@@ -83,12 +88,27 @@ export function TemporaryChatPanel({
 
   useEffect(() => {
     if (!address) return
-    return subscribeRuntimeTaskStream(address, {
+    const addressKey = temporaryChatAddressKey(address)
+    const existingSubscription = getTemporaryChatStreamSubscription(instanceId)
+    if (
+      existingSubscription?.addressKey === addressKey &&
+      existingSubscription.subscribe === subscribeRuntimeTaskStream
+    ) {
+      return
+    }
+    existingSubscription?.unsubscribe()
+
+    const unsubscribe = subscribeRuntimeTaskStream(address, {
       onMessageAction: dispatchMessages,
       onAssistantStart: () => setSending(true),
       onAssistantSettled: () => setSending(false),
     })
-  }, [address, dispatchMessages, subscribeRuntimeTaskStream])
+    setTemporaryChatStreamSubscription(instanceId, {
+      addressKey,
+      subscribe: subscribeRuntimeTaskStream,
+      unsubscribe,
+    })
+  }, [address, dispatchMessages, instanceId, subscribeRuntimeTaskStream])
 
   const selectedModelFields = useMemo(() => {
     const selectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel

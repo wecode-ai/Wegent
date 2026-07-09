@@ -11,6 +11,7 @@ import {
 } from '@/lib/xterm-theme'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
+import { appendTerminalOutput, readTerminalOutput } from './terminalOutputBuffer'
 
 interface RemoteTerminalProps {
   sessionId: string
@@ -81,6 +82,7 @@ export function RemoteTerminal({
     })
     const unsubscribeOutput = client.onOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
+        appendTerminalOutput(sessionId, payload.data)
         terminal.write(payload.data)
         scheduleThemeSync()
       }
@@ -97,6 +99,10 @@ export function RemoteTerminal({
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(webLinksAddon)
     terminal.open(container)
+    const bufferedOutput = readTerminalOutput(sessionId)
+    if (bufferedOutput) {
+      terminal.write(bufferedOutput)
+    }
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {

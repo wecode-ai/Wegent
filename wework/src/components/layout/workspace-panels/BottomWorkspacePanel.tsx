@@ -1,5 +1,5 @@
 import { SquareTerminal, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -25,6 +25,7 @@ interface BottomWorkspacePanelProps {
   preferLocalTerminal?: boolean
   onRequestClose: () => void
   onTerminalTabsEmpty?: () => void
+  onLocalTerminalSessionsChange?: (sessionIds: string[]) => void
 }
 
 function createTerminalTab(index: number): BottomWorkspacePanelTab {
@@ -42,12 +43,14 @@ export function BottomWorkspacePanel({
   preferLocalTerminal = false,
   onRequestClose,
   onTerminalTabsEmpty,
+  onLocalTerminalSessionsChange,
 }: BottomWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const { height, handleResizeStart } = useResizableBottomPanel()
   const terminalSequenceRef = useRef(2)
   const [tabs, setTabs] = useState<BottomWorkspacePanelTab[]>(() => [createTerminalTab(1)])
   const [activeTabId, setActiveTabId] = useState('terminal-1')
+  const localTerminalSessionsByTabRef = useRef(new Map<string, string[]>())
   const activeTab = tabs.find(tab => tab.id === activeTabId) ?? tabs[0] ?? null
   const renderContent = open || preserveContent
   const panelActive = active && open
@@ -75,6 +78,10 @@ export function BottomWorkspacePanel({
     const nextTabs = tabs.filter(tab => tab.id !== tabId)
 
     setTabs(nextTabs)
+    localTerminalSessionsByTabRef.current.delete(tabId)
+    onLocalTerminalSessionsChange?.(
+      Array.from(localTerminalSessionsByTabRef.current.values()).flat()
+    )
 
     if (nextTabs.length === 0) {
       setActiveTabId('')
@@ -100,6 +107,20 @@ export function BottomWorkspacePanel({
       return current.map(item => (item.id === tabId ? { ...item, title: normalizedTitle } : item))
     })
   }
+
+  const updateLocalTerminalSessions = useCallback(
+    (tabId: string, sessionIds: string[]) => {
+      if (sessionIds.length > 0) {
+        localTerminalSessionsByTabRef.current.set(tabId, sessionIds)
+      } else {
+        localTerminalSessionsByTabRef.current.delete(tabId)
+      }
+      onLocalTerminalSessionsChange?.(
+        Array.from(localTerminalSessionsByTabRef.current.values()).flat()
+      )
+    },
+    [onLocalTerminalSessionsChange]
+  )
 
   const menuItems: WorkspaceAddMenuItem[] = [
     {
@@ -183,6 +204,9 @@ export function BottomWorkspacePanel({
                   panelActive={panelActive}
                   testIdsEnabled={contentTestIdsEnabled}
                   onTerminalTitleChange={title => updateTabTitle(tab.id, title)}
+                  onLocalTerminalSessionsChange={sessionIds =>
+                    updateLocalTerminalSessions(tab.id, sessionIds)
+                  }
                 />
               </div>
             ))}

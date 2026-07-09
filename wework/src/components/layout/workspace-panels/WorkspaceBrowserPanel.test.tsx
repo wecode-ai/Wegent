@@ -197,6 +197,23 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('keeps the native browser open when the panel unmounts', async () => {
+    mockBrowserHostRect()
+    const { unmount } = render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    unmount()
+
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+  })
+
   test('creates only a code comment context from a browser annotation', async () => {
     mockBrowserHostRect()
     const onAddCodeComment = vi.fn()

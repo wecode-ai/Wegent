@@ -35,6 +35,12 @@ import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import {
+  getRightWorkspaceChatTabSuffix,
+  isRightWorkspaceChatTab,
+  type RightWorkspacePanelTab,
+  type RightWorkspacePanelView,
+} from './rightWorkspacePanelTypes'
 
 const RIGHT_WORKSPACE_SHORTCUTS = {
   review: '⌥⌘R',
@@ -42,24 +48,6 @@ const RIGHT_WORKSPACE_SHORTCUTS = {
   chat: '⌥⌘S',
   files: '⌥⌘F',
 } as const
-
-export type RightWorkspaceChatTab = `chat:${string}`
-export type RightWorkspacePanelTab =
-  | 'review'
-  | 'terminal'
-  | 'browser'
-  | 'files'
-  | 'plan'
-  | RightWorkspaceChatTab
-export type RightWorkspacePanelView = 'launcher' | RightWorkspacePanelTab
-
-function isRightWorkspaceChatTab(tab: RightWorkspacePanelView): tab is RightWorkspaceChatTab {
-  return tab.startsWith('chat:')
-}
-
-function getRightWorkspaceChatTabSuffix(tab: RightWorkspaceChatTab) {
-  return tab.slice('chat:'.length)
-}
 
 interface RightWorkspaceReviewState {
   loading: boolean

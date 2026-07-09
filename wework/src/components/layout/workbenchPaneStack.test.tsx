@@ -181,9 +181,9 @@ describe('workbenchPaneStack', () => {
       .closest('[data-active-workbench-pane]')
 
     expect(standaloneWrapper).toHaveAttribute('data-active-workbench-pane', 'true')
-    expect(standaloneWrapper).toHaveClass('visible')
+    expect(screen.getByTestId('runtime-pane-project')).toBeVisible()
     expect(runtimeWrapper).toHaveAttribute('data-active-workbench-pane', 'false')
-    expect(runtimeWrapper).toHaveClass('invisible')
+    expect(screen.getByTestId('runtime-pane-runtime-1')).not.toBeVisible()
   })
 
   test('uses standalone chat key to create a fresh new chat pane', async () => {

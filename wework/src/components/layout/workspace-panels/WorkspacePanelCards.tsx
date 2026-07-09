@@ -30,6 +30,7 @@ import type { WorkspaceTarget } from '@/types/workspace-files'
 import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
 import { RemoteTerminal } from './RemoteTerminal'
+import { clearTerminalOutput } from './terminalOutputBuffer'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 
 interface WorkspacePanelCardsProps {
@@ -47,6 +48,7 @@ interface WorkspacePanelCardsProps {
   panelActive?: boolean
   testIdsEnabled?: boolean
   onTerminalTitleChange?: (title: string) => void
+  onLocalTerminalSessionsChange?: (sessionIds: string[]) => void
 }
 
 type WorkspaceTool = 'terminal' | 'ide' | 'desktop'
@@ -144,6 +146,7 @@ export function WorkspacePanelCards({
   panelActive = true,
   testIdsEnabled = true,
   onTerminalTitleChange,
+  onLocalTerminalSessionsChange,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
   const testId = useCallback(
@@ -268,14 +271,12 @@ export function WorkspacePanelCards({
   }, [activeTerminalTitle, onTerminalTitleChange])
 
   useEffect(() => {
-    return () => {
-      terminalSessionsRef.current.forEach(session => {
-        if (session.terminal_kind === 'local') {
-          void closeLocalTerminal(session.session_id)
-        }
-      })
-    }
-  }, [])
+    onLocalTerminalSessionsChange?.(
+      terminalSessions
+        .filter(session => session.terminal_kind === 'local')
+        .map(session => session.session_id)
+    )
+  }, [onLocalTerminalSessionsChange, terminalSessions])
 
   useEffect(() => {
     if (terminalProjectKeyRef.current === null) {
@@ -519,11 +520,13 @@ export function WorkspacePanelCards({
     if (session?.terminal_kind === 'local') {
       void closeLocalTerminal(sessionId)
     }
+    clearTerminalOutput(sessionId)
 
     removeTerminalSession(sessionId)
   }
 
   const handleTerminalSessionExit = (sessionId: string) => {
+    clearTerminalOutput(sessionId)
     removeTerminalSession(sessionId)
   }
 

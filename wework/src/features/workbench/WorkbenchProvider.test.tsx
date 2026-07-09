@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createContext, StrictMode, useContext, useEffect, useMemo, useState } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -710,6 +710,20 @@ function RuntimePaneSendProbe() {
       <span data-testid="runtime-local-task-titles">
         {runtimeTasks.map(task => task.title).join('|')}
       </span>
+      <button
+        type="button"
+        onClick={() => {
+          const task = runtimeTasks[0]
+          if (!task) return
+          void workbench.openRuntimeTask({
+            deviceId: 'device-1',
+            taskId: task.taskId,
+            workspacePath: task.workspacePath,
+          })
+        }}
+      >
+        open first runtime task
+      </button>
       <CachedWorkbenchPaneStack
         activePane={{
           currentRuntimeTask: workbench.state.currentRuntimeTask,
@@ -717,10 +731,15 @@ function RuntimePaneSendProbe() {
           standaloneChatKey: workbench.state.standaloneChatKey,
         }}
         maxPanes={10}
+        activeTestId="active-runtime-pane"
         renderPane={pane => <RuntimePaneStackItem pane={pane} />}
       />
     </div>
   )
+}
+
+function activeRuntimePane() {
+  return within(screen.getByTestId('active-runtime-pane'))
 }
 
 function RuntimePaneStackItem({ pane }: { pane: WorkbenchPaneIdentity }) {
@@ -2654,9 +2673,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<RuntimePaneSendProbe />, services)
 
     await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
-    await userEvent.click(await screen.findByText('select mapped project workspace'))
-    await userEvent.click(screen.getByText('set pane input'))
-    await userEvent.click(screen.getByText('send pane input'))
+    await userEvent.click(activeRuntimePane().getByText('select mapped project workspace'))
+    await userEvent.click(activeRuntimePane().getByText('set pane input'))
+    await userEvent.click(activeRuntimePane().getByText('send pane input'))
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     await waitFor(() =>
@@ -2664,7 +2683,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         'device-1:runtime-created:/workspace/project-alpha'
       )
     )
-    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
+    expect(activeRuntimePane().getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
     expect(screen.getByTestId('runtime-local-task-count')).toHaveTextContent('1')
     expect(screen.getByTestId('runtime-local-task-titles')).toHaveTextContent('修复 CI')
   })
@@ -2714,14 +2733,14 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderStrictWorkbench(<RuntimePaneSendProbe />, services)
 
     await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
-    await userEvent.click(await screen.findByText('select mapped project workspace'))
-    await userEvent.click(screen.getByText('set pane goal'))
-    expect(screen.getByTestId('pane-goal-draft-active')).toHaveTextContent('active')
-    await userEvent.click(screen.getByText('set pane input'))
-    await userEvent.click(screen.getByText('send pane input'))
+    await userEvent.click(activeRuntimePane().getByText('select mapped project workspace'))
+    await userEvent.click(activeRuntimePane().getByText('set pane goal'))
+    expect(activeRuntimePane().getByTestId('pane-goal-draft-active')).toHaveTextContent('active')
+    await userEvent.click(activeRuntimePane().getByText('set pane input'))
+    await userEvent.click(activeRuntimePane().getByText('send pane input'))
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
-    expect(screen.getByTestId('pane-goal-objective')).toHaveTextContent('修复 CI')
+    expect(activeRuntimePane().getByTestId('pane-goal-objective')).toHaveTextContent('修复 CI')
 
     const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
     await act(async () => {
@@ -2740,7 +2759,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         `device-1:${request.taskId}:/workspace/project-alpha`
       )
     )
-    expect(screen.getByTestId('pane-goal-objective')).toHaveTextContent('修复 CI')
+    expect(activeRuntimePane().getByTestId('pane-goal-objective')).toHaveTextContent('修复 CI')
   })
 
   test('keeps the sent user message when transcript loading effects replay', async () => {
@@ -2790,16 +2809,16 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderStrictWorkbench(<RuntimePaneSendProbe />, services)
 
     await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
-    await userEvent.click(await screen.findByText('select mapped project workspace'))
-    await userEvent.click(screen.getByText('set pane input'))
-    await userEvent.click(screen.getByText('send pane input'))
+    await userEvent.click(activeRuntimePane().getByText('select mapped project workspace'))
+    await userEvent.click(activeRuntimePane().getByText('set pane input'))
+    await userEvent.click(activeRuntimePane().getByText('send pane input'))
 
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
         'device-1:runtime-created:/workspace/project-alpha'
       )
     )
-    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
+    expect(activeRuntimePane().getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
   })
 
   test('starts a fresh project pane after creating a runtime task in the same project', async () => {
@@ -2849,25 +2868,125 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<RuntimePaneSendProbe />, services)
 
     await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
-    await userEvent.click(await screen.findByText('select mapped project workspace'))
-    await userEvent.click(screen.getByText('set pane input'))
-    await userEvent.click(screen.getByText('send pane input'))
+    await userEvent.click(activeRuntimePane().getByText('select mapped project workspace'))
+    await userEvent.click(activeRuntimePane().getByText('set pane input'))
+    await userEvent.click(activeRuntimePane().getByText('send pane input'))
 
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
         'device-1:runtime-created:/workspace/project-alpha'
       )
     )
-    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
+    expect(activeRuntimePane().getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
 
-    await userEvent.click(screen.getByText('start new project task'))
+    await userEvent.click(activeRuntimePane().getByText('start new project task'))
 
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
     )
-    expect(screen.getByTestId('active-pane-key')).toHaveTextContent('project:7')
-    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('')
-    expect(screen.getByTestId('pane-goal-draft-active')).toHaveTextContent('inactive')
+    expect(activeRuntimePane().getByTestId('active-pane-key')).toHaveTextContent('project:7')
+    expect(activeRuntimePane().getByTestId('pane-message-roles')).toHaveTextContent('')
+    expect(activeRuntimePane().getByTestId('pane-goal-draft-active')).toHaveTextContent('inactive')
+  })
+
+  test('keeps streaming inactive runtime pane content and shows it when reopened', async () => {
+    const streamHandlers: ChatStreamHandlers[] = []
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      streamHandlers.push(handlers)
+      return vi.fn(() => {
+        const index = streamHandlers.indexOf(handlers)
+        if (index >= 0) streamHandlers.splice(index, 1)
+      })
+    })
+    const initialRuntimeWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [],
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(initialRuntimeWork),
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-1',
+        taskId: 'runtime-created',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+      }),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-created',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'claude_code',
+        messages: [],
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: {
+        subscribe,
+      } as unknown as WorkbenchServices['chatStream'],
+    })
+
+    renderWorkbench(<RuntimePaneSendProbe />, services)
+
+    await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
+    await userEvent.click(activeRuntimePane().getByText('select mapped project workspace'))
+    await userEvent.click(activeRuntimePane().getByText('set pane input'))
+    await userEvent.click(activeRuntimePane().getByText('send pane input'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-created:/workspace/project-alpha'
+      )
+    )
+
+    await userEvent.click(activeRuntimePane().getByText('start new project task'))
+    await waitFor(() =>
+      expect(activeRuntimePane().getByTestId('active-pane-key')).toHaveTextContent('project:7')
+    )
+    await waitFor(() => expect(streamHandlers.some(handler => handler.onChatChunk)).toBe(true))
+
+    act(() => {
+      streamHandlers.forEach(handler => {
+        handler.onChatStart?.({
+          taskId: 'runtime-created',
+          subtaskId: 'inactive-subtask',
+          timestamp: Date.now(),
+          deviceId: 'device-1',
+        })
+        handler.onChatChunk?.({
+          taskId: 'runtime-created',
+          subtaskId: 'inactive-subtask',
+          content: 'inactive streamed answer',
+          offset: 0,
+          deviceId: 'device-1',
+        })
+      })
+    })
+
+    await userEvent.click(screen.getByText('open first runtime task'))
+
+    await waitFor(() =>
+      expect(activeRuntimePane().getByTestId('pane-message-roles')).toHaveTextContent(
+        'assistant:inactive streamed answer'
+      )
+    )
   })
 
   test('keeps streamed assistant content when the resolved address adds a workspace path', async () => {
@@ -2926,9 +3045,9 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<RuntimePaneSendProbe />, services)
 
     await waitFor(() => expect(screen.getByTestId('runtime-project-count')).toHaveTextContent('1'))
-    await userEvent.click(await screen.findByText('select mapped project workspace'))
-    await userEvent.click(screen.getByText('set pane input'))
-    await userEvent.click(screen.getByText('send pane input'))
+    await userEvent.click(activeRuntimePane().getByText('select mapped project workspace'))
+    await userEvent.click(activeRuntimePane().getByText('set pane input'))
+    await userEvent.click(activeRuntimePane().getByText('send pane input'))
 
     await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
     const request = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
@@ -2952,7 +3071,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
     await waitFor(() =>
-      expect(screen.getByTestId('pane-message-roles')).toHaveTextContent(
+      expect(activeRuntimePane().getByTestId('pane-message-roles')).toHaveTextContent(
         'assistant:streamed answer'
       )
     )
@@ -2973,8 +3092,10 @@ describe('WorkbenchProvider runtime tasks', () => {
         `device-1:${request.taskId}:/workspace/project-alpha`
       )
     )
-    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
-    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('assistant:streamed answer')
+    expect(activeRuntimePane().getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
+    expect(activeRuntimePane().getByTestId('pane-message-roles')).toHaveTextContent(
+      'assistant:streamed answer'
+    )
   })
 
   afterEach(() => {

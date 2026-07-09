@@ -13,8 +13,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import {
   canUseEmbeddedBrowser,
-  closeEmbeddedBrowser,
-  consumeEmbeddedBrowserLabelTransfer,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   evalEmbeddedBrowser,
   evalEmbeddedBrowserJson,
@@ -709,11 +707,13 @@ export function WorkspaceBrowserPanel({
         }, EMBEDDED_BROWSER_READY_TIMEOUT_MS)
 
         const pageState = await openEmbeddedBrowser(currentUrl, bounds, label)
+        nativeBrowserOpenRef.current = true
         if (disposed) {
-          await closeEmbeddedBrowser(label).catch(() => undefined)
+          await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label).catch(
+            () => undefined
+          )
           return
         }
-        nativeBrowserOpenRef.current = true
         updatePageUrl(pageState.url || currentUrl)
         schedulePostOpenBoundsSync(active)
         if (readyTimer !== null) window.clearTimeout(readyTimer)
@@ -917,14 +917,6 @@ export function WorkspaceBrowserPanel({
       window.clearInterval(intervalId)
     }
   }, [active, activePageUrl, annotationMode, embeddedBrowserAvailable, label, onAddCodeComment])
-
-  useEffect(() => {
-    return () => {
-      nativeBrowserOpenRef.current = false
-      if (consumeEmbeddedBrowserLabelTransfer(label)) return
-      void closeEmbeddedBrowser(label).catch(() => undefined)
-    }
-  }, [label])
 
   useEffect(() => {
     const handleDebugPanelVisibility = (event: Event) => {

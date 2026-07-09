@@ -22,11 +22,12 @@ import type { EnvironmentDiffMode } from '@/api/environment'
 import type { WorkspaceFileOpenRequest, WorkspaceTarget } from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
+import { RightWorkspacePanel } from './workspace-panels/RightWorkspacePanel'
 import {
-  RightWorkspacePanel,
+  isRightWorkspaceChatTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
-} from './workspace-panels/RightWorkspacePanel'
+} from './workspace-panels/rightWorkspacePanelTypes'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { useResizableRightSplitChat } from './workspace-panels/useResizableWorkspacePanel'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
@@ -39,10 +40,14 @@ import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { closeLocalTerminal } from '@/lib/local-terminal'
+import { clearTerminalOutput } from './workspace-panels/terminalOutputBuffer'
 import {
+  closeEmbeddedBrowser,
   listenEmbeddedBrowserOpenRequests,
   markEmbeddedBrowserLabelTransferred,
   relabelEmbeddedBrowser,
+  setEmbeddedBrowserBounds,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
 import { TaskForkDialog } from './TaskForkDialog'
@@ -79,6 +84,7 @@ import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
+import { disposeTemporaryChatPanel } from './workspace-panels/temporaryChatPanelLifecycle'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
@@ -210,7 +216,10 @@ interface DesktopWorkbenchMainProps {
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
+  const activePaneKey = getWorkbenchPaneKey(props.activePane)
+  const previousActivePaneKeyRef = useRef(activePaneKey)
   const [terminalPinnedPaneKeys, setTerminalPinnedPaneKeys] = useState<string[]>([])
+  const localTerminalSessionsByPaneRef = useRef(new Map<string, string[]>())
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
@@ -240,6 +249,42 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const unpinTerminalPane = useCallback((paneKey: string) => {
     setTerminalPinnedPaneKeys(current => current.filter(key => key !== paneKey))
   }, [])
+  const updatePaneLocalTerminalSessions = useCallback((paneKey: string, sessionIds: string[]) => {
+    if (sessionIds.length > 0) {
+      localTerminalSessionsByPaneRef.current.set(paneKey, sessionIds)
+    } else {
+      localTerminalSessionsByPaneRef.current.delete(paneKey)
+    }
+  }, [])
+  const closePrunedPaneResources = useCallback((paneKeys: string[]) => {
+    paneKeys.forEach(paneKey => {
+      void closeEmbeddedBrowser(getEmbeddedBrowserLabelForPaneKey(paneKey)).catch(() => undefined)
+    })
+  }, [])
+
+  useEffect(() => {
+    const previousPaneKey = previousActivePaneKeyRef.current
+    if (previousPaneKey === activePaneKey) return
+    previousActivePaneKeyRef.current = activePaneKey
+    void setEmbeddedBrowserBounds(
+      { x: 0, y: 0, width: 1, height: 1 },
+      false,
+      getEmbeddedBrowserLabelForPaneKey(previousPaneKey)
+    ).catch(() => undefined)
+  }, [activePaneKey])
+
+  useEffect(() => {
+    if (prunedPaneKeys.length === 0) return
+
+    prunedPaneKeys.forEach(paneKey => {
+      const sessionIds = localTerminalSessionsByPaneRef.current.get(paneKey) ?? []
+      sessionIds.forEach(sessionId => {
+        void closeLocalTerminal(sessionId)
+        clearTerminalOutput(sessionId)
+      })
+      localTerminalSessionsByPaneRef.current.delete(paneKey)
+    })
+  }, [prunedPaneKeys])
 
   return (
     <CachedWorkbenchPaneStack
@@ -248,6 +293,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       pinnedKeys={pinnedPaneKeys}
       prunedKeys={prunedPaneKeys}
       activeTestId="desktop-workbench-main"
+      onPrunedKeys={closePrunedPaneResources}
       renderPane={pane => (
         <DesktopWorkbenchPane
           pane={pane}
@@ -256,6 +302,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
           onTerminalPanePinned={pinTerminalPane}
           onTerminalPaneUnpinned={unpinTerminalPane}
+          onLocalTerminalSessionsChange={updatePaneLocalTerminalSessions}
         />
       )}
     />
@@ -269,6 +316,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onSidebarCollapsedChange,
   onTerminalPanePinned,
   onTerminalPaneUnpinned,
+  onLocalTerminalSessionsChange,
 }: {
   pane: WorkbenchPaneIdentity
   sidebarCollapsed: boolean
@@ -276,6 +324,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onSidebarCollapsedChange: (collapsed: boolean) => void
   onTerminalPanePinned: (paneKey: string) => void
   onTerminalPaneUnpinned: (paneKey: string) => void
+  onLocalTerminalSessionsChange: (paneKey: string, sessionIds: string[]) => void
 }) {
   const {
     state,
@@ -674,6 +723,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      if (tab === 'browser') {
+        void closeEmbeddedBrowser(embeddedBrowserLabel).catch(() => undefined)
+      } else if (isRightWorkspaceChatTab(tab)) {
+        disposeTemporaryChatPanel(tab)
+      }
       setRightPanelTabs(current => {
         const currentTabs = current.includes(tab) ? current : [...current, tab]
         const next = currentTabs.filter(openTab => openTab !== tab)
@@ -688,7 +742,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
     },
-    [rightPanelView, setRightPanelOpen, setRightPanelTabs, setRightPanelView]
+    [embeddedBrowserLabel, rightPanelView, setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
 
   const openReviewFromDiffLoader = useCallback(
@@ -1502,6 +1556,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onTerminalPaneUnpinned(paneKey)
               }
             }}
+            onLocalTerminalSessionsChange={sessionIds =>
+              onLocalTerminalSessionsChange(paneKey, sessionIds)
+            }
           />
         )
       })}
@@ -1546,4 +1603,14 @@ function sanitizeEmbeddedBrowserLabelSegment(value: string) {
     .split('')
     .map(character => (/^[a-zA-Z0-9_-]$/.test(character) ? character : '-'))
     .join('')
+}
+
+function getEmbeddedBrowserLabelForPaneKey(paneKey: string): string {
+  if (paneKey.startsWith('runtime:')) {
+    const [, , ...taskIdParts] = paneKey.split(':')
+    const taskId = taskIdParts.join(':') || paneKey
+    return `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(taskId)}`
+  }
+
+  return `workspace-browser-${sanitizeEmbeddedBrowserLabelSegment(paneKey)}`
 }

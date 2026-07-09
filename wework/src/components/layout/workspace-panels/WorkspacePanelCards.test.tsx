@@ -475,15 +475,25 @@ describe('WorkspacePanelCards', () => {
     expect(screen.queryByTestId('workspace-local-device-limited-tools')).not.toBeInTheDocument()
   })
 
-  test('closes local terminal sessions when the workspace panel unmounts', async () => {
-    const { unmount } = render(<WorkspacePanelCards currentProject={project} devices={[]} />)
+  test('reports local terminal sessions and keeps them alive when the panel unmounts', async () => {
+    const onLocalTerminalSessionsChange = vi.fn()
+    const { unmount } = render(
+      <WorkspacePanelCards
+        currentProject={project}
+        devices={[]}
+        onLocalTerminalSessionsChange={onLocalTerminalSessionsChange}
+      />
+    )
 
     await userEvent.click(await screen.findByTestId('workspace-terminal-card'))
     await waitFor(() => expect(startLocalTerminalMock).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(onLocalTerminalSessionsChange).toHaveBeenLastCalledWith(['local-terminal-1'])
+    )
 
     unmount()
 
-    expect(closeLocalTerminalMock).toHaveBeenCalledWith('local-terminal-1')
+    expect(closeLocalTerminalMock).not.toHaveBeenCalledWith('local-terminal-1')
   })
 
   test('closes local terminal sessions when the workspace target changes', async () => {

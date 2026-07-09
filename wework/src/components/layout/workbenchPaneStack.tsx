@@ -1,6 +1,7 @@
-/* eslint-disable react-hooks/refs -- Inactive workbench panes are intentionally cached in refs so their local UI state survives pane switches. */
+/* eslint-disable react-hooks/refs -- Inactive workbench panes are intentionally cached in refs so Activity can restore their UI state. */
 /* eslint-disable react-refresh/only-export-components -- The stack exports pane identity helpers used by layout modules. */
 import {
+  Activity,
   createContext,
   memo,
   useContext,
@@ -63,6 +64,7 @@ interface CachedWorkbenchPaneStackProps {
   prunedKeys?: string[]
   className?: string
   activeTestId?: string
+  onPrunedKeys?: (keys: string[]) => void
   renderPane: (pane: WorkbenchPaneIdentity) => ReactNode
 }
 
@@ -73,6 +75,7 @@ export function CachedWorkbenchPaneStack({
   prunedKeys = [],
   className,
   activeTestId,
+  onPrunedKeys,
   renderPane,
 }: CachedWorkbenchPaneStackProps) {
   const activeKey = getWorkbenchPaneKey(activePane)
@@ -84,6 +87,7 @@ export function CachedWorkbenchPaneStack({
   const paneCacheRef = useRef<Map<string, WorkbenchPaneIdentity>>(new Map())
   const [cachedKeys, setCachedKeys] = useState<string[]>(() => [activeKey])
   const cachedKeysRef = useRef<string[]>(cachedKeys)
+  const previousCachedKeysRef = useRef<string[]>(cachedKeys)
   const recentKeysRef = useRef<string[]>([activeKey])
   cachedKeysRef.current = cachedKeys
 
@@ -118,6 +122,15 @@ export function CachedWorkbenchPaneStack({
     })
   }, [activeKey, maxPanes, pinnedKeySet, prunedKeySet])
 
+  useEffect(() => {
+    const previousKeys = previousCachedKeysRef.current
+    const removedKeys = previousKeys.filter(key => !cachedKeys.includes(key))
+    previousCachedKeysRef.current = cachedKeys
+    if (removedKeys.length > 0) {
+      onPrunedKeys?.(removedKeys)
+    }
+  }, [cachedKeys, onPrunedKeys])
+
   const renderKeys = getStableCachedPaneKeys(
     cachedKeys.filter(key => !prunedKeySet.has(key)),
     activeKey,
@@ -139,12 +152,11 @@ export function CachedWorkbenchPaneStack({
               data-active-workbench-pane={active ? 'true' : 'false'}
               data-testid={active ? activeTestId : undefined}
               aria-hidden={!active}
-              className={cn(
-                'absolute inset-0 min-w-0 overflow-hidden',
-                active ? 'visible z-10' : 'invisible pointer-events-none z-0'
-              )}
+              className={cn('absolute inset-0 min-w-0 overflow-hidden', active ? 'z-10' : 'z-0')}
             >
-              <CachedWorkbenchPane pane={pane} renderPane={renderPane} />
+              <Activity mode={active ? 'visible' : 'hidden'}>
+                <CachedWorkbenchPane pane={pane} renderPane={renderPane} />
+              </Activity>
             </div>
           </WorkbenchPaneActiveContext.Provider>
         )
