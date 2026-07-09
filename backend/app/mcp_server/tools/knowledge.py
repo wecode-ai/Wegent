@@ -30,6 +30,7 @@ from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.server import EXTERNAL_KNOWLEDGE_MCP_MOUNT_PATH
 from app.mcp_server.tools.decorator import build_mcp_tools_dict, mcp_tool
 from app.models.user import User
+from app.services.knowledge import KnowledgeFolderService
 from app.services.knowledge.external_document_access import (
     DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
     DOWNLOAD_TOKEN_HEADER,
@@ -38,7 +39,6 @@ from app.services.knowledge.external_document_access import (
     get_document_access_or_raise,
     normalize_disposition,
 )
-from app.services.knowledge import KnowledgeFolderService
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
     MAX_DOCUMENT_READ_LIMIT,
