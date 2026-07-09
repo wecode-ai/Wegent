@@ -501,7 +501,7 @@ export function DocumentList({
   const canManageDocument = (_document: KnowledgeDocument) => canManageDocumentArea
 
   const canSelectDocument = (document: KnowledgeDocument) =>
-    Boolean(onSelectionChange) || (canManageAllDocuments && canManageDocument(document))
+    Boolean(onSelectionChange) || canManageDocument(document)
 
   const folderSelectionBlocksDocumentBatchActions = selectionSummary.hasFolderScopeSelection
   const documentBatchActionsDisabled = shouldDisableDocumentBatchActions({
@@ -1110,7 +1110,7 @@ export function DocumentList({
       ) : documents.length > 0 || folders.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
-          {canManageAllDocuments && selectionSummary.canTransfer && !onSelectionChange && (
+          {canManageDocumentArea && selectionSummary.canTransfer && !onSelectionChange && (
             <div
               className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
             >
@@ -1237,7 +1237,7 @@ export function DocumentList({
                 onRenameFolder={canManageDocumentArea ? handleRenameFolder : undefined}
                 onDeleteFolder={canManageDocumentArea ? handleDeleteFolderClick : undefined}
                 canManageFolders={canManageDocumentArea}
-                canSelectFolders={canManageAllDocuments && !onSelectionChange}
+                canSelectFolders={canManageDocumentArea && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
                 activeFolderId={activeFolderId}
@@ -1263,7 +1263,7 @@ export function DocumentList({
                 treeIndex={resourceTree.index}
                 folders={folders}
                 documents={documents}
-                showSelectionColumn={canManageAllDocuments}
+                showSelectionColumn={canManageDocumentArea}
                 showActionsColumn={canManageAnyDocuments}
                 sortField={sortField}
                 sortOrder={sortOrder}
@@ -1288,16 +1288,16 @@ export function DocumentList({
                 refreshingDocId={refreshingDocId}
                 reindexingDocId={reindexingDocId}
                 canManage={canManageDocument}
-                canSelect={doc => canSelectDocument(doc) && canManageAllDocuments}
+                canSelect={canSelectDocument}
                 selectedDocumentIds={selectedDocumentIds}
                 includedInFolderScope={isDocumentIncludedInFolderScope}
-                onSelect={canManageAllDocuments ? handleSelectDoc : undefined}
+                onSelect={canManageDocumentArea ? handleSelectDoc : undefined}
                 ragConfigured={ragConfigured}
                 onCreateFolder={canManageDocumentArea ? handleCreateFolder : undefined}
                 onRenameFolder={canManageDocumentArea ? handleRenameFolder : undefined}
                 onDeleteFolder={canManageDocumentArea ? handleDeleteFolderClick : undefined}
                 canManageFolders={canManageDocumentArea}
-                canSelectFolders={canManageAllDocuments && !onSelectionChange}
+                canSelectFolders={canManageDocumentArea && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
                 activeFolderId={activeFolderId}
