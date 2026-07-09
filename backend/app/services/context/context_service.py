@@ -45,7 +45,7 @@ from shared.utils.attachment_block import (
     truncate_for_injection,
 )
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
-from shared.utils.multimodal_ext import is_multimodal_extension
+from shared.utils.multimodal_ext import multimodal_media_type
 
 logger = logging.getLogger(__name__)
 
@@ -257,11 +257,13 @@ class ContextService:
         extension: str,
     ) -> Optional[TruncationInfo]:
         """Parse attachment data and update context fields."""
-        # Multimodal files (video/image) are not text-parseable. They are
-        # analyzed by the Gemini multimodal pipeline (convert_multimodal task)
-        # which produces Markdown. Skip text extraction here — the file is
-        # stored as binary and the converter fetches it via the download endpoint.
-        if is_multimodal_extension(extension):
+        # Video attachments are not text-parseable and cannot be inlined as
+        # base64 for the model — skip text extraction and leave the binary
+        # stored as-is. Images are NOT skipped: they go through the parser
+        # below so their base64 is extracted and sent to vision models (chat
+        # image upload). KB multimodal files use a separate context path
+        # (create_knowledge_base_context), so this only governs chat attachments.
+        if multimodal_media_type(extension) == "video":
             context.extracted_text = ""
             context.text_length = 0
             context.image_base64 = ""
