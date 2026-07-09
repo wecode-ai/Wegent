@@ -71,7 +71,7 @@ function createPaneStatus({
     isAssistantStreaming,
     isResponseActive,
     isBusy,
-    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant,
+    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant || taskRunning,
     canSendQueuedMessage: !isBusy,
   }
 }

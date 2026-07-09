@@ -37,7 +37,7 @@ use super::{
     codex_notifications::codex_notification,
     codex_rollout::{
         append_rollout_turns_from_offset, rollout_context_usage, rollout_turns,
-        thread_with_rollout_running_status, thread_with_rollout_turns, thread_with_turns,
+        thread_with_rollout_turns, thread_with_turns,
     },
     events::{emit_response_event, CodexNotificationEventMapper},
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
@@ -509,15 +509,53 @@ impl RuntimeWorkRpcHandler {
 
     async fn list_tasks(&self) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
+        log_runtime_work_list_diagnostic("started", started_at, started_at, &[]);
+        let stage_started_at = Instant::now();
         let project_index = CodexGlobalProjectIndex::load();
-        let links =
-            self.visible_links_for_projects(self.collect_links(false).await, &project_index);
+        log_runtime_work_list_diagnostic(
+            "project_index_loaded",
+            started_at,
+            stage_started_at,
+            &[
+                ("projects", project_index.projects().len().to_string()),
+                (
+                    "project_state_loaded",
+                    project_index.has_project_state().to_string(),
+                ),
+            ],
+        );
+        let stage_started_at = Instant::now();
+        let collected_links = self.collect_links(false).await;
+        log_runtime_work_list_diagnostic(
+            "links_collected",
+            started_at,
+            stage_started_at,
+            &[("links", collected_links.len().to_string())],
+        );
+        let stage_started_at = Instant::now();
+        let links = self.visible_links_for_projects(collected_links, &project_index);
+        log_runtime_work_list_diagnostic(
+            "project_filter_applied",
+            started_at,
+            stage_started_at,
+            &[("visible_links", links.len().to_string())],
+        );
+        let stage_started_at = Instant::now();
         let workspaces = workspace_response(links, codex_project_workspaces(&project_index));
         let task_count = workspaces
             .iter()
             .filter_map(|workspace| workspace.get("tasks").and_then(Value::as_array))
             .map(Vec::len)
             .sum::<usize>();
+        log_runtime_work_list_diagnostic(
+            "response_built",
+            started_at,
+            stage_started_at,
+            &[
+                ("workspaces", workspaces.len().to_string()),
+                ("tasks", task_count.to_string()),
+            ],
+        );
         log_executor_event(
             "runtime work list finished",
             &[
@@ -2415,13 +2453,25 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn collect_links(&self, archived: bool) -> Vec<RuntimeTaskLink> {
+        let started_at = Instant::now();
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
         let mut discovered_codex_task_signatures = HashSet::new();
 
-        for thread in self.codex_threads(archived).await {
+        let threads = self.codex_threads(archived).await;
+        let stage_started_at = Instant::now();
+        for thread in threads {
+            let thread_started_at = Instant::now();
+            let thread_id = string_field(&thread, "id").unwrap_or_else(|| "none".to_owned());
             if let Some(mut link) = self.link_from_thread(&thread) {
+                log_slow_runtime_collect_thread(
+                    archived,
+                    &thread_id,
+                    thread_started_at,
+                    &thread,
+                    &link,
+                );
                 if link.ephemeral {
                     continue;
                 }
@@ -2455,9 +2505,27 @@ impl RuntimeWorkRpcHandler {
                     discovered_codex_task_signatures.insert(signature);
                 }
                 links.push(link);
+            } else {
+                log_slow_runtime_collect_thread_missing(
+                    archived,
+                    &thread_id,
+                    thread_started_at,
+                    &thread,
+                );
             }
         }
+        log_runtime_collect_diagnostic(
+            "threads_linked",
+            archived,
+            started_at,
+            stage_started_at,
+            &[
+                ("links", links.len().to_string()),
+                ("threads", discovered_thread_ids.len().to_string()),
+            ],
+        );
 
+        let stage_started_at = Instant::now();
         for mut link in self.local_task_links(true) {
             if self.archived_link_is_deleted(&link) {
                 continue;
@@ -2493,6 +2561,13 @@ impl RuntimeWorkRpcHandler {
             link.list_order = Some(links.len());
             links.push(link);
         }
+        log_runtime_collect_diagnostic(
+            "local_links_merged",
+            archived,
+            started_at,
+            stage_started_at,
+            &[("links", links.len().to_string())],
+        );
 
         links
     }
@@ -2987,9 +3062,8 @@ impl RuntimeWorkRpcHandler {
         let workspace_path = string_field(thread, "cwd")
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());
-        let codex_thread = thread_with_rollout_running_status(thread);
-        let mut link = RuntimeTaskLink::from_thread(&codex_thread, local_link, workspace_path);
-        if let Some(path) = string_field(&codex_thread, "path") {
+        let mut link = RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path);
+        if let Some(path) = string_field(thread, "path") {
             let mut runtime_handle = link
                 .runtime_handle
                 .as_object()
@@ -3006,7 +3080,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn local_task_links(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
-        self.store.list_tasks(include_archived)
+        self.store.list_task_summaries(include_archived)
     }
 
     fn local_task_link(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
@@ -3058,7 +3132,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn local_task_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
-        self.store.find_by_thread_id(thread_id)
+        self.store.find_summary_by_thread_id(thread_id)
     }
 
     fn upsert_local_task(&self, link: RuntimeTaskLink) {
@@ -4594,6 +4668,159 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 .unwrap_or_else(|| json!({}));
             self.dispatch(&method, payload).await
         })
+    }
+}
+
+#[cfg(debug_assertions)]
+const SLOW_RUNTIME_COLLECT_THREAD_MS: u128 = 100;
+
+#[cfg(debug_assertions)]
+fn log_runtime_collect_diagnostic(
+    stage: &str,
+    archived: bool,
+    started_at: Instant,
+    stage_started_at: Instant,
+    fields: &[(&str, String)],
+) {
+    let mut diagnostic_fields = vec![
+        ("stage", stage.to_owned()),
+        ("archived", archived.to_string()),
+        ("elapsed_ms", elapsed_ms(started_at)),
+        ("stage_elapsed_ms", elapsed_ms(stage_started_at)),
+    ];
+    if let Some(rss_kb) = current_process_max_rss_kb() {
+        diagnostic_fields.push(("max_rss_kb", rss_kb.to_string()));
+    }
+    diagnostic_fields.extend(fields.iter().map(|(key, value)| (*key, value.clone())));
+    log_executor_event("runtime work collect diagnostic", &diagnostic_fields);
+}
+
+#[cfg(not(debug_assertions))]
+fn log_runtime_collect_diagnostic(
+    _stage: &str,
+    _archived: bool,
+    _started_at: Instant,
+    _stage_started_at: Instant,
+    _fields: &[(&str, String)],
+) {
+}
+
+#[cfg(debug_assertions)]
+fn log_slow_runtime_collect_thread(
+    archived: bool,
+    thread_id: &str,
+    started_at: Instant,
+    thread: &Value,
+    link: &RuntimeTaskLink,
+) {
+    let elapsed = started_at.elapsed().as_millis();
+    if elapsed < SLOW_RUNTIME_COLLECT_THREAD_MS {
+        return;
+    }
+    log_executor_event(
+        "runtime work collect slow thread",
+        &[
+            ("archived", archived.to_string()),
+            ("elapsed_ms", elapsed.to_string()),
+            ("thread_id", thread_id.to_owned()),
+            ("thread_json_bytes", debug_json_len(thread).to_string()),
+            ("local_task_id", link.local_task_id.clone()),
+            ("workspace_path", link.workspace_path.clone()),
+            ("status", link.status.clone()),
+        ],
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_slow_runtime_collect_thread(
+    _archived: bool,
+    _thread_id: &str,
+    _started_at: Instant,
+    _thread: &Value,
+    _link: &RuntimeTaskLink,
+) {
+}
+
+#[cfg(debug_assertions)]
+fn log_slow_runtime_collect_thread_missing(
+    archived: bool,
+    thread_id: &str,
+    started_at: Instant,
+    thread: &Value,
+) {
+    let elapsed = started_at.elapsed().as_millis();
+    if elapsed < SLOW_RUNTIME_COLLECT_THREAD_MS {
+        return;
+    }
+    log_executor_event(
+        "runtime work collect slow skipped thread",
+        &[
+            ("archived", archived.to_string()),
+            ("elapsed_ms", elapsed.to_string()),
+            ("thread_id", thread_id.to_owned()),
+            ("thread_json_bytes", debug_json_len(thread).to_string()),
+        ],
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_slow_runtime_collect_thread_missing(
+    _archived: bool,
+    _thread_id: &str,
+    _started_at: Instant,
+    _thread: &Value,
+) {
+}
+
+#[cfg(debug_assertions)]
+fn debug_json_len(value: &Value) -> usize {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .unwrap_or_default()
+}
+
+#[cfg(debug_assertions)]
+fn log_runtime_work_list_diagnostic(
+    stage: &str,
+    started_at: Instant,
+    stage_started_at: Instant,
+    fields: &[(&str, String)],
+) {
+    let mut diagnostic_fields = vec![
+        ("stage", stage.to_owned()),
+        ("elapsed_ms", elapsed_ms(started_at)),
+        ("stage_elapsed_ms", elapsed_ms(stage_started_at)),
+    ];
+    if let Some(rss_kb) = current_process_max_rss_kb() {
+        diagnostic_fields.push(("max_rss_kb", rss_kb.to_string()));
+    }
+    diagnostic_fields.extend(fields.iter().map(|(key, value)| (*key, value.clone())));
+    log_executor_event("runtime work list diagnostic", &diagnostic_fields);
+}
+
+#[cfg(not(debug_assertions))]
+fn log_runtime_work_list_diagnostic(
+    _stage: &str,
+    _started_at: Instant,
+    _stage_started_at: Instant,
+    _fields: &[(&str, String)],
+) {
+}
+
+#[cfg(debug_assertions)]
+fn current_process_max_rss_kb() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let max_rss = unsafe { usage.assume_init().ru_maxrss };
+    #[cfg(target_os = "macos")]
+    {
+        Some((max_rss as u64).saturating_div(1024))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Some(max_rss as u64)
     }
 }
 

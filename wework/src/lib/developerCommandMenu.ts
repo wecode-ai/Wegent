@@ -360,6 +360,7 @@ function renderDebugPanelBody(container: HTMLElement, snapshot: WorkbenchDebugSn
       `Active Task State (${formatRunningStateLabel(snapshot)})`,
       formatDebugJson(snapshot)
     ),
+    createDebugPanelSection('Memory Diagnostics', formatMemoryDiagnostics(snapshot)),
     createMessageStyleComparisonSection(snapshot),
     createDebugPanelSection(
       `Debug Logs (${snapshot.logs.length}/${snapshot.logLimit})`,
@@ -542,6 +543,13 @@ function formatDebugJson(snapshot: WorkbenchDebugSnapshot): string {
     null,
     2
   )
+}
+
+function formatMemoryDiagnostics(snapshot: WorkbenchDebugSnapshot): string {
+  const memory = snapshot.pane?.memory
+  if (!memory) return 'No runtime pane memory snapshot has been captured yet.'
+
+  return JSON.stringify(memory, null, 2)
 }
 
 function formatDebugLogs(snapshot: WorkbenchDebugSnapshot): string {

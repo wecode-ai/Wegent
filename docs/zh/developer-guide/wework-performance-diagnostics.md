@@ -37,6 +37,23 @@ Developer Commands 菜单中的 **Debug Panel** 用于排查 Wework 当前运行
 
 Debug 面板可以展开、收起、刷新、复制快照和清空日志。收起后只保留右下角状态条，避免遮挡主界面。
 
+### Runtime 内存快照
+
+Debug 面板的快照会附带当前 runtime pane 的轻量内存摘要，用于定位 WebView 或 executor 内存异常：
+
+- 消息数量、角色分布、状态分布和正文长度汇总。
+- processing block 数量、类型分布和工具输出长度汇总。
+- 队列消息、guidance 消息、代码评论上下文和 transcript 范围状态。
+- 当前 runtime task 在 work list 中的 `running` 原始值，以及由 pane 推导出的运行状态。
+
+快照只记录摘要，不会把完整命令输出、原始 Codex 事件或完整 transcript 内容复制到 Debug 面板。需要排查原始内容时应查看 executor 日志或 Web Inspector 采样，而不是通过前端快照搬运大文本。
+
+## Runtime transcript 与列表载荷
+
+为降低前端和 executor 的内存压力，runtime task 列表、runtime handle 摘要和 transcript 响应只保留 UI 必需字段。命令输出、streaming delta、cached message、原始请求/响应等大块原始载荷不会放进 runtime work list 发送给前端。
+
+前端显示对话时仍以 transcript/message action 生成的 `WorkbenchMessage` 为准；任务列表和状态轮询只用于状态、标题、运行态和 workspace 信息。排查“列表很慢”或“切换任务内存上涨”时，应优先确认是否又把原始消息或命令输出加入了 runtime list/handle/transcript 元数据路径。
+
 ## 本地 Codex 流式日志
 
 本地 executor 的 Codex 调试日志默认保留 delta 详情，便于定位流式输出顺序、阶段识别和最终内容覆盖问题。默认会记录 Codex 原始 delta 与运行态分类摘要。

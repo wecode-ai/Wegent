@@ -153,8 +153,11 @@ export const MessageList = memo(function MessageList({
     editingMessageId === editableLastUserMessageId ? editingMessageId : null
   const activeSubmittingEditMessageId =
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
+  const lastVisibleMessage = visibleMessages.at(-1)
+  const waitingForAssistantTurn = !lastVisibleMessage || lastVisibleMessage.role === 'user'
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
+    waitingForAssistantTurn &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
   const disableMessageContentVisibility =
     disableContentVisibility || isTextSelectionActive || isTauri

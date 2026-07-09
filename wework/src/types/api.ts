@@ -1615,6 +1615,8 @@ export interface ChatBlock {
   tool_name?: string
   tool_input?: Record<string, unknown>
   tool_output?: unknown
+  tool_output_truncated?: boolean
+  tool_output_original_bytes?: number
   render_payload?: unknown
   renderPayload?: unknown
   file_changes?: TurnFileChangesSummary
@@ -1640,6 +1642,9 @@ export interface ChatBlockUpdatedPayload {
   toolOutput?: unknown
   toolOutputDelta?: string
   toolOutputTruncated?: boolean
+  toolOutputOriginalBytes?: number
+  tool_output_truncated?: boolean
+  tool_output_original_bytes?: number
   toolInput?: Record<string, unknown>
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'

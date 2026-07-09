@@ -95,8 +95,10 @@ describe('developerCommandMenu', () => {
 
     expect(document.getElementById('wework-debug-panel')).toBeInTheDocument()
     expect(document.body).toHaveTextContent('Active Task State (taskKnown=true')
+    expect(document.body).toHaveTextContent('Memory Diagnostics')
     expect(document.body).toHaveTextContent('Transcript vs Streaming Style')
     expect(document.body).toHaveTextContent('"taskId": "task-1"')
+    expect(document.body).toHaveTextContent('"toolOutputApproxChars": 128')
     expect(document.body).toHaveTextContent('Transcript Loaded')
     expect(document.body).toHaveTextContent('Current Streaming')
     expect(document.body).toHaveTextContent('loaded transcript response')
@@ -298,6 +300,46 @@ function createDebugSnapshot() {
         ],
         renderingRules: ['Streaming messages hide hover actions and suppress final artifacts.'],
       },
+      memory: {
+        messages: {
+          count: 2,
+          contentChars: 41,
+          blockCount: 2,
+          toolBlockCount: 1,
+          toolOutputApproxChars: 128,
+          renderPayloadApproxChars: 0,
+          attachmentCount: 0,
+          attachmentPathChars: 0,
+          referenceCount: 1,
+          memoryCitationCount: 0,
+          topToolOutputs: [
+            {
+              messageId: 'loaded-1',
+              blockId: 'tool-1',
+              toolName: 'bash',
+              status: 'done',
+              approxChars: 128,
+              outputType: 'string',
+            },
+          ],
+        },
+        currentRuntimeTask: {
+          hasRuntimeHandle: true,
+          runtimeHandleKeys: ['messages'],
+          runtimeHandleApproxChars: 256,
+          runtimeHandleEstimateTruncated: false,
+        },
+        transcript: {
+          loadedRangeCount: 1,
+          loadedRanges: [{ start: 0, end: 50 }],
+          loadedMessageSlots: 50,
+        },
+        dom: {
+          messageNodes: 2,
+          processingBlockNodes: 1,
+          codeBlocks: 1,
+        },
+      },
       queuedMessages: [],
       guidanceMessages: [],
       codeCommentContextCount: 0,
@@ -307,6 +349,7 @@ function createDebugSnapshot() {
         hasMoreBefore: false,
         loadingMoreBefore: false,
         turnNavigationCount: 0,
+        loadedRanges: [{ start: 0, end: 50 }],
       },
       subagentStatuses: [],
       goal: null,

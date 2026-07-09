@@ -29,6 +29,8 @@ export interface WorkbenchToolBlock extends BaseWorkbenchProcessingBlock {
   toolName: string
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
+  toolOutputTruncated?: boolean
+  toolOutputOriginalBytes?: number
   renderPayload?: unknown
 }
 
@@ -87,6 +89,8 @@ type ProcessingBlockUpdate = {
   toolInput?: Record<string, unknown>
   toolOutput?: unknown
   toolOutputDelta?: string
+  toolOutputTruncated?: boolean
+  toolOutputOriginalBytes?: number
   renderPayload?: unknown
   fileChanges?: unknown
   status?: WorkbenchToolBlockStatus
