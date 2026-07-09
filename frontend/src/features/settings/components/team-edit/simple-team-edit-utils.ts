@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { filterSelectableShells, type UnifiedShell } from '@/apis/shells'
-import type { TaskType } from '@/types/api'
+import type { Bot, TaskType } from '@/types/api'
 
 export type SimpleExecutorMode = 'simple' | 'complex' | 'custom'
 export type ExecutorNormalizationReason = 'requires_claude_code' | null
@@ -112,6 +112,25 @@ export function resolveShellForExecutor(
   }
 
   return getCustomShells(shells).find(shell => shell.name === customShellName) ?? null
+}
+
+export function resolveSimpleExecutorFromBot(bot: Bot | undefined): {
+  mode: SimpleExecutorMode
+  customShellName: string
+} {
+  if (!bot) {
+    return { mode: 'simple', customShellName: '' }
+  }
+
+  if (bot.shell_name === 'ClaudeCode') {
+    return { mode: 'complex', customShellName: '' }
+  }
+
+  if (bot.shell_name === 'Chat') {
+    return { mode: 'simple', customShellName: '' }
+  }
+
+  return { mode: 'custom', customShellName: bot.shell_name }
 }
 
 export function normalizeExecutorForBindMode(
