@@ -19,6 +19,10 @@ import {
   formatJsonContent,
   containsMarkdownSyntax,
 } from '@/utils/languageDetection'
+import {
+  isImageDocument,
+  InlineImageViewer,
+} from '@/features/knowledge/multimodal/components/InlineImageViewer'
 import { resolveWikiLink } from '../utils/wikiLinkResolver'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
@@ -84,6 +88,10 @@ export function DocumentContentViewer({
     if (!content) return false
     return isMarkdownFileExtension(document?.file_extension) || containsMarkdownSyntax(content)
   }, [content, document?.file_extension])
+
+  // Detect image documents: render the original image above the (Gemini-extracted)
+  // text content so the user can see both the picture and its multimodal analysis.
+  const isImageDocType = isImageDocument(document)
 
   // Handle wiki link clicks
   const handleWikiLinkClick = useCallback(
@@ -186,6 +194,15 @@ export function DocumentContentViewer({
   }
 
   if (!content) {
+    // Image documents show the picture even when extracted text is empty.
+    if (isImageDocType) {
+      return (
+        <InlineImageViewer
+          document={document}
+          className="p-4 bg-white rounded-lg border border-border"
+        />
+      )
+    }
     return (
       <div className="p-4 bg-surface rounded-lg border border-border text-center text-sm text-text-muted">
         {t('document.document.detail.noContent')}
@@ -195,6 +212,11 @@ export function DocumentContentViewer({
 
   return (
     <div className="p-4 bg-white rounded-lg border border-border">
+      {/* Image document: show the original image above the extracted text content */}
+      <InlineImageViewer
+        document={document}
+        className="mb-4 rounded-lg border border-border bg-surface p-2 flex justify-center"
+      />
       {/* Content display */}
       {isMarkdownContent && viewMode === 'preview' ? renderMarkdown() : renderRaw()}
 

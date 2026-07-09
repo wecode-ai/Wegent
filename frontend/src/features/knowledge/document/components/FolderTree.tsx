@@ -53,6 +53,7 @@ interface FolderTreeProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onReanalyze?: (doc: KnowledgeDocument) => void
   onMove?: (doc: KnowledgeDocument) => void
   refreshingDocId?: number | null
   reindexingDocId?: number | null
@@ -505,6 +506,7 @@ interface FolderTreeNodeProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onReanalyze?: (doc: KnowledgeDocument) => void
   onMove?: (doc: KnowledgeDocument) => void
   isRefreshing?: (docId: number) => boolean
   isReindexing?: (docId: number) => boolean
@@ -536,6 +538,7 @@ function FolderTreeNode({
   onDelete,
   onRefresh,
   onReindex,
+  onReanalyze,
   onMove,
   isRefreshing,
   isReindexing,
@@ -574,6 +577,7 @@ function FolderTreeNode({
             onDelete={onDelete ? () => onDelete(doc) : undefined}
             onRefresh={onRefresh ? () => onRefresh(doc) : undefined}
             onReindex={onReindex ? () => onReindex(doc) : undefined}
+            onReanalyze={onReanalyze ? () => onReanalyze(doc) : undefined}
             onMove={onMove ? () => onMove(doc) : undefined}
             isRefreshing={isRefreshing?.(doc.id) ?? false}
             isReindexing={isReindexing?.(doc.id) ?? false}
@@ -599,6 +603,7 @@ function FolderTreeNode({
         onDelete={onDelete ? () => onDelete(doc) : undefined}
         onRefresh={onRefresh ? () => onRefresh(doc) : undefined}
         onReindex={onReindex ? () => onReindex(doc) : undefined}
+        onReanalyze={onReanalyze ? () => onReanalyze(doc) : undefined}
         onMove={onMove ? () => onMove(doc) : undefined}
         isRefreshing={isRefreshing?.(doc.id) ?? false}
         isReindexing={isReindexing?.(doc.id) ?? false}
@@ -666,6 +671,7 @@ function FolderTreeNode({
               onDelete={onDelete}
               onRefresh={onRefresh}
               onReindex={onReindex}
+              onReanalyze={onReanalyze}
               onMove={onMove}
               isRefreshing={isRefreshing}
               isReindexing={isReindexing}
@@ -704,6 +710,7 @@ export function FolderTree({
   onDelete,
   onRefresh,
   onReindex,
+  onReanalyze,
   onMove,
   refreshingDocId,
   reindexingDocId,
@@ -804,6 +811,7 @@ export function FolderTree({
             onDelete={onDelete}
             onRefresh={onRefresh}
             onReindex={onReindex}
+            onReanalyze={onReanalyze}
             onMove={onMove}
             isRefreshing={id => refreshingDocId === id}
             isReindexing={id => reindexingDocId === id}
@@ -840,6 +848,7 @@ export function FolderTree({
       onDelete={onDelete}
       onRefresh={onRefresh}
       onReindex={onReindex}
+      onReanalyze={onReanalyze}
       onMove={onMove}
       isRefreshing={id => refreshingDocId === id}
       isReindexing={id => reindexingDocId === id}

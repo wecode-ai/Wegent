@@ -37,6 +37,7 @@ import { DocumentUpload, type TableDocument } from './DocumentUpload'
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
+import { ReanalyzeMultimodalDialog } from '@/features/knowledge/multimodal/components/ReanalyzeMultimodalDialog'
 import { useDocuments } from '../hooks/useDocuments'
 import { useFolders } from '../hooks/useFolders'
 import { FolderTree, type SortField, type SortOrder } from './FolderTree'
@@ -48,6 +49,9 @@ import { useColumnResize } from '../hooks/useColumnResize'
 import { Pagination } from '@/components/ui/pagination'
 import { listDocuments } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
+import { useDocumentIndexPolling } from '@/features/knowledge/multimodal/hooks/useDocumentIndexPolling'
+import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
+import { resolvePerFilePrompt } from '@/features/knowledge/multimodal/utils/resolvePerFilePrompt'
 import type {
   KnowledgeBase,
   KnowledgeDocument,
@@ -316,6 +320,11 @@ export function DocumentList({
   // Flatten folder tree for select dropdowns
   const folderOptions = useMemo(() => flattenFoldersForSelect(folders), [folders])
 
+  // Resolve whether the KB's multimodal analysis model supports video, so the
+  // upload picker can reject video files early when an image-only model is
+  // selected (UX early-rejection; the backend remains the correctness boundary).
+  const modelSupportsVideo = useModelSupportsVideo(knowledgeBase)
+
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
   const showLoadError = error && documents.length === 0
@@ -358,6 +367,9 @@ export function DocumentList({
     })
   }, [isTransferring, selectedIds.size, selectedFolderIds.size, t])
 
+  // Track the document open in the "modify prompt & re-analyze" dialog
+  const [reanalyzeDoc, setReanalyzeDoc] = useState<KnowledgeDocument | null>(null)
+
   // Resizable name column width (normal table mode only)
   const {
     widthOverride: nameColumnWidth,
@@ -374,6 +386,19 @@ export function DocumentList({
       isMountedRef.current = false
     }
   }, [])
+
+  // Mirror documents in a ref so polling interval callbacks read the latest
+  // statuses without re-creating the interval each render.
+  const documentsRef = useRef(documents)
+  documentsRef.current = documents
+
+  // Poll the document list while any document is in an active indexing state
+  // so live progress (pending_conversion → converting → indexing → terminal)
+  // is reflected during slow background work like multimodal Gemini analysis.
+  // See hooks/useDocumentIndexPolling for details.
+  useDocumentIndexPolling(documents, () => {
+    if (isMountedRef.current) refresh()
+  })
 
   // Check if summary generation failed
   const summaryError = knowledgeBase.summary?.error
@@ -488,7 +513,11 @@ export function DocumentList({
 
   const handleUploadComplete = async (
     attachments: { attachment: { id: number; filename: string }; file: File }[],
-    splitterConfig?: Partial<SplitterConfig>
+    splitterConfig?: Partial<SplitterConfig>,
+    multimodalAnalysisPrompts?: {
+      video?: string | null
+      image?: string | null
+    }
   ) => {
     // Track newly created document IDs for auto-selection
     const newDocumentIds: number[] = []
@@ -498,6 +527,10 @@ export function DocumentList({
       // Use attachment.filename (which may have been renamed) instead of file.name
       const documentName = attachment.filename || file.name
       const extension = documentName.split('.').pop() || ''
+      // Apply the per-media-type prompt override: video files get the video
+      // prompt, image files get the image prompt, non-media files get none.
+      // undefined → the document inherits the KB default for its type.
+      const perFilePrompt = resolvePerFilePrompt(documentName, extension, multimodalAnalysisPrompts)
       try {
         const created = await create({
           attachment_id: attachment.id,
@@ -507,6 +540,9 @@ export function DocumentList({
           splitter_config: splitterConfig,
           source_type: 'file',
           folder_id: selectedUploadFolderId || 0,
+          // Forward the per-upload multimodal prompt override (undefined when
+          // not customized or when the file is not multimodal → inherits KB default).
+          multimodal_analysis_prompt: perFilePrompt,
         })
         // Collect newly created document ID
         if (created?.id) {
@@ -728,12 +764,13 @@ export function DocumentList({
         description: t('document.document.reindexSuccess'),
       })
 
-      // Refresh document list after a short delay to allow backend to start processing
-      setTimeout(() => {
-        if (isMountedRef.current) {
-          refresh()
-        }
-      }, 2000)
+      // Immediately refresh so the doc's new PENDING_CONVERSION/QUEUED status
+      // lands in `documents` and kicks off the active-indexing poll above (which
+      // keeps refreshing every 5s until the doc reaches a terminal state). The
+      // backend has already committed the status change before returning, so this
+      // refresh is guaranteed to see it. Mirrors how newly-uploaded docs (which
+      // enter the list already in an active status) get live progress updates.
+      await refresh()
     } catch (err) {
       // Use ApiError.errorCode for structured error handling
       let errorMessage = t('document.document.reindexFailed')
@@ -1220,6 +1257,7 @@ export function DocumentList({
                 onDelete={setDeletingDoc}
                 onRefresh={handleRefreshWebDocument}
                 onReindex={handleReindexDocument}
+                onReanalyze={setReanalyzeDoc}
                 onMove={handleMoveDocument}
                 refreshingDocId={refreshingDocId}
                 reindexingDocId={reindexingDocId}
@@ -1351,6 +1389,7 @@ export function DocumentList({
                   onDelete={setDeletingDoc}
                   onRefresh={handleRefreshWebDocument}
                   onReindex={handleReindexDocument}
+                  onReanalyze={setReanalyzeDoc}
                   onMove={handleMoveDocument}
                   refreshingDocId={refreshingDocId}
                   reindexingDocId={reindexingDocId}
@@ -1446,6 +1485,25 @@ export function DocumentList({
         folderId={selectedUploadFolderId}
         folderOptions={folderOptions}
         onFolderChange={setSelectedUploadFolderId}
+        multimodalAnalysisEnabled={knowledgeBase.multimodal_analysis_enabled}
+        multimodalModelSupportsVideo={modelSupportsVideo}
+        multimodalVideoPrompt={knowledgeBase.multimodal_analysis_video_prompt}
+        multimodalImagePrompt={knowledgeBase.multimodal_analysis_image_prompt}
+      />
+
+      <ReanalyzeMultimodalDialog
+        open={!!reanalyzeDoc}
+        onOpenChange={open => !open && setReanalyzeDoc(null)}
+        document={reanalyzeDoc}
+        kbVideoPrompt={knowledgeBase.multimodal_analysis_video_prompt}
+        kbImagePrompt={knowledgeBase.multimodal_analysis_image_prompt}
+        onReanalyzed={() => {
+          // Immediately refresh so the doc's new PENDING_CONVERSION status lands
+          // in `documents` and kicks off the active-indexing poll (same mechanism
+          // as reindex). The poll then keeps the UI in sync through CONVERTING →
+          // INDEXING → terminal state during the 1–2 min Gemini re-analysis.
+          if (isMountedRef.current) refresh()
+        }}
       />
 
       <EditDocumentDialog

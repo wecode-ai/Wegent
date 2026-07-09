@@ -328,6 +328,14 @@ export interface KnowledgeBase {
   max_calls_per_conversation: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
   exempt_calls_before_check: number
+  /** Whether multimodal (video/image) uploads + Gemini analysis are enabled for this KB */
+  multimodal_analysis_enabled?: boolean
+  /** Model reference for multimodal analysis (must support multimodal analysis) */
+  multimodal_analysis_model_ref?: SummaryModelRef | null
+  /** Custom video analysis prompt; null/undefined = use system default */
+  multimodal_analysis_video_prompt?: string | null
+  /** Custom image analysis prompt; null/undefined = use system default */
+  multimodal_analysis_image_prompt?: string | null
   created_at: string
   updated_at: string
 }
@@ -358,6 +366,14 @@ export interface KnowledgeBaseCreate {
   exempt_calls_before_check?: number
   /** Initial members (users and groups) to add after creation */
   members?: InitialMember[]
+  /** Enable multimodal (video/image) uploads + Gemini analysis */
+  multimodal_analysis_enabled?: boolean
+  /** Model reference for multimodal analysis (must support multimodal analysis) */
+  multimodal_analysis_model_ref?: SummaryModelRef | null
+  /** Custom video analysis prompt; null/empty = use system default */
+  multimodal_analysis_video_prompt?: string | null
+  /** Custom image analysis prompt; null/empty = use system default */
+  multimodal_analysis_image_prompt?: string | null
 }
 
 export interface RetrievalConfigUpdate {
@@ -382,6 +398,14 @@ export interface KnowledgeBaseUpdate {
   max_calls_per_conversation?: number
   /** Number of calls exempt from token checking (must be < max_calls_per_conversation) */
   exempt_calls_before_check?: number
+  /** Enable multimodal (video/image) uploads + Gemini analysis */
+  multimodal_analysis_enabled?: boolean
+  /** Model reference for multimodal analysis (must support multimodal analysis) */
+  multimodal_analysis_model_ref?: SummaryModelRef | null
+  /** Custom video analysis prompt; null/empty = use system default */
+  multimodal_analysis_video_prompt?: string | null
+  /** Custom image analysis prompt; null/empty = use system default */
+  multimodal_analysis_image_prompt?: string | null
 }
 
 export interface KnowledgeBaseListResponse {
@@ -420,6 +444,8 @@ export interface KnowledgeDocumentCreate {
   splitter_config?: Partial<SplitterConfig>
   source_type?: DocumentSourceType
   source_config?: Record<string, unknown>
+  /** Per-document multimodal analysis prompt override; null/undefined = inherit KB default */
+  multimodal_analysis_prompt?: string | null
 }
 
 export interface KnowledgeDocumentUpdate {

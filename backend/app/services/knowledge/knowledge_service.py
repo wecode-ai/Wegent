@@ -276,6 +276,27 @@ class KnowledgeService:
         if "status" not in resource_data or resource_data["status"] is None:
             resource_data["status"] = {"state": "Available"}
 
+        # Multimodal analysis config: KnowledgeBaseSpec does not declare these
+        # fields (it ignores extras), so write them into the spec dict AFTER
+        # model_dump. enabled defaults to False when unset; blank/whitespace
+        # prompts normalize to None (system default).
+        if data.multimodal_analysis_enabled is not None:
+            resource_data.setdefault("spec", {})[
+                "multimodalAnalysisEnabled"
+            ] = data.multimodal_analysis_enabled
+        if data.multimodal_analysis_model_ref:
+            resource_data.setdefault("spec", {})[
+                "multimodalAnalysisModelRef"
+            ] = data.multimodal_analysis_model_ref
+        if data.multimodal_analysis_video_prompt is not None:
+            resource_data.setdefault("spec", {})["multimodalAnalysisVideoPrompt"] = (
+                data.multimodal_analysis_video_prompt.strip() or None
+            )
+        if data.multimodal_analysis_image_prompt is not None:
+            resource_data.setdefault("spec", {})["multimodalAnalysisImagePrompt"] = (
+                data.multimodal_analysis_image_prompt.strip() or None
+            )
+
         # Create Kind record directly using the passed db session
         db_resource = Kind(
             user_id=user_id,
@@ -559,6 +580,7 @@ class KnowledgeService:
         knowledge_base_id: int,
         user_id: int,
         data: KnowledgeBaseUpdate,
+        multimodal_update_fields: Optional[dict[str, Any]] = None,
     ) -> Optional[Kind]:
         """
         Update a knowledge base.
@@ -568,6 +590,9 @@ class KnowledgeService:
             knowledge_base_id: Knowledge base ID
             user_id: Requesting user ID
             data: Update data
+            multimodal_update_fields: Explicitly-set multimodal spec fields (only
+                keys the client sent are present; a ``None`` value means clear).
+                When None the multimodal spec is left untouched.
 
         Returns:
             Updated Kind if successful, None otherwise
@@ -665,6 +690,29 @@ class KnowledgeService:
                 f"exemptCallsBeforeCheck ({exempt_calls}) must be less than "
                 f"maxCallsPerConversation ({max_calls})"
             )
+
+        # Multimodal spec fields: only keys the client explicitly sent are
+        # present (None = clear). Mirrors the summary_model_ref / guided_questions
+        # explicit-set handling above.
+        if multimodal_update_fields:
+            if "multimodal_analysis_enabled" in multimodal_update_fields:
+                spec["multimodalAnalysisEnabled"] = multimodal_update_fields[
+                    "multimodal_analysis_enabled"
+                ]
+            if "multimodal_analysis_model_ref" in multimodal_update_fields:
+                spec["multimodalAnalysisModelRef"] = multimodal_update_fields[
+                    "multimodal_analysis_model_ref"
+                ]
+            if "multimodal_analysis_video_prompt" in multimodal_update_fields:
+                v = multimodal_update_fields["multimodal_analysis_video_prompt"]
+                spec["multimodalAnalysisVideoPrompt"] = (
+                    v.strip() if v else None
+                ) or None
+            if "multimodal_analysis_image_prompt" in multimodal_update_fields:
+                v = multimodal_update_fields["multimodal_analysis_image_prompt"]
+                spec["multimodalAnalysisImagePrompt"] = (
+                    v.strip() if v else None
+                ) or None
 
         kb_json["spec"] = spec
         kb.json = kb_json
@@ -1092,6 +1140,19 @@ class KnowledgeService:
             )
             validated_folder_id = target_folder.id
 
+        # Persist the optional per-document multimodal analysis prompt override
+        # into source_config under the same key the reindex path and re-analyze
+        # dialog read. Blank clears the override (inherit KB default); None
+        # leaves source_config untouched (no multimodal override requested).
+        source_config = dict(data.source_config) if data.source_config else {}
+        prompt_override = getattr(data, "multimodal_analysis_prompt", None)
+        if prompt_override is not None:
+            prompt_text = prompt_override.strip()
+            if prompt_text:
+                source_config["multimodal_analysis_prompt"] = prompt_text
+            else:
+                source_config.pop("multimodal_analysis_prompt", None)
+
         document = KnowledgeDocument(
             kind_id=knowledge_base_id,
             attachment_id=data.attachment_id if data.attachment_id is not None else 0,
@@ -1106,7 +1167,7 @@ class KnowledgeService:
                 else {}
             ),  # Save splitter_config with default {}
             source_type=data.source_type.value if data.source_type else "file",
-            source_config=data.source_config if data.source_config else {},
+            source_config=source_config,
         )
         db.add(document)
         db.flush()  # Flush to persist document before counting

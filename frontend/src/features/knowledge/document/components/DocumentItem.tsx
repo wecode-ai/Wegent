@@ -31,6 +31,11 @@ import type { KnowledgeDocument } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatDate } from '@/utils/dateTime'
 import { toast } from '@/hooks/use-toast'
+import { useMultimodalDocActions } from '@/features/knowledge/multimodal/hooks/useMultimodalDocActions'
+import {
+  ReanalyzeDropdownItem,
+  ReanalyzeIconButton,
+} from '@/features/knowledge/multimodal/components/ReanalyzeActions'
 
 interface DocumentItemProps {
   document: KnowledgeDocument
@@ -40,6 +45,8 @@ interface DocumentItemProps {
   onReindex?: (doc: KnowledgeDocument) => void
   onViewDetail?: (doc: KnowledgeDocument) => void
   onMove?: (doc: KnowledgeDocument) => void
+  /** Open the "modify prompt & re-analyze" dialog (video/image docs only) */
+  onReanalyze?: (doc: KnowledgeDocument) => void
   canManage?: boolean
   canSelect?: boolean
   showBorder?: boolean
@@ -78,6 +85,7 @@ export function DocumentItem({
   ragConfigured = true,
   nameColumnWidth,
   indent = 0,
+  onReanalyze,
 }: DocumentItemProps) {
   const { t } = useTranslation()
 
@@ -178,6 +186,13 @@ export function DocumentItem({
     !!onReindex &&
     (isIndexFailed || isNotIndexed) &&
     !showIndexingState
+
+  // Multimodal (video/image) document actions — re-analyze gate + handler.
+  const { canReanalyze, handleReanalyze } = useMultimodalDocActions(
+    document,
+    onReanalyze,
+    showIndexingState
+  )
 
   // Check if Excel file exceeds size limit (2MB)
   const EXCEL_FILE_SIZE_LIMIT = 2 * 1024 * 1024 // 2MB
@@ -289,13 +304,10 @@ export function DocumentItem({
                   {formatFileSize(document.file_size)}
                 </span>
               )}
-              {/* Status indicator */}
-              {document.is_active ? (
-                <span
-                  className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
-                  title={t('knowledge:document.document.indexStatus.available')}
-                />
-              ) : showIndexingState ? (
+              {/* Status indicator. Indexing-in-progress takes precedence over
+                  is_active: a re-analyze/re-index keeps the old index queryable
+                  but the UI must surface the in-flight state. */}
+              {showIndexingState ? (
                 <TooltipProvider>
                   <Tooltip delayDuration={200}>
                     <TooltipTrigger asChild>
@@ -312,6 +324,11 @@ export function DocumentItem({
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+              ) : document.is_active ? (
+                <span
+                  className="w-1 h-1 rounded-full flex-shrink-0 bg-green-500"
+                  title={t('knowledge:document.document.indexStatus.available')}
+                />
               ) : (
                 <TooltipProvider>
                   <Tooltip delayDuration={200}>
@@ -399,6 +416,11 @@ export function DocumentItem({
                           : t('knowledge:document.document.reindex')}
                     </DropdownMenuItem>
                   )}
+                  <ReanalyzeDropdownItem
+                    show={canReanalyze}
+                    disabled={showIndexingState}
+                    onClick={handleReanalyze}
+                  />
                   {showDownload && (
                     <DropdownMenuItem onClick={handleDownload}>
                       <Download className="w-3.5 h-3.5 mr-2" />
@@ -545,13 +567,9 @@ export function DocumentItem({
         </span>
       </div>
 
-      {/* Index status (is_active) */}
+      {/* Index status — indexing-in-progress takes precedence over is_active */}
       <div className="w-24 flex-shrink-0 text-center">
-        {document.is_active ? (
-          <Badge variant="success" size="sm" className="whitespace-nowrap">
-            {t('knowledge:document.document.indexStatus.available')}
-          </Badge>
-        ) : showIndexingState ? (
+        {showIndexingState ? (
           <TooltipProvider>
             <Tooltip delayDuration={200}>
               <TooltipTrigger asChild>
@@ -580,6 +598,10 @@ export function DocumentItem({
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
+        ) : document.is_active ? (
+          <Badge variant="success" size="sm" className="whitespace-nowrap">
+            {t('knowledge:document.document.indexStatus.available')}
+          </Badge>
         ) : (
           <TooltipProvider>
             <Tooltip delayDuration={200}>
@@ -650,6 +672,12 @@ export function DocumentItem({
               <RotateCcw className={`w-4 h-4 ${showIndexingState ? 'animate-spin' : ''}`} />
             </button>
           )}
+          <ReanalyzeIconButton
+            show={canReanalyze}
+            disabled={showIndexingState}
+            documentId={document.id}
+            onClick={handleReanalyze}
+          />
           {/* Download button - only for file documents with attachment */}
           {showDownload && (
             <button

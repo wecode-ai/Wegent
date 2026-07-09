@@ -45,6 +45,7 @@ from shared.utils.attachment_block import (
     truncate_for_injection,
 )
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
+from shared.utils.multimodal_ext import is_multimodal_extension
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +257,26 @@ class ContextService:
         extension: str,
     ) -> Optional[TruncationInfo]:
         """Parse attachment data and update context fields."""
+        # Multimodal files (video/image) are not text-parseable. They are
+        # analyzed by the Gemini multimodal pipeline (convert_multimodal task)
+        # which produces Markdown. Skip text extraction here — the file is
+        # stored as binary and the converter fetches it via the download endpoint.
+        if is_multimodal_extension(extension):
+            context.extracted_text = ""
+            context.text_length = 0
+            context.image_base64 = ""
+            context.status = ContextStatus.READY.value
+            context.type_data = {
+                **(context.type_data or {}),
+                "is_truncated": False,
+            }
+            logger.info(
+                "Skipping text parse for multimodal file: context=%s ext=%s",
+                context.id,
+                extension,
+            )
+            return None
+
         truncation_info = None
         try:
             parse_result: ParseResult = self.parser.parse(binary_data, extension)

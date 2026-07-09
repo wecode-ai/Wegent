@@ -320,6 +320,11 @@ export function getFileIcon(extension: string): string {
 export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
 /**
+ * Video file extensions supported for attachments / media analysis
+ */
+export const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mkv', '.mov', '.flv', '.wmv']
+
+/**
  * HTML file extensions
  */
 export const HTML_EXTENSIONS = ['.html', '.htm', '.html5']
@@ -330,6 +335,23 @@ export const HTML_EXTENSIONS = ['.html', '.htm', '.html5']
 export function isImageExtension(extension: string): boolean {
   const ext = extension.toLowerCase()
   return IMAGE_EXTENSIONS.includes(ext)
+}
+
+/**
+ * Check if a file extension is a video type
+ */
+export function isVideoExtension(extension: string): boolean {
+  const ext = extension.startsWith('.') ? extension.toLowerCase() : `.${extension.toLowerCase()}`
+  return VIDEO_EXTENSIONS.includes(ext)
+}
+
+/**
+ * Check if a filename is a supported video file.
+ */
+export function isVideoFileName(filename: string): boolean {
+  const dotIndex = filename.lastIndexOf('.')
+  if (dotIndex < 0) return false
+  return isVideoExtension(filename.slice(dotIndex))
 }
 
 /**

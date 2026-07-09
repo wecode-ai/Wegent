@@ -340,6 +340,12 @@ services:
       PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-false}
       PROMETHEUS_PORT: ${PROMETHEUS_PORT:-9090}
       PROMETHEUS_PATH: ${PROMETHEUS_PATH:-/metrics}
+      # Multimodal analysis (video/image → Gemini → Markdown). Off by default;
+      # set MULTIMODAL_ENABLED=true to opt the worker into the multimodal queue.
+      KNOWLEDGE_CONVERSION_QUEUE: ${KNOWLEDGE_CONVERSION_QUEUE:-knowledge_conversion}
+      CELERY_QUEUE: ${CELERY_QUEUE:-knowledge_conversion,knowledge_multimodal_conversion}
+      MULTIMODAL_ENABLED: ${MULTIMODAL_ENABLED:-false}
+      MULTIMODAL_QUEUE: ${MULTIMODAL_QUEUE:-knowledge_multimodal_conversion}
     ports:
       - "${PROMETHEUS_PORT:-9090}:${PROMETHEUS_PORT:-9090}"
     volumes:

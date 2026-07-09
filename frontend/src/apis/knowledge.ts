@@ -187,12 +187,49 @@ export async function migrateKnowledgeBaseToGroup(
 }
 
 /**
- * Trigger re-indexing for a document
+ * Optional body for document re-index (supports "modify prompt & re-analyze").
+ */
+export interface DocumentReindexBody {
+  /** Per-document multimodal prompt override; blank = clear override */
+  multimodal_analysis_prompt?: string | null
+}
+
+/**
+ * System default multimodal analysis prompts (single source of truth from
+ * shared.models.multimodal_prompts). Used to prefill prompt editors.
+ *
+ * `enabled` mirrors the backend global KNOWLEDGE_MULTIMODAL_ENABLED switch —
+ * when false the frontend hides the entire multimodal UI.
+ */
+export interface MultimodalDefaultPrompts {
+  enabled: boolean
+  video_prompt: string
+  image_prompt: string
+}
+
+/**
+ * Fetch the system default multimodal analysis prompts.
+ */
+export async function getMultimodalDefaultPrompts(): Promise<MultimodalDefaultPrompts> {
+  return apiClient.get<MultimodalDefaultPrompts>('/knowledge-bases/multimodal-default-prompts')
+}
+
+/**
+ * Trigger re-indexing for a document, optionally overriding its multimodal
+ * analysis prompt (the "modify prompt & re-analyze" flow).
  * @param documentId The document ID to reindex
+ * @param body Optional body carrying a multimodal prompt override; omit for a
+ *   plain reindex.
  * @returns Success message indicating reindex has started
  */
-export async function reindexDocument(documentId: number): Promise<DocumentReindexResponse> {
-  return apiClient.post<DocumentReindexResponse>(`/knowledge-documents/${documentId}/reindex`)
+export async function reindexDocument(
+  documentId: number,
+  body?: DocumentReindexBody
+): Promise<DocumentReindexResponse> {
+  return apiClient.post<DocumentReindexResponse>(
+    `/knowledge-documents/${documentId}/reindex`,
+    body ?? {}
+  )
 }
 
 // ============== Batch Document Operations ==============

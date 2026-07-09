@@ -422,6 +422,26 @@ class Settings(BaseSettings):
     # WORKER_CONVERSION_S3_REGION_NAME -> converter config
     # --- End Document Conversion Configuration ---
 
+    # --- Knowledge Multimodal Analysis Configuration ---
+    # Master switch for multimodal (video/image) Gemini analysis in knowledge
+    # bases. When False the orchestrator never classifies a file as multimodal,
+    # so no dispatch/Gemini runs anywhere; already-converted documents keep
+    # re-indexing normally. The open-source build ships image analysis fully
+    # wired; video analysis requires a configured media staging provider.
+    KNOWLEDGE_MULTIMODAL_ENABLED: bool = False
+    # Dedicated Celery queue for multimodal conversion tasks. The converter
+    # worker consumes both this and the MinerU queue by default.
+    KNOWLEDGE_MULTIMODAL_CONVERSION_QUEUE: str = "knowledge_multimodal_conversion"
+    # Internal endpoint the converter calls at execution time to resolve the
+    # KB's multimodalAnalysisModelRef into a decrypted runtime config (api_key
+    # + resolved default_headers). Keeps the Celery broker free of secrets.
+    MULTIMODAL_MODEL_CONFIG_RESOLVE_PATH: str = "/api/internal/model-config/resolve"
+    # When False, video multimodal analysis is rejected up-front (the
+    # open-source default ships no media staging provider). Enable after
+    # configuring a concrete MediaStagingProvider implementation.
+    KNOWLEDGE_MULTIMODAL_VIDEO_STAGING_ENABLED: bool = False
+    # --- End Knowledge Multimodal Analysis Configuration ---
+
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
     CIRCUIT_BREAKER_RESET_TIMEOUT: int = 60  # Try to recover after 60 seconds

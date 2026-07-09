@@ -33,6 +33,7 @@ import {
   modelApis,
   ModelCRD,
   ModelCategoryType,
+  ModelCapabilities,
   TTSConfig,
   STTConfig,
   EmbeddingConfig,
@@ -87,6 +88,8 @@ export interface ModelFormData {
   videoSeed?: number
   videoCameraFixed?: boolean
   videoWatermark?: boolean
+  supportsImageInput?: boolean
+  supportsVideoInput?: boolean
 }
 
 // Initial data for editing (can be from ModelCRD or admin model JSON)
@@ -112,6 +115,7 @@ export interface ModelInitialData {
   videoConfig?: VideoGenerationConfig
   imageConfig?: import('@/apis/models').ImageGenerationConfig
   thinkingConfig?: Record<string, unknown>
+  modelCapabilities?: ModelCapabilities
 }
 
 /**
@@ -303,6 +307,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             sttConfig: model.spec.sttConfig,
             embeddingConfig: model.spec.embeddingConfig,
             rerankConfig: model.spec.rerankConfig,
+            modelCapabilities: model.spec.modelCapabilities,
+            videoConfig: model.spec.videoConfig,
+            imageConfig: model.spec.imageConfig,
             thinkingConfig: extractThinkingConfig(model),
           }
         : null)
@@ -362,6 +369,10 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   const [videoWatermark, setVideoWatermark] = useState<boolean>(false)
   // Image - use ImageConfigState from extracted component
   const [imageConfig, setImageConfig] = useState<ImageConfigState>(getDefaultImageConfig())
+
+  // Multimodal capabilities (LLM models only)
+  const [supportsImageInput, setSupportsImageInput] = useState(false)
+  const [supportsVideoInput, setSupportsVideoInput] = useState(false)
 
   // Video capabilities state
   const [capRatios, setCapRatios] = useState<string[]>([])
@@ -494,6 +505,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           setThinkingConfigStr('')
         }
         setThinkingConfigError('')
+        // Load multimodal capabilities (LLM models)
+        setSupportsImageInput(effectiveInitialData.modelCapabilities?.supportsImage ?? false)
+        setSupportsVideoInput(effectiveInitialData.modelCapabilities?.supportsVideo ?? false)
       } else {
         // Reset for new model
         setModelIdName('')
@@ -526,6 +540,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setVideoWatermark(false)
         // Reset image-specific configs
         setImageConfig(getDefaultImageConfig())
+        // Reset multimodal capabilities
+        setSupportsImageInput(false)
+        setSupportsVideoInput(false)
         // Reset video capabilities
         setCapRatios([])
         setCapResolutions([])
@@ -1065,6 +1082,17 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
       const imageGenerationConfig =
         modelCategoryType === 'image' ? toImageGenerationConfig(imageConfig) : undefined
 
+      // Build multimodal capabilities (LLM models only). Only include declared
+      // capabilities so the field is absent when neither toggle is set.
+      const rawModelCapabilities: ModelCapabilities = {
+        ...(supportsImageInput && { supportsImage: true }),
+        ...(supportsVideoInput && { supportsVideo: true }),
+      }
+      const modelCapabilities: ModelCapabilities | undefined =
+        modelCategoryType === 'llm' && Object.keys(rawModelCapabilities).length > 0
+          ? rawModelCapabilities
+          : undefined
+
       // Map provider type to model field value
       // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
       // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
@@ -1124,6 +1152,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
           ...(rerankConfig && { rerankConfig }),
           ...(videoConfig && { videoConfig }),
           ...(imageGenerationConfig && { imageConfig: imageGenerationConfig }),
+          ...(modelCapabilities && { modelCapabilities }),
         },
         status: {
           state: 'Available',
@@ -1171,6 +1200,8 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         videoSeed,
         videoCameraFixed,
         videoWatermark,
+        supportsImageInput,
+        supportsVideoInput,
       }
 
       // If custom onSave callback is provided, use it
@@ -1570,6 +1601,51 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
               />
               {thinkingConfigError && <p className="text-xs text-error">{thinkingConfigError}</p>}
               <p className="text-xs text-text-muted">{t('common:models.thinking_config_hint')}</p>
+            </div>
+          )}
+
+          {/* Multimodal capabilities (LLM models only) */}
+          {modelCategoryType === 'llm' && (
+            <div className="space-y-3 rounded-lg bg-muted p-4">
+              <div className="flex items-start space-x-3">
+                <Checkbox
+                  id="supports_image_input"
+                  data-testid="supports-image-input-checkbox"
+                  checked={supportsImageInput}
+                  onCheckedChange={checked => setSupportsImageInput(Boolean(checked))}
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="supports_image_input"
+                    className="cursor-pointer text-sm font-medium"
+                  >
+                    {t('common:models.supports_image_input')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.supports_image_input_hint')}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start space-x-3">
+                <Checkbox
+                  id="supports_video_input"
+                  data-testid="supports-video-input-checkbox"
+                  checked={supportsVideoInput}
+                  onCheckedChange={checked => setSupportsVideoInput(Boolean(checked))}
+                />
+                <div className="space-y-1">
+                  <Label
+                    htmlFor="supports_video_input"
+                    className="cursor-pointer text-sm font-medium"
+                  >
+                    {t('common:models.supports_video_input')}
+                  </Label>
+                  <p className="text-xs text-text-muted">
+                    {t('common:models.supports_video_input_hint')}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 

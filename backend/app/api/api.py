@@ -77,6 +77,11 @@ from app.api.endpoints.internal import (
     chat_storage_router,
     conversion_callback_router,
     knowledge_router,
+)
+from app.api.endpoints.internal import (
+    model_config_router as internal_model_config_router,
+)
+from app.api.endpoints.internal import (
     object_storage_router,
     rag_content_router,
     services_router,
@@ -309,4 +314,9 @@ api_router.include_router(
     conversion_callback_router,
     prefix="/internal",
     tags=["internal-conversion-callback"],
+)
+api_router.include_router(
+    internal_model_config_router,
+    prefix="/internal",
+    tags=["internal-model-config"],
 )
