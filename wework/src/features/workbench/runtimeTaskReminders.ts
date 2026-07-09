@@ -46,6 +46,7 @@ export const EMPTY_RUNTIME_TASK_REMINDERS: RuntimeTaskReminderState = {
 
 interface RuntimeTaskReminderSnapshot {
   runningTaskKeys: Set<string>
+  taskKeys: Set<string>
   completedUnreadItems: RuntimeTaskReminderItem[]
   items: RuntimeTaskReminderItem[]
 }
@@ -252,6 +253,7 @@ export function buildRuntimeTaskReminderSnapshot({
   currentRuntimeTask?: RuntimeTaskAddress | null | undefined
 }): RuntimeTaskReminderSnapshot {
   const items = collectRuntimeTaskReminderItems(runtimeWork)
+  const taskKeys = new Set(items.map(item => item.key))
   const runningTaskKeys = new Set(
     items.filter(item => isRuntimeTaskActive(item.task)).map(item => item.key)
   )
@@ -270,7 +272,25 @@ export function buildRuntimeTaskReminderSnapshot({
     completedUnreadItems.push(item)
   }
 
-  return { runningTaskKeys, completedUnreadItems, items }
+  return { runningTaskKeys, taskKeys, completedUnreadItems, items }
+}
+
+export function reconcileRuntimeTaskUnreadKeys({
+  previousUnreadTaskKeys,
+  visibleTaskKeys,
+  completedUnreadItems,
+}: {
+  previousUnreadTaskKeys: ReadonlySet<string>
+  visibleTaskKeys: ReadonlySet<string>
+  completedUnreadItems: RuntimeTaskReminderItem[]
+}): Set<string> {
+  const nextUnreadTaskKeys = new Set(
+    [...previousUnreadTaskKeys].filter(key => visibleTaskKeys.has(key))
+  )
+  for (const item of completedUnreadItems) {
+    nextUnreadTaskKeys.add(item.key)
+  }
+  return nextUnreadTaskKeys
 }
 
 export function useRuntimeTaskReminders({
@@ -318,17 +338,23 @@ export function useRuntimeTaskReminders({
       }),
     [currentRuntimeTask, runningTaskKeys, runtimeWork]
   )
+  const visibleUnreadTaskKeys = useMemo(
+    () => new Set([...unreadTaskKeys].filter(key => snapshot.taskKeys.has(key))),
+    [snapshot.taskKeys, unreadTaskKeys]
+  )
 
   useEffect(() => {
     if (!runtimeWork) return
 
     const previousUnreadTaskKeys = readStoredStringSet(unreadTaskKeysStorageKey)
     const previousRunningTaskKeys = readStoredStringSet(runningTaskKeysStorageKey)
-    const nextUnreadTaskKeys = new Set(previousUnreadTaskKeys)
+    const nextUnreadTaskKeys = reconcileRuntimeTaskUnreadKeys({
+      previousUnreadTaskKeys,
+      visibleTaskKeys: snapshot.taskKeys,
+      completedUnreadItems: snapshot.completedUnreadItems,
+    })
     const completedUnreadItems = snapshot.completedUnreadItems.filter(item => {
-      if (nextUnreadTaskKeys.has(item.key)) return false
-      nextUnreadTaskKeys.add(item.key)
-      return true
+      return !previousUnreadTaskKeys.has(item.key)
     })
     const unreadChanged = !sameStringSet(previousUnreadTaskKeys, nextUnreadTaskKeys)
     const runningChanged = !sameStringSet(previousRunningTaskKeys, snapshot.runningTaskKeys)
@@ -394,8 +420,8 @@ export function useRuntimeTaskReminders({
 
   return useMemo(
     () => ({
-      unreadTaskKeys,
-      unreadCount: unreadTaskKeys.size,
+      unreadTaskKeys: visibleUnreadTaskKeys,
+      unreadCount: visibleUnreadTaskKeys.size,
       hasRunningTasks: snapshot.runningTaskKeys.size > 0,
       preferences,
       items: snapshot.items,
@@ -415,6 +441,6 @@ export function useRuntimeTaskReminders({
         emitStoredStringSetChange(unreadTaskKeysStorageKey)
       },
     }),
-    [preferences, snapshot, unreadTaskKeys, unreadTaskKeysStorageKey, userId]
+    [preferences, snapshot, unreadTaskKeysStorageKey, userId, visibleUnreadTaskKeys]
   )
 }
