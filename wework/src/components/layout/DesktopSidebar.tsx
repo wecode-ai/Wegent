@@ -1047,10 +1047,10 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
         title={error ?? title}
         aria-label={error ?? title}
         className={cn(
-          'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-[0_4px_12px_rgba(20,184,166,0.14)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_8px_20px_rgba(20,184,166,0.22)] active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60',
+          'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
           error
-            ? 'border-red-400/35 bg-red-500/10 text-red-500 hover:border-red-400/45 hover:bg-red-500/15'
-            : 'border-primary/20 bg-primary/10 text-primary hover:border-primary/30 hover:bg-primary/15'
+            ? 'text-red-500 hover:bg-red-500/10'
+            : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
         )}
       >
         {busy ? (
@@ -1059,10 +1059,10 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
           <Download className="sidebar-update-download-icon h-4 w-4" />
         )}
         {availableUpdate && (
-          <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar))]" />
+          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
         )}
         {error && (
-          <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar))]" />
+          <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
         )}
       </button>
       {error && errorTooltipPosition
@@ -2304,7 +2304,7 @@ export function DesktopSidebar({
       <div className="h-full overflow-hidden">
         <div
           className={cn(
-            'relative flex h-full flex-col px-1.5 pb-4',
+            'relative flex h-full flex-col px-1.5',
             usesOverlayTitlebar ? 'pt-[44px]' : 'pt-1.5'
           )}
           style={{ width: sidebarWidth }}
@@ -2612,8 +2612,8 @@ export function DesktopSidebar({
             </section>
           </div>
 
-          <div ref={settingsMenuRef} className="mt-4 flex shrink-0 flex-col gap-1">
-            <div className="flex items-center gap-1">
+          <div ref={settingsMenuRef} className="group/account relative shrink-0">
+            <div className="relative flex h-[60px] items-center rounded-[10px] transition-colors group-hover/account:bg-[rgb(var(--color-sidebar-hover))] group-focus-within/account:bg-[rgb(var(--color-sidebar-hover))]">
               <button
                 type="button"
                 data-testid="settings-button"
@@ -2621,12 +2621,12 @@ export function DesktopSidebar({
                   setImNotificationMenuOpen(false)
                   setSettingsMenuOpen(open => !open)
                 }}
-                className="flex h-14 min-w-0 flex-1 items-center gap-3 rounded-xl px-2.5 text-left text-[rgb(var(--color-sidebar-text-primary))] transition-colors hover:bg-[rgb(var(--color-sidebar-hover))]"
+                className="flex h-[60px] min-w-0 flex-1 items-center gap-3 rounded-[10px] py-2 pl-1.5 pr-10 text-left text-[rgb(var(--color-sidebar-text-primary))] transition-[padding] group-hover/account:pr-[72px] group-focus-within/account:pr-[72px]"
                 title={t('workbench.settings', '设置')}
                 aria-label={t('workbench.settings', '设置')}
                 aria-expanded={settingsMenuOpen}
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[11px] font-semibold leading-none text-primary">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[12px] font-semibold leading-none text-primary">
                   {sidebarAccount.initials}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -2638,28 +2638,32 @@ export function DesktopSidebar({
                   </span>
                 </span>
               </button>
-              <SidebarAppUpdateButton
-                onBeforeInstall={() => {
-                  setSettingsMenuOpen(false)
-                  setImNotificationMenuOpen(false)
-                }}
-              />
-              <GlobalImNotificationBell
-                devices={devices}
-                imNotificationSettings={imNotificationSettings}
-                menuOpen={imNotificationMenuOpen}
-                onMenuOpenChange={open => {
-                  if (open) setSettingsMenuOpen(false)
-                  setImNotificationMenuOpen(open)
-                }}
-                onToggleGlobalImNotification={onToggleGlobalImNotification}
-                onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
-                onOpenSettings={() => onOpenSettings()}
-                onAddCloudDevice={() => {
-                  setStandaloneRemoteDialogIntent('add-device')
-                  setStandaloneWorkspaceDialogMode('remote')
-                }}
-              />
+              <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+                <div className="max-w-0 translate-x-1 overflow-hidden opacity-0 transition-[max-width,opacity,transform] duration-150 group-hover/account:max-w-8 group-hover/account:translate-x-0 group-hover/account:opacity-100 group-focus-within/account:max-w-8 group-focus-within/account:translate-x-0 group-focus-within/account:opacity-100">
+                  <SidebarAppUpdateButton
+                    onBeforeInstall={() => {
+                      setSettingsMenuOpen(false)
+                      setImNotificationMenuOpen(false)
+                    }}
+                  />
+                </div>
+                <GlobalImNotificationBell
+                  devices={devices}
+                  imNotificationSettings={imNotificationSettings}
+                  menuOpen={imNotificationMenuOpen}
+                  onMenuOpenChange={open => {
+                    if (open) setSettingsMenuOpen(false)
+                    setImNotificationMenuOpen(open)
+                  }}
+                  onToggleGlobalImNotification={onToggleGlobalImNotification}
+                  onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
+                  onOpenSettings={() => onOpenSettings()}
+                  onAddCloudDevice={() => {
+                    setStandaloneRemoteDialogIntent('add-device')
+                    setStandaloneWorkspaceDialogMode('remote')
+                  }}
+                />
+              </div>
               {settingsMenuOpen && (
                 <DesktopSettingsMenu
                   user={user}
