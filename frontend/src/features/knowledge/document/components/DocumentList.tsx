@@ -498,6 +498,7 @@ export function DocumentList({
   }, [folders, activeFolderId, resetSelection])
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
+  const canManageFolderStructure = canManageAllDocuments
 
   const canManageDocument = (document: KnowledgeDocument) =>
     canManageAllDocuments || (canUpload && user?.id === document.user_id)
@@ -1235,10 +1236,10 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
-                onCreateFolder={canUpload ? handleCreateFolder : undefined}
-                onRenameFolder={canUpload ? handleRenameFolder : undefined}
-                onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
-                canManageFolders={canUpload}
+                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                canManageFolders={canManageFolderStructure}
                 canSelectFolders={canManageAllDocuments && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
@@ -1295,10 +1296,10 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={canManageAllDocuments ? handleSelectDoc : undefined}
                 ragConfigured={ragConfigured}
-                onCreateFolder={canUpload ? handleCreateFolder : undefined}
-                onRenameFolder={canUpload ? handleRenameFolder : undefined}
-                onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
-                canManageFolders={canUpload}
+                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                canManageFolders={canManageFolderStructure}
                 canSelectFolders={canManageAllDocuments && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
