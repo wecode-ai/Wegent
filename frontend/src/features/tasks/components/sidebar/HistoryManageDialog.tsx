@@ -248,7 +248,9 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
   const handleTaskClick = (task: Task) => {
     onOpenChange(false)
     let targetPath = paths.chat.getHref() // default to chat
-    if (task.task_type === 'code') {
+    if (task.task_type === 'knowledge' && task.knowledge_base_id) {
+      targetPath = `/knowledge/document/${task.knowledge_base_id}`
+    } else if (task.task_type === 'code') {
       targetPath = paths.chat.getHref()
     } else if (task.task_type === 'video' || task.task_type === 'image') {
       targetPath = paths.generate.getHref()
