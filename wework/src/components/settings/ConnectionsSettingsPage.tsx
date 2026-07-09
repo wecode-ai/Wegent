@@ -38,6 +38,7 @@ import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnecti
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
@@ -802,6 +803,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   value={editName}
                   onChange={e => setEditName(e.target.value)}
                   onKeyDown={e => {
+                    if (isImeEnterEvent(e)) return
                     if (e.key === 'Enter') handleSaveEdit()
                     if (e.key === 'Escape') handleCancelEdit()
                   }}
