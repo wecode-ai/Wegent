@@ -406,6 +406,7 @@
     "environment_branch_select": "Select branch",
     "environment_commit": "Commit",
     "environment_commit_message": "Commit message",
+    "environment_commit_message_placeholder": "Commit message (blank for AI)",
     "environment_commit_cancel": "Cancel",
     "environment_commit_confirm": "Confirm",
     "environment_committing": "Committing",

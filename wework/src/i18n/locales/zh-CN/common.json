@@ -406,6 +406,7 @@
     "environment_branch_select": "选择分支",
     "environment_commit": "提交",
     "environment_commit_message": "提交说明",
+    "environment_commit_message_placeholder": "提交说明（留空由 AI 生成）",
     "environment_commit_cancel": "取消",
     "environment_commit_confirm": "确认",
     "environment_committing": "提交中",

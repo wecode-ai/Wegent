@@ -3822,6 +3822,31 @@ describe('MessageList', () => {
     expect(screen.getByTestId('markdown-code-block')).toHaveClass('overflow-hidden')
   })
 
+  test('limits highlighted code selection to the code body', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-code-selection',
+            role: 'assistant',
+            content: ['```bash', 'git push origin feature/example', '```'].join('\n'),
+            status: 'done',
+            createdAt: '2026-05-25T00:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    const block = screen.getByTestId('markdown-code-block')
+    const scrollContainer = screen.getByTestId('markdown-code-scroll-container')
+    const code = block.querySelector('code')
+
+    expect(block).toHaveClass('select-none')
+    expect(screen.getByTestId('markdown-code-block-language')).toHaveClass('select-none')
+    expect(scrollContainer).toHaveClass('select-none')
+    expect(code).toHaveClass('select-text')
+  })
+
   test('renders local skill markdown links in user messages', () => {
     render(
       <MessageList

@@ -458,6 +458,34 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
     assert_eq!(request.argv[0], "python3");
     assert_eq!(request.argv[3], "review");
     assert_eq!(request.argv[4], "turn-file-changes/0/1");
+
+    let commit_message_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-commit-message",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_generate_commit_message",
+                    "path": "/tmp/project"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(commit_message_response["ok"], true);
+    let request = seen_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.argv[0], "python3");
+    assert!(request.command.contains("generate git commit message"));
+    assert!(
+        !request
+            .argv
+            .iter()
+            .any(|argument| argument.contains("--ask-for-approval")),
+        "commit message generator must not use unsupported Codex exec approval flags"
+    );
 }
 
 #[tokio::test]

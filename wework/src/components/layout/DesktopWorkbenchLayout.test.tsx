@@ -5289,6 +5289,54 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('已提交')).toBeInTheDocument()
   })
 
+  test('submits an empty environment commit message so AI can generate it', async () => {
+    const onCommitEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(await screen.findByTestId('environment-commit-button'))
+
+    const confirmButton = screen.getByTestId('environment-confirm-commit-button')
+    expect(confirmButton).toBeEnabled()
+    await userEvent.click(confirmButton)
+
+    await waitFor(() =>
+      expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, name: 'github_wegent' }),
+        '',
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
+      )
+    )
+  })
+
   test('switches and creates branches from the environment popover', async () => {
     const onListEnvironmentBranches = vi
       .fn()

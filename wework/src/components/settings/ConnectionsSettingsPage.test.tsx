@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
+import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
@@ -31,7 +32,7 @@ vi.mock('@/config/runtime', () => ({
 }))
 
 vi.mock('@/api/http', () => ({
-  createHttpClient: vi.fn(() => ({})),
+  createHttpClient: vi.fn((options: unknown) => ({ options })),
   shouldUseTauriFetch: vi.fn(() => false),
 }))
 
@@ -96,6 +97,7 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 }))
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
+const createHttpClientMock = vi.mocked(createHttpClient)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
@@ -149,6 +151,43 @@ function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     },
     ...overrides,
   })
+}
+
+function connectedCloudConnection(
+  overrides: Partial<CloudConnectionContextValue> = {}
+): CloudConnectionContextValue {
+  return {
+    status: 'connected',
+    backendUrl: 'https://cloud.example.com',
+    apiBaseUrl: 'https://cloud.example.com/api',
+    socketBaseUrl: 'https://cloud.example.com',
+    socketPath: '/socket.io',
+    token: 'cloud-token',
+    tokenExpiresAt: null,
+    user: { id: 7, user_name: 'crystal', email: 'crystal@example.com' },
+    connectedAt: '2026-07-09T00:00:00.000Z',
+    error: null,
+    isConnected: true,
+    serviceKey: 'cloud:https://cloud.example.com/api',
+    connectWithAuthorization: vi.fn(),
+    refreshUser: vi.fn(),
+    disconnect: vi.fn(),
+    ...overrides,
+  }
+}
+
+function disconnectedCloudConnection(
+  overrides: Partial<CloudConnectionContextValue> = {}
+): CloudConnectionContextValue {
+  return {
+    ...DISCONNECTED_STATE,
+    isConnected: false,
+    serviceKey: 'disconnected',
+    connectWithAuthorization: vi.fn(),
+    refreshUser: vi.fn(),
+    disconnect: vi.fn(),
+    ...overrides,
+  }
 }
 
 describe('ConnectionsSettingsPage', () => {
@@ -754,6 +793,68 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByTestId('skill-management-result')).toHaveTextContent(
       '/Users/crystal/.agents/skills'
     )
+  })
+
+  test('loads skill devices through the connected cloud API client', async () => {
+    window.history.pushState({}, '', '/settings/skills')
+    const cloudConnection = connectedCloudConnection()
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={cloudConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    expect(await screen.findByTestId('skill-settings-page')).toBeInTheDocument()
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
+
+    const cloudClientOptions = createHttpClientMock.mock.calls
+      .map(([options]) => options)
+      .find(
+        (options): options is { baseUrl: string; getToken: () => string | null } =>
+          typeof options === 'object' &&
+          options !== null &&
+          'baseUrl' in options &&
+          options.baseUrl === 'https://cloud.example.com/api' &&
+          'getToken' in options &&
+          typeof options.getToken === 'function'
+      )
+
+    expect(cloudClientOptions).toBeDefined()
+    expect(cloudClientOptions?.getToken()).toBe('cloud-token')
+    expect(screen.getByTestId('skill-management-device-select')).toHaveValue('local-device')
+    expect(screen.getByTestId('skill-management-enable-button')).not.toBeDisabled()
+  })
+
+  test('loads skill devices through the local API when cloud is disconnected', async () => {
+    window.history.pushState({}, '', '/settings/skills')
+    const cloudConnection = disconnectedCloudConnection()
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={cloudConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    expect(await screen.findByTestId('skill-settings-page')).toBeInTheDocument()
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
+
+    const localClientOptions = createHttpClientMock.mock.calls
+      .map(([options]) => options)
+      .find(
+        (options): options is { baseUrl: string } =>
+          typeof options === 'object' &&
+          options !== null &&
+          'baseUrl' in options &&
+          options.baseUrl === '/api'
+      )
+
+    expect(localClientOptions).toBeDefined()
+    expect(screen.queryByTestId('skill-management-error')).not.toBeInTheDocument()
+    expect(screen.getByTestId('skill-management-device-select')).toHaveValue('local-device')
+    expect(screen.getByTestId('skill-management-enable-button')).not.toBeDisabled()
   })
 
   test('shows a single empty worktree state without device groups', async () => {
