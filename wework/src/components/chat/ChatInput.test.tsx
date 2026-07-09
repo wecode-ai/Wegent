@@ -1222,12 +1222,16 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('attachment-file-input')).not.toHaveAttribute('accept')
   })
 
-  test('renders desktop context usage indicator when usage is available', () => {
+  test('renders desktop context usage indicator with compact action when usage is available', async () => {
+    const onSubmit = vi.fn()
+    const onCompactContext = vi.fn()
+
     render(
       <ChatInput
         value=""
         onChange={vi.fn()}
-        onSubmit={vi.fn()}
+        onSubmit={onSubmit}
+        onCompactContext={onCompactContext}
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({
@@ -1257,6 +1261,16 @@ describe('ChatInput', () => {
       'aria-label',
       'workbench.context_usage_aria'
     )
+
+    await userEvent.click(screen.getByTestId('context-usage-button'))
+
+    expect(screen.getByTestId('confirm-compact-context-button')).toHaveTextContent('压缩')
+
+    await userEvent.click(screen.getByTestId('confirm-compact-context-button'))
+
+    expect(onCompactContext).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('confirm-compact-context-button')).not.toBeInTheDocument()
   })
 
   test('uploads pasted images from the desktop message textbox', () => {
