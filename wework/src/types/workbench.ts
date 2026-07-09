@@ -103,6 +103,7 @@ export interface RuntimePaneTranscript {
   messages: WorkbenchMessage[]
   contextUsage?: RuntimeContextUsage | null
   turnNavigation?: RuntimeTurnNavigationItem[]
+  fullContent?: boolean
   rangeStart?: number | null
   rangeEnd?: number | null
   hasMoreBefore?: boolean
@@ -116,6 +117,7 @@ export interface RuntimePaneTranscriptLoadOptions {
   beforeCursor?: string | null
   afterCursor?: string | null
   refresh?: boolean
+  includeFullContent?: boolean
 }
 
 export type RuntimeTranscriptLoader = (

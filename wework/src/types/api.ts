@@ -270,6 +270,10 @@ export interface NormalizedRuntimeMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | string
   content: string
+  contentTruncated?: boolean | null
+  content_truncated?: boolean | null
+  contentOriginalChars?: number | null
+  content_original_chars?: number | null
   messageIndex?: number | null
   message_index?: number | null
   subtaskId?: string | null
@@ -471,6 +475,7 @@ export interface RuntimeTranscriptResponse {
   title?: string | null
   messages: NormalizedRuntimeMessage[]
   contextUsage?: RuntimeContextUsage | null
+  fullContent?: boolean
   turnNavigation?: RuntimeTurnNavigationItem[]
   rangeStart?: number | null
   rangeEnd?: number | null
@@ -486,6 +491,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   beforeCursor?: string | null
   afterCursor?: string | null
   refresh?: boolean
+  includeFullContent?: boolean
 }
 
 export interface RuntimeSendRequest {
@@ -1615,6 +1621,8 @@ export interface ChatBlock {
   id: string
   type: ChatBlockType
   content?: string
+  contentTruncated?: boolean
+  contentOriginalChars?: number
   tool_use_id?: string
   tool_name?: string
   tool_input?: Record<string, unknown>

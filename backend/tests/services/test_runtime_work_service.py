@@ -1228,6 +1228,59 @@ async def test_runtime_transcript_dispatches_pagination_payload(
 
 
 @pytest.mark.asyncio
+async def test_runtime_transcript_dispatches_full_content_payload(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTranscriptRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "taskId": "codex-1",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "codex",
+            "messages": [],
+            "fullContent": True,
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.get_runtime_transcript(
+        db=test_db,
+        user_id=test_user.id,
+        address=RuntimeTranscriptRequest(
+            deviceId="device-1",
+            localTaskId="codex-1",
+            workspacePath="/repo/Wegent",
+            afterCursor="offset:10",
+            includeFullContent=True,
+        ),
+    )
+
+    assert response.full_content is True
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.tasks.transcript",
+        payload={
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "taskId": "codex-1",
+            "afterCursor": "offset:10",
+            "includeFullContent": True,
+        },
+        timeout_seconds=30,
+    )
+
+
+@pytest.mark.asyncio
 async def test_archive_runtime_task_dispatches_to_owned_device_without_task_rows(
     test_db,
     test_user,
