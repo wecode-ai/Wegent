@@ -54,6 +54,7 @@ import {
   getDefaultSimpleBindMode,
   isClaudeCodeShell,
   normalizeExecutorForBindMode,
+  resolveSimpleExecutorFromBot,
   resolveShellForExecutor,
   shellSupportsPreloadSkills,
   type SimpleExecutorMode,
@@ -113,25 +114,6 @@ function getInitialBindMode(team: Team): TaskType[] {
   }
 
   return normalizeSimpleBindMode(team)
-}
-
-function resolveSimpleExecutorFromBot(bot: Bot | undefined): {
-  mode: SimpleExecutorMode
-  customShellName: string
-} {
-  if (!bot) {
-    return { mode: 'simple', customShellName: '' }
-  }
-
-  if (bot.shell_type === 'ClaudeCode' || bot.shell_name === 'ClaudeCode') {
-    return { mode: 'complex', customShellName: '' }
-  }
-
-  if (bot.shell_type === 'Chat' || bot.shell_name === 'Chat') {
-    return { mode: 'simple', customShellName: '' }
-  }
-
-  return { mode: 'custom', customShellName: bot.shell_name }
 }
 
 export default function TeamEditDialog(props: TeamEditDialogProps) {

@@ -39,19 +39,17 @@ pub(crate) fn cached_messages(link: &RuntimeTaskLink) -> Vec<Value> {
 }
 
 pub(crate) fn set_runtime_handle_messages(runtime_handle: &mut Value, messages: Vec<Value>) {
-    let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
+    if !runtime_handle.is_object() {
+        *runtime_handle = Value::Object(Map::new());
+    }
+    let object = runtime_handle
+        .as_object_mut()
+        .expect("runtime handle object was just inserted");
     object.insert("messages".to_owned(), Value::Array(messages));
-    *runtime_handle = Value::Object(object);
 }
 
 pub(crate) fn append_runtime_handle_message(runtime_handle: &mut Value, message: Value) {
-    let mut messages = runtime_handle
-        .get("messages")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    messages.push(message);
-    set_runtime_handle_messages(runtime_handle, messages);
+    runtime_handle_messages_mut(runtime_handle).push(message);
 }
 
 #[cfg(test)]
@@ -481,7 +479,7 @@ fn cache_runtime_assistant_block(
     request: &ExecutionRequest,
     block: Value,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         complete_open_process_blocks(blocks);
         merge_cached_block(blocks, block);
     });
@@ -496,7 +494,7 @@ fn cache_runtime_assistant_plan_item(
 ) {
     let block_id = plan_block_id(params);
     let process_item_id = notification_item_id(params);
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         if let Some(block) = blocks.iter_mut().find(|block| {
             block_identity(block).as_deref() == Some(block_id.as_str())
                 || process_block_accepts_delta_for_item(
@@ -539,7 +537,7 @@ fn update_runtime_assistant_block(
     block_id: &str,
     updates: Value,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         update_cached_block(blocks, block_id, updates);
     });
 }
@@ -551,7 +549,7 @@ fn append_runtime_assistant_tool_output_delta(
     tool_use_id: &str,
     delta: String,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         append_tool_output_delta(blocks, tool_use_id, delta);
     });
 }
@@ -565,7 +563,7 @@ fn append_runtime_assistant_process_delta(
     process_item_id: Option<String>,
     delta: String,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         append_process_block_delta(
             blocks,
             local_task_id,
@@ -587,7 +585,7 @@ fn append_runtime_assistant_process_snapshot(
     process_item_id: Option<String>,
     content: String,
 ) {
-    mutate_cached_assistant_blocks(store, local_task_id, request, |blocks| {
+    mutate_cached_assistant_blocks_throttled(store, local_task_id, request, |blocks| {
         if let Some(block) = blocks.iter_mut().rev().find(|block| {
             process_block_accepts_delta_for_item(
                 block,
@@ -626,7 +624,7 @@ fn append_runtime_assistant_content_delta(
     request: &ExecutionRequest,
     delta: String,
 ) {
-    mutate_cached_assistant_message(store, local_task_id, request, |message| {
+    mutate_cached_assistant_message_throttled(store, local_task_id, request, |message| {
         append_message_content_delta(message, delta);
     });
 }
@@ -686,31 +684,57 @@ pub(crate) fn merge_cached_messages(
     merged
 }
 
-fn mutate_cached_assistant_blocks(
+fn mutate_cached_assistant_blocks_throttled(
     store: &RuntimeWorkStore,
     local_task_id: &str,
     request: &ExecutionRequest,
     mutate_blocks: impl FnOnce(&mut Vec<Value>),
 ) {
-    mutate_cached_assistant_message(store, local_task_id, request, |assistant| {
-        let blocks = ensure_message_blocks(assistant);
-        mutate_blocks(blocks);
-    });
+    mutate_cached_assistant_message_with_persistence(
+        store,
+        local_task_id,
+        request,
+        false,
+        |assistant| {
+            let blocks = ensure_message_blocks(assistant);
+            mutate_blocks(blocks);
+        },
+    );
 }
 
-fn mutate_cached_assistant_message(
+fn mutate_cached_assistant_message_throttled(
     store: &RuntimeWorkStore,
     local_task_id: &str,
     request: &ExecutionRequest,
     mutate_message: impl FnOnce(&mut Value),
 ) {
-    store.update_task(local_task_id, |link| {
-        let mut messages = cached_messages(link);
-        let assistant = ensure_cached_assistant_message(&mut messages, local_task_id, request);
+    mutate_cached_assistant_message_with_persistence(
+        store,
+        local_task_id,
+        request,
+        false,
+        mutate_message,
+    );
+}
+
+fn mutate_cached_assistant_message_with_persistence(
+    store: &RuntimeWorkStore,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    persist: bool,
+    mutate_message: impl FnOnce(&mut Value),
+) {
+    let update = |link: &mut RuntimeTaskLink| {
+        let messages = runtime_handle_messages_mut(&mut link.runtime_handle);
+        let assistant = ensure_cached_assistant_message(messages, local_task_id, request);
         mutate_message(assistant);
         link.updated_at = now_ms();
-        set_runtime_handle_messages(&mut link.runtime_handle, messages);
-    });
+    };
+    if persist {
+        store.update_task(local_task_id, update);
+    } else {
+        store.update_task_in_memory(local_task_id, update);
+    }
 }
 
 fn mutate_existing_cached_assistant_message(
@@ -719,14 +743,13 @@ fn mutate_existing_cached_assistant_message(
     request: &ExecutionRequest,
     mutate_message: impl FnOnce(&mut Value),
 ) {
-    store.update_task(local_task_id, |link| {
-        let mut messages = cached_messages(link);
-        let Some(index) = cached_assistant_message_index(&messages, request) else {
+    store.update_task_in_memory(local_task_id, |link| {
+        let messages = runtime_handle_messages_mut(&mut link.runtime_handle);
+        let Some(index) = cached_assistant_message_index(messages, request) else {
             return;
         };
         mutate_message(&mut messages[index]);
         link.updated_at = now_ms();
-        set_runtime_handle_messages(&mut link.runtime_handle, messages);
     });
 }
 
@@ -854,6 +877,22 @@ fn ensure_cached_assistant_message<'a>(
     messages
         .last_mut()
         .expect("assistant message was just inserted")
+}
+
+fn runtime_handle_messages_mut(runtime_handle: &mut Value) -> &mut Vec<Value> {
+    if !runtime_handle.is_object() {
+        *runtime_handle = Value::Object(Map::new());
+    }
+    let object = runtime_handle
+        .as_object_mut()
+        .expect("runtime handle object was just inserted");
+    if !object.get("messages").is_some_and(Value::is_array) {
+        object.insert("messages".to_owned(), Value::Array(Vec::new()));
+    }
+    object
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .expect("messages array was just inserted")
 }
 
 fn cached_assistant_message_index(messages: &[Value], request: &ExecutionRequest) -> Option<usize> {
@@ -1247,6 +1286,163 @@ mod tests {
     }
 
     #[test]
+    fn cache_codex_notification_marks_successful_legacy_mcp_end_as_done() {
+        let index_path = temp_index_path("legacy-mcp-success-cache");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "id": "fc-1",
+                    "name": "ask",
+                    "namespace": "askhuman",
+                    "arguments": "{\"message\":\"Confirm?\"}",
+                    "call_id": "call-ask"
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "mcp_tool_call_end",
+                    "call_id": "call-ask",
+                    "invocation": {
+                        "server": "askhuman",
+                        "tool": "ask",
+                        "arguments": {"message": "Confirm?"}
+                    },
+                    "result": {
+                        "Ok": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "{\"answers\":[{\"question_index\":0,\"user_input\":\"done\"}]}"
+                                }
+                            ],
+                            "structuredContent": {
+                                "answers": [
+                                    {"question_index": 0, "user_input": "done"}
+                                ]
+                            },
+                            "isError": false
+                        }
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["tool_name"], "ask");
+        assert_eq!(block["tool_output"]["isError"], false);
+        assert_eq!(block["status"], "done");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_codex_notification_marks_completed_mcp_with_null_error_as_done() {
+        let index_path = temp_index_path("mcp-null-error-success-cache");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": "call-mcp",
+                        "server": "codex",
+                        "tool": "list_mcp_resources",
+                        "arguments": {},
+                        "status": "inProgress",
+                        "error": null,
+                        "result": null
+                    }
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "type": "mcpToolCall",
+                        "id": "call-mcp",
+                        "server": "codex",
+                        "tool": "list_mcp_resources",
+                        "arguments": {},
+                        "status": "completed",
+                        "error": null,
+                        "result": {
+                            "_meta": null,
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "{\"resources\":[]}"
+                                }
+                            ],
+                            "structuredContent": null
+                        }
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        let block = &messages[0]["blocks"][0];
+
+        assert_eq!(block["tool_name"], "codex.list_mcp_resources");
+        assert_eq!(block["status"], "done");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
     fn cache_codex_notification_preserves_context_compaction_as_tool_block() {
         let index_path = temp_index_path("context-compaction-cache");
         let store = RuntimeWorkStore::new(index_path.clone());
@@ -1283,6 +1479,65 @@ mod tests {
         assert_eq!(messages[0]["role"], "assistant");
         assert_eq!(messages[0]["blocks"][0]["id"], "ctx-1");
         assert_eq!(messages[0]["blocks"][0]["type"], "tool");
+        assert_eq!(messages[0]["blocks"][0]["tool_name"], "context_compaction");
+        assert_eq!(messages[0]["blocks"][0]["status"], "done");
+
+        let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn cache_completed_context_compaction_item_marks_existing_block_done() {
+        let index_path = temp_index_path("context-compaction-completed-cache");
+        let store = RuntimeWorkStore::new(index_path.clone());
+        let local_task_id = "runtime-cache";
+        store.upsert_task(RuntimeTaskLink::new_pending(
+            local_task_id.to_owned(),
+            "/tmp/project".to_owned(),
+            "Runtime cache".to_owned(),
+        ));
+        let request = ExecutionRequest {
+            task_id: "1".to_owned(),
+            subtask_id: "42".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "ctx-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+        cache_codex_notification(
+            &store,
+            local_task_id,
+            &request,
+            &json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "ctx-1",
+                        "type": "contextCompaction"
+                    }
+                }
+            }),
+        );
+
+        let link = store
+            .get_task(local_task_id)
+            .expect("runtime task should exist");
+        let messages = cached_messages(&link);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["blocks"].as_array().unwrap().len(), 1);
+        assert_eq!(messages[0]["blocks"][0]["id"], "ctx-1");
         assert_eq!(messages[0]["blocks"][0]["tool_name"], "context_compaction");
         assert_eq!(messages[0]["blocks"][0]["status"], "done");
 

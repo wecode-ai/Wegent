@@ -3,8 +3,10 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   emptyCodexUsageDisplay,
+  formatCodexUsageResetTime,
   getLocalCodexUsageDisplay,
   type CodexUsageDisplay,
+  type CodexUsageWindowDisplay,
 } from '@/api/local/codexUsage'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
@@ -164,15 +166,9 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
             <div className="py-1 text-[13px] leading-[18px] text-text-secondary">{quotaError}</div>
           ) : null}
           {!quotaError ? (
-            <div className="space-y-1.5 text-xs leading-5 text-text-secondary">
-              <div className="flex items-center justify-between gap-3 whitespace-nowrap">
-                <span>{codexUsage.fiveHour.title}</span>
-                <span className="font-semibold text-text-primary">{codexUsage.fiveHour.value}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3 whitespace-nowrap">
-                <span>{codexUsage.sevenDay.title}</span>
-                <span className="font-semibold text-text-primary">{codexUsage.sevenDay.value}</span>
-              </div>
+            <div className="space-y-2 text-xs leading-5 text-text-secondary">
+              <UsageWindowRow window={codexUsage.fiveHour} />
+              <UsageWindowRow window={codexUsage.sevenDay} />
             </div>
           ) : null}
         </div>
@@ -185,6 +181,25 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
           onClick={onLogout}
         />
       ) : null}
+    </div>
+  )
+}
+
+function UsageWindowRow({ window }: { window: CodexUsageWindowDisplay }) {
+  const resetTime = formatCodexUsageResetTime(window.resetsAt)
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="whitespace-nowrap">{window.title}</div>
+        {resetTime ? (
+          <div className="mt-0.5 whitespace-nowrap text-[11px] leading-4 text-text-muted">
+            {resetTime} 重置
+          </div>
+        ) : null}
+      </div>
+      <span className="shrink-0 whitespace-nowrap font-semibold text-text-primary">
+        {window.value}
+      </span>
     </div>
   )
 }

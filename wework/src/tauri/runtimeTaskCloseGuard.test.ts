@@ -1,6 +1,23 @@
-import { describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { RuntimeWorkListResponse } from '@/types/api'
-import { hasRunningRuntimeTasks, shouldPreventRuntimeTaskClose } from './runtimeTaskCloseGuard'
+import {
+  CLOSE_TO_TRAY_HINT_REQUESTED_EVENT,
+  closeMainWindowToTray,
+  hasRunningRuntimeTasks,
+  installRuntimeTaskCloseGuard,
+  shouldPreventRuntimeTaskClose,
+} from './runtimeTaskCloseGuard'
+
+const invokeMock = vi.hoisted(() => vi.fn())
+const listenMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: invokeMock,
+}))
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: listenMock,
+}))
 
 function runtimeWorkWithTasks(tasks: Array<{ running?: boolean }>): RuntimeWorkListResponse {
   return {
@@ -29,6 +46,11 @@ function runtimeWorkWithTasks(tasks: Array<{ running?: boolean }>): RuntimeWorkL
 }
 
 describe('runtime task close guard', () => {
+  beforeEach(() => {
+    invokeMock.mockReset()
+    listenMock.mockReset()
+  })
+
   test('detects running tasks across runtime work', () => {
     expect(hasRunningRuntimeTasks(runtimeWorkWithTasks([{ running: false }]))).toBe(false)
     expect(hasRunningRuntimeTasks(runtimeWorkWithTasks([{ running: true }]))).toBe(true)
@@ -79,5 +101,32 @@ describe('runtime task close guard', () => {
       shouldPreventRuntimeTaskClose(runtimeWorkWithTasks([{ running: true }]), confirmClose)
     ).toBe(false)
     expect(confirmClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('listens for the close-to-tray hint request event', async () => {
+    const unlisten = vi.fn()
+    const onCloseToTrayHintRequest = vi.fn()
+    listenMock.mockResolvedValue(unlisten)
+
+    const result = await installRuntimeTaskCloseGuard(onCloseToTrayHintRequest)
+
+    expect(listenMock).toHaveBeenCalledWith(
+      CLOSE_TO_TRAY_HINT_REQUESTED_EVENT,
+      expect.any(Function)
+    )
+
+    const callback = listenMock.mock.calls[0][1] as () => void
+    callback()
+
+    expect(onCloseToTrayHintRequest).toHaveBeenCalledTimes(1)
+    expect(result).toBe(unlisten)
+  })
+
+  test('closes the main window to tray through the Tauri command', async () => {
+    invokeMock.mockResolvedValue(undefined)
+
+    await closeMainWindowToTray()
+
+    expect(invokeMock).toHaveBeenCalledWith('close_main_window_to_tray')
   })
 })

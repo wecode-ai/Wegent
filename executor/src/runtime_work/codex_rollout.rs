@@ -4,17 +4,16 @@
 
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read, Seek, SeekFrom},
+    io::{BufRead, BufReader, Seek, SeekFrom},
     path::Path,
 };
 
 use serde_json::{json, Value};
 
 use super::util::{
-    codex_wrapped_item_payload, extract_text, item_type, now_ms, string_field, timestamp_ms_field,
+    codex_wrapped_item_payload, extract_text, integer_field, item_type, now_ms, string_field,
+    timestamp_ms_field,
 };
-
-const ROLLOUT_STATUS_TAIL_BYTES: u64 = 64 * 1024;
 
 pub(crate) fn thread_with_rollout_turns(thread: &Value) -> Option<Value> {
     let Some(path) = string_field(thread, "path") else {
@@ -39,12 +38,97 @@ pub(crate) fn thread_with_rollout_turns(thread: &Value) -> Option<Value> {
     Some(next_thread)
 }
 
+pub(crate) fn rollout_context_usage(thread: &Value) -> Option<Value> {
+    normalize_thread_token_usage(
+        thread
+            .get("tokenUsage")
+            .or_else(|| thread.get("token_usage"))
+            .unwrap_or(thread),
+    )
+    .or_else(|| {
+        string_field(thread, "path").and_then(|path| rollout_path_context_usage(Path::new(&path)))
+    })
+}
+
 pub(crate) fn thread_with_turns(thread: &Value, turns: Vec<Value>) -> Value {
     let mut next_thread = thread.clone();
     if let Some(object) = next_thread.as_object_mut() {
         object.insert("turns".to_owned(), Value::Array(turns));
     }
     next_thread
+}
+
+fn rollout_path_context_usage(path: &Path) -> Option<Value> {
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    reader
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| serde_json::from_str::<Value>(&line).ok())
+        .filter_map(|item| {
+            let payload = codex_wrapped_item_payload(&item).unwrap_or(&item);
+            if !matches!(item_type(payload).as_str(), "tokencount" | "token_count") {
+                return None;
+            }
+            payload
+                .get("info")
+                .and_then(normalize_token_usage_info)
+                .or_else(|| normalize_thread_token_usage(payload))
+        })
+        .last()
+}
+
+fn normalize_token_usage_info(info: &Value) -> Option<Value> {
+    let total = normalize_token_usage_breakdown(
+        info.get("total_token_usage")
+            .or_else(|| info.get("totalTokenUsage"))
+            .or_else(|| info.get("total"))?,
+    )?;
+    let last = normalize_token_usage_breakdown(
+        info.get("last_token_usage")
+            .or_else(|| info.get("lastTokenUsage"))
+            .or_else(|| info.get("last"))?,
+    )?;
+    let model_context_window = integer_field(info, "model_context_window")
+        .or_else(|| integer_field(info, "modelContextWindow"))?;
+
+    Some(json!({
+        "total": total,
+        "last": last,
+        "modelContextWindow": model_context_window,
+    }))
+}
+
+fn normalize_thread_token_usage(value: &Value) -> Option<Value> {
+    let total = normalize_token_usage_breakdown(value.get("total")?)?;
+    let last = normalize_token_usage_breakdown(value.get("last")?)?;
+    let model_context_window = integer_field(value, "modelContextWindow")
+        .or_else(|| integer_field(value, "model_context_window"))?;
+
+    Some(json!({
+        "total": total,
+        "last": last,
+        "modelContextWindow": model_context_window,
+    }))
+}
+
+fn normalize_token_usage_breakdown(value: &Value) -> Option<Value> {
+    Some(json!({
+        "totalTokens": integer_field(value, "total_tokens")
+            .or_else(|| integer_field(value, "totalTokens"))?,
+        "inputTokens": integer_field(value, "input_tokens")
+            .or_else(|| integer_field(value, "inputTokens"))
+            .unwrap_or(0),
+        "cachedInputTokens": integer_field(value, "cached_input_tokens")
+            .or_else(|| integer_field(value, "cachedInputTokens"))
+            .unwrap_or(0),
+        "outputTokens": integer_field(value, "output_tokens")
+            .or_else(|| integer_field(value, "outputTokens"))
+            .unwrap_or(0),
+        "reasoningOutputTokens": integer_field(value, "reasoning_output_tokens")
+            .or_else(|| integer_field(value, "reasoningOutputTokens"))
+            .unwrap_or(0),
+    }))
 }
 
 pub(crate) fn rollout_turns(thread: &Value) -> Option<Vec<Value>> {
@@ -98,67 +182,6 @@ pub(crate) fn append_rollout_turns_from_offset(
     })
 }
 
-pub(crate) fn thread_with_rollout_running_status(thread: &Value) -> Value {
-    if !rollout_tail_is_running(thread) {
-        return thread.clone();
-    }
-
-    let mut next_thread = thread.clone();
-    if let Some(object) = next_thread.as_object_mut() {
-        object.insert("status".to_owned(), Value::String("running".to_owned()));
-    }
-    next_thread
-}
-
-fn rollout_tail_is_running(thread: &Value) -> bool {
-    let Some(path) = string_field(thread, "path") else {
-        return false;
-    };
-    let Ok(mut file) = File::open(path) else {
-        return false;
-    };
-    let Ok(metadata) = file.metadata() else {
-        return false;
-    };
-    let file_len = metadata.len();
-    let start = file_len.saturating_sub(ROLLOUT_STATUS_TAIL_BYTES);
-    if file.seek(SeekFrom::Start(start)).is_err() {
-        return false;
-    }
-
-    let mut tail_bytes = Vec::new();
-    if file.read_to_end(&mut tail_bytes).is_err() {
-        return false;
-    }
-    let tail = String::from_utf8_lossy(&tail_bytes);
-    let tail = if start > 0 {
-        tail.split_once('\n')
-            .map(|(_, rest)| rest)
-            .unwrap_or(tail.as_ref())
-    } else {
-        tail.as_ref()
-    };
-
-    let mut running = false;
-    for line in tail.lines() {
-        let Ok(item) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        if is_turn_start_item(&item) {
-            running = true;
-            continue;
-        }
-        if is_turn_completion_item(&item) {
-            running = false;
-            continue;
-        }
-        if rollout_transcript_item(&item).is_some() || is_rollout_activity_item(&item) {
-            running = true;
-        }
-    }
-    running
-}
-
 fn rollout_path_turns(path: &Path, thread: &Value) -> Vec<Value> {
     let Ok(file) = File::open(path) else {
         return Vec::new();
@@ -204,6 +227,7 @@ fn rollout_path_turns(path: &Path, thread: &Value) -> Vec<Value> {
         current.items.push(transcript_item);
     }
 
+    complete_current_turn_if_final_assistant_message(&mut current, fallback_started_at);
     push_rollout_turn(&mut turns, &mut current, fallback_started_at);
     turns
 }
@@ -386,6 +410,35 @@ fn rollout_transcript_item(item: &Value) -> Option<Value> {
         "eventmsg" if rollout_event_is_transcript_item(item) => Some(item.clone()),
         _ => None,
     }
+}
+
+fn is_final_assistant_message_item(item: &Value) -> bool {
+    if item_type(item) != "responseitem" || !is_root_turn_marker(item) {
+        return false;
+    }
+    let Some(payload) = codex_wrapped_item_payload(item) else {
+        return false;
+    };
+    item_type(payload) == "message"
+        && string_field(payload, "role").is_some_and(|role| role.eq_ignore_ascii_case("assistant"))
+}
+
+fn complete_current_turn_if_final_assistant_message(
+    current: &mut RolloutTurn,
+    fallback_started_at: i64,
+) {
+    if current.status != "running" {
+        return;
+    }
+    let Some(last_item) = current
+        .items
+        .last()
+        .filter(|item| is_final_assistant_message_item(item))
+    else {
+        return;
+    };
+    current.status = "completed".to_owned();
+    current.completed_at = item_timestamp_ms(last_item).or(Some(fallback_started_at));
 }
 
 fn is_rollout_activity_item(item: &Value) -> bool {
@@ -635,6 +688,29 @@ mod tests {
     }
 
     #[test]
+    fn detects_inactive_turn_when_rollout_ends_with_assistant_message() {
+        let path = temp_rollout_path("assistant-message-complete");
+        fs::write(
+            &path,
+            [
+                json!({"type":"event_msg","payload":{"type":"user_message","message":"fix"}})
+                    .to_string(),
+                json!({"type":"event_msg","payload":{"type":"agent_message","message":"done"}})
+                    .to_string(),
+                json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}})
+                    .to_string(),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let thread = thread_with_path(&path);
+        let hydrated = thread_with_rollout_turns(&thread).expect("rollout should hydrate thread");
+        assert_eq!(hydrated["turns"][0]["status"], "completed");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn detects_inactive_turn_when_rollout_ends_with_turn_aborted() {
         let path = temp_rollout_path("aborted");
         fs::write(
@@ -820,63 +896,6 @@ mod tests {
     }
 
     #[test]
-    fn running_status_uses_rollout_tail_without_hydrating_turns() {
-        let path = temp_rollout_path("running-status");
-        fs::write(
-            &path,
-            [
-                json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
-                json!({"type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"exec_command"}})
-                    .to_string(),
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-
-        let thread = thread_with_path(&path);
-        let state = thread_with_rollout_running_status(&thread);
-
-        assert_eq!(state["status"], "running");
-        assert_eq!(
-            state["turns"]
-                .as_array()
-                .expect("existing turns array should be preserved")
-                .len(),
-            0
-        );
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn running_status_detects_completed_tail() {
-        let path = temp_rollout_path("running-status-complete");
-        fs::write(
-            &path,
-            [
-                json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
-                json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}})
-                    .to_string(),
-                json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-
-        let thread = thread_with_path(&path);
-        let state = thread_with_rollout_running_status(&thread);
-
-        assert_ne!(state["status"], "running");
-        assert_eq!(
-            state["turns"]
-                .as_array()
-                .expect("existing turns array should be preserved")
-                .len(),
-            0
-        );
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
     fn ignores_subagent_turn_completion_for_root_rollout_status() {
         let path = temp_rollout_path("subagent-complete");
         fs::write(
@@ -925,30 +944,6 @@ mod tests {
 
         assert_eq!(items.len(), 2);
         assert_eq!(items[1]["payload"]["content"][0]["text"], "root");
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn running_status_ignores_subagent_turn_completion_tail() {
-        let path = temp_rollout_path("running-status-subagent-complete");
-        fs::write(
-            &path,
-            [
-                json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"root-turn"}})
-                    .to_string(),
-                json!({"type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"spawn_agent"}})
-                    .to_string(),
-                json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":"child-turn","agent_path":"/root/worker"}})
-                    .to_string(),
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-
-        let thread = thread_with_path(&path);
-        let state = thread_with_rollout_running_status(&thread);
-
-        assert_eq!(state["status"], "running");
         let _ = fs::remove_file(path);
     }
 
@@ -1036,6 +1031,60 @@ mod tests {
             appended.turns[1]["items"][0]["payload"]["role"],
             "assistant"
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rollout_context_usage_reads_latest_token_count_from_rollout_file() {
+        let path = temp_rollout_path("context-usage");
+        fs::write(
+            &path,
+            format!(
+                "{}\n{}\n{}\n",
+                json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","model_context_window":258400}}),
+                json!({"type":"event_msg","payload":{"type":"token_count","info":{
+                    "total_token_usage":{
+                        "input_tokens":12000,
+                        "cached_input_tokens":4000,
+                        "output_tokens":100,
+                        "reasoning_output_tokens":0,
+                        "total_tokens":12100
+                    },
+                    "last_token_usage":{
+                        "input_tokens":12000,
+                        "cached_input_tokens":4000,
+                        "output_tokens":100,
+                        "reasoning_output_tokens":0,
+                        "total_tokens":12100
+                    },
+                    "model_context_window":258400
+                }}}),
+                json!({"type":"event_msg","payload":{"type":"token_count","info":{
+                    "total_token_usage":{
+                        "input_tokens":17000000,
+                        "cached_input_tokens":0,
+                        "output_tokens":200000,
+                        "reasoning_output_tokens":0,
+                        "total_tokens":17200000
+                    },
+                    "last_token_usage":{
+                        "input_tokens":7000,
+                        "cached_input_tokens":1000,
+                        "output_tokens":1000,
+                        "reasoning_output_tokens":0,
+                        "total_tokens":8000
+                    },
+                    "model_context_window":258400
+                }}})
+            ),
+        )
+        .unwrap();
+
+        let usage = rollout_context_usage(&thread_with_path(&path)).expect("context usage");
+
+        assert_eq!(usage["total"]["totalTokens"], json!(17_200_000));
+        assert_eq!(usage["last"]["totalTokens"], json!(8_000));
+        assert_eq!(usage["modelContextWindow"], json!(258_400));
         let _ = fs::remove_file(path);
     }
 

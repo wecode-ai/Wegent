@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { BranchSelector } from '@/components/common/BranchSelector'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -234,7 +235,10 @@ export function ProjectWorkBar({
   onCreateProjectMode,
   branchName,
   branchLoading,
+  onRefreshBranch,
   onListBranches,
+  onCheckoutBranch,
+  onCreateBranch,
   worktreeBranch,
   onWorktreeBranchChange,
   className,
@@ -1006,6 +1010,23 @@ export function ProjectWorkBar({
           </button>
         </div>
       )}
+      {currentProject &&
+        projectExecutionUi.displayedMode === 'current_workspace' &&
+        !selectedWorkspaceIsRemote &&
+        !executionModeLocked &&
+        onListBranches &&
+        onCheckoutBranch && (
+          <BranchSelector
+            variant="workbar"
+            mobileSheet
+            currentBranch={branchName}
+            loading={branchLoading}
+            onRefresh={onRefreshBranch}
+            onListBranches={onListBranches}
+            onCheckoutBranch={onCheckoutBranch}
+            onCreateBranch={onCreateBranch}
+          />
+        )}
       {currentProject &&
         projectExecutionUi.displayedMode === 'git_worktree' &&
         !executionModeLocked &&

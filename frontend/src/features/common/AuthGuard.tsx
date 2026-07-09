@@ -34,6 +34,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       '/shared/knowledge', // Allow public shared knowledge base page without authentication
       '/auth/dingtalk', // DingTalk authentication page
       '/jump', // Jump page for notification redirects (no auth required)
+      '/wework/authorize',
     ]
 
     // Check if URL contains Aidesk authentication parameters

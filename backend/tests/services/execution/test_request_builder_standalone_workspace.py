@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from app.core.constants import CLIENT_ORIGIN_FRONTEND, CLIENT_ORIGIN_WEWORK
+from app.models.project import Project
 from app.models.task import TaskResource
 from app.services.chat.standalone_workspace import (
     WORKSPACE_PATH_LABEL,
@@ -148,4 +149,82 @@ def test_merge_task_spec_execution_workspace_derives_git_worktree_path():
         "device_id": "device-1",
         "checkout_path": None,
         "local_path": "worktrees/1386/Wegent",
+    }
+
+
+def test_merge_project_workspace_preserves_cloud_device_path(test_db, test_user):
+    project = Project(
+        id=9410,
+        user_id=test_user.id,
+        name="cloud workspace",
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+        config={
+            "mode": "workspace",
+            "execution": {"targetType": "cloud", "deviceId": "cloud-crd"},
+            "workspace": {
+                "source": "device_path",
+                "devicePath": "/workspace/repo",
+            },
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    builder = TaskRequestBuilder(test_db)
+    task = Mock(spec=TaskResource)
+    task.project_id = project.id
+    task.user_id = test_user.id
+    task.json = {}
+    workspace_data = {"repository": {}, "branch": None, "path": None}
+
+    builder._merge_project_workspace(task, workspace_data)
+
+    assert workspace_data["project"] == {
+        "project_id": project.id,
+        "workspace_source": "device_path",
+        "project_workspace_path": "/workspace/repo",
+        "execution_target_type": "cloud",
+        "device_id": "cloud-crd",
+        "checkout_path": None,
+        "local_path": None,
+        "device_path": "/workspace/repo",
+    }
+
+
+def test_merge_project_workspace_preserves_remote_device_path(test_db, test_user):
+    project = Project(
+        id=9411,
+        user_id=test_user.id,
+        name="remote workspace",
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+        config={
+            "mode": "workspace",
+            "execution": {"targetType": "remote", "deviceId": "remote-device"},
+            "workspace": {
+                "source": "device_path",
+                "devicePath": "/srv/repo",
+            },
+        },
+    )
+    test_db.add(project)
+    test_db.commit()
+
+    builder = TaskRequestBuilder(test_db)
+    task = Mock(spec=TaskResource)
+    task.project_id = project.id
+    task.user_id = test_user.id
+    task.json = {}
+    workspace_data = {"repository": {}, "branch": None, "path": None}
+
+    builder._merge_project_workspace(task, workspace_data)
+
+    assert workspace_data["project"] == {
+        "project_id": project.id,
+        "workspace_source": "device_path",
+        "project_workspace_path": "/srv/repo",
+        "execution_target_type": "remote",
+        "device_id": "remote-device",
+        "checkout_path": None,
+        "local_path": None,
+        "device_path": "/srv/repo",
     }

@@ -38,6 +38,7 @@ export interface CodexUsageDisplay {
 const EMPTY_VALUE = '无'
 const FIVE_HOUR_MINUTES = 5 * 60
 const SEVEN_DAY_MINUTES = 7 * 24 * 60
+const MILLISECONDS_PER_SECOND = 1000
 
 function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -84,6 +85,71 @@ function windowsFromSnapshot(snapshot: CodexRateLimitSnapshot | null | undefined
   }
 }
 
+function isEnglishLocale(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false
+  }
+  return navigator.language.toLowerCase().startsWith('en')
+}
+
+function isSameLocalDate(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  )
+}
+
+export function formatCodexUsageResetTime(
+  resetsAt: number | null,
+  now = new Date()
+): string | null {
+  if (typeof resetsAt !== 'number' || !Number.isFinite(resetsAt)) {
+    return null
+  }
+
+  const resetDate = new Date(resetsAt * MILLISECONDS_PER_SECOND)
+  if (Number.isNaN(resetDate.getTime())) {
+    return null
+  }
+
+  const english = isEnglishLocale()
+  if (english) {
+    const time = resetDate.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+    })
+    if (isSameLocalDate(resetDate, now)) {
+      return time
+    }
+    const date = resetDate.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    })
+    return `${date}, ${time}`
+  }
+
+  const time = resetDate.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  if (isSameLocalDate(resetDate, now)) {
+    return time
+  }
+  return `${resetDate.getMonth() + 1}月${resetDate.getDate()}日 ${time}`
+}
+
+function formatTooltipLine(window: CodexUsageWindowDisplay): string {
+  const resetTime = formatCodexUsageResetTime(window.resetsAt)
+  const resetText = resetTime
+    ? isEnglishLocale()
+      ? ` (resets ${resetTime})`
+      : `（${resetTime} 重置）`
+    : ''
+  return `${window.title} ${window.value}${resetText}`
+}
+
 function codexSnapshot(response: CodexRateLimitsResponse): CodexRateLimitSnapshot | null {
   return response.rateLimitsByLimitId?.codex ?? response.rateLimits ?? null
 }
@@ -104,7 +170,7 @@ export function formatCodexUsageDisplay(
     fiveHour,
     sevenDay,
     trayTitle,
-    tooltip: `5小时额度 ${fiveHour.value}\n7天额度 ${sevenDay.value}`,
+    tooltip: `${formatTooltipLine(fiveHour)}\n${formatTooltipLine(sevenDay)}`,
   }
 }
 

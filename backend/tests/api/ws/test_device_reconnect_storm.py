@@ -330,6 +330,7 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
             "name": "MacBook App",
             "device_type": DeviceType.APP.value,
             "executor_version": "1.8.5",
+            "runtime_instance_id": "runtime-stable",
             "app_device_id": "local-app-device",
         },
     )
@@ -337,7 +338,8 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
     assert result == {"success": True, "device_id": "local-app-device"}
     assert len(upsert_calls) == 1
     assert upsert_calls[0][1][4] == DeviceType.APP.value
-    assert upsert_calls[0][1][7] == "local-app-device"
+    assert upsert_calls[0][1][7] == "runtime-stable"
+    assert upsert_calls[0][1][8] == "local-app-device"
 
 
 @pytest.mark.asyncio
@@ -385,7 +387,7 @@ async def test_cloud_device_register_matches_cloud_device(monkeypatch):
 
     assert result == {"success": True, "device_id": "standalone-admin-device"}
     match_cloud_device.assert_awaited_once_with(
-        7, "198.18.0.1", "standalone-admin-device"
+        7, "198.18.0.1", "standalone-admin-device", None
     )
     run_sync_in_executor.assert_not_awaited()
     set_device_online.assert_awaited_once()

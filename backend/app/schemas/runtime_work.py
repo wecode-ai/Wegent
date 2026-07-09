@@ -360,6 +360,7 @@ class RuntimeTranscriptResponse(BaseModel):
     runtime: RuntimeName
     title: Optional[str] = None
     messages: list[NormalizedRuntimeMessage] = Field(default_factory=list)
+    context_usage: Optional[dict[str, Any]] = Field(default=None, alias="contextUsage")
     has_more_before: bool = Field(default=False, alias="hasMoreBefore")
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
     parse_error: Optional[str] = Field(default=None, alias="parseError")

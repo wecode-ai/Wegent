@@ -4,6 +4,10 @@ import { isTauriRuntime } from './runtime-environment'
 
 const DEFAULT_BROWSER_LABEL = 'workspace-browser'
 const transferredBrowserLabels = new Set<string>()
+const embeddedBrowserOpenRequestHandlers = new Set<(request: EmbeddedBrowserOpenRequest) => void>()
+let embeddedBrowserOpenRequestUnlistenPromise: Promise<UnlistenFn> | null = null
+let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
+let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 
@@ -157,10 +161,59 @@ export function listenEmbeddedBrowserOpenRequests(
     return null
   }
 
-  return listen<EmbeddedBrowserOpenRequest>(EMBEDDED_BROWSER_OPEN_REQUEST_EVENT, event => {
-    handler(event.payload)
-  }).catch(error => {
-    console.error('[Wework] Failed to listen for embedded browser open requests', error)
-    return () => {}
+  if (embeddedBrowserOpenRequestReleaseTimer !== null) {
+    clearTimeout(embeddedBrowserOpenRequestReleaseTimer)
+    embeddedBrowserOpenRequestReleaseTimer = null
+  }
+
+  embeddedBrowserOpenRequestHandlers.add(handler)
+
+  if (!embeddedBrowserOpenRequestUnlistenPromise) {
+    embeddedBrowserOpenRequestUnlistenPromise = listen<EmbeddedBrowserOpenRequest>(
+      EMBEDDED_BROWSER_OPEN_REQUEST_EVENT,
+      event => {
+        embeddedBrowserOpenRequestHandlers.forEach(currentHandler => currentHandler(event.payload))
+      }
+    )
+      .then(unlisten => {
+        embeddedBrowserOpenRequestUnlisten = unlisten
+        if (
+          embeddedBrowserOpenRequestHandlers.size === 0 &&
+          embeddedBrowserOpenRequestReleaseTimer === null
+        ) {
+          embeddedBrowserOpenRequestUnlisten?.()
+          embeddedBrowserOpenRequestUnlisten = null
+          embeddedBrowserOpenRequestUnlistenPromise = null
+        }
+        return unlisten
+      })
+      .catch(error => {
+        embeddedBrowserOpenRequestUnlistenPromise = null
+        console.error('[Wework] Failed to listen for embedded browser open requests', error)
+        return () => {}
+      })
+  }
+
+  return Promise.resolve(() => {
+    embeddedBrowserOpenRequestHandlers.delete(handler)
+    if (embeddedBrowserOpenRequestHandlers.size > 0) return
+    if (embeddedBrowserOpenRequestReleaseTimer !== null) return
+
+    embeddedBrowserOpenRequestReleaseTimer = setTimeout(() => {
+      embeddedBrowserOpenRequestReleaseTimer = null
+      if (embeddedBrowserOpenRequestHandlers.size > 0) return
+
+      const currentUnlisten = embeddedBrowserOpenRequestUnlisten
+      const pendingUnlisten = embeddedBrowserOpenRequestUnlistenPromise
+      embeddedBrowserOpenRequestUnlisten = null
+      embeddedBrowserOpenRequestUnlistenPromise = null
+      if (currentUnlisten) {
+        currentUnlisten()
+        return
+      }
+      if (pendingUnlisten) {
+        void pendingUnlisten.then(unlisten => unlisten())
+      }
+    }, 1000)
   })
 }

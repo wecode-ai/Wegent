@@ -27,6 +27,7 @@ pub(crate) struct CachedTranscript {
     pub workspace_path: String,
     pub runtime: String,
     pub messages: Vec<Value>,
+    pub context_usage: Option<Value>,
     pub running: bool,
     pub source_signature: Option<TranscriptSourceSignature>,
     pub rollout_turns: Option<Vec<Value>>,
@@ -52,11 +53,17 @@ impl CachedTranscript {
             workspace_path,
             runtime,
             messages,
+            context_usage: None,
             running,
             source_signature,
             rollout_turns: None,
             cached_at: now_ms(),
         }
+    }
+
+    pub fn with_context_usage(mut self, context_usage: Option<Value>) -> Self {
+        self.context_usage = context_usage;
+        self
     }
 
     pub fn with_rollout_turns(mut self, turns: Option<Vec<Value>>) -> Self {

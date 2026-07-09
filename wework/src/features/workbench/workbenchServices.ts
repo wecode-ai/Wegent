@@ -53,11 +53,7 @@ export interface WorkbenchServices {
   imSessionApi?: ReturnType<typeof createImSessionApi>
   runtimeWorkApi?: ReturnType<typeof createRuntimeWorkApi>
   attachmentApi?: {
-    uploadAttachment: (
-      file: File,
-      onProgress?: (progress: number) => void,
-      context?: { workspacePath?: string | null }
-    ) => Promise<Attachment>
+    uploadAttachment: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
     deleteAttachment?: (attachmentId: number) => Promise<void>
   }
   executorClient?: ExecutorClient

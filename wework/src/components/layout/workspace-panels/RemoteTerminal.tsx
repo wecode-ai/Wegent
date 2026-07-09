@@ -9,6 +9,7 @@ import {
   getTerminalTheme,
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
+import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 
 interface RemoteTerminalProps {
@@ -61,6 +62,7 @@ export function RemoteTerminal({
       theme: getTerminalTheme(),
     })
     const fitAddon = new FitAddon()
+    const webLinksAddon = createXtermWebLinksAddon()
     const client = createRemoteTerminalClient(sessionId)
     let disposed = false
     let scheduleThemeSync: () => void = () => undefined
@@ -93,6 +95,7 @@ export function RemoteTerminal({
     })
 
     terminal.loadAddon(fitAddon)
+    terminal.loadAddon(webLinksAddon)
     terminal.open(container)
     inputFallback = installXtermInputFallback({
       terminal,

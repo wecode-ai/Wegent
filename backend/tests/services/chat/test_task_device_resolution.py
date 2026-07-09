@@ -110,6 +110,126 @@ def test_resolve_chat_task_device_uses_frontend_project_config(
     )
 
 
+def test_resolve_chat_task_device_uses_cloud_project_device_id(
+    test_db: Session,
+    test_user: User,
+):
+    test_db.add(
+        Project(
+            id=51,
+            user_id=test_user.id,
+            name="cloud workspace",
+            client_origin=CLIENT_ORIGIN_FRONTEND,
+            config={
+                "mode": "workspace",
+                "execution": {
+                    "targetType": "cloud",
+                    "deviceId": "cloud-crd",
+                },
+                "workspace": {
+                    "source": "device_path",
+                    "devicePath": "/workspace/repo",
+                },
+            },
+        )
+    )
+    test_db.commit()
+
+    params = TaskCreationParams(
+        message="pwd",
+        project_id=51,
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+    )
+
+    assert (
+        resolve_chat_task_device_id(
+            test_db,
+            user_id=test_user.id,
+            params=params,
+        )
+        == "cloud-crd"
+    )
+
+
+def test_resolve_chat_task_device_uses_remote_project_device_id(
+    test_db: Session,
+    test_user: User,
+):
+    test_db.add(
+        Project(
+            id=52,
+            user_id=test_user.id,
+            name="remote workspace",
+            client_origin=CLIENT_ORIGIN_FRONTEND,
+            config={
+                "mode": "workspace",
+                "execution": {
+                    "targetType": "remote",
+                    "deviceId": "remote-device",
+                },
+                "workspace": {
+                    "source": "device_path",
+                    "devicePath": "/srv/repo",
+                },
+            },
+        )
+    )
+    test_db.commit()
+
+    params = TaskCreationParams(
+        message="pwd",
+        project_id=52,
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+    )
+
+    assert (
+        resolve_chat_task_device_id(
+            test_db,
+            user_id=test_user.id,
+            params=params,
+        )
+        == "remote-device"
+    )
+
+
+def test_resolve_chat_task_device_ignores_managed_cloud_without_device_id(
+    test_db: Session,
+    test_user: User,
+):
+    test_db.add(
+        Project(
+            id=53,
+            user_id=test_user.id,
+            name="managed cloud workspace",
+            client_origin=CLIENT_ORIGIN_FRONTEND,
+            config={
+                "mode": "workspace",
+                "execution": {
+                    "targetType": "cloud",
+                },
+                "workspace": {"source": "git", "checkoutPath": "repo"},
+                "git": {"url": "https://github.com/example/repo.git"},
+            },
+        )
+    )
+    test_db.commit()
+
+    params = TaskCreationParams(
+        message="pwd",
+        project_id=53,
+        client_origin=CLIENT_ORIGIN_FRONTEND,
+    )
+
+    assert (
+        resolve_chat_task_device_id(
+            test_db,
+            user_id=test_user.id,
+            params=params,
+        )
+        is None
+    )
+
+
 def test_resolve_chat_task_device_maps_project_app_device_id(
     test_db: Session,
     test_user: User,

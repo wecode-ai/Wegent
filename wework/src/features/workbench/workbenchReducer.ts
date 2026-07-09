@@ -113,6 +113,10 @@ export type WorkbenchAction =
       address: RuntimeTaskAddress
     }
   | {
+      type: 'runtime_task_started'
+      address: RuntimeTaskAddress
+    }
+  | {
       type: 'runtime_task_settled'
       address: RuntimeTaskAddress
     }
@@ -309,7 +313,7 @@ function mergeRuntimeTasks(
 }
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
-  return task.status === 'creating'
+  return task.status === 'creating' || (task.optimistic === true && task.status === 'failed')
 }
 
 function isFreshOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
@@ -617,6 +621,53 @@ function settleRuntimeTask(
     }
   })
   const chats = current.chats.map(settleWorkspace)
+  const nextRuntimeWork = {
+    ...current,
+    projects,
+    chats,
+  }
+  return {
+    ...nextRuntimeWork,
+    totalTasks: countRuntimeWorkTasks(nextRuntimeWork),
+  }
+}
+
+function startRuntimeTask(
+  current: RuntimeWorkListResponse | null | undefined,
+  address: RuntimeTaskAddress
+): RuntimeWorkListResponse | null {
+  if (!current) return null
+
+  const startWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace => {
+    if (workspace.deviceId !== address.deviceId) return workspace
+    return {
+      ...workspace,
+      tasks: workspace.tasks.map(task => {
+        if (task.taskId !== address.taskId) return task
+        if (
+          address.workspacePath &&
+          getRuntimeTaskWorkspacePath(workspace, task) !== address.workspacePath
+        ) {
+          return task
+        }
+        return {
+          ...task,
+          running: true,
+          updatedAt: new Date().toISOString(),
+        }
+      }),
+    }
+  }
+
+  const projects = current.projects.map(project => {
+    const deviceWorkspaces = project.deviceWorkspaces.map(startWorkspace)
+    return {
+      ...project,
+      deviceWorkspaces,
+      totalTasks: countRuntimeTasks(deviceWorkspaces),
+    }
+  })
+  const chats = current.chats.map(startWorkspace)
   const nextRuntimeWork = {
     ...current,
     projects,
@@ -1155,6 +1206,11 @@ export function workbenchReducer(state: WorkbenchState, action: WorkbenchAction)
       return {
         ...state,
         runtimeWork: removeOptimisticRuntimeTask(state.runtimeWork, action.address),
+      }
+    case 'runtime_task_started':
+      return {
+        ...state,
+        runtimeWork: startRuntimeTask(state.runtimeWork, action.address),
       }
     case 'runtime_task_settled':
       return {

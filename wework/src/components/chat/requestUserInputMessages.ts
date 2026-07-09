@@ -61,6 +61,20 @@ export function isImplementationPlanRequestUserInput(
   })
 }
 
+export function isImplementationPlanConfirmationResponse(
+  response: RequestUserInputResponse | null | undefined
+): boolean {
+  const answers = response?.answers
+  if (!answers || typeof answers !== 'object') return false
+
+  return Object.values(answers).some(answer => {
+    if (!answer || typeof answer !== 'object') return false
+    const values = (answer as { answers?: unknown }).answers
+    if (!Array.isArray(values)) return false
+    return values.some(value => hasImplementationPlanText(String(value)))
+  })
+}
+
 export function isRequestUserInputBlock(block: ProcessingBlock): block is RequestUserInputBlock {
   if (block.type !== 'tool') return false
   return isRequestUserInputPayload(block.renderPayload)

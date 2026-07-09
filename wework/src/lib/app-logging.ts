@@ -9,11 +9,20 @@ type TauriWindow = Window &
 
 const MAX_LOG_ARGUMENT_LENGTH = 4000
 const MAX_LOG_MESSAGE_LENGTH = 12000
+const VERBOSE_TAURI_LOG_STORAGE_KEY = 'wework:debug-tauri-console-log'
 
 let installed = false
 
 function isTauriRuntime() {
   return typeof window !== 'undefined' && Boolean((window as TauriWindow).__TAURI_INTERNALS__)
+}
+
+function shouldWriteTauriLog(level: ConsoleLevel) {
+  if (level === 'error' || level === 'warn') {
+    return true
+  }
+
+  return globalThis.localStorage?.getItem(VERBOSE_TAURI_LOG_STORAGE_KEY) === '1'
 }
 
 function serializeLogArgument(value: unknown): string {
@@ -80,7 +89,9 @@ export function installAppLogging() {
   ;(['debug', 'error', 'info', 'log', 'warn'] as const).forEach(level => {
     console[level] = (...args: unknown[]) => {
       originalConsole[level](...args)
-      writeTauriLog(level, args)
+      if (shouldWriteTauriLog(level)) {
+        writeTauriLog(level, args)
+      }
     }
   })
 

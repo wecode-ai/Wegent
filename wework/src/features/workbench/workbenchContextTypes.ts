@@ -13,6 +13,7 @@ import type {
   LocalDeviceSkill,
   ModelOptions,
   ProjectExecutionMode,
+  RuntimeContextUsage,
   ProjectWithTasks,
   RuntimeGoalClearResponse,
   RuntimeGoalCreateInput,
@@ -48,6 +49,7 @@ import type {
 } from '@/types/workbench'
 import type { ReactNode } from 'react'
 import type { RuntimeTaskStreamHandlers } from './runtimePaneMessages'
+import type { RuntimeTaskReminderState } from './runtimeTaskReminders'
 import type { WorkbenchServices } from './workbenchServices'
 
 export type ProjectMutationOptions = {
@@ -95,6 +97,7 @@ export interface WorkbenchContextValue {
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
   currentRuntimeTaskRunning: boolean
+  runtimeTaskReminders: RuntimeTaskReminderState
   cloudWorkStatus: CloudWorkStatus
   projectChat: {
     models: UnifiedModel[]
@@ -107,6 +110,7 @@ export interface WorkbenchContextValue {
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
     errors: Map<string, string>
+    contextUsage?: RuntimeContextUsage
     isOptionsLocked: boolean
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void

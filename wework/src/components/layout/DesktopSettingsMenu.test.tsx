@@ -23,6 +23,8 @@ vi.mock('@/features/app-update/app-update-context', () => ({
 vi.mock('@/lib/runtime-mode', () => runtimeModeMock)
 
 vi.mock('@/api/local/codexUsage', () => ({
+  formatCodexUsageResetTime: (resetsAt: number | null) =>
+    resetsAt === 1 ? '11:30' : resetsAt === 2 ? '1月5日 09:15' : null,
   emptyCodexUsageDisplay: () => ({
     status: 'none',
     fiveHour: { label: '5h', title: '5小时额度', value: '无', percent: null, resetsAt: null },
@@ -32,8 +34,8 @@ vi.mock('@/api/local/codexUsage', () => ({
   }),
   getLocalCodexUsageDisplay: vi.fn().mockResolvedValue({
     status: 'available',
-    fiveHour: { label: '5h', title: '5小时额度', value: '90%', percent: 90, resetsAt: null },
-    sevenDay: { label: '7d', title: '7天额度', value: '80%', percent: 80, resetsAt: null },
+    fiveHour: { label: '5h', title: '5小时额度', value: '90%', percent: 90, resetsAt: 1 },
+    sevenDay: { label: '7d', title: '7天额度', value: '80%', percent: 80, resetsAt: 2 },
     trayTitle: '5h 90%\n7d 80%',
     tooltip: '5小时额度 90%\n7天额度 80%',
   }),
@@ -107,5 +109,14 @@ describe('DesktopSettingsMenu', () => {
 
     await userEvent.click(updateButton)
     expect(mockInstallUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows usage reset times in the expanded usage panel', async () => {
+    renderMenu()
+
+    await userEvent.click(screen.getByTestId('usage-menu-button'))
+
+    expect(await screen.findByText('11:30 重置')).toBeInTheDocument()
+    expect(screen.getByText('1月5日 09:15 重置')).toBeInTheDocument()
   })
 })
