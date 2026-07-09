@@ -9,6 +9,7 @@ import type {
   DeviceWorkspacePrepareResponse,
   GitBranch,
   GitRepoInfo,
+  LocalDeviceApp,
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
@@ -126,6 +127,7 @@ export interface WorkbenchContextValue {
     removeAttachment: (attachmentId: number) => Promise<void>
     resetAttachments: () => void
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
+    listLocalApps: () => Promise<LocalDeviceApp[]>
   }
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode

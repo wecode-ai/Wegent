@@ -4669,6 +4669,49 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
             self.dispatch(&method, payload).await
         })
     }
+
+    fn handle_codex_app_server_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            let method = string_field(&data, "method")
+                .ok_or_else(|| AppIpcError::new("bad_request", "method is required"))?;
+            if !is_allowed_plugin_app_server_method(&method) {
+                return Err(AppIpcError::new(
+                    "unsupported_codex_app_server_method",
+                    format!("Unsupported Codex app-server method: {method}"),
+                ));
+            }
+            let params = data
+                .get("params")
+                .cloned()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            self.codex_app_server
+                .request(&method, params)
+                .await
+                .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))
+        })
+    }
+}
+
+fn is_allowed_plugin_app_server_method(method: &str) -> bool {
+    matches!(
+        method,
+        "marketplace/add"
+            | "marketplace/remove"
+            | "marketplace/upgrade"
+            | "plugin/list"
+            | "plugin/installed"
+            | "plugin/read"
+            | "plugin/skill/read"
+            | "plugin/install"
+            | "plugin/uninstall"
+            | "skills/list"
+            | "skills/config/write"
+            | "app/list"
+    )
 }
 
 #[cfg(debug_assertions)]
@@ -4858,6 +4901,32 @@ mod tests {
         assert_eq!(provider.display_name, "CodeX");
         assert_eq!(provider.kind, "official");
         assert!(provider.current);
+    }
+
+    #[test]
+    fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
+        for method in [
+            "marketplace/add",
+            "marketplace/remove",
+            "marketplace/upgrade",
+            "plugin/list",
+            "plugin/installed",
+            "plugin/read",
+            "plugin/skill/read",
+            "plugin/install",
+            "plugin/uninstall",
+            "skills/list",
+            "skills/config/write",
+            "app/list",
+        ] {
+            assert!(
+                is_allowed_plugin_app_server_method(method),
+                "{method} should be allowed"
+            );
+        }
+
+        assert!(!is_allowed_plugin_app_server_method("thread/new"));
+        assert!(!is_allowed_plugin_app_server_method("plugin/share/save"));
     }
 
     #[test]

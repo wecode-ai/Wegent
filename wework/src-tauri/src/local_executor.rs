@@ -27,6 +27,8 @@ const LOCAL_EXECUTOR_SOCKET_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_SOCKET";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
+const CODEX_HOME_ENV: &str = "CODEX_HOME";
+const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const CODEX_BINARY_PATH_ENV: &str = "CODEX_BINARY_PATH";
 const CODEX_BIN_ENV: &str = "CODEX_BIN";
 const CODEX_MANAGED_PACKAGE_ROOT_ENV: &str = "CODEX_MANAGED_PACKAGE_ROOT";
@@ -828,10 +830,12 @@ fn normalize_command_arg(value: String, name: &str) -> Result<String, String> {
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
     let executor_home = path_or_error(local_executor_home_path());
+    let codex_home = path_or_error(wework_codex_home_path(&executor_home));
     let socket_path = path_or_error(app_ipc_socket_path());
     let log_dir = path_or_error(local_executor_log_dir_path());
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
+        (CODEX_HOME_ENV.to_string(), codex_home),
         (LOCAL_EXECUTOR_SOCKET_ENV.to_string(), socket_path),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (
@@ -876,6 +880,16 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         ("WEGENT_APP_IPC_DEVICE_ID".to_string(), app_ipc_device_id),
     ]);
     envs
+}
+
+fn wework_codex_home_path(executor_home: &str) -> Result<PathBuf, String> {
+    if let Ok(path) = std::env::var(WEGENT_CODEX_HOME_ENV) {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+    Ok(PathBuf::from(executor_home).join("codex"))
 }
 
 fn local_executor_sidecar_env(
@@ -2145,9 +2159,11 @@ mod tests {
     fn backend_env_marks_current_app_device_without_changing_device_id() {
         let _guard = env_lock();
         let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_codex_home = std::env::var_os(WEGENT_CODEX_HOME_ENV);
         let previous_socket = std::env::var_os(LOCAL_EXECUTOR_SOCKET_ENV);
         let previous_log_dir = std::env::var_os(LOCAL_EXECUTOR_LOG_DIR_ENV);
         std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wework-instance-executor");
+        std::env::remove_var(WEGENT_CODEX_HOME_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_SOCKET_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_LOG_DIR_ENV);
         let inner = LocalExecutorInner {
@@ -2164,6 +2180,7 @@ mod tests {
             .collect::<HashMap<_, _>>();
 
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(WEGENT_CODEX_HOME_ENV, previous_codex_home);
         restore_env(LOCAL_EXECUTOR_SOCKET_ENV, previous_socket);
         restore_env(LOCAL_EXECUTOR_LOG_DIR_ENV, previous_log_dir);
 
@@ -2187,6 +2204,10 @@ mod tests {
         assert_eq!(
             envs.get(LOCAL_EXECUTOR_HOME_ENV).map(String::as_str),
             Some("/tmp/wework-instance-executor")
+        );
+        assert_eq!(
+            envs.get(CODEX_HOME_ENV).map(String::as_str),
+            Some("/tmp/wework-instance-executor/codex")
         );
         let socket_env = envs
             .get(LOCAL_EXECUTOR_SOCKET_ENV)

@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { ChatInput, type ChatInputProps, type ChatSubmitOptions } from '@/components/chat/ChatInput'
 
-export function BufferedChatInput({ value, onSubmit, ...props }: ChatInputProps) {
+export function BufferedChatInput({ value, onChange, onSubmit, ...props }: ChatInputProps) {
   const [draftState, setDraftState] = useState(() => ({
     sourceValue: value,
     draft: value,
@@ -10,8 +10,11 @@ export function BufferedChatInput({ value, onSubmit, ...props }: ChatInputProps)
   const setDraft = useCallback(
     (nextDraft: string) => {
       setDraftState({ sourceValue: value, draft: nextDraft })
+      if (value.includes('skill://')) {
+        onChange(nextDraft)
+      }
     },
-    [value]
+    [onChange, value]
   )
 
   const handleSubmit = useCallback(

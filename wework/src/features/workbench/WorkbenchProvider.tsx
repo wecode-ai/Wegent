@@ -5,9 +5,10 @@ import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { getActiveWorkbenchDeviceId } from '@/lib/workbench-device'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import type {
+  LocalDeviceApp,
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
@@ -31,6 +32,7 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
+import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
 import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
@@ -50,6 +52,7 @@ import {
 } from './runtimeContextUsage'
 import {
   findSelectableProject,
+  findProjectDeviceWorkspace,
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
@@ -155,6 +158,8 @@ export function WorkbenchProvider({
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
+  const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
+  const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   const currentRuntimeTaskRunning = useMemo(
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
@@ -186,18 +191,6 @@ export function WorkbenchProvider({
     },
     [projectChatScopeKey]
   )
-  const activeDeviceId =
-    state.currentRuntimeTask?.deviceId ??
-    getActiveWorkbenchDeviceId({
-      currentProject: activeProject,
-      standaloneDeviceId: state.standaloneDeviceId,
-    })
-  const activeDeviceIdRef = useRef(activeDeviceId)
-
-  useEffect(() => {
-    activeDeviceIdRef.current = activeDeviceId
-  }, [activeDeviceId])
-
   useEffect(() => {
     const socketClient = resolvedServices.socketClient
     if (!socketClient) return undefined
@@ -550,6 +543,7 @@ export function WorkbenchProvider({
         state.standaloneDeviceId
       ),
       standaloneWorkspacePath: null,
+      startFreshChat: true,
     })
     navigateTo('/')
   }, [state.devices, state.standaloneDeviceId, user])
@@ -792,21 +786,68 @@ export function WorkbenchProvider({
   const stableRevertTurnFileChanges = useStableEvent(runtimeMessaging.revertTurnFileChanges)
 
   const listLocalSkills = useCallback(async () => {
-    const activeDeviceId = activeDeviceIdRef.current
-    if (!activeDeviceId) return []
+    const selectedProjectWorkspace = findProjectDeviceWorkspace(
+      state.runtimeWork,
+      activeProject?.id,
+      state.selectedDeviceWorkspaceId
+    )
+    const cwd =
+      state.currentRuntimeTask?.workspacePath ??
+      selectedProjectWorkspace?.workspacePath ??
+      state.standaloneWorkspacePath ??
+      null
+    const cwds = cwd ? [cwd] : []
+    const cacheKey = cwds.length > 0 ? cwds.join('\u0000') : 'default'
 
-    const cached = localSkillsCacheRef.current.get(activeDeviceId)
+    const cached = localSkillsCacheRef.current.get(cacheKey)
     if (cached && cached.expiresAt > Date.now()) {
       return cached.skills
     }
 
-    const skills = await executorClient.commands.listSkills(activeDeviceId)
-    localSkillsCacheRef.current.set(activeDeviceId, {
+    const skills = await localPluginApi.listSkills({ cwds })
+    localSkillsCacheRef.current.set(cacheKey, {
       expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
       skills,
     })
     return skills
-  }, [executorClient])
+  }, [
+    activeProject?.id,
+    localPluginApi,
+    state.currentRuntimeTask?.workspacePath,
+    state.runtimeWork,
+    state.selectedDeviceWorkspaceId,
+    state.standaloneWorkspacePath,
+  ])
+
+  const listLocalApps = useCallback(async () => {
+    const cached = localAppsCacheRef.current
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.apps
+    }
+
+    let apps: LocalDeviceApp[] = []
+    try {
+      apps = await localPluginApi.listApps()
+    } catch (error) {
+      console.warn('[Wework] Failed to load local Codex apps; continuing with skills only.', error)
+    }
+    localAppsCacheRef.current = {
+      expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
+      apps,
+    }
+    return apps
+  }, [localPluginApi])
+
+  useEffect(() => {
+    const clearLocalSkillCache = () => {
+      localSkillsCacheRef.current.clear()
+      localAppsCacheRef.current = null
+    }
+    window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
+    return () => {
+      window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
+    }
+  }, [])
 
   const workspaceFileApi = useMemo(
     () => ({
@@ -867,6 +908,7 @@ export function WorkbenchProvider({
       removeAttachment: attachmentSelection.removeAttachment,
       resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills,
+      listLocalApps,
     }),
     [
       attachmentSelection.addExistingAttachment,
@@ -882,6 +924,7 @@ export function WorkbenchProvider({
       currentContextUsage,
       isOptionsLocked,
       listLocalSkills,
+      listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
       modelSelection.selectedModel,
@@ -925,6 +968,7 @@ export function WorkbenchProvider({
       removeAttachment: attachmentSelection.removeAttachment,
       resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills,
+      listLocalApps,
     }),
     [
       attachmentSelection.addExistingAttachment,
@@ -939,6 +983,7 @@ export function WorkbenchProvider({
       handleBlockedModelSelect,
       currentContextUsage,
       listLocalSkills,
+      listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
       modelSelection.selectedModel,

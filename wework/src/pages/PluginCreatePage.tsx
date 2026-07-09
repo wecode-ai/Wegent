@@ -5,21 +5,19 @@ import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
-import { PluginsWorkspace } from '@/components/plugins/PluginsWorkspace'
+import { PluginCreateWorkspace } from '@/components/plugins/PluginCreateWorkspace'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { useAuth } from '@/features/auth/useAuth'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 
-export function PluginsPage() {
+export function PluginCreatePage() {
   const { t } = useTranslation('common')
   const { logout } = useAuth()
-  const cloudConnection = useOptionalCloudConnection()
   const isMobile = useIsMobile()
   const {
     state,
@@ -180,8 +178,7 @@ export function PluginsPage() {
           />
         </>
       )}
-      <PluginsWorkspace
-        cloudMarketplaceAvailable={cloudConnection.isConnected}
+      <PluginCreateWorkspace
         sidebarCollapsed={sidebarCollapsed && !isMobile}
         topBarLeftActions={
           !isMobile && sidebarCollapsed && !isTauri ? (

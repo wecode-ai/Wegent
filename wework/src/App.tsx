@@ -7,6 +7,7 @@ import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
+import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
 import { AppsPage } from '@/pages/AppsPage'
 import { stripAppBasePath } from '@/config/runtime'
@@ -100,6 +101,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
     <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
       {path === '/plugins/manage' ? (
         <PluginManagementPage />
+      ) : path === '/plugins/create' ? (
+        <PluginCreatePage />
       ) : path === '/plugins' ? (
         <PluginsPage />
       ) : path === '/apps' ? (

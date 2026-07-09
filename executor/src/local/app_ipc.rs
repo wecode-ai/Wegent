@@ -125,6 +125,7 @@ print(
 const RUNTIME_AUTH_STATUS_SCRIPT: &str = r#"
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -133,7 +134,8 @@ def iso_mtime(path_stat):
     return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
 
 
-target = Path.home() / ".codex" / "auth.json"
+codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+target = codex_home / "auth.json"
 result = {
     "runtime": "codex",
     "target_path": str(target),
@@ -165,6 +167,7 @@ print(json.dumps(result, ensure_ascii=False))
 "#;
 const LOCAL_SKILLS_SCRIPT: &str = r##"
 import json
+import os
 from pathlib import Path
 
 
@@ -367,11 +370,12 @@ def prefer_skill(left, right):
 
 
 home = Path.home()
+codex_home = Path(os.environ.get("CODEX_HOME") or (home / ".codex")).expanduser()
 skills = []
-codex_skills_root = home / ".codex" / "skills"
+codex_skills_root = codex_home / "skills"
 skills.extend(scan_skill_dir(codex_skills_root, "codex", "user", 0))
 skills.extend(scan_system_skill_dir(codex_skills_root, "codex"))
-skills.extend(scan_plugin_dir(home / ".codex" / "plugins", "codex-plugin"))
+skills.extend(scan_plugin_dir(codex_home / "plugins", "codex-plugin"))
 
 deduped_by_name = {}
 for skill in skills:
@@ -496,6 +500,18 @@ type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait RuntimeWorkHandler: Send + Sync {
     fn handle_runtime_rpc<'a>(&'a self, data: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+
+    fn handle_codex_app_server_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+        Box::pin(async {
+            Err(AppIpcError::new(
+                "codex_app_server_unavailable",
+                "Codex app-server handler is not available",
+            ))
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -646,6 +662,16 @@ impl AppIpcServer {
             return handler
                 .handle_runtime_rpc(json!({"method": method, "payload": params}))
                 .await;
+        }
+
+        if method == "codex.app_server_request" {
+            let Some(handler) = &self.runtime_work_handler else {
+                return Err(AppIpcError::new(
+                    "codex_app_server_unavailable",
+                    "Codex app-server handler is not available",
+                ));
+            };
+            return handler.handle_codex_app_server_rpc(params).await;
         }
 
         Err(AppIpcError::new(

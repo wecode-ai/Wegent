@@ -3,6 +3,7 @@ import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
   Attachment,
   DeviceInfo,
+  LocalDeviceApp,
   LocalDeviceSkill,
   ModelOptions,
   ProjectExecutionMode,
@@ -45,6 +46,7 @@ export interface ProjectChatControls {
   handleFileSelect: (files: File | File[]) => Promise<void>
   removeAttachment: (attachmentId: number) => Promise<void>
   listLocalSkills: () => Promise<LocalDeviceSkill[]>
+  listLocalApps?: () => Promise<LocalDeviceApp[]>
 }
 
 export interface ProjectWorkControls {
@@ -166,6 +168,7 @@ export function ChatInput({
     handleFileSelect: async () => {},
     removeAttachment: async () => {},
     listLocalSkills: async () => [],
+    listLocalApps: async () => [],
   }
 
   const planModeActive = controls.selectedModelOptions.collaborationMode === 'plan'
@@ -271,6 +274,7 @@ export function ChatInput({
           }
           showProjectWorkBar={showProjectWorkBar}
           onListLocalSkills={controls.listLocalSkills}
+          onListLocalApps={controls.listLocalApps}
           isStreaming={isStreaming}
           onPause={onPause}
         />
@@ -311,6 +315,7 @@ export function ChatInput({
         }}
         onClearCodeComments={onClearCodeComments}
         onListLocalSkills={controls.listLocalSkills}
+        onListLocalApps={controls.listLocalApps}
         models={controls.models}
         selectedModel={controls.selectedModel}
         selectedModelOptions={controls.selectedModelOptions}

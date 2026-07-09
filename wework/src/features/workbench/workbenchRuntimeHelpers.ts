@@ -282,8 +282,17 @@ export function findProjectMetadataDeviceWorkspace(
   return workspaces.length === 1 ? workspaces[0] : null
 }
 
+const MARKDOWN_MENTION_PATTERN = /\[([^\]]+)]\(([^)]+)\)/g
+
+function runtimeTitleText(value: string): string {
+  return value
+    .replace(MARKDOWN_MENTION_PATTERN, (_match, label: string) => label)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 export function buildRuntimeTaskTitle(message: string, fallback?: string): string {
-  const title = (fallback || message).trim()
+  const title = runtimeTitleText(fallback || message)
   return title ? title.slice(0, 100) : EMPTY_MESSAGE_TASK_TITLE
 }
 

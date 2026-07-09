@@ -47,6 +47,8 @@ pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancell
 const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
+const CODEX_HOME_ENV: &str = "CODEX_HOME";
+const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const MACOS_CODEX_APP_BINARY: &str = "/Applications/Codex.app/Contents/Resources/codex";
 const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
@@ -1406,6 +1408,8 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
 ) -> Result<tokio::process::Child, String> {
     let resolved_binary = resolve_codex_binary(binary);
+    let codex_home = wework_codex_home();
+    prepare_wework_codex_home(&codex_home)?;
     let mut command = Command::new(&resolved_binary);
     for config_override in &launch_config.config_overrides {
         command.arg("-c").arg(config_override);
@@ -1414,6 +1418,7 @@ fn spawn_codex_app_server(
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
+    command.env(CODEX_HOME_ENV, &codex_home);
     command.env(
         "PATH",
         process_environment::normalized_process_path(
@@ -1428,6 +1433,115 @@ fn spawn_codex_app_server(
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|error| format!("failed to start codex app-server: {error}"))
+}
+
+fn wework_codex_home() -> PathBuf {
+    env::var_os(WEGENT_CODEX_HOME_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| executor_home().join("codex"))
+}
+
+fn prepare_wework_codex_home(codex_home: &Path) -> Result<(), String> {
+    fs::create_dir_all(codex_home).map_err(|error| {
+        format!(
+            "failed to create Codex home {}: {error}",
+            codex_home.display()
+        )
+    })?;
+    link_user_codex_auth(codex_home)
+}
+
+fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
+    let target = codex_home.join("auth.json");
+    if let Ok(metadata) = fs::symlink_metadata(&target) {
+        if metadata.file_type().is_symlink() && !target.exists() {
+            fs::remove_file(&target).map_err(|error| {
+                format!(
+                    "failed to remove stale Codex auth link {}: {error}",
+                    target.display()
+                )
+            })?;
+        } else {
+            return Ok(());
+        }
+    }
+    let Some(source) = user_codex_auth_path().filter(|path| path.is_file()) else {
+        return Ok(());
+    };
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&source, &target).map_err(|error| {
+            format!(
+                "failed to link Codex auth {} -> {}: {error}",
+                target.display(),
+                source.display()
+            )
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        fs::copy(&source, &target).map(|_| ()).map_err(|error| {
+            format!(
+                "failed to copy Codex auth {} -> {}: {error}",
+                source.display(),
+                target.display()
+            )
+        })
+    }
+}
+
+fn user_codex_auth_path() -> Option<PathBuf> {
+    env::var_os(CODEX_HOME_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|home| home.join("auth.json"))
+        .or_else(|| {
+            env::var_os("HOME")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .map(|home| home.join(".codex").join("auth.json"))
+        })
+}
+
+#[cfg(test)]
+fn unique_test_path(prefix: &str) -> PathBuf {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    env::temp_dir().join(format!("{prefix}-{}-{id}", std::process::id()))
+}
+
+#[cfg(test)]
+struct EnvRestore {
+    key: &'static str,
+    value: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl EnvRestore {
+    fn capture(key: &'static str) -> Self {
+        Self {
+            key,
+            value: env::var_os(key),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        restore_env(self.key, self.value.clone());
+    }
+}
+
+#[cfg(test)]
+fn restore_env(key: &'static str, value: Option<std::ffi::OsString>) {
+    if let Some(value) = value {
+        env::set_var(key, value);
+    } else {
+        env::remove_var(key);
+    }
 }
 
 #[cfg(unix)]
@@ -3622,38 +3736,55 @@ fn codex_collaboration_mode(request: &ExecutionRequest) -> Option<&str> {
 
 fn turn_input(prompt: &Value) -> Vec<Value> {
     let Value::Array(items) = prompt else {
-        return vec![text_input(prompt_text(prompt))];
+        return text_input_with_structured_mentions(prompt_text(prompt));
     };
 
-    let mut input = items.iter().filter_map(turn_input_item).collect::<Vec<_>>();
+    let mut input = items.iter().flat_map(turn_input_item).collect::<Vec<_>>();
     if input.is_empty() {
-        input.push(text_input(prompt_text(prompt)));
+        input.extend(text_input_with_structured_mentions(prompt_text(prompt)));
     }
     input
 }
 
-fn turn_input_item(item: &Value) -> Option<Value> {
-    let kind = item.get("type").and_then(Value::as_str)?;
+fn turn_input_item(item: &Value) -> Vec<Value> {
+    let Some(kind) = item.get("type").and_then(Value::as_str) else {
+        return Vec::new();
+    };
     match kind {
         "input_text" | "text" => item
             .get("text")
             .and_then(Value::as_str)
-            .map(|text| text_input(text.to_owned())),
+            .map(|text| text_input_with_structured_mentions(text.to_owned())),
         "input_image" => item
             .get("image_url")
             .or_else(|| item.get("url"))
             .and_then(Value::as_str)
-            .map(|url| json!({"type": "image", "url": url})),
-        "image" => image_input(item),
+            .map(|url| vec![json!({"type": "image", "url": url})]),
+        "image" => image_input(item).map(|item| vec![item]),
         "localImage" | "local_image" => item
             .get("path")
             .and_then(Value::as_str)
-            .map(|path| json!({"type": "localImage", "path": path})),
+            .map(|path| vec![json!({"type": "localImage", "path": path})]),
+        "skill" => match (
+            item.get("name").and_then(Value::as_str),
+            item.get("path").and_then(Value::as_str),
+        ) {
+            (Some(name), Some(path)) => Some(vec![skill_input(name, path)]),
+            _ => None,
+        },
+        "mention" => match (
+            item.get("name").and_then(Value::as_str),
+            item.get("path").and_then(Value::as_str),
+        ) {
+            (Some(name), Some(path)) => Some(vec![mention_input(name, path)]),
+            _ => None,
+        },
         _ => item
             .get("text")
             .and_then(Value::as_str)
-            .map(|text| text_input(text.to_owned())),
+            .map(|text| text_input_with_structured_mentions(text.to_owned())),
     }
+    .unwrap_or_default()
 }
 
 fn image_input(item: &Value) -> Option<Value> {
@@ -3674,6 +3805,79 @@ fn image_input(item: &Value) -> Option<Value> {
 
 fn text_input(text: String) -> Value {
     json!({"type": "text", "text": text, "text_elements": []})
+}
+
+fn skill_input(name: &str, path: &str) -> Value {
+    json!({"type": "skill", "name": name, "path": normalize_skill_path(path)})
+}
+
+fn mention_input(name: &str, path: &str) -> Value {
+    json!({"type": "mention", "name": name, "path": path})
+}
+
+fn text_input_with_structured_mentions(text: String) -> Vec<Value> {
+    let (normalized_text, mentions) = extract_structured_mentions(&text);
+    let mut input = vec![text_input(normalized_text)];
+    input.extend(mentions);
+    input
+}
+
+fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
+    let mut output = String::with_capacity(text.len());
+    let mut mentions = Vec::new();
+    let mut seen_paths = std::collections::BTreeSet::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = text[cursor..].find("[$") {
+        let start = cursor + relative_start;
+        let Some(label_end) = text[start + 2..].find("](").map(|index| start + 2 + index) else {
+            break;
+        };
+        let uri_start = label_end + 2;
+        let Some(uri_end) = text[uri_start..].find(')').map(|index| uri_start + index) else {
+            break;
+        };
+
+        let name = &text[start + 2..label_end];
+        let uri = &text[uri_start..uri_end];
+        let Some(mention) = structured_mention_input(name, uri) else {
+            output.push_str(&text[cursor..uri_end + 1]);
+            cursor = uri_end + 1;
+            continue;
+        };
+
+        output.push_str(&text[cursor..start]);
+        output.push_str(&visible_mention_text(name, uri));
+        if seen_paths.insert(uri.to_owned()) {
+            mentions.push(mention);
+        }
+        cursor = uri_end + 1;
+    }
+
+    output.push_str(&text[cursor..]);
+    (output, mentions)
+}
+
+fn structured_mention_input(name: &str, uri: &str) -> Option<Value> {
+    if uri.starts_with("skill://") {
+        return Some(skill_input(name, uri));
+    }
+    if uri.starts_with("app://") || uri.starts_with("plugin://") {
+        return Some(mention_input(name, uri));
+    }
+    None
+}
+
+fn visible_mention_text(name: &str, uri: &str) -> String {
+    if uri.starts_with("plugin://") {
+        format!("@{name}")
+    } else {
+        format!("${name}")
+    }
+}
+
+fn normalize_skill_path(path: &str) -> String {
+    path.strip_prefix("skill://").unwrap_or(path).to_owned()
 }
 
 fn response_id(message: &Value) -> Option<u64> {
@@ -3769,6 +3973,102 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn wework_codex_home_defaults_to_executor_home_codex() {
+        let _lock = crate::test_env::lock();
+        let home = unique_test_path("wework-codex-home-default");
+        let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+        let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+
+        env::set_var("WEGENT_EXECUTOR_HOME", &home);
+        env::remove_var(WEGENT_CODEX_HOME_ENV);
+        env::set_var(
+            CODEX_HOME_ENV,
+            home.join("user-codex-should-not-be-wework-home"),
+        );
+
+        assert_eq!(wework_codex_home(), home.join("codex"));
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn wework_codex_home_prefers_explicit_wework_home() {
+        let _lock = crate::test_env::lock();
+        let executor_home = unique_test_path("wework-codex-home-executor");
+        let codex_home = unique_test_path("wework-codex-home-explicit");
+        let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+        let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+
+        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
+        env::set_var(WEGENT_CODEX_HOME_ENV, &codex_home);
+        env::set_var(CODEX_HOME_ENV, executor_home.join("ignored-codex"));
+
+        assert_eq!(wework_codex_home(), codex_home);
+
+        let _ = fs::remove_dir_all(executor_home);
+        let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    fn prepare_wework_codex_home_links_user_auth() {
+        let _lock = crate::test_env::lock();
+        let root = unique_test_path("wework-codex-home-auth");
+        let user_codex_home = root.join("user-codex");
+        let codex_home = root.join("wework-codex");
+        let source_auth = user_codex_home.join("auth.json");
+        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+
+        fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
+            .expect("user Codex home should be created");
+        fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
+        env::set_var(CODEX_HOME_ENV, &user_codex_home);
+
+        prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+        let linked_auth = codex_home.join("auth.json");
+        assert!(linked_auth.is_file());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::read_link(&linked_auth).expect("auth should be a symlink"),
+            source_auth
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_wework_codex_home_replaces_stale_auth_link() {
+        let _lock = crate::test_env::lock();
+        let root = unique_test_path("wework-codex-home-stale-auth");
+        let user_codex_home = root.join("user-codex");
+        let codex_home = root.join("wework-codex");
+        let source_auth = user_codex_home.join("auth.json");
+        let stale_source = root.join("missing-auth.json");
+        let linked_auth = codex_home.join("auth.json");
+        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+
+        fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
+            .expect("user Codex home should be created");
+        fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
+        fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
+        std::os::unix::fs::symlink(&stale_source, &linked_auth)
+            .expect("stale auth link should be created");
+        env::set_var(CODEX_HOME_ENV, &user_codex_home);
+
+        prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+        assert_eq!(
+            fs::read_link(&linked_auth).expect("auth should be a symlink"),
+            source_auth
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn codex_raw_log_preview_summarizes_large_command_output() {
@@ -4198,6 +4498,54 @@ mod tests {
             "high"
         );
         assert!(params["collaborationMode"]["settings"]["developerInstructions"].is_null());
+    }
+
+    #[test]
+    fn turn_input_expands_skill_markdown_mentions_for_app_server() {
+        let input = turn_input(&Value::String(
+            "[$linear](skill:///Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage"
+                .to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![
+                json!({"type": "text", "text": "$linear triage", "text_elements": []}),
+                json!({
+                    "type": "skill",
+                    "name": "linear",
+                    "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
+        let input = turn_input(&Value::String(
+            "Use [$calendar](app://google-calendar) and [$sample](plugin://sample@test)".to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![
+                json!({
+                    "type": "text",
+                    "text": "Use $calendar and @sample",
+                    "text_elements": [],
+                }),
+                json!({
+                    "type": "mention",
+                    "name": "calendar",
+                    "path": "app://google-calendar",
+                }),
+                json!({
+                    "type": "mention",
+                    "name": "sample",
+                    "path": "plugin://sample@test",
+                }),
+            ]
+        );
     }
 
     #[test]

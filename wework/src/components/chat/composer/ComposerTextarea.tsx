@@ -1,9 +1,34 @@
-import { ClipboardList, Cpu, Package, Target } from 'lucide-react'
+import { ClipboardList, Cpu, Package, Plug, Target } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ClipboardEventHandler, KeyboardEventHandler, ReactNode, RefObject } from 'react'
+import type { KeyboardEventHandler, RefObject } from 'react'
+import type { InitialConfigType } from '@lexical/react/LexicalComposer'
+import { LexicalComposer } from '@lexical/react/LexicalComposer'
+import { ContentEditable } from '@lexical/react/LexicalContentEditable'
+import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
+import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary'
+import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin'
+import { PlainTextPlugin } from '@lexical/react/LexicalPlainTextPlugin'
+import {
+  COMMAND_PRIORITY_HIGH,
+  COMMAND_PRIORITY_LOW,
+  $getSelection,
+  $isRangeSelection,
+  KEY_ARROW_DOWN_COMMAND,
+  KEY_ARROW_UP_COMMAND,
+  KEY_BACKSPACE_COMMAND,
+  KEY_DELETE_COMMAND,
+  KEY_ENTER_COMMAND,
+  KEY_ESCAPE_COMMAND,
+  DROP_COMMAND,
+  PASTE_COMMAND,
+  SELECTION_CHANGE_COMMAND,
+  type LexicalEditor,
+} from 'lexical'
 import { useTranslation } from '@/hooks/useTranslation'
+import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
 import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
-import type { LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
+import type { LocalDeviceApp, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
+import { ComposerSkillNode, displaySkillNameFromName, localSkillTestId } from './ComposerSkillNode'
 import type { ComposerTextTrigger, SlashCommand } from './composerAutocomplete'
 import {
   chooseNearestTrigger,
@@ -11,6 +36,13 @@ import {
   findStandaloneTrigger,
   hasDraftTextForSlashCommands,
 } from './composerAutocomplete'
+import {
+  $getComposerSelectionRange,
+  $getComposerValue,
+  $selectComposerOffset,
+  $setComposerValue,
+  parseComposerSkillReferences,
+} from './composerLexicalSerialization'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
@@ -27,12 +59,14 @@ interface ComposerTextareaProps {
   canSend: boolean
   disabled?: boolean
   placeholder: string
+  testId?: string
   rows: number
-  textareaRef: RefObject<HTMLTextAreaElement | null>
+  textareaRef: RefObject<HTMLElement | null>
   className: string
   skillMenuClassName?: string
   onPasteFiles?: (files: File[]) => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
+  onListLocalApps?: () => Promise<LocalDeviceApp[]>
   models?: UnifiedModel[]
   selectedModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
@@ -49,35 +83,26 @@ interface ActiveComposerMenu {
   trigger: ComposerTextTrigger
 }
 
-interface SkillMention {
-  id: string
-  name: string
-  label: string
-  reference: string
-  start: number
-  end: number
+interface ComposerEditorSnapshot {
+  value: string
+  selectionOffset: number
+  selectionStart: number
+  selectionEnd: number
 }
 
-interface TextSelection {
-  start: number
-  end: number
-  focused: boolean
+interface FocusPluginTrialComposerEventDetail {
+  expectedValue?: string
 }
 
 type CommonTranslate = ReturnType<typeof useTranslation>['t']
-
-const LOCAL_SKILL_REFERENCE_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
-
-function displaySkillNameFromName(name: string): string {
-  return name
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
-}
+const COMPOSER_SKILL_REFERENCE_ATTRIBUTE = 'data-composer-skill-reference'
 
 function displaySkillName(skill: LocalDeviceSkill): string {
   return displaySkillNameFromName(skill.name)
+}
+
+function displayAppName(app: LocalDeviceApp): string {
+  return app.name || app.id
 }
 
 function displaySkillSource(skill: LocalDeviceSkill, t: CommonTranslate): string {
@@ -149,21 +174,14 @@ function inferSkillRuntime(model: UnifiedModel): 'claude' | 'codex' | null {
 
   if (provider === 'claude') return 'claude'
   if (provider === 'openai') return 'codex'
-
   if (runtimeProtocol === 'claude') return 'claude'
-  if (runtimeProtocol === 'openai-responses') {
-    return 'codex'
-  }
-
+  if (runtimeProtocol === 'openai-responses') return 'codex'
   if (protocol === 'claude') return 'claude'
-  if (protocol === 'openai-responses' || apiFormat === 'responses') {
-    return 'codex'
-  }
+  if (protocol === 'openai-responses' || apiFormat === 'responses') return 'codex'
 
   const family = inferModelFamily(model)
   if (family === 'claude') return 'claude'
   if (family === 'gpt') return 'codex'
-
   return null
 }
 
@@ -180,12 +198,12 @@ function canSelectSkillForModel(
   return isSharedSkill(skill) || !isCodexSkill(skill)
 }
 
-function localSkillTestId(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_-]/g, '-')
-}
-
 function slashSkillTestId(name: string): string {
   return `skill-${localSkillTestId(name)}`
+}
+
+function slashAppTestId(id: string): string {
+  return `app-${localSkillTestId(id)}`
 }
 
 function skillIdentityKey(skill: LocalDeviceSkill): string {
@@ -220,137 +238,457 @@ function skillReference(skill: LocalDeviceSkill): string {
   return `[$${skill.name}](skill://${skill.path})`
 }
 
-function parseSkillMentions(value: string): SkillMention[] {
-  return Array.from(value.matchAll(LOCAL_SKILL_REFERENCE_PATTERN)).map(match => {
-    const start = match.index ?? 0
-    const reference = match[0]
-    const name = match[1]
-    return {
-      id: `parsed:${start}:${reference}`,
-      name,
-      label: displaySkillNameFromName(name),
-      reference,
-      start,
-      end: start + reference.length,
+function appReference(app: LocalDeviceApp): string {
+  return `[$${app.name || app.id}](app://${app.id})`
+}
+
+type ComposerMentionCandidate =
+  | {
+      kind: 'skill'
+      key: string
+      title: string
+      description?: string
+      metaLabel: string
+      testId: string
+      enabled: boolean
+      reference: string
+      searchAliases: string[]
+      skill: LocalDeviceSkill
+    }
+  | {
+      kind: 'app'
+      key: string
+      title: string
+      description?: string
+      metaLabel: string
+      testId: string
+      enabled: boolean
+      reference: string
+      searchAliases: string[]
+      app: LocalDeviceApp
+    }
+
+type ComposerSkillMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'skill' }>
+type ComposerAppMentionCandidate = Extract<ComposerMentionCandidate, { kind: 'app' }>
+
+function readComposerEditorSnapshot(editor: LexicalEditor): ComposerEditorSnapshot {
+  let snapshot: ComposerEditorSnapshot = {
+    value: '',
+    selectionOffset: 0,
+    selectionStart: 0,
+    selectionEnd: 0,
+  }
+  editor.getEditorState().read(() => {
+    const value = $getComposerValue()
+    const selectionRange = $getComposerSelectionRange()
+    snapshot = {
+      value,
+      selectionOffset: selectionRange.end,
+      selectionStart: selectionRange.start,
+      selectionEnd: selectionRange.end,
     }
   })
+  return snapshot
 }
 
-interface SkillMentionDeletionRange {
-  start: number
-  end: number
-  cursor: number
+function composerDomNodeLength(node: Node): number {
+  if (node.nodeType === Node.TEXT_NODE) return (node.textContent ?? '').length
+  if (!(node instanceof HTMLElement)) return 0
+  const reference = node.getAttribute(COMPOSER_SKILL_REFERENCE_ATTRIBUTE)
+  if (reference) return reference.length
+  if (node.tagName === 'BR') return 1
+  return Array.from(node.childNodes).reduce((sum, child) => sum + composerDomNodeLength(child), 0)
 }
 
-function findExpandedSelectionDeletionRange(
+function serializeComposerDomNode(node: Node, parts: string[]): void {
+  if (node.nodeType === Node.TEXT_NODE) {
+    parts.push(node.textContent ?? '')
+    return
+  }
+  if (!(node instanceof HTMLElement)) return
+
+  const reference = node.getAttribute(COMPOSER_SKILL_REFERENCE_ATTRIBUTE)
+  if (reference) {
+    parts.push(reference)
+    return
+  }
+  if (node.tagName === 'BR') {
+    parts.push('\n')
+    return
+  }
+
+  node.childNodes.forEach(child => serializeComposerDomNode(child, parts))
+}
+
+function serializeComposerDom(rootElement: HTMLElement): string {
+  const parts: string[] = []
+  Array.from(rootElement.childNodes).forEach((node, index) => {
+    if (index > 0) parts.push('\n')
+    serializeComposerDomNode(node, parts)
+  })
+  return parts.join('')
+}
+
+function getComposerDomSelectionOffset(rootElement: HTMLElement): number {
+  const selection = rootElement.ownerDocument.getSelection()
+  if (!selection || selection.rangeCount === 0) return serializeComposerDom(rootElement).length
+  const range = selection.getRangeAt(0)
+  if (!rootElement.contains(range.startContainer)) return serializeComposerDom(rootElement).length
+
+  let offset = 0
+  let found = false
+
+  const visit = (node: Node) => {
+    if (found) return
+    if (node === range.startContainer) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        offset += Math.min(range.startOffset, (node.textContent ?? '').length)
+      } else {
+        Array.from(node.childNodes)
+          .slice(0, range.startOffset)
+          .forEach(child => {
+            offset += composerDomNodeLength(child)
+          })
+      }
+      found = true
+      return
+    }
+
+    if (node instanceof HTMLElement && node.contains(range.startContainer)) {
+      Array.from(node.childNodes).forEach(visit)
+      return
+    }
+
+    offset += composerDomNodeLength(node)
+  }
+
+  Array.from(rootElement.childNodes).forEach((node, index) => {
+    if (found) return
+    if (index > 0) offset += 1
+    visit(node)
+  })
+  return offset
+}
+
+function findMentionDeletionRange(
+  value: string,
   selectionStart: number,
   selectionEnd: number,
-  mentions: SkillMention[]
-): SkillMentionDeletionRange | null {
-  if (selectionStart === selectionEnd) return null
-
-  let start = Math.min(selectionStart, selectionEnd)
-  let end = Math.max(selectionStart, selectionEnd)
-  let intersectsSkillMention = false
-
-  for (const mention of mentions) {
-    if (mention.end <= start || mention.start >= end) continue
-    intersectsSkillMention = true
-    start = Math.min(start, mention.start)
-    end = Math.max(end, mention.end)
+  key: 'Backspace' | 'Delete'
+): { start: number; end: number; cursor: number } | null {
+  const references = parseComposerSkillReferences(value)
+  if (selectionStart !== selectionEnd) {
+    let start = selectionStart
+    let end = selectionEnd
+    let intersects = false
+    references.forEach(reference => {
+      if (reference.end <= start || reference.start >= end) return
+      intersects = true
+      start = Math.min(start, reference.start)
+      end = Math.max(end, reference.end)
+    })
+    return intersects ? { start, end, cursor: start } : null
   }
 
-  return intersectsSkillMention ? { start, end, cursor: start } : null
+  const cursor = selectionStart
+  const reference = references.find(item =>
+    key === 'Backspace'
+      ? cursor > item.start && cursor <= item.end + 1
+      : cursor >= item.start && cursor < item.end
+  )
+  if (!reference) return null
+
+  const end =
+    key === 'Backspace' && value[reference.end] === ' ' ? reference.end + 1 : reference.end
+  return { start: reference.start, end, cursor: reference.start }
 }
 
-function findBackspaceSkillMentionDeletionRange(
-  value: string,
-  cursor: number,
-  mentions: SkillMention[]
-): SkillMentionDeletionRange | null {
-  for (const mention of mentions) {
-    if (cursor > mention.start && cursor <= mention.end) {
-      return { start: mention.start, end: mention.end, cursor: mention.start }
-    }
-    if (cursor > mention.end && value.slice(mention.end, cursor) === ' ') {
-      return { start: mention.start, end: cursor, cursor: mention.start }
-    }
-  }
+function ComposerValuePlugin({
+  value,
+  onChange,
+  onEditorReady,
+  onTriggerChange,
+  isComposing,
+}: {
+  value: string
+  onChange: (value: string) => void
+  onEditorReady: (editor: LexicalEditor) => void
+  onTriggerChange: (snapshot: ComposerEditorSnapshot) => void
+  isComposing: boolean
+}) {
+  const [editor] = useLexicalComposerContext()
+  const lastEditorValueRef = useRef(value)
 
-  return null
-}
+  useEffect(() => {
+    onEditorReady(editor)
+  }, [editor, onEditorReady])
 
-function findDeleteSkillMentionDeletionRange(
-  value: string,
-  cursor: number,
-  mentions: SkillMention[]
-): SkillMentionDeletionRange | null {
-  const mention = mentions.find(item => cursor >= item.start && cursor < item.end)
-  const end = mention && /\s/.test(value[mention.end] ?? '') ? mention.end + 1 : mention?.end
-  return mention ? { start: mention.start, end: end ?? mention.end, cursor: mention.start } : null
-}
+  useEffect(() => {
+    if (isComposing) return
+    if (value === lastEditorValueRef.current) return
 
-function renderCaret(key: string) {
+    editor.update(() => {
+      const currentValue = $getComposerValue()
+      if (currentValue === value) {
+        lastEditorValueRef.current = value
+        return
+      }
+      $setComposerValue(value, value.length)
+      lastEditorValueRef.current = value
+    })
+  }, [editor, isComposing, value])
+
   return (
-    <span
-      key={key}
-      data-testid="local-skill-caret"
-      className="local-skill-caret inline-block h-5 w-px bg-text-primary align-middle"
+    <OnChangePlugin
+      ignoreSelectionChange={false}
+      onChange={editorState => {
+        editorState.read(() => {
+          const nextValue = $getComposerValue()
+          const selectionRange = $getComposerSelectionRange()
+          const snapshot = {
+            value: nextValue,
+            selectionOffset: selectionRange.end,
+            selectionStart: selectionRange.start,
+            selectionEnd: selectionRange.end,
+          }
+          onTriggerChange(snapshot)
+          if (nextValue !== lastEditorValueRef.current) {
+            lastEditorValueRef.current = nextValue
+            onChange(nextValue)
+          }
+        })
+      }}
     />
   )
 }
 
-function renderTextSegment(text: string, start: number, key: string, caretIndex: number | null) {
-  if (caretIndex === null || caretIndex < start || caretIndex > start + text.length) {
-    return text ? [<span key={key}>{text}</span>] : []
-  }
+function ComposerCommandPlugin({
+  canSend,
+  closeAutocompleteMenu,
+  getActiveOptionCount,
+  getHighlightedIndex,
+  getShowSkillMenu,
+  getShowSlashMenu,
+  getSuppressEnter,
+  isComposing,
+  onPasteFiles,
+  onMoveHighlightedIndex,
+  onSelectHighlightedMention,
+  onSelectHighlightedSlashCommand,
+  onSubmit,
+  setSuppressEnter,
+  syncAutocomplete,
+}: {
+  canSend: boolean
+  closeAutocompleteMenu: () => void
+  getActiveOptionCount: () => number
+  getHighlightedIndex: () => number
+  getShowSkillMenu: () => boolean
+  getShowSlashMenu: () => boolean
+  getSuppressEnter: () => boolean
+  isComposing: boolean
+  onPasteFiles?: (files: File[]) => void
+  onMoveHighlightedIndex: (delta: number) => boolean
+  onSelectHighlightedMention: () => boolean
+  onSelectHighlightedSlashCommand: () => boolean
+  onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
+  setSuppressEnter: (value: boolean) => void
+  syncAutocomplete: () => void
+}) {
+  const [editor] = useLexicalComposerContext()
 
-  const split = caretIndex - start
-  return [
-    text.slice(0, split) ? <span key={`${key}-before`}>{text.slice(0, split)}</span> : null,
-    renderCaret(`${key}-caret`),
-    text.slice(split) ? <span key={`${key}-after`}>{text.slice(split)}</span> : null,
-  ].filter(Boolean)
-}
+  useEffect(() => {
+    const cleanups = [
+      editor.registerCommand(
+        SELECTION_CHANGE_COMMAND,
+        () => {
+          syncAutocomplete()
+          return false
+        },
+        COMMAND_PRIORITY_LOW
+      ),
+      editor.registerCommand<KeyboardEvent>(
+        KEY_ARROW_DOWN_COMMAND,
+        event => {
+          if (!getShowSkillMenu() && !getShowSlashMenu()) return false
+          if (getActiveOptionCount() <= 0) return false
+          event.preventDefault()
+          return onMoveHighlightedIndex(1)
+        },
+        COMMAND_PRIORITY_HIGH
+      ),
+      editor.registerCommand<KeyboardEvent>(
+        KEY_ARROW_UP_COMMAND,
+        event => {
+          if (!getShowSkillMenu() && !getShowSlashMenu()) return false
+          if (getActiveOptionCount() <= 0) return false
+          event.preventDefault()
+          return onMoveHighlightedIndex(-1)
+        },
+        COMMAND_PRIORITY_HIGH
+      ),
+      editor.registerCommand<KeyboardEvent>(
+        KEY_ESCAPE_COMMAND,
+        event => {
+          if (!getShowSkillMenu() && !getShowSlashMenu()) return false
+          event.preventDefault()
+          closeAutocompleteMenu()
+          return true
+        },
+        COMMAND_PRIORITY_HIGH
+      ),
+      editor.registerCommand<KeyboardEvent>(
+        KEY_ENTER_COMMAND,
+        event => {
+          const snapshot = readComposerEditorSnapshot(editor)
+          debugComposerEvent('keydown-enter', {
+            shiftKey: event.shiftKey,
+            canSend,
+            stateIsComposing: isComposing,
+            nativeIsComposing: event.isComposing,
+            suppressEnterUntilKeyUp: getSuppressEnter(),
+            showSkillMenu: getShowSkillMenu(),
+            showSlashMenu: getShowSlashMenu(),
+            highlightedIndex: getHighlightedIndex(),
+            activeOptionCount: getActiveOptionCount(),
+            domValue: textMetrics(snapshot.value),
+          })
 
-function renderTextWithSkillMentions(
-  value: string,
-  mentions: SkillMention[],
-  caretIndex: number | null
-) {
-  const parts: ReactNode[] = []
-  let offset = 0
+          if (isComposing || event.isComposing) {
+            setSuppressEnter(true)
+            return false
+          }
 
-  mentions.forEach(mention => {
-    if (mention.start < offset) return
+          if (getSuppressEnter()) {
+            event.preventDefault()
+            return true
+          }
 
-    const text = value.slice(offset, mention.start)
-    parts.push(...renderTextSegment(text, offset, `text-${offset}`, caretIndex))
+          if (getShowSkillMenu() && onSelectHighlightedMention()) {
+            event.preventDefault()
+            return true
+          }
+          if (getShowSlashMenu() && onSelectHighlightedSlashCommand()) {
+            event.preventDefault()
+            return true
+          }
 
-    if (caretIndex === mention.start) {
-      parts.push(renderCaret(`caret-before-${mention.id}`))
-    }
+          if (event.shiftKey) return false
 
-    parts.push(
-      <span
-        key={mention.id}
-        data-testid={`local-skill-chip-${localSkillTestId(mention.name)}`}
-        className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-[#E6D5AF] bg-[#FFF8EA] px-2 align-middle text-xs font-medium text-[#6F4D13]"
-      >
-        <Package className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{mention.label}</span>
-      </span>
-    )
-    if (caretIndex !== null && caretIndex > mention.start && caretIndex <= mention.end) {
-      parts.push(renderCaret(`caret-after-${mention.id}`))
-    }
-    offset = mention.end
-  })
+          event.preventDefault()
+          const submittedValue = snapshot.value
+          const canSubmitCurrentValue = submittedValue.trim().length > 0 || canSend
+          if (canSubmitCurrentValue) {
+            if (event.metaKey || event.ctrlKey) {
+              onSubmit(submittedValue, { guideWhenBusy: true })
+            } else {
+              onSubmit(submittedValue)
+            }
+          }
+          return true
+        },
+        COMMAND_PRIORITY_HIGH
+      ),
+      editor.registerCommand<KeyboardEvent>(
+        KEY_BACKSPACE_COMMAND,
+        event => {
+          const snapshot = readComposerEditorSnapshot(editor)
+          const range = findMentionDeletionRange(
+            snapshot.value,
+            snapshot.selectionStart,
+            snapshot.selectionEnd,
+            'Backspace'
+          )
+          if (!range) return false
+          event.preventDefault()
+          editor.update(() => {
+            const nextValue = snapshot.value.slice(0, range.start) + snapshot.value.slice(range.end)
+            $setComposerValue(nextValue, range.cursor)
+          })
+          return true
+        },
+        COMMAND_PRIORITY_HIGH
+      ),
+      editor.registerCommand<KeyboardEvent>(
+        KEY_DELETE_COMMAND,
+        event => {
+          const snapshot = readComposerEditorSnapshot(editor)
+          const range = findMentionDeletionRange(
+            snapshot.value,
+            snapshot.selectionStart,
+            snapshot.selectionEnd,
+            'Delete'
+          )
+          if (!range) return false
+          event.preventDefault()
+          editor.update(() => {
+            const nextValue = snapshot.value.slice(0, range.start) + snapshot.value.slice(range.end)
+            $setComposerValue(nextValue, range.cursor)
+          })
+          return true
+        },
+        COMMAND_PRIORITY_HIGH
+      ),
+      editor.registerCommand<ClipboardEvent>(
+        PASTE_COMMAND,
+        event => {
+          if (!onPasteFiles) return false
+          const clipboardData = event.clipboardData
+          if (!clipboardData) return false
 
-  const remainingText = value.slice(offset)
-  parts.push(...renderTextSegment(remainingText, offset, `text-${offset}`, caretIndex))
+          const files = Array.from(clipboardData.files)
+          if (files.length > 0) {
+            event.preventDefault()
+            onPasteFiles(files)
+            return true
+          }
 
-  return parts
+          const textAttachment = createLongPastedTextAttachment(clipboardData.getData('text/plain'))
+          if (!textAttachment) return false
+
+          event.preventDefault()
+          onPasteFiles([textAttachment])
+          return true
+        },
+        COMMAND_PRIORITY_HIGH
+      ),
+      editor.registerCommand<DragEvent>(
+        DROP_COMMAND,
+        event => {
+          if (!onPasteFiles) return false
+          const files = Array.from(event.dataTransfer?.files ?? [])
+          if (files.length === 0) return false
+
+          event.preventDefault()
+          event.stopPropagation()
+          onPasteFiles(files)
+          return true
+        },
+        COMMAND_PRIORITY_HIGH
+      ),
+    ]
+
+    return () => cleanups.forEach(cleanup => cleanup())
+  }, [
+    canSend,
+    closeAutocompleteMenu,
+    editor,
+    getActiveOptionCount,
+    getHighlightedIndex,
+    getShowSkillMenu,
+    getShowSlashMenu,
+    getSuppressEnter,
+    isComposing,
+    onMoveHighlightedIndex,
+    onPasteFiles,
+    onSelectHighlightedMention,
+    onSelectHighlightedSlashCommand,
+    onSubmit,
+    setSuppressEnter,
+    syncAutocomplete,
+  ])
+
+  return null
 }
 
 export function ComposerTextarea({
@@ -358,13 +696,16 @@ export function ComposerTextarea({
   onChange,
   onSubmit,
   canSend,
+  disabled,
   placeholder,
+  testId = 'chat-message-input',
   rows,
   textareaRef,
   className,
   skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
   onPasteFiles,
   onListLocalSkills,
+  onListLocalApps,
   models = [],
   selectedModel,
   selectedModelOptions = {},
@@ -382,17 +723,23 @@ export function ComposerTextarea({
   const skillsLoadingRef = useRef(false)
   const skillsRequestIdRef = useRef(0)
   const skillsSourceRef = useRef<typeof onListLocalSkills>(undefined)
+  const appsLoadedRef = useRef(false)
+  const appsLoadingRef = useRef(false)
+  const appsRequestIdRef = useRef(0)
+  const appsSourceRef = useRef<typeof onListLocalApps>(undefined)
   const mountedRef = useRef(true)
-  const overlayRef = useRef<HTMLDivElement>(null)
-  const [skills, setSkills] = useState<LocalDeviceSkill[]>([])
-  const [selectedSkillMentions, setSelectedSkillMentions] = useState<SkillMention[]>([])
-  const [selection, setSelection] = useState<TextSelection>({
-    start: 0,
-    end: 0,
-    focused: false,
-  })
-  const [isComposing, setIsComposing] = useState(false)
+  const editorRef = useRef<LexicalEditor | null>(null)
+  const valueRef = useRef(value)
+  const selectionRangeRef = useRef({ start: value.length, end: value.length })
+  const activeMenuRef = useRef<ActiveComposerMenu | null>(null)
+  const highlightedIndexRef = useRef(0)
+  const showSkillMenuRef = useRef(false)
+  const showSlashMenuRef = useRef(false)
+  const activeOptionCountRef = useRef(0)
   const suppressEnterUntilKeyUpRef = useRef(false)
+  const [skills, setSkills] = useState<LocalDeviceSkill[]>([])
+  const [apps, setApps] = useState<LocalDeviceApp[]>([])
+  const [isComposing, setIsComposing] = useState(false)
   const [activeMenu, setActiveMenu] = useState<ActiveComposerMenu | null>(null)
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
@@ -400,34 +747,71 @@ export function ComposerTextarea({
   const [modelSelectedIndex, setModelSelectedIndex] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState(false)
+  const [appsLoading, setAppsLoading] = useState(false)
+  const [appsLoadError, setAppsLoadError] = useState(false)
+
+  useEffect(() => {
+    valueRef.current = value
+  }, [value])
 
   const dedupedSkills = useMemo(() => dedupeLocalSkills(skills), [skills])
 
-  const validSkillMentions = useMemo(() => {
-    const mentions = new Map<string, SkillMention>()
-    for (const mention of parseSkillMentions(value)) {
-      mentions.set(`${mention.start}:${mention.end}`, mention)
-    }
-    for (const mention of selectedSkillMentions) {
-      if (value.slice(mention.start, mention.end) !== mention.reference) continue
-      mentions.set(`${mention.start}:${mention.end}`, mention)
-    }
-    return Array.from(mentions.values()).sort((left, right) => left.start - right.start)
-  }, [selectedSkillMentions, value])
+  const appCandidates = useMemo<ComposerAppMentionCandidate[]>(
+    () =>
+      apps.map(app => {
+        const pluginNames = app.pluginDisplayNames ?? []
+        return {
+          kind: 'app',
+          key: `app:${app.id}`,
+          title: displayAppName(app),
+          description: app.description ?? undefined,
+          metaLabel: pluginNames[0] ?? t('workbench.skill_scope_personal', 'Personal'),
+          testId: localSkillTestId(app.id),
+          enabled: app.isEnabled !== false && app.isAccessible !== false,
+          reference: appReference(app),
+          searchAliases: [app.id, app.name, app.description ?? '', ...pluginNames],
+          app,
+        }
+      }),
+    [apps, t]
+  )
 
-  const filteredSkills = useMemo(() => {
+  const skillCandidates = useMemo<ComposerSkillMentionCandidate[]>(() => {
+    return dedupedSkills.map(skill => {
+      const description = skill.short_description || skill.description || undefined
+      return {
+        kind: 'skill',
+        key: `skill:${skill.path}`,
+        title: displaySkillName(skill),
+        description,
+        metaLabel: displaySkillSource(skill, t),
+        testId: localSkillTestId(skill.name),
+        enabled: canSelectSkillForModel(skill, selectedModel),
+        reference: skillReference(skill),
+        searchAliases: [skill.name, skill.plugin_name ?? '', description ?? ''],
+        skill,
+      }
+    })
+  }, [dedupedSkills, selectedModel, t])
+
+  const mentionCandidates = useMemo(
+    () => [...skillCandidates, ...appCandidates],
+    [appCandidates, skillCandidates]
+  )
+
+  const filteredMentionCandidates = useMemo(() => {
     const query = activeMenu?.kind === 'skill' ? activeMenu.trigger.query.trim().toLowerCase() : ''
-    if (!query) return dedupedSkills
+    if (!query) return mentionCandidates
 
-    return dedupedSkills.filter(skill => {
-      const description = skill.short_description || skill.description || ''
+    return mentionCandidates.filter(candidate => {
+      const description = candidate.description || ''
       return (
-        skill.name.toLowerCase().includes(query) ||
-        displaySkillName(skill).toLowerCase().includes(query) ||
-        description.toLowerCase().includes(query)
+        candidate.title.toLowerCase().includes(query) ||
+        description.toLowerCase().includes(query) ||
+        candidate.searchAliases.some(alias => alias.toLowerCase().includes(query))
       )
     })
-  }, [activeMenu, dedupedSkills])
+  }, [activeMenu, mentionCandidates])
 
   const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onSelectModel) && models.length > 0
   const openSlashModelMenu = useCallback(() => {
@@ -493,27 +877,39 @@ export function ComposerTextarea({
 
   const skillSlashCommands = useMemo<SlashCommand[]>(() => {
     const skillGroup = t('workbench.slash_command_group_skills')
-    return dedupedSkills.map(skill => {
-      const description = skill.short_description || skill.description || undefined
-      const sourceLabel = displaySkillSource(skill, t)
-      return {
-        id: `skill:${skill.path}`,
-        title: displaySkillName(skill),
-        description,
-        metaLabel: sourceLabel,
-        group: skillGroup,
-        searchAliases: [skill.name, sourceLabel, skill.plugin_name ?? ''],
-        Icon: Package,
-        enabled: canSelectSkillForModel(skill, selectedModel),
-        testId: slashSkillTestId(skill.name),
-        skill,
-      }
-    })
-  }, [dedupedSkills, selectedModel, t])
+    return skillCandidates.map(candidate => ({
+      id: candidate.key,
+      title: candidate.title,
+      description: candidate.description,
+      metaLabel: candidate.metaLabel,
+      group: skillGroup,
+      searchAliases: candidate.searchAliases,
+      Icon: Package,
+      enabled: candidate.enabled,
+      testId: slashSkillTestId(candidate.skill.name),
+      skill: candidate.skill,
+    }))
+  }, [skillCandidates, t])
+
+  const appSlashCommands = useMemo<SlashCommand[]>(() => {
+    const appGroup = t('workbench.slash_command_group_apps', 'Apps')
+    return appCandidates.map(candidate => ({
+      id: candidate.key,
+      title: candidate.title,
+      description: candidate.description,
+      metaLabel: candidate.metaLabel,
+      group: appGroup,
+      searchAliases: candidate.searchAliases,
+      Icon: Plug,
+      enabled: candidate.enabled,
+      testId: slashAppTestId(candidate.app.id),
+      app: candidate.app,
+    }))
+  }, [appCandidates, t])
 
   const slashCommands = useMemo(
-    () => [...actionSlashCommands, ...skillSlashCommands],
-    [actionSlashCommands, skillSlashCommands]
+    () => [...actionSlashCommands, ...skillSlashCommands, ...appSlashCommands],
+    [actionSlashCommands, appSlashCommands, skillSlashCommands]
   )
 
   const filteredSlashCommands = useMemo(() => {
@@ -525,91 +921,62 @@ export function ComposerTextarea({
     )
   }, [activeMenu, slashCommands, value])
 
-  const showSkillMenu = activeMenu?.kind === 'skill' && Boolean(onListLocalSkills)
+  const showSkillMenu =
+    activeMenu?.kind === 'skill' && (Boolean(onListLocalSkills) || Boolean(onListLocalApps))
   const showSlashMenu = activeMenu?.kind === 'slash'
   const activeOptionCount = showSkillMenu
-    ? filteredSkills.length
+    ? filteredMentionCandidates.length
     : showSlashMenu
       ? filteredSlashCommands.length
       : 0
   const highlightedIndex = Math.min(selectedIndex, Math.max(activeOptionCount - 1, 0))
+  const hasMentionCandidates = mentionCandidates.length > 0
+  const hasMentionLoadError = !hasMentionCandidates && (loadError || appsLoadError)
+  const isMentionLoading = !hasMentionCandidates && (loading || appsLoading)
+  const hasMentionSlashCommands = skillSlashCommands.length + appSlashCommands.length > 0
+  const hasSlashMentionLoadError =
+    !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loadError) || appsLoadError)
+  const isSlashMentionLoading =
+    !hasMentionSlashCommands && ((Boolean(onListLocalSkills) && loading) || appsLoading)
+
+  useEffect(() => {
+    activeMenuRef.current = activeMenu
+    highlightedIndexRef.current = highlightedIndex
+    showSkillMenuRef.current = showSkillMenu
+    showSlashMenuRef.current = showSlashMenu
+    activeOptionCountRef.current = activeOptionCount
+  }, [activeMenu, activeOptionCount, highlightedIndex, showSkillMenu, showSlashMenu])
+
+  useEffect(() => {
+    if (!showSkillMenu && !showSlashMenu) return
+    const selectedOption = menuRef.current?.querySelector<HTMLElement>(
+      '[role="option"][aria-selected="true"]'
+    )
+    selectedOption?.scrollIntoView?.({ block: 'nearest' })
+  }, [activeOptionCount, highlightedIndex, showSkillMenu, showSlashMenu])
 
   const closeAutocompleteMenu = useCallback(() => {
     setActiveMenu(null)
     setSelectedIndex(0)
+    highlightedIndexRef.current = 0
   }, [])
 
-  const syncSelection = useCallback(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
+  const moveHighlightedIndex = useCallback((delta: number) => {
+    const optionCount = activeOptionCountRef.current
+    if (optionCount <= 0) return false
 
-    setSelection({
-      start: textarea.selectionStart,
-      end: textarea.selectionEnd,
-      focused: document.activeElement === textarea,
+    setSelectedIndex(currentIndex => {
+      const current = Math.min(currentIndex, optionCount - 1)
+      const nextIndex = Math.max(0, Math.min(current + delta, optionCount - 1))
+      highlightedIndexRef.current = nextIndex
+      return nextIndex
     })
-  }, [textareaRef])
-
-  const handleValueChange = useCallback(
-    (nextValue: string) => {
-      const previousValue = value
-      let commonPrefixLength = 0
-      while (
-        commonPrefixLength < previousValue.length &&
-        commonPrefixLength < nextValue.length &&
-        previousValue[commonPrefixLength] === nextValue[commonPrefixLength]
-      ) {
-        commonPrefixLength += 1
-      }
-
-      let previousSuffixIndex = previousValue.length - 1
-      let nextSuffixIndex = nextValue.length - 1
-      while (
-        previousSuffixIndex >= commonPrefixLength &&
-        nextSuffixIndex >= commonPrefixLength &&
-        previousValue[previousSuffixIndex] === nextValue[nextSuffixIndex]
-      ) {
-        previousSuffixIndex -= 1
-        nextSuffixIndex -= 1
-      }
-
-      const replacedStart = commonPrefixLength
-      const replacedEnd = previousSuffixIndex + 1
-      const delta = nextValue.length - previousValue.length
-
-      setSelectedSkillMentions(current =>
-        current
-          .map(mention => {
-            if (mention.end <= replacedStart) return mention
-            if (mention.start >= replacedEnd) {
-              return {
-                ...mention,
-                start: mention.start + delta,
-                end: mention.end + delta,
-              }
-            }
-            return null
-          })
-          .filter((mention): mention is SkillMention =>
-            Boolean(mention && nextValue.slice(mention.start, mention.end) === mention.label)
-          )
-      )
-      onChange(nextValue)
-    },
-    [onChange, value]
-  )
-
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
+    return true
   }, [])
 
   const loadLocalSkills = useCallback(
     (options?: { force?: boolean }) => {
       if (!onListLocalSkills) return
-
       if (skillsSourceRef.current !== onListLocalSkills) {
         skillsSourceRef.current = onListLocalSkills
         skillsLoadedRef.current = false
@@ -617,7 +984,6 @@ export function ComposerTextarea({
         skillsRequestIdRef.current += 1
         setSkills([])
       }
-
       if (skillsLoadedRef.current || skillsLoadingRef.current || (loadError && !options?.force)) {
         return
       }
@@ -648,159 +1014,214 @@ export function ComposerTextarea({
     [loadError, onListLocalSkills]
   )
 
-  const updateAutocompleteTrigger = useCallback(() => {
-    const textarea = textareaRef.current
-    if (!textarea) return
-
-    const nextTrigger = chooseNearestTrigger([
-      onListLocalSkills
-        ? findStandaloneTrigger(textarea.value, textarea.selectionStart, '$', 'skill')
-        : null,
-      findStandaloneTrigger(textarea.value, textarea.selectionStart, '/', 'slash'),
-    ])
-    setActiveMenu(nextTrigger ? { kind: nextTrigger.kind, trigger: nextTrigger } : null)
-    if (nextTrigger) {
-      setModelMenuOpen(false)
-      setSelectedIndex(0)
-      if (nextTrigger.kind === 'skill' || onListLocalSkills) {
-        loadLocalSkills()
+  const loadLocalApps = useCallback(
+    (options?: { force?: boolean }) => {
+      if (!onListLocalApps) return
+      if (appsSourceRef.current !== onListLocalApps) {
+        appsSourceRef.current = onListLocalApps
+        appsLoadedRef.current = false
+        appsLoadingRef.current = false
+        appsRequestIdRef.current += 1
+        setApps([])
       }
-    }
-  }, [loadLocalSkills, onListLocalSkills, textareaRef])
-
-  useEffect(() => {
-    if (!showSkillMenu && !showSlashMenu) return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (
-        target instanceof Node &&
-        (menuRef.current?.contains(target) || textareaRef.current?.contains(target))
-      ) {
+      if (appsLoadedRef.current || appsLoadingRef.current || (appsLoadError && !options?.force)) {
         return
       }
+
+      const requestId = appsRequestIdRef.current + 1
+      appsRequestIdRef.current = requestId
+      appsLoadingRef.current = true
+      setAppsLoading(true)
+      setAppsLoadError(false)
+      onListLocalApps()
+        .then(nextApps => {
+          if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
+          appsLoadedRef.current = true
+          setAppsLoadError(false)
+          setApps(nextApps)
+        })
+        .catch(() => {
+          if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
+          appsLoadedRef.current = false
+          setAppsLoadError(true)
+        })
+        .finally(() => {
+          if (!mountedRef.current || requestId !== appsRequestIdRef.current) return
+          appsLoadingRef.current = false
+          setAppsLoading(false)
+        })
+    },
+    [appsLoadError, onListLocalApps]
+  )
+
+  const loadLocalMentions = useCallback(
+    (options?: { force?: boolean }) => {
+      loadLocalSkills(options)
+      loadLocalApps(options)
+    },
+    [loadLocalApps, loadLocalSkills]
+  )
+
+  const updateAutocompleteTrigger = useCallback(
+    (snapshot?: ComposerEditorSnapshot) => {
+      const editor = editorRef.current
+      const current = snapshot ?? (editor ? readComposerEditorSnapshot(editor) : null)
+      if (!current) return
+      selectionRangeRef.current = {
+        start: current.selectionStart,
+        end: current.selectionEnd,
+      }
+
+      const nextTrigger = chooseNearestTrigger([
+        onListLocalSkills
+          ? findStandaloneTrigger(current.value, current.selectionOffset, '$', 'skill')
+          : null,
+        findStandaloneTrigger(current.value, current.selectionOffset, '/', 'slash'),
+      ])
+      const currentMenu = activeMenuRef.current
+      const currentTriggerEnd = currentMenu
+        ? currentMenu.trigger.start + 1 + currentMenu.trigger.query.length
+        : null
+      const nextTriggerEnd = nextTrigger ? nextTrigger.start + 1 + nextTrigger.query.length : null
+      const triggerUnchanged =
+        currentMenu &&
+        nextTrigger &&
+        currentMenu.kind === nextTrigger.kind &&
+        currentMenu.trigger.start === nextTrigger.start &&
+        currentTriggerEnd === nextTriggerEnd &&
+        currentMenu.trigger.query === nextTrigger.query
+
+      setActiveMenu(nextTrigger ? { kind: nextTrigger.kind, trigger: nextTrigger } : null)
+      if (nextTrigger) {
+        setModelMenuOpen(false)
+        if (!triggerUnchanged) {
+          setSelectedIndex(0)
+          highlightedIndexRef.current = 0
+        }
+        if (nextTrigger.kind === 'skill' || onListLocalSkills || onListLocalApps) {
+          loadLocalMentions()
+        }
+      }
+    },
+    [loadLocalMentions, onListLocalApps, onListLocalSkills]
+  )
+
+  const commitEditorValue = useCallback(
+    (nextValue: string, nextCursor: number) => {
+      const editor = editorRef.current
+      valueRef.current = nextValue
+      selectionRangeRef.current = { start: nextCursor, end: nextCursor }
+      onChange(nextValue)
+      if (!editor) return
+      editor.update(() => {
+        $setComposerValue(nextValue, nextCursor)
+      })
+      window.requestAnimationFrame(() =>
+        updateAutocompleteTrigger({
+          value: nextValue,
+          selectionOffset: nextCursor,
+          selectionStart: nextCursor,
+          selectionEnd: nextCursor,
+        })
+      )
+    },
+    [onChange, updateAutocompleteTrigger]
+  )
+
+  const selectMentionCandidate = useCallback(
+    (candidate: ComposerMentionCandidate, explicitTrigger?: ComposerTextTrigger | null) => {
+      const trigger = explicitTrigger ?? activeMenuRef.current?.trigger
+      const editor = editorRef.current
+      if (!trigger || !editor) return false
+
+      const snapshot = readComposerEditorSnapshot(editor)
+      const replacement = `${candidate.reference} `
+      const nextValue =
+        snapshot.value.slice(0, trigger.start) +
+        replacement +
+        snapshot.value.slice(snapshot.selectionEnd)
+      const nextCursor = trigger.start + replacement.length
+
+      commitEditorValue(nextValue, nextCursor)
       closeAutocompleteMenu()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-    }
-  }, [closeAutocompleteMenu, showSkillMenu, showSlashMenu, textareaRef])
-
-  useEffect(() => {
-    if (!modelMenuOpen) return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (
-        target instanceof Node &&
-        (modelMenuRef.current?.contains(target) || textareaRef.current?.contains(target))
-      ) {
-        return
-      }
-      closeSlashModelMenu()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-    }
-  }, [closeSlashModelMenu, modelMenuOpen, textareaRef])
-
-  const handleCompositionStart = () => {
-    setIsComposing(true)
-    debugComposerEvent('composition-start', {
-      propValue: textMetrics(value),
-      domValue: textMetrics(textareaRef.current?.value),
-      suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
-    })
-  }
-
-  const handleCompositionEnd = () => {
-    setIsComposing(false)
-    suppressEnterUntilKeyUpRef.current = true
-    debugComposerEvent('composition-end', {
-      propValue: textMetrics(value),
-      domValue: textMetrics(textareaRef.current?.value),
-      suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
-    })
-  }
+      textareaRef.current?.focus()
+      editor.focus()
+      return true
+    },
+    [closeAutocompleteMenu, commitEditorValue, textareaRef]
+  )
 
   const selectSkill = useCallback(
-    (skill: LocalDeviceSkill) => {
-      const textarea = textareaRef.current
-      if (!textarea || !activeMenu) return
-
-      const { trigger } = activeMenu
-      const cursor = textarea.selectionStart
-      const label = displaySkillName(skill)
-      const reference = skillReference(skill)
-      const replacement = `${reference} `
-      const nextValue = value.slice(0, trigger.start) + replacement + value.slice(cursor)
-      const nextCursor = trigger.start + replacement.length
-      const mentionEnd = trigger.start + reference.length
-      const delta = replacement.length - (cursor - trigger.start)
-
-      setSelectedSkillMentions(current => [
-        ...current
-          .filter(mention => mention.end <= trigger.start || mention.start >= cursor)
-          .map(mention => {
-            if (mention.start < cursor) return mention
-            return {
-              ...mention,
-              start: mention.start + delta,
-              end: mention.end + delta,
-            }
-          }),
-        {
-          id: `${skill.source}:${skill.path}:${trigger.start}:${Date.now()}`,
-          name: skill.name,
-          label,
-          reference,
-          start: trigger.start,
-          end: mentionEnd,
-        },
-      ])
-      onChange(nextValue)
-      closeAutocompleteMenu()
-
-      window.requestAnimationFrame(() => {
-        textarea.focus()
-        textarea.setSelectionRange(nextCursor, nextCursor)
-        setSelection({ start: nextCursor, end: nextCursor, focused: true })
-      })
+    (skill: LocalDeviceSkill, explicitTrigger?: ComposerTextTrigger | null) => {
+      const skillCandidate = skillCandidates.find(candidate => candidate.skill.name === skill.name)
+      return skillCandidate ? selectMentionCandidate(skillCandidate, explicitTrigger) : false
     },
-    [activeMenu, closeAutocompleteMenu, onChange, textareaRef, value]
+    [selectMentionCandidate, skillCandidates]
   )
 
   const selectSlashCommand = useCallback(
-    (command: SlashCommand) => {
-      if (command.skill) {
-        selectSkill(command.skill)
-        return
+    (command: SlashCommand, explicitTrigger?: ComposerTextTrigger | null) => {
+      if (command.skill) return selectSkill(command.skill, explicitTrigger)
+      if (command.app) {
+        const appCandidate = appCandidates.find(candidate => candidate.app.id === command.app?.id)
+        return appCandidate ? selectMentionCandidate(appCandidate, explicitTrigger) : false
       }
 
-      const textarea = textareaRef.current
-      if (!textarea || activeMenu?.kind !== 'slash') return
+      const trigger =
+        explicitTrigger ??
+        (activeMenuRef.current?.kind === 'slash' ? activeMenuRef.current.trigger : null)
+      const editor = editorRef.current
+      if (!trigger || !editor) return false
 
-      const cursor = textarea.selectionStart
-      const { trigger } = activeMenu
-      const nextValue = value.slice(0, trigger.start) + value.slice(cursor)
+      const snapshot = readComposerEditorSnapshot(editor)
+      const nextValue =
+        snapshot.value.slice(0, trigger.start) + snapshot.value.slice(snapshot.selectionEnd)
       const nextCursor = trigger.start
 
-      onChange(nextValue)
+      commitEditorValue(nextValue, nextCursor)
       closeAutocompleteMenu()
-
-      window.requestAnimationFrame(() => {
-        textarea.focus()
-        textarea.setSelectionRange(nextCursor, nextCursor)
-        setSelection({ start: nextCursor, end: nextCursor, focused: true })
-        command.onSelect?.()
-      })
+      command.onSelect?.()
+      textareaRef.current?.focus()
+      editor.focus()
+      return true
     },
-    [activeMenu, closeAutocompleteMenu, onChange, selectSkill, textareaRef, value]
+    [
+      appCandidates,
+      closeAutocompleteMenu,
+      commitEditorValue,
+      selectMentionCandidate,
+      selectSkill,
+      textareaRef,
+    ]
   )
+
+  const selectHighlightedMention = useCallback(() => {
+    const candidate = filteredMentionCandidates[highlightedIndexRef.current]
+    if (!candidate || !candidate.enabled) return false
+    return selectMentionCandidate(candidate)
+  }, [filteredMentionCandidates, selectMentionCandidate])
+
+  const selectHighlightedSlashCommand = useCallback(() => {
+    const editor = editorRef.current
+    if (!editor) return false
+    const snapshot = readComposerEditorSnapshot(editor)
+    const currentSlashTrigger = findStandaloneTrigger(
+      snapshot.value,
+      snapshot.selectionOffset,
+      '/',
+      'slash'
+    )
+    const commands = currentSlashTrigger
+      ? filterSlashCommands(
+          slashCommands,
+          currentSlashTrigger.query,
+          hasDraftTextForSlashCommands(snapshot.value)
+        )
+      : filteredSlashCommands
+    const command = commands[highlightedIndexRef.current] ?? commands[0]
+    if (!command || command.enabled === false) return false
+    return selectSlashCommand(command, currentSlashTrigger)
+  }, [filteredSlashCommands, selectSlashCommand, slashCommands])
 
   const getModelCompatibilityDisabledMessage = useCallback(
     (model: UnifiedModel): string | undefined => {
@@ -836,259 +1257,248 @@ export function ComposerTextarea({
     [closeSlashModelMenu, onSelectModel]
   )
 
-  const handleKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = event => {
-    if (event.key === 'Enter') {
-      debugComposerEvent('keydown-enter', {
-        shiftKey: event.shiftKey,
-        canSend,
-        stateIsComposing: isComposing,
-        nativeIsComposing: event.nativeEvent.isComposing,
-        suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
-        showSkillMenu,
-        showSlashMenu,
-        activeMenuKind: activeMenu?.kind ?? null,
-        highlightedIndex,
-        activeOptionCount,
-        propValue: textMetrics(value),
-        domValue: textMetrics(event.currentTarget.value),
+  const handleEditorReady = useCallback(
+    (editor: LexicalEditor) => {
+      editorRef.current = editor
+      editor.setEditable(!disabled)
+    },
+    [disabled]
+  )
+
+  const setComposerElementRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      ;(textareaRef as { current: HTMLElement | null }).current = element
+      if (!element) return
+      element.setAttribute('placeholder', placeholder)
+      element.setAttribute('rows', String(rows))
+      Object.defineProperty(element, 'value', {
+        configurable: true,
+        get: () => valueRef.current,
+        set: nextValue => {
+          const normalizedValue = String(nextValue ?? '')
+          commitEditorValue(normalizedValue, normalizedValue.length)
+        },
       })
+    },
+    [commitEditorValue, placeholder, rows, textareaRef]
+  )
+
+  const initialConfig = useMemo<InitialConfigType>(
+    () => ({
+      namespace: 'WeworkComposer',
+      nodes: [ComposerSkillNode],
+      theme: {
+        paragraph: 'm-0',
+      },
+      editorState: () => $setComposerValue(value, value.length),
+      onError(error) {
+        throw error
+      },
+    }),
+    [value]
+  )
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
     }
+  }, [])
 
-    if (event.key === 'Enter' && (isComposing || event.nativeEvent.isComposing)) {
-      suppressEnterUntilKeyUpRef.current = true
-      debugComposerEvent('keydown-enter-ignored-composition', {
-        stateIsComposing: isComposing,
-        nativeIsComposing: event.nativeEvent.isComposing,
-        suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
-        domValue: textMetrics(event.currentTarget.value),
-      })
-      return
-    }
+  useEffect(() => {
+    editorRef.current?.setEditable(!disabled)
+  }, [disabled])
 
-    if (event.key === 'Enter' && suppressEnterUntilKeyUpRef.current) {
-      event.preventDefault()
-      debugComposerEvent('keydown-enter-suppressed-until-keyup', {
-        stateIsComposing: isComposing,
-        nativeIsComposing: event.nativeEvent.isComposing,
-        domValue: textMetrics(event.currentTarget.value),
-      })
-      return
-    }
-
-    if (isComposing || event.nativeEvent.isComposing) {
-      return
-    }
-
-    if (event.key === 'Backspace' || event.key === 'Delete') {
-      const selectionStart = event.currentTarget.selectionStart
-      const selectionEnd = event.currentTarget.selectionEnd
-      const deletionRange =
-        findExpandedSelectionDeletionRange(selectionStart, selectionEnd, validSkillMentions) ??
-        (selectionStart === selectionEnd && event.key === 'Backspace'
-          ? findBackspaceSkillMentionDeletionRange(value, selectionStart, validSkillMentions)
-          : null) ??
-        (selectionStart === selectionEnd && event.key === 'Delete'
-          ? findDeleteSkillMentionDeletionRange(value, selectionStart, validSkillMentions)
-          : null)
-
-      if (deletionRange) {
-        event.preventDefault()
-        const nextValue = value.slice(0, deletionRange.start) + value.slice(deletionRange.end)
-        handleValueChange(nextValue)
-        window.requestAnimationFrame(() => {
-          const textarea = textareaRef.current
-          textarea?.setSelectionRange(deletionRange.cursor, deletionRange.cursor)
-          setSelection({
-            start: deletionRange.cursor,
-            end: deletionRange.cursor,
-            focused: true,
-          })
+  useEffect(() => {
+    const handleFocusRequest = (event: Event) => {
+      const detail = (event as CustomEvent<FocusPluginTrialComposerEventDetail>).detail
+      if (detail?.expectedValue && detail.expectedValue !== valueRef.current) return
+      const editor = editorRef.current
+      if (!editor) return
+      editor.focus(() => {
+        editor.update(() => {
+          $selectComposerOffset($getComposerValue().length)
         })
-        return
-      }
+      })
+      closeAutocompleteMenu()
     }
 
-    if (showSkillMenu || showSlashMenu) {
-      if (event.key === 'ArrowDown') {
-        event.preventDefault()
-        setSelectedIndex(Math.min(highlightedIndex + 1, Math.max(activeOptionCount - 1, 0)))
-        return
-      }
-      if (event.key === 'ArrowUp') {
-        event.preventDefault()
-        setSelectedIndex(Math.max(highlightedIndex - 1, 0))
-        return
-      }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        closeAutocompleteMenu()
-        return
-      }
+    window.addEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
+    return () => {
+      window.removeEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
+    }
+  }, [closeAutocompleteMenu])
+
+  useEffect(() => {
+    if (!showSkillMenu && !showSlashMenu) return
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
       if (
-        event.key === 'Enter' &&
-        showSkillMenu &&
-        filteredSkills[highlightedIndex] &&
-        canSelectSkillForModel(filteredSkills[highlightedIndex], selectedModel)
+        target instanceof Node &&
+        (menuRef.current?.contains(target) || textareaRef.current?.contains(target))
       ) {
-        event.preventDefault()
-        debugComposerEvent('keydown-enter-select-skill', {
-          highlightedIndex,
-          skillName: filteredSkills[highlightedIndex]?.name,
-          domValue: textMetrics(event.currentTarget.value),
-        })
-        selectSkill(filteredSkills[highlightedIndex])
         return
       }
+      closeAutocompleteMenu()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [closeAutocompleteMenu, showSkillMenu, showSlashMenu, textareaRef])
+
+  useEffect(() => {
+    if (!modelMenuOpen) return
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
       if (
-        event.key === 'Enter' &&
-        showSlashMenu &&
-        filteredSlashCommands[highlightedIndex] &&
-        filteredSlashCommands[highlightedIndex].enabled !== false
+        target instanceof Node &&
+        (modelMenuRef.current?.contains(target) || textareaRef.current?.contains(target))
       ) {
-        event.preventDefault()
-        debugComposerEvent('keydown-enter-select-slash-command', {
-          highlightedIndex,
-          commandId: filteredSlashCommands[highlightedIndex]?.id,
-          domValue: textMetrics(event.currentTarget.value),
-        })
-        selectSlashCommand(filteredSlashCommands[highlightedIndex])
         return
       }
+      closeSlashModelMenu()
     }
 
-    if (event.key !== 'Enter' || event.shiftKey) {
-      if (event.key === 'Enter') {
-        debugComposerEvent('keydown-enter-newline', {
-          shiftKey: event.shiftKey,
-          domValue: textMetrics(event.currentTarget.value),
-        })
-      }
-      return
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
     }
+  }, [closeSlashModelMenu, modelMenuOpen, textareaRef])
 
-    const submittedValue = event.currentTarget.value
-    const canSubmitCurrentValue = submittedValue.trim().length > 0 || canSend
-
-    event.preventDefault()
-    const guideWhenBusy = event.metaKey || event.ctrlKey
-    debugComposerEvent('keydown-enter-submit-decision', {
-      canSend,
-      canSubmitCurrentValue,
-      guideWhenBusy,
-      submittedValue: textMetrics(submittedValue),
-      propValue: textMetrics(value),
+  const handleCompositionStart = useCallback(() => {
+    setIsComposing(true)
+    debugComposerEvent('composition-start', {
+      propValue: textMetrics(valueRef.current),
+      suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
     })
-    if (canSubmitCurrentValue) {
-      if (guideWhenBusy) {
-        onSubmit(submittedValue, { guideWhenBusy: true })
-      } else {
-        onSubmit(submittedValue)
-      }
-    } else {
-      debugComposerEvent('keydown-enter-submit-skipped-empty', {
-        submittedValue: textMetrics(submittedValue),
-        propValue: textMetrics(value),
+  }, [])
+
+  const handleCompositionEnd = useCallback(() => {
+    setIsComposing(false)
+    suppressEnterUntilKeyUpRef.current = true
+    debugComposerEvent('composition-end', {
+      propValue: textMetrics(valueRef.current),
+      suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
+    })
+  }, [])
+
+  const handleKeyUp: KeyboardEventHandler<HTMLDivElement> = event => {
+    if (suppressEnterUntilKeyUpRef.current) {
+      suppressEnterUntilKeyUpRef.current = false
+      debugComposerEvent('keyup-clear-composition-enter-suppression', {
+        key: event.key,
+        propValue: textMetrics(valueRef.current),
       })
     }
+    updateAutocompleteTrigger()
   }
 
-  const handlePaste: ClipboardEventHandler<HTMLTextAreaElement> = event => {
-    const files = Array.from(event.clipboardData.files)
-    if (files.length > 0) {
-      event.preventDefault()
-      onPasteFiles?.(files)
-      return
-    }
+  const ensureEditorSelection = useCallback(() => {
+    const editor = editorRef.current
+    if (!editor) return
+    editor.update(() => {
+      const selection = $getSelection()
+      if (!$isRangeSelection(selection)) {
+        $selectComposerOffset($getComposerValue().length)
+      }
+    })
+  }, [])
 
-    if (!onPasteFiles) return
-    const textAttachment = createLongPastedTextAttachment(event.clipboardData.getData('text/plain'))
-    if (!textAttachment) return
+  const syncDomInputToEditor = useCallback(
+    (element: HTMLElement) => {
+      if (isComposing) return
+      const editor = editorRef.current
+      if (!editor) return
 
-    event.preventDefault()
-    onPasteFiles([textAttachment])
-  }
+      const domValue = serializeComposerDom(element)
+      const snapshot = readComposerEditorSnapshot(editor)
+      if (domValue === snapshot.value) return
 
-  const hasSkillMentionOverlay = validSkillMentions.length > 0
-  const overlayCaretIndex =
-    hasSkillMentionOverlay && selection.focused && selection.start === selection.end
-      ? selection.start
-      : null
+      const cursor = getComposerDomSelectionOffset(element)
+      valueRef.current = domValue
+      selectionRangeRef.current = { start: cursor, end: cursor }
+      editor.update(() => {
+        $setComposerValue(domValue, cursor)
+      })
+    },
+    [isComposing]
+  )
 
   return (
     <div className="relative min-w-0 flex-1 w-full">
-      {hasSkillMentionOverlay && (
-        <div
-          ref={overlayRef}
-          aria-hidden="true"
-          className={`${className} pointer-events-none absolute inset-0 z-20 whitespace-pre-wrap break-words overflow-hidden text-text-primary`}
-        >
-          {renderTextWithSkillMentions(value, validSkillMentions, overlayCaretIndex)}
-        </div>
-      )}
-      <textarea
-        ref={textareaRef}
-        data-testid="chat-message-input"
-        rows={rows}
-        value={value}
-        onChange={event => {
-          const nativeIsComposing =
-            event.nativeEvent instanceof InputEvent ? event.nativeEvent.isComposing : undefined
-          debugComposerEvent('textarea-change', {
-            propValue: textMetrics(value),
-            nextValue: textMetrics(event.target.value),
-            stateIsComposing: isComposing,
-            nativeIsComposing,
-            suppressEnterUntilKeyUp: suppressEnterUntilKeyUpRef.current,
-          })
-          handleValueChange(event.target.value)
-          window.requestAnimationFrame(() => {
-            updateAutocompleteTrigger()
-            syncSelection()
-          })
-        }}
-        onScroll={event => {
-          if (overlayRef.current) {
-            overlayRef.current.scrollTop = event.currentTarget.scrollTop
-            overlayRef.current.scrollLeft = event.currentTarget.scrollLeft
+      <LexicalComposer initialConfig={initialConfig}>
+        <PlainTextPlugin
+          contentEditable={
+            <ContentEditable
+              ref={setComposerElementRef}
+              data-testid={testId}
+              placeholder={null}
+              role="textbox"
+              aria-multiline="true"
+              spellCheck
+              className={`${className} relative z-30 whitespace-pre-wrap break-words`}
+              onBeforeInputCapture={() => {
+                ensureEditorSelection()
+              }}
+              onInput={event => syncDomInputToEditor(event.currentTarget)}
+              onKeyUp={handleKeyUp}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={event => {
+                handleCompositionEnd()
+                syncDomInputToEditor(event.currentTarget)
+              }}
+              onDropCapture={event => {
+                const files = Array.from(event.dataTransfer.files)
+                if (files.length === 0) return
+                event.preventDefault()
+                event.stopPropagation()
+                onPasteFiles?.(files)
+              }}
+              onClick={() => updateAutocompleteTrigger()}
+              onFocus={() => {
+                ensureEditorSelection()
+                updateAutocompleteTrigger()
+              }}
+            />
           }
-        }}
-        onClick={() => {
-          updateAutocompleteTrigger()
-          syncSelection()
-        }}
-        onKeyDown={handleKeyDown}
-        onKeyUp={event => {
-          if (suppressEnterUntilKeyUpRef.current) {
-            suppressEnterUntilKeyUpRef.current = false
-            debugComposerEvent('keyup-clear-composition-enter-suppression', {
-              key: event.key,
-              propValue: textMetrics(value),
-              domValue: textMetrics(event.currentTarget.value),
-            })
+          placeholder={
+            <div
+              className={`${className} pointer-events-none absolute inset-0 !text-text-muted/55`}
+            >
+              {placeholder}
+            </div>
           }
-          syncSelection()
-        }}
-        onCompositionStart={handleCompositionStart}
-        onCompositionEnd={handleCompositionEnd}
-        onSelect={() => {
-          updateAutocompleteTrigger()
-          syncSelection()
-        }}
-        onPaste={handlePaste}
-        onFocus={syncSelection}
-        onBlur={() => {
-          setSelection(current => ({ ...current, focused: false }))
-        }}
-        placeholder={placeholder}
-        className={[
-          className,
-          'relative z-30',
-          hasSkillMentionOverlay ? 'text-transparent caret-transparent' : '',
-        ].join(' ')}
-        style={
-          hasSkillMentionOverlay ? { color: 'transparent', caretColor: 'transparent' } : undefined
-        }
-      />
+          ErrorBoundary={LexicalErrorBoundary}
+        />
+        <ComposerValuePlugin
+          value={value}
+          onChange={onChange}
+          onEditorReady={handleEditorReady}
+          onTriggerChange={updateAutocompleteTrigger}
+          isComposing={isComposing}
+        />
+        <ComposerCommandPlugin
+          canSend={canSend}
+          closeAutocompleteMenu={closeAutocompleteMenu}
+          getActiveOptionCount={() => activeOptionCountRef.current}
+          getHighlightedIndex={() => highlightedIndexRef.current}
+          getShowSkillMenu={() => showSkillMenuRef.current}
+          getShowSlashMenu={() => showSlashMenuRef.current}
+          getSuppressEnter={() => suppressEnterUntilKeyUpRef.current}
+          isComposing={isComposing}
+          onPasteFiles={onPasteFiles}
+          onMoveHighlightedIndex={moveHighlightedIndex}
+          onSelectHighlightedMention={selectHighlightedMention}
+          onSelectHighlightedSlashCommand={selectHighlightedSlashCommand}
+          onSubmit={onSubmit}
+          setSuppressEnter={next => {
+            suppressEnterUntilKeyUpRef.current = next
+          }}
+          syncAutocomplete={() => updateAutocompleteTrigger()}
+        />
+      </LexicalComposer>
       {showSkillMenu && (
         <div
           ref={menuRef}
@@ -1102,16 +1512,16 @@ export function ComposerTextarea({
           <div className="px-2 pb-1 pt-0.5 text-xs font-normal leading-4 text-text-muted">
             {t('workbench.local_skills', '技能')}
           </div>
-          {loading ? (
+          {isMentionLoading ? (
             <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
               {t('workbench.loading_local_skills')}
             </div>
-          ) : loadError ? (
+          ) : hasMentionLoadError ? (
             <button
               type="button"
               data-testid="local-skill-load-error"
               className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-5 text-text-muted hover:bg-muted"
-              onClick={() => loadLocalSkills({ force: true })}
+              onClick={() => loadLocalMentions({ force: true })}
             >
               <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
               <span className="min-w-0 flex-1 truncate">{t('workbench.local_skills_error')}</span>
@@ -1122,56 +1532,54 @@ export function ComposerTextarea({
                 {t('workbench.retry_local_skills')}
               </span>
             </button>
-          ) : filteredSkills.length === 0 ? (
+          ) : filteredMentionCandidates.length === 0 ? (
             <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
               {t('workbench.no_local_skills')}
             </div>
           ) : (
-            filteredSkills.map((skill, index) => {
-              const canSelectSkill = canSelectSkillForModel(skill, selectedModel)
-              return (
-                <button
-                  key={`${skill.source}:${skill.path}`}
-                  type="button"
-                  data-testid={`local-skill-option-${skill.name}`}
-                  aria-selected={index === highlightedIndex}
-                  role="option"
-                  disabled={!canSelectSkill}
-                  aria-disabled={!canSelectSkill}
-                  onMouseEnter={() => {
-                    if (canSelectSkill) setSelectedIndex(index)
-                  }}
-                  onPointerEnter={() => {
-                    if (canSelectSkill) setSelectedIndex(index)
-                  }}
-                  onClick={() => {
-                    if (canSelectSkill) selectSkill(skill)
-                  }}
-                  className={[
-                    'flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent',
-                    index === highlightedIndex ? 'bg-muted' : '',
-                  ].join(' ')}
-                >
-                  <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-                  <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                    <span className="shrink-0 truncate text-[13px] font-medium leading-5 text-text-primary">
-                      {displaySkillName(skill)}
+            filteredMentionCandidates.map((candidate, index) => (
+              <button
+                key={candidate.key}
+                type="button"
+                data-testid={`${candidate.kind === 'app' ? 'local-app' : 'local-skill'}-option-${candidate.testId}`}
+                aria-selected={index === highlightedIndex}
+                role="option"
+                disabled={!candidate.enabled}
+                aria-disabled={!candidate.enabled}
+                onMouseEnter={() => {
+                  if (candidate.enabled) setSelectedIndex(index)
+                }}
+                onPointerEnter={() => {
+                  if (candidate.enabled) setSelectedIndex(index)
+                }}
+                onClick={() => {
+                  // eslint-disable-next-line react-hooks/refs -- refs are read when the click handler runs.
+                  if (candidate.enabled) selectMentionCandidate(candidate)
+                }}
+                className={[
+                  'flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent',
+                  index === highlightedIndex ? 'bg-muted' : '',
+                ].join(' ')}
+              >
+                <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
+                <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                  <span className="shrink-0 truncate text-[13px] font-medium leading-5 text-text-primary">
+                    {candidate.title}
+                  </span>
+                  {candidate.description && (
+                    <span className="min-w-0 truncate text-[13px] font-normal leading-5 text-text-muted">
+                      {candidate.description}
                     </span>
-                    {(skill.short_description || skill.description) && (
-                      <span className="min-w-0 truncate text-[13px] font-normal leading-5 text-text-muted">
-                        {skill.short_description || skill.description}
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    data-testid={`local-skill-source-${skill.name}`}
-                    className="shrink-0 text-xs leading-5 text-text-muted"
-                  >
-                    {displaySkillSource(skill, t)}
-                  </span>
-                </button>
-              )
-            })
+                  )}
+                </span>
+                <span
+                  data-testid={`local-skill-source-${candidate.testId}`}
+                  className="shrink-0 text-xs leading-5 text-text-muted"
+                >
+                  {candidate.metaLabel}
+                </span>
+              </button>
+            ))
           )}
         </div>
       )}
@@ -1183,15 +1591,15 @@ export function ComposerTextarea({
             className={skillMenuClassName}
             title={t('workbench.slash_command_menu_title')}
             noResultsLabel={t('workbench.no_slash_commands')}
-            loadingSkills={Boolean(onListLocalSkills) && loading}
-            skillLoadError={Boolean(onListLocalSkills) && loadError}
+            loadingSkills={isSlashMentionLoading}
+            skillLoadError={hasSlashMentionLoadError}
             skillGroupLabel={t('workbench.slash_command_group_skills')}
             skillLoadingLabel={t('workbench.loading_slash_command_skills')}
             skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
             skillRetryLabel={t('workbench.retry_local_skills')}
-            onSelectCommand={selectSlashCommand}
+            onSelectCommand={command => selectSlashCommand(command)}
             onHighlightCommand={setSelectedIndex}
-            onRetrySkills={() => loadLocalSkills({ force: true })}
+            onRetrySkills={() => loadLocalMentions({ force: true })}
           />
         </div>
       )}

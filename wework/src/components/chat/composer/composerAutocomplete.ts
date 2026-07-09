@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import type { LocalDeviceSkill } from '@/types/api'
+import type { LocalDeviceApp, LocalDeviceSkill } from '@/types/api'
 
 export type ComposerTriggerKind = 'skill' | 'slash'
 
@@ -21,6 +21,7 @@ export interface SlashCommand {
   enabled?: boolean
   testId: string
   skill?: LocalDeviceSkill
+  app?: LocalDeviceApp
   onSelect?: () => void
 }
 

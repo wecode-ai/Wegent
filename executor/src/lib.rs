@@ -35,6 +35,6 @@ pub(crate) mod test_env {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     pub(crate) fn lock() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().expect("test environment lock poisoned")
+        ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner())
     }
 }
