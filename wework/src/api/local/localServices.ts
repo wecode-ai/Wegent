@@ -15,6 +15,7 @@ import type {
   RuntimeArchivedConversationBulkResponse,
   RuntimeDeviceWorkspace,
   RuntimeRollbackRequest,
+  RuntimeCompactRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
   RuntimeGuidanceRequest,
@@ -1542,6 +1543,19 @@ export function createRuntimeWorkApiFromIpc(
         payloadKeys: Object.keys(payload).sort(),
       })
       return request('runtime.tasks.rollback', payload, localDeviceId)
+    },
+    async compactRuntimeTask(data: RuntimeCompactRequest): Promise<RuntimeSendResponse> {
+      const localDeviceId = await resolveDeviceId({ address: data.address })
+      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.compact',
+        {
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
+        },
+        localDeviceId
+      )
     },
     async guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
       const localDeviceId = await resolveDeviceId({ address: data.address })

@@ -48,6 +48,7 @@ interface ProjectChatComposerProps {
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
   onSetGoal?: () => void
+  onCompactContext?: () => void
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
   onRemoveAttachment: (attachmentId: number) => void
@@ -165,6 +166,7 @@ export function ProjectChatComposer({
   onSetPlanMode,
   onClearPlanMode,
   onSetGoal,
+  onCompactContext,
   goalDraftActive = false,
   onCancelGoalDraft,
   onRemoveAttachment,
@@ -323,6 +325,7 @@ export function ProjectChatComposer({
           onSetPlanMode={onSetPlanMode}
           onClearPlanMode={onClearPlanMode}
           onSetGoal={onSetGoal}
+          onCompactContext={onCompactContext}
           goalDraftActive={goalDraftActive}
           onCancelGoalDraft={onCancelGoalDraft}
           isStreaming={isStreaming}

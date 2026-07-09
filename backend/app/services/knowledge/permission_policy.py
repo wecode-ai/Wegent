@@ -149,17 +149,9 @@ def can_manage_accessible_knowledge_document(
     user_id: int,
     document_owner_id: int,
 ) -> bool:
-    """Return whether merged KB access allows document management."""
-    if not has_access:
-        return False
-
-    if is_creator:
-        return True
-
-    if role is None:
-        return False
-
-    if has_permission(role, BaseRole.Maintainer):
-        return True
-
-    return role == BaseRole.Developer and document_owner_id == user_id
+    """Return whether merged KB access allows document-area management."""
+    return can_manage_accessible_knowledge_base_documents(
+        has_access=has_access,
+        role=role,
+        is_creator=is_creator,
+    )

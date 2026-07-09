@@ -152,6 +152,16 @@ function getWorkspaceCodeViewText() {
     .join('\n')
 }
 
+function getWorkspaceCodeViewSelectedLineNumbers() {
+  return Array.from(
+    document.querySelectorAll('[data-testid="workspace-file-preview-code-view"] diffs-container')
+  ).flatMap(container =>
+    Array.from(container.shadowRoot?.querySelectorAll('[data-line][data-selected-line]') ?? []).map(
+      line => line.getAttribute('data-line')
+    )
+  )
+}
+
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => ({ appBasePath: '', apiBaseUrl: '/api' }),
   stripAppBasePath: (path: string) => path,
@@ -482,6 +492,7 @@ describe('DesktopWorkbenchLayout', () => {
       },
     })
     Element.prototype.scrollIntoView = vi.fn()
+    Element.prototype.scrollTo = vi.fn()
     isLocalTerminalAvailableMock.mockReturnValue(false)
     getLocalExecutorDeviceIdMock.mockResolvedValue(null)
     localPathExistsMock.mockResolvedValue(false)
@@ -5053,6 +5064,28 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('repeat'))
   })
 
+  test('workspace file preview selects the requested target line', async () => {
+    render(
+      <WorkspaceFilePreview
+        file={{
+          path: '/workspace/project/repeat.txt',
+          name: 'repeat.txt',
+          content: 'first\nsecond\nthird',
+          truncated: false,
+          size: 18,
+          modifiedAt: null,
+        }}
+        loading={false}
+        targetLineStart={2}
+        onRetry={vi.fn()}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await waitFor(() => expect(getWorkspaceCodeViewSelectedLineNumbers()).toContain('2'))
+    expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
+  })
+
   test('workspace file preview swaps Pierre viewer when file changes', async () => {
     const firstFile = {
       path: '/workspace/project/first.txt',
@@ -5287,6 +5320,54 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(screen.getByText('已提交')).toBeInTheDocument()
+  })
+
+  test('submits an empty environment commit message so AI can generate it', async () => {
+    const onCommitEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(await screen.findByTestId('environment-commit-button'))
+
+    const confirmButton = screen.getByTestId('environment-confirm-commit-button')
+    expect(confirmButton).toBeEnabled()
+    await userEvent.click(confirmButton)
+
+    await waitFor(() =>
+      expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, name: 'github_wegent' }),
+        '',
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
+      )
+    )
   })
 
   test('switches and creates branches from the environment popover', async () => {

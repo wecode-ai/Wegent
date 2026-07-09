@@ -1,6 +1,7 @@
 import { Loader2, Search, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 import type {
   RuntimeTaskAddress,
@@ -160,6 +161,7 @@ function WorkbenchSearchDialogPanel({
                 setSelectedIndex(index => Math.max(index - 1, 0))
                 return
               }
+              if (isImeEnterEvent(event)) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 openItem(selectedItem)

@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 import { DocumentList } from '@/features/knowledge/document/components/DocumentList'
-import type { KnowledgeBase } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeDocument } from '@/types/knowledge'
+
+let mockDocuments: KnowledgeDocument[] = []
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -32,15 +34,23 @@ jest.mock('@/features/common/UserContext', () => ({
 
 jest.mock('@/features/knowledge/document/hooks/useDocuments', () => ({
   useDocuments: () => ({
-    documents: [],
+    documents: mockDocuments,
     loading: false,
     error: null,
     create: jest.fn(),
     update: jest.fn(),
     remove: jest.fn(),
     batchDelete: jest.fn(),
+    transfer: jest.fn(),
     refresh: jest.fn(),
     fetchWithFolder: jest.fn(),
+    page: 1,
+    pageSize: 20,
+    totalCount: mockDocuments.length,
+    totalPages: 1,
+    hasMore: false,
+    setPage: jest.fn(),
+    setPageSize: jest.fn(),
   }),
 }))
 
@@ -52,6 +62,8 @@ jest.mock('@/features/knowledge/document/hooks/useFolders', () => ({
     updateFolder: jest.fn(),
     deleteFolder: jest.fn(),
     fetchFolders: jest.fn(),
+    moveDocument: jest.fn(),
+    batchMove: jest.fn(),
   }),
 }))
 
@@ -81,6 +93,33 @@ jest.mock('@/features/knowledge/document/components/RetrievalTestDialog', () => 
 }))
 jest.mock('@/features/knowledge/document/components/FolderTree', () => ({
   FolderTree: () => null,
+}))
+jest.mock('@/features/knowledge/document/components/knowledge-document-tree-grid', () => ({
+  KnowledgeDocumentTreeGrid: ({
+    documents,
+    showSelectionColumn,
+    canSelect,
+    onSelect,
+  }: {
+    documents: KnowledgeDocument[]
+    showSelectionColumn: boolean
+    canSelect?: (document: KnowledgeDocument) => boolean
+    onSelect?: (document: KnowledgeDocument, selected: boolean) => void
+  }) => (
+    <div>
+      {documents.map(document => (
+        <button
+          key={document.id}
+          type="button"
+          data-testid={`select-document-${document.id}`}
+          disabled={!showSelectionColumn || !canSelect?.(document)}
+          onClick={() => onSelect?.(document, true)}
+        >
+          {document.name}
+        </button>
+      ))}
+    </div>
+  ),
 }))
 jest.mock('@/features/knowledge/document/components/CreateFolderDialog', () => ({
   CreateFolderDialog: () => null,
@@ -120,7 +159,34 @@ function createKnowledgeBase(overrides?: Partial<KnowledgeBase>): KnowledgeBase 
   }
 }
 
+function createDocument(overrides?: Partial<KnowledgeDocument>): KnowledgeDocument {
+  return {
+    id: 10,
+    kind_id: 1,
+    user_id: 1,
+    name: 'doc.txt',
+    file_extension: 'txt',
+    file_size: 128,
+    status: 'enabled',
+    is_active: true,
+    index_status: 'success',
+    index_generation: 1,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    folder_id: 0,
+    source_type: 'file',
+    source_config: {},
+    attachment_id: null,
+    created_by: 'alice',
+    ...overrides,
+  }
+}
+
 describe('DocumentList summary header', () => {
+  beforeEach(() => {
+    mockDocuments = []
+  })
+
   it('shows inline summary edit button when manual summary exists after AI failure', () => {
     render(<DocumentList knowledgeBase={createKnowledgeBase()} canManageAllDocuments={true} />)
 
@@ -153,5 +219,35 @@ describe('DocumentList summary header', () => {
     )
 
     expect(screen.queryByText('chatPage.summaryRetry')).not.toBeInTheDocument()
+  })
+
+  it('shows create-folder action for folder managers without upload permission', () => {
+    render(
+      <DocumentList
+        knowledgeBase={createKnowledgeBase()}
+        canUpload={false}
+        canManageAllDocuments={true}
+      />
+    )
+
+    expect(screen.getByText('document.folder.create')).toBeInTheDocument()
+    expect(screen.queryByText('document.document.upload')).not.toBeInTheDocument()
+  })
+
+  it('shows batch actions for document-area editors without knowledge-base manage permission', () => {
+    mockDocuments = [createDocument()]
+
+    render(
+      <DocumentList
+        knowledgeBase={createKnowledgeBase({ document_count: 1 })}
+        canUpload={true}
+        canManageAllDocuments={false}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('select-document-10'))
+
+    expect(screen.getByTestId('batch-move-button')).toBeInTheDocument()
+    expect(screen.getByTestId('batch-transfer-button')).toBeInTheDocument()
   })
 })

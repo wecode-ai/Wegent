@@ -507,6 +507,10 @@ export interface RuntimeRollbackRequest extends RuntimeSendRequest {
   messageId?: string | null
 }
 
+export interface RuntimeCompactRequest {
+  address: RuntimeTaskAddress
+}
+
 export interface RequestUserInputResponseAnswer {
   answers: string[]
 }

@@ -49,7 +49,6 @@ const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
-const MACOS_CODEX_APP_BINARY: &str = "/Applications/Codex.app/Contents/Resources/codex";
 const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
@@ -3524,23 +3523,7 @@ fn executor_home() -> PathBuf {
 }
 
 fn resolve_codex_binary(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.contains('/') || trimmed.contains('\\') {
-        return trimmed.to_owned();
-    }
-
-    if trimmed == "codex" && cfg!(target_os = "macos") && Path::new(MACOS_CODEX_APP_BINARY).exists()
-    {
-        return MACOS_CODEX_APP_BINARY.to_owned();
-    }
-
-    env::var_os("PATH")
-        .into_iter()
-        .flat_map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
-        .map(|path| path.join(trimmed))
-        .find(|path| path.is_file())
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| trimmed.to_owned())
+    super::resolve_codex_binary_path(value)
 }
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {

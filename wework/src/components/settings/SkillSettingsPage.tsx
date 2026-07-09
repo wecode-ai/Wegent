@@ -1,17 +1,11 @@
 import { AlertCircle, CheckCircle2, Link2, Loader2, Package, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
-import { getRuntimeConfig } from '@/config/runtime'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import type { SkillDirectorySetupResult } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
-
-function createSkillSettingsApi() {
-  const { apiBaseUrl } = getRuntimeConfig()
-  return createDeviceApi(createHttpClient({ baseUrl: apiBaseUrl }))
-}
+import { createActiveSettingsDeviceApi } from './settings-cloud-api'
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
@@ -19,6 +13,7 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 export function SkillSettingsPage() {
   const { t } = useTranslation('common')
+  const cloudConnection = useOptionalCloudConnection()
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState('')
   const [loading, setLoading] = useState(true)
@@ -49,7 +44,7 @@ export function SkillSettingsPage() {
       }
       setError(null)
       try {
-        const allDevices = await createSkillSettingsApi().getAllDevices()
+        const allDevices = await createActiveSettingsDeviceApi(cloudConnection).getAllDevices()
         setDevices(allDevices.filter(isClaudeCodeDevice))
       } catch (loadError) {
         setError(
@@ -60,7 +55,7 @@ export function SkillSettingsPage() {
         setRefreshing(false)
       }
     },
-    [t]
+    [cloudConnection, t]
   )
 
   useEffect(() => {
@@ -74,7 +69,8 @@ export function SkillSettingsPage() {
     setError(null)
     setResult(null)
     try {
-      const nextResult = await createSkillSettingsApi().setupSharedSkills(effectiveDeviceId)
+      const nextResult =
+        await createActiveSettingsDeviceApi(cloudConnection).setupSharedSkills(effectiveDeviceId)
       setResult(nextResult)
     } catch (setupError) {
       setError(

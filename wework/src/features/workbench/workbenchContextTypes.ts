@@ -245,6 +245,10 @@ export interface WorkbenchContextValue {
     options?: RuntimePaneActionOptions
   ) => Promise<boolean>
   sendRuntimePaneGuidance: (request: RuntimeGuidanceRequest) => Promise<RuntimePaneGuidanceResult>
+  compactRuntimePaneTask: (
+    address: RuntimeTaskAddress,
+    options?: RuntimePaneActionOptions
+  ) => Promise<boolean>
   editLastUserMessage: (request: RuntimeRollbackRequest) => Promise<boolean>
   cancelRuntimePaneTask: (
     address: RuntimeTaskAddress,
@@ -262,11 +266,13 @@ export interface WorkbenchContextValue {
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
     subtaskId: string,
-    messagesOverride?: WorkbenchMessage[]
+    messagesOverride?: WorkbenchMessage[],
+    fileChangesOverride?: TurnFileChangesSummary
   ) => Promise<string>
   revertTurnFileChanges: (
     subtaskId: string,
-    messagesOverride?: WorkbenchMessage[]
+    messagesOverride?: WorkbenchMessage[],
+    fileChangesOverride?: TurnFileChangesSummary
   ) => Promise<TurnFileChangesSummary>
 }
 

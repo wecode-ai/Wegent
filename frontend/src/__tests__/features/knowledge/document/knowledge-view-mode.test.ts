@@ -57,6 +57,26 @@ describe('useKnowledgeViewMode', () => {
     expect(result.current.currentView).toBe('documents')
   })
 
+  it('opens notebook view for knowledge task history URLs even when kb_type is classic', () => {
+    setBrowserUrl('/knowledge/default/my-kb?taskId=123')
+
+    const { result } = renderHook(() => useKnowledgeViewMode('classic'))
+
+    expect(result.current.defaultView).toBe('documents')
+    expect(result.current.currentView).toBe('notebook')
+  })
+
+  it('keeps explicit documents view ahead of task history defaults', async () => {
+    setBrowserUrl('/knowledge/default/my-kb?view=documents&taskId=123')
+
+    const { result } = renderHook(() => useKnowledgeViewMode('classic'))
+
+    expect(result.current.currentView).toBe('documents')
+    await waitFor(() => {
+      expect(window.location.search).toBe('?view=documents')
+    })
+  })
+
   it('falls back to kb_type when URL view is invalid', () => {
     setBrowserUrl('/knowledge/default/my-kb?view=classic')
 

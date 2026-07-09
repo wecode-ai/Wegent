@@ -26,6 +26,7 @@ import {
 } from 'lexical'
 import { useTranslation } from '@/hooks/useTranslation'
 import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
+import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
 import type { LocalDeviceApp, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import { ComposerSkillNode, displaySkillNameFromName, localSkillTestId } from './ComposerSkillNode'
@@ -554,7 +555,7 @@ function ComposerCommandPlugin({
             domValue: textMetrics(snapshot.value),
           })
 
-          if (isComposing || event.isComposing) {
+          if (isComposing || isImeEnterEvent(event) || isImeComposingEvent(event)) {
             setSuppressEnter(true)
             return false
           }

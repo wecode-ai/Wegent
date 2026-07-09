@@ -34,10 +34,19 @@ jobs:
       publish_release: ${{ steps.version.outputs.publish_release }}
 
     steps:
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ steps.release-app-token.outputs.token }}
 
       - name: Resolve Wework release version
         id: version
@@ -102,6 +111,7 @@ jobs:
         env:
           PUBLISH_RELEASE: ${{ steps.version.outputs.publish_release }}
           RELEASE_VERSION: ${{ steps.version.outputs.value }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           set -euo pipefail
 
@@ -179,8 +189,9 @@ jobs:
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          app_user_id="$(gh api "/users/${{ steps.release-app-token.outputs.app-slug }}[bot]" --jq .id)"
+          git config user.name "${{ steps.release-app-token.outputs.app-slug }}[bot]"
+          git config user.email "${app_user_id}+${{ steps.release-app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           git add wework/package.json wework/src-tauri/tauri.conf.json wework/src-tauri/Cargo.toml wework/src-tauri/Cargo.lock
           git commit -m "chore(wework): bump app version to ${RELEASE_VERSION}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
@@ -190,7 +201,7 @@ jobs:
         if: steps.version.outputs.publish_release == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
           RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
@@ -504,11 +515,20 @@ jobs:
             echo "signature_path=$signature_path"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Create release app token
+        if: needs.prepare-release.outputs.publish_release == 'true'
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Upload macOS assets to GitHub Release
         if: needs.prepare-release.outputs.publish_release == 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |
@@ -544,10 +564,18 @@ jobs:
       - build-macos
 
     steps:
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Generate latest.json
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
@@ -619,10 +647,18 @@ jobs:
       - publish-updater-manifest
 
     steps:
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID || secrets.RELEASE_APP_ID || vars.RELEASE_APP_CLIENT_ID || secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
       - name: Publish GitHub Release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |

@@ -184,8 +184,58 @@ describe('createRuntimeTaskStreamHandlers', () => {
       taskId: 'runtime-task-1',
     }
     const actions: RuntimePaneMessageAction[] = []
+    const onAssistantSettled = vi.fn()
+    const onRefreshWorkLists = vi.fn()
     const handlers = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => actions.push(action),
+      onAssistantSettled,
+      onRefreshWorkLists,
+    })
+
+    handlers.onBlockCreated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'runtime-task-1-context-compact',
+      deviceId: 'device-1',
+      block: {
+        id: 'ctx-1',
+        type: 'tool',
+        tool_name: 'context_compaction',
+        status: 'done',
+        timestamp: 1770000000000,
+      },
+    })
+
+    expect(actions).toHaveLength(2)
+    expect(actions[0]).toMatchObject({
+      type: 'block_created',
+      block: {
+        id: 'ctx-1',
+        type: 'tool',
+        toolName: 'context_compaction',
+        status: 'done',
+      },
+    })
+    expect(actions[1]).toMatchObject({
+      type: 'assistant_done',
+      subtaskId: 'runtime-task-1-context-compact',
+      content: '',
+    })
+    expect(onAssistantSettled).toHaveBeenCalledTimes(1)
+    expect(onRefreshWorkLists).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not finish an active assistant turn for automatic context compaction', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const actions: RuntimePaneMessageAction[] = []
+    const onAssistantSettled = vi.fn()
+    const onRefreshWorkLists = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: action => actions.push(action),
+      onAssistantSettled,
+      onRefreshWorkLists,
     })
 
     handlers.onBlockCreated?.({
@@ -204,6 +254,7 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect(actions).toHaveLength(1)
     expect(actions[0]).toMatchObject({
       type: 'block_created',
+      subtaskId: 'subtask-9',
       block: {
         id: 'ctx-1',
         type: 'tool',
@@ -211,6 +262,8 @@ describe('createRuntimeTaskStreamHandlers', () => {
         status: 'done',
       },
     })
+    expect(onAssistantSettled).not.toHaveBeenCalled()
+    expect(onRefreshWorkLists).not.toHaveBeenCalled()
   })
 
   test('preserves request user input render payload on block created events', () => {

@@ -1,7 +1,7 @@
 import type { CodeViewItem } from '@pierre/diffs'
-import { CodeView } from '@pierre/diffs/react'
+import { CodeView, type CodeViewHandle } from '@pierre/diffs/react'
 import { MessageSquare } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 
@@ -75,11 +75,14 @@ interface WorkspaceFilePreviewProps {
   loading: boolean
   error?: string | null
   onRetry: () => void
+  targetLineStart?: number
+  targetLineEnd?: number
   onAddCodeComment: (context: CodeCommentContext) => void
 }
 
 interface SelectionState {
   filePath: string
+  targetKey: string
   selectedText: string
   startLine: number
   endLine: number
@@ -100,17 +103,47 @@ interface WorkspaceCodeViewLineSelection {
 
 interface WorkspaceFilePreviewContentProps {
   file: WorkspaceTextFileResponse
+  targetLineStart?: number
+  targetLineEnd?: number
   onAddCodeComment: (context: CodeCommentContext) => void
 }
 
-function WorkspaceFilePreviewContent({ file, onAddCodeComment }: WorkspaceFilePreviewContentProps) {
+function normalizeTargetLineRange(
+  lineStart: number | undefined,
+  lineEnd: number | undefined,
+  lineCount: number
+): { start: number; end: number } | null {
+  if (!Number.isInteger(lineStart) || Number(lineStart) < 1) return null
+  const boundedStart = Math.min(Number(lineStart), Math.max(lineCount, 1))
+  const rawEnd = Number.isInteger(lineEnd) && Number(lineEnd) >= 1 ? Number(lineEnd) : boundedStart
+  const boundedEnd = Math.min(rawEnd, Math.max(lineCount, 1))
+  return {
+    start: Math.min(boundedStart, boundedEnd),
+    end: Math.max(boundedStart, boundedEnd),
+  }
+}
+
+function WorkspaceFilePreviewContent({
+  file,
+  targetLineStart,
+  targetLineEnd,
+  onAddCodeComment,
+}: WorkspaceFilePreviewContentProps) {
   const { t } = useTranslation('common')
+  const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
   const [selection, setSelection] = useState<SelectionState | null>(null)
   const [commentState, setCommentState] = useState<CommentState>({
     filePath: null,
     value: '',
   })
   const lines = useMemo(() => file.content.split('\n'), [file.content])
+  const targetLineRange = useMemo(
+    () => normalizeTargetLineRange(targetLineStart, targetLineEnd, lines.length),
+    [lines.length, targetLineEnd, targetLineStart]
+  )
+  const targetLineKey = targetLineRange
+    ? `${file.path}:${targetLineRange.start}:${targetLineRange.end}`
+    : `${file.path}:none`
   const codeViewItems = useMemo<CodeViewItem[]>(
     () => [
       {
@@ -126,7 +159,8 @@ function WorkspaceFilePreviewContent({ file, onAddCodeComment }: WorkspaceFilePr
     ],
     [file.content, file.name, file.path]
   )
-  const activeSelection = selection?.filePath === file.path ? selection : null
+  const activeSelection =
+    selection?.filePath === file.path && selection.targetKey === targetLineKey ? selection : null
   const comment = commentState.filePath === file.path ? commentState.value : ''
   const selectedLines = activeSelection
     ? {
@@ -136,7 +170,23 @@ function WorkspaceFilePreviewContent({ file, onAddCodeComment }: WorkspaceFilePr
           end: activeSelection.endLine,
         },
       }
-    : null
+    : targetLineRange
+      ? {
+          id: file.path,
+          range: targetLineRange,
+        }
+      : null
+
+  useEffect(() => {
+    if (!targetLineRange) return
+    codeViewRef.current?.scrollTo({
+      type: 'range',
+      id: file.path,
+      range: targetLineRange,
+      align: 'center',
+      behavior: 'instant',
+    })
+  }, [file.path, targetLineRange])
 
   const captureLineSelection = (selectionRange: WorkspaceCodeViewLineSelection | null) => {
     if (!selectionRange || selectionRange.id !== file.path) {
@@ -154,7 +204,13 @@ function WorkspaceFilePreviewContent({ file, onAddCodeComment }: WorkspaceFilePr
       setSelection(null)
       return
     }
-    setSelection({ filePath: file.path, selectedText, startLine, endLine })
+    setSelection({
+      filePath: file.path,
+      targetKey: targetLineKey,
+      selectedText,
+      startLine,
+      endLine,
+    })
     setCommentState({ filePath: file.path, value: '' })
   }
 
@@ -181,6 +237,7 @@ function WorkspaceFilePreviewContent({ file, onAddCodeComment }: WorkspaceFilePr
     >
       <div data-testid="workspace-file-preview-code-view" className="min-h-0 flex-1 bg-background">
         <CodeView
+          ref={codeViewRef}
           key={file.path}
           items={codeViewItems}
           selectedLines={selectedLines}
@@ -258,6 +315,8 @@ export function WorkspaceFilePreview({
   loading,
   error,
   onRetry,
+  targetLineStart,
+  targetLineEnd,
   onAddCodeComment,
 }: WorkspaceFilePreviewProps) {
   const { t } = useTranslation('common')
@@ -295,6 +354,12 @@ export function WorkspaceFilePreview({
   }
 
   return (
-    <WorkspaceFilePreviewContent key={file.path} file={file} onAddCodeComment={onAddCodeComment} />
+    <WorkspaceFilePreviewContent
+      key={file.path}
+      file={file}
+      targetLineStart={targetLineStart}
+      targetLineEnd={targetLineEnd}
+      onAddCodeComment={onAddCodeComment}
+    />
   )
 }

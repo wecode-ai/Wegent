@@ -19,7 +19,11 @@ import {
   isRemoteDevice,
 } from '@/lib/device-capabilities'
 import type { EnvironmentDiffMode } from '@/api/environment'
-import type { WorkspaceFileOpenRequest, WorkspaceTarget } from '@/types/workspace-files'
+import type {
+  WorkspaceFileOpenOptions,
+  WorkspaceFileOpenRequest,
+  WorkspaceTarget,
+} from '@/types/workspace-files'
 import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
@@ -362,6 +366,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     defaultFileTreeVisible: undefined,
     branchName: undefined,
     targetBranchName: undefined,
+    sourceSubtaskId: undefined,
     reloadDiff: undefined,
   })
   const closeRightPanel = useCallback(() => setRightPanelOpen(false), [setRightPanelOpen])
@@ -547,6 +552,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const previousTurnReviewRef = useRef<{
     loadDiff: () => Promise<string>
     defaultFileTreeVisible?: boolean
+    sourceSubtaskId?: string
   } | null>(null)
   const paneMessages = paneSession.messages
   const pendingRequestUserInput = pendingRequestUserInputPayload(
@@ -706,6 +712,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         branchName: metadata.branchName,
         targetBranchName: metadata.targetBranchName,
         focusFilePath: metadata.focusFilePath,
+        sourceSubtaskId: metadata.sourceSubtaskId,
         reloadDiff: loadDiff,
       })
       try {
@@ -721,6 +728,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             branchName: metadata.branchName,
             targetBranchName: metadata.targetBranchName,
             focusFilePath: metadata.focusFilePath,
+            sourceSubtaskId: metadata.sourceSubtaskId,
             reloadDiff: loadDiff,
           })
         }
@@ -740,6 +748,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             branchName: metadata.branchName,
             targetBranchName: metadata.targetBranchName,
             focusFilePath: metadata.focusFilePath,
+            sourceSubtaskId: metadata.sourceSubtaskId,
             reloadDiff: loadDiff,
           })
         }
@@ -800,12 +809,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [openRightPanelTab])
 
   const openWorkspaceFileFromMessage = useCallback(
-    (path: string) => {
+    (path: string, options?: WorkspaceFileOpenOptions) => {
       const trimmedPath = path.trim()
       if (!trimmedPath) return
       setOpenFileRequest(current => ({
         id: (current?.id ?? 0) + 1,
         path: trimmedPath,
+        lineStart: options?.lineStart,
+        lineEnd: options?.lineEnd,
       }))
       openRightPanelTab('files')
     },
@@ -822,6 +833,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       branchName: reviewState.branchName,
       targetBranchName: reviewState.targetBranchName,
       focusFilePath: reviewState.focusFilePath,
+      sourceSubtaskId: reviewState.sourceSubtaskId,
     })
   }, [
     openReviewFromDiffLoader,
@@ -831,6 +843,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     reviewState.reloadDiff,
     reviewState.reviewMode,
     reviewState.reviewTitle,
+    reviewState.sourceSubtaskId,
     reviewState.targetBranchName,
   ])
 
@@ -876,6 +889,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   loadDiff: () =>
                     loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessages),
                   defaultFileTreeVisible: false,
+                  sourceSubtaskId: latestPreviousTurnSubtaskId,
                 }
               : previousTurnReviewRef.current
           if (!previousTurn) return
@@ -883,6 +897,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             reviewTitle: tChat('file_changes.previous_turn_label'),
             reviewMode: 'previous-turn',
             defaultFileTreeVisible: previousTurn.defaultFileTreeVisible,
+            sourceSubtaskId: previousTurn.sourceSubtaskId,
           })
         },
       },
@@ -900,6 +915,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workspaceTarget,
     ]
   )
+  const fileChangesDiffPreviewDisabledSubtaskId =
+    rightPanelOpen &&
+    rightPanelView === 'review' &&
+    reviewState.reviewMode === 'previous-turn' &&
+    reviewState.sourceSubtaskId &&
+    (reviewState.loading || Boolean(reviewState.diff))
+      ? reviewState.sourceSubtaskId
+      : null
 
   const toggleRightPanel = useCallback(() => {
     setRightPanelOpen(open => {
@@ -1298,6 +1321,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             codeComments={paneSession.codeCommentContexts}
                             isStreaming={paneIsResponseStreaming}
                             onPause={() => void paneSession.pauseCurrentResponse()}
+                            onCompactContext={() => void paneSession.compactContext()}
                             goal={paneSession.goal}
                             goalDraftActive={paneSession.goalDraftActive}
                             onSetGoal={
@@ -1329,11 +1353,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 onSwitchModelForFailedMessage={() =>
                   setModelSelectorOpenSignal(signal => signal + 1)
                 }
-                onLoadFileChangesDiff={subtaskId =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages)
+                onLoadFileChangesDiff={(subtaskId, fileChanges) =>
+                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
                 }
-                onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
+                onRevertFileChanges={(subtaskId, fileChanges) =>
+                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+                }
                 onOpenFileChangesReview={({
+                  subtaskId,
                   loadDiff,
                   reviewTitle,
                   defaultFileTreeVisible,
@@ -1342,6 +1369,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   previousTurnReviewRef.current = {
                     loadDiff,
                     defaultFileTreeVisible,
+                    sourceSubtaskId: subtaskId,
                   }
                   setHasPreviousTurnReview(true)
                   void openReviewFromDiffLoader(loadDiff, {
@@ -1349,8 +1377,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     reviewMode: 'previous-turn',
                     defaultFileTreeVisible,
                     focusFilePath,
+                    sourceSubtaskId: subtaskId,
                   })
                 }}
+                fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                 onOpenWorkspaceFile={openWorkspaceFileFromMessage}
                 onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
                 onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
@@ -1399,6 +1429,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   codeComments={paneSession.codeCommentContexts}
                   isStreaming={paneIsResponseStreaming}
                   onPause={() => void paneSession.pauseCurrentResponse()}
+                  onCompactContext={() => void paneSession.compactContext()}
                   goal={paneSession.goal}
                   goalDraftActive={paneSession.goalDraftActive}
                   onSetGoal={
