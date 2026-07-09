@@ -221,6 +221,19 @@ describe('DocumentList summary header', () => {
     expect(screen.queryByText('chatPage.summaryRetry')).not.toBeInTheDocument()
   })
 
+  it('shows create-folder action for folder managers without upload permission', () => {
+    render(
+      <DocumentList
+        knowledgeBase={createKnowledgeBase()}
+        canUpload={false}
+        canManageAllDocuments={true}
+      />
+    )
+
+    expect(screen.getByText('document.folder.create')).toBeInTheDocument()
+    expect(screen.queryByText('document.document.upload')).not.toBeInTheDocument()
+  })
+
   it('shows batch actions for document-area editors without knowledge-base manage permission', () => {
     mockDocuments = [createDocument()]
 

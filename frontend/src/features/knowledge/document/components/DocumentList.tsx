@@ -497,6 +497,7 @@ export function DocumentList({
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
   const canManageDocumentArea = canManageAnyDocuments
+  const canManageFolderStructure = canManageDocumentArea
 
   const canManageDocument = (_document: KnowledgeDocument) => canManageDocumentArea
 
@@ -1075,7 +1076,7 @@ export function DocumentList({
         </TooltipProvider>
 
         {/* Create folder button */}
-        {canUpload && (
+        {canManageFolderStructure && (
           <Button
             variant="outline"
             className="h-11 min-w-[44px]"
@@ -1233,11 +1234,11 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
-                onCreateFolder={canManageDocumentArea ? handleCreateFolder : undefined}
-                onRenameFolder={canManageDocumentArea ? handleRenameFolder : undefined}
-                onDeleteFolder={canManageDocumentArea ? handleDeleteFolderClick : undefined}
-                canManageFolders={canManageDocumentArea}
-                canSelectFolders={canManageDocumentArea && !onSelectionChange}
+                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                canManageFolders={canManageFolderStructure}
+                canSelectFolders={canManageFolderStructure && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
                 activeFolderId={activeFolderId}
@@ -1293,11 +1294,11 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={canManageDocumentArea ? handleSelectDoc : undefined}
                 ragConfigured={ragConfigured}
-                onCreateFolder={canManageDocumentArea ? handleCreateFolder : undefined}
-                onRenameFolder={canManageDocumentArea ? handleRenameFolder : undefined}
-                onDeleteFolder={canManageDocumentArea ? handleDeleteFolderClick : undefined}
-                canManageFolders={canManageDocumentArea}
-                canSelectFolders={canManageDocumentArea && !onSelectionChange}
+                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                canManageFolders={canManageFolderStructure}
+                canSelectFolders={canManageFolderStructure && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
                 activeFolderId={activeFolderId}
