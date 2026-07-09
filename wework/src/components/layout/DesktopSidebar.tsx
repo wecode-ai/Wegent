@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Download,
   Edit3,
+  FolderOpen,
   FolderPlus,
   Globe2,
   GitCompareArrows,
@@ -45,7 +46,13 @@ import {
 } from '@/components/projects/StandaloneProjectDialogs'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
+import {
+  canUseForProjectCreation,
+  isCloudDevice,
+  isClaudeCodeDevice,
+  isRemoteDevice,
+} from '@/lib/device-capabilities'
+import { openLocalWorkspace } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
@@ -142,6 +149,11 @@ interface DesktopSidebarProps {
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onOpenPlugins: () => void
   onRefreshDevices?: () => Promise<void>
+  onOpenBlankStandaloneProject?: () => void
+  onOpenStandaloneFolderProject?: (
+    mode: StandaloneWorkspaceDialogMode,
+    intent?: StandaloneRemoteDialogIntent
+  ) => void
   onOpenStandaloneWorkspace?: (
     deviceId: string,
     workspacePath: string,
@@ -646,6 +658,38 @@ function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefin
   return (
     workspaces.length > 0 && workspaces.every(workspace => workspace.workspaceSource === 'remote')
   )
+}
+
+function isLocalProjectFinderDevice(device: DeviceInfo | undefined): device is DeviceInfo {
+  if (!device) return false
+
+  return (
+    !isCloudDevice(device) &&
+    !isRemoteDevice(device) &&
+    isClaudeCodeDevice(device) &&
+    canUseForProjectCreation(device)
+  )
+}
+
+function getProjectFinderWorkspacePath(
+  project: ProjectWithTasks,
+  runtimeProjectWork: RuntimeProjectWork | undefined,
+  devices: DeviceInfo[]
+): string | null {
+  const runtimeWorkspace = runtimeProjectWork?.deviceWorkspaces.find(workspace => {
+    const workspacePath = workspace.workspacePath.trim()
+    const device = devices.find(item => item.device_id === workspace.deviceId)
+    return Boolean(workspacePath) && isLocalProjectFinderDevice(device)
+  })
+  if (runtimeWorkspace) return runtimeWorkspace.workspacePath.trim()
+
+  const projectWorkspacePath = project.config?.workspace?.localPath?.trim()
+  const projectDevice = devices.find(item => item.device_id === getProjectDeviceId(project))
+  if (projectWorkspacePath && isLocalProjectFinderDevice(projectDevice)) {
+    return projectWorkspacePath
+  }
+
+  return null
 }
 
 function shouldShowRuntimeProject(runtimeProjectWork: RuntimeProjectWork): boolean {
@@ -1578,6 +1622,7 @@ function ProjectItem({
     runtimeTaskItems.length > 0 &&
     Boolean(onArchiveProjectConversations) &&
     !projectArchiving
+  const finderWorkspacePath = getProjectFinderWorkspacePath(project, runtimeProjectWork, devices)
   const newProjectChatTitle =
     projectDeviceState && !canStartProjectChat
       ? getDeviceUnavailableActionTitle(t, projectDeviceState)
@@ -1720,6 +1765,20 @@ function ProjectItem({
                 testId: `rename-project-${project.id}`,
                 onSelect: () => onRenameProject(project),
               },
+              ...(finderWorkspacePath
+                ? [
+                    {
+                      label: t('workbench.show_in_finder', '在 Finder 中显示'),
+                      icon: FolderOpen,
+                      testId: `show-project-in-finder-${project.id}`,
+                      onSelect: () =>
+                        openLocalWorkspace({
+                          opener: 'finder',
+                          path: finderWorkspacePath,
+                        }),
+                    },
+                  ]
+                : []),
               {
                 label: projectArchiving
                   ? t('workbench.archiving_conversations', '归档中...')
@@ -1908,6 +1967,8 @@ export function DesktopSidebar({
   onOpenGlobalImNotificationSettings,
   onOpenPlugins,
   onRefreshDevices,
+  onOpenBlankStandaloneProject,
+  onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
   onSelectStandaloneDevice,
   onGetRemoteDeviceStartupCommand,
@@ -2379,8 +2440,12 @@ export function DesktopSidebar({
                 onOpenSettings={() => onOpenSettings({ settingsPage: 'connections' })}
                 onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
                 onAddDevice={() => {
-                  setStandaloneRemoteDialogIntent('add-device')
-                  setStandaloneWorkspaceDialogMode('remote')
+                  if (onOpenStandaloneFolderProject) {
+                    onOpenStandaloneFolderProject('remote', 'add-device')
+                  } else {
+                    setStandaloneRemoteDialogIntent('add-device')
+                    setStandaloneWorkspaceDialogMode('remote')
+                  }
                 }}
               />
             )}
@@ -2462,7 +2527,11 @@ export function DesktopSidebar({
                       data-testid="project-create-blank-option"
                       onClick={() => {
                         setProjectCreateMenuOpen(false)
-                        setBlankProjectDialogOpen(true)
+                        if (onOpenBlankStandaloneProject) {
+                          onOpenBlankStandaloneProject()
+                        } else {
+                          setBlankProjectDialogOpen(true)
+                        }
                       }}
                       className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
                     >
@@ -2476,7 +2545,11 @@ export function DesktopSidebar({
                       data-testid="project-create-existing-option"
                       onClick={() => {
                         setProjectCreateMenuOpen(false)
-                        setStandaloneWorkspaceDialogMode('existing')
+                        if (onOpenStandaloneFolderProject) {
+                          onOpenStandaloneFolderProject('existing')
+                        } else {
+                          setStandaloneWorkspaceDialogMode('existing')
+                        }
                       }}
                       className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
                     >
@@ -2491,8 +2564,12 @@ export function DesktopSidebar({
                       data-testid="project-create-remote-option"
                       onClick={() => {
                         setProjectCreateMenuOpen(false)
-                        setStandaloneRemoteDialogIntent('project')
-                        setStandaloneWorkspaceDialogMode('remote')
+                        if (onOpenStandaloneFolderProject) {
+                          onOpenStandaloneFolderProject('remote', 'project')
+                        } else {
+                          setStandaloneRemoteDialogIntent('project')
+                          setStandaloneWorkspaceDialogMode('remote')
+                        }
                       }}
                       className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-muted"
                     >
@@ -2659,8 +2736,12 @@ export function DesktopSidebar({
                   onOpenGlobalImNotificationSettings={onOpenGlobalImNotificationSettings}
                   onOpenSettings={() => onOpenSettings()}
                   onAddCloudDevice={() => {
-                    setStandaloneRemoteDialogIntent('add-device')
-                    setStandaloneWorkspaceDialogMode('remote')
+                    if (onOpenStandaloneFolderProject) {
+                      onOpenStandaloneFolderProject('remote', 'add-device')
+                    } else {
+                      setStandaloneRemoteDialogIntent('add-device')
+                      setStandaloneWorkspaceDialogMode('remote')
+                    }
                   }}
                 />
               </div>

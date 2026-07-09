@@ -70,6 +70,8 @@ The worktree ID is the task ID. The task stores `git_worktree` as the execution 
 
 In desktop Wework, open the right workspace panel to browse files from the current task or project in read-only mode. The file tree reads the workspace directory from the currently bound execution device; existing tasks prefer the task workspace, and new conversations prefer the current project workspace.
 
+For a project bound to the local macOS device, the project row menu includes **Show in Finder**. Use it to open the project directory in Finder without changing the current Wework task.
+
 The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
 
 ## Use the Right-Side Browser
@@ -85,6 +87,8 @@ Bottom terminals opened by the user inside a task stay available after switching
 Code comment context is not uploaded as a normal file and does not use `attachment_ids`. If you add only code comments without typed text, Wework sends a short default prompt. If you upload only normal file attachments without typed text, the message body remains empty and Wework uses the default conversation title.
 
 ## Using an Existing Folder
+
+In the macOS desktop app, choosing “Using existing folder” for a local device opens the native Finder directory picker. If the target is a remote or cloud device, Wework keeps the in-app remote directory picker so the selected path belongs to that execution device.
 
 When creating a Wework project with “Using existing folder”, Wegent looks for an existing project by current user, Wework origin, execution device, and normalized local folder path:
 

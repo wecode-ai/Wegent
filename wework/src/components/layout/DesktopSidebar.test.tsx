@@ -14,6 +14,11 @@ import {
   AppUpdateContext,
   type AppUpdateContextValue,
 } from '@/features/app-update/app-update-context'
+import { openLocalWorkspace } from '@/lib/local-terminal'
+
+vi.mock('@/lib/local-terminal', () => ({
+  openLocalWorkspace: vi.fn(),
+}))
 
 function localDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -131,6 +136,7 @@ describe('DesktopSidebar', () => {
     localStorage.clear()
     enableTauri()
     Element.prototype.scrollIntoView = vi.fn()
+    vi.mocked(openLocalWorkspace).mockReset()
   })
 
   afterEach(() => {
@@ -1712,6 +1718,96 @@ describe('DesktopSidebar', () => {
     })
 
     confirmSpy.mockRestore()
+  })
+
+  test('opens a local runtime project folder in Finder from the project row menu', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'local-device',
+                deviceName: 'Local Mac',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/Users/alice/dev/Wegent',
+                workspaceKind: 'workspace',
+                workspaceSource: 'local',
+                tasks: [],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+    await user.click(screen.getByTestId('show-project-in-finder-7'))
+
+    expect(openLocalWorkspace).toHaveBeenCalledWith({
+      opener: 'finder',
+      path: '/Users/alice/dev/Wegent',
+    })
+  })
+
+  test('hides the Finder action for remote runtime project folders', async () => {
+    const user = userEvent.setup()
+
+    renderSidebar({
+      projects: [],
+      devices: [
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Box',
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'project:7', name: 'Wegent' },
+            totalTasks: 1,
+            deviceWorkspaces: [
+              {
+                id: 91,
+                deviceId: 'remote-device',
+                deviceName: 'Remote Box',
+                deviceStatus: 'online',
+                available: true,
+                workspacePath: '/home/alice/Wegent',
+                workspaceKind: 'workspace',
+                workspaceSource: 'remote',
+                tasks: [
+                  {
+                    taskId: 'codex-1',
+                    workspacePath: '/home/alice/Wegent',
+                    title: 'Remote work',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    await user.click(screen.getByTestId('project-menu-7'))
+
+    expect(screen.queryByTestId('show-project-in-finder-7')).not.toBeInTheDocument()
+    expect(openLocalWorkspace).not.toHaveBeenCalled()
   })
 
   test('opens away reminder controls from the account notification bell', async () => {
