@@ -2397,7 +2397,7 @@ export function DesktopSidebar({
 
           <div
             data-testid="sidebar-worklists-scroll"
-            className="scrollbar-none mt-8 min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
+            className="scrollbar-none my-3 min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]"
           >
             <section>
               <div ref={projectCreateMenuRef}>
