@@ -63,7 +63,7 @@ interface MessageListProps {
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
+  onLoadFileChangesDiff?: (subtaskId: string, summary?: TurnFileChangesSummary) => Promise<string>
   onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
     subtaskId: string
@@ -1399,7 +1399,7 @@ function AssistantMessage({
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
+  onLoadFileChangesDiff?: (subtaskId: string, summary?: TurnFileChangesSummary) => Promise<string>
   onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
     subtaskId: string
@@ -1454,7 +1454,7 @@ function AssistantMessage({
     if (fileChangesSubtaskId && onLoadFileChangesDiff && onOpenFileChangesReview) {
       onOpenFileChangesReview({
         subtaskId: fileChangesSubtaskId,
-        loadDiff: () => onLoadFileChangesDiff(fileChangesSubtaskId),
+        loadDiff: () => onLoadFileChangesDiff(fileChangesSubtaskId, message.fileChanges),
         reviewTitle: t('file_changes.previous_turn_label'),
         defaultFileTreeVisible: false,
         focusFilePath: path,

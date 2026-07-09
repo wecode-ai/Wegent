@@ -988,9 +988,18 @@ export function useWorkbenchRuntimeMessaging({
   const loadTurnFileChangesDiff = useCallback(
     async (subtaskId: string, messagesOverride?: WorkbenchMessage[]) => {
       const messageSource = messagesOverride ?? []
-      const runtimeFileChanges = state.currentRuntimeTask
+      let runtimeFileChanges = state.currentRuntimeTask
         ? findFileChangesBySubtaskId(messageSource, subtaskId)
         : undefined
+      if (!runtimeFileChanges && state.currentRuntimeTask) {
+        const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(
+          state.currentRuntimeTask,
+          {
+            refresh: true,
+          }
+        )
+        runtimeFileChanges = findFileChangesBySubtaskId(transcript.messages, subtaskId)
+      }
       if (runtimeFileChanges?.diff) return runtimeFileChanges.diff
       if (runtimeFileChanges) {
         const response = await executorClient.commands.executeCommand(
@@ -1027,7 +1036,7 @@ export function useWorkbenchRuntimeMessaging({
       const response = await loadDiff(subtaskId)
       return response.diff
     },
-    [executorClient, services.taskApi, state.currentRuntimeTask]
+    [executorClient, runtimeTasks, services.taskApi, state.currentRuntimeTask]
   )
 
   const revertTurnFileChanges = useCallback(
@@ -1036,9 +1045,18 @@ export function useWorkbenchRuntimeMessaging({
       messagesOverride?: WorkbenchMessage[]
     ): Promise<TurnFileChangesSummary> => {
       const messageSource = messagesOverride ?? []
-      const runtimeFileChanges = state.currentRuntimeTask
+      let runtimeFileChanges = state.currentRuntimeTask
         ? findFileChangesBySubtaskId(messageSource, subtaskId)
         : undefined
+      if (!runtimeFileChanges && state.currentRuntimeTask) {
+        const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(
+          state.currentRuntimeTask,
+          {
+            refresh: true,
+          }
+        )
+        runtimeFileChanges = findFileChangesBySubtaskId(transcript.messages, subtaskId)
+      }
       if (runtimeFileChanges && state.currentRuntimeTask) {
         try {
           const response = await executorClient.runtime.revertRuntimeFileChanges({
@@ -1092,7 +1110,7 @@ export function useWorkbenchRuntimeMessaging({
         throw error
       }
     },
-    [executorClient, services.taskApi, state.currentRuntimeTask]
+    [executorClient, runtimeTasks, services.taskApi, state.currentRuntimeTask]
   )
 
   const pauseCurrentResponse = useCallback(async () => {
