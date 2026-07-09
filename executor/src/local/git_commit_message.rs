@@ -9,6 +9,7 @@
 
 use std::{
     collections::HashMap,
+    ffi::OsString,
     path::{Path, PathBuf},
     process::Stdio,
     sync::atomic::{AtomicU64, Ordering},
@@ -143,16 +144,7 @@ async fn run_codex(
     env: &HashMap<String, String>,
 ) -> Result<String, String> {
     let mut command = Command::new(binary);
-    command.args([
-        "exec",
-        "--ephemeral",
-        "--ignore-rules",
-        "--sandbox",
-        "read-only",
-        "--output-last-message",
-    ]);
-    command.arg(output_path);
-    command.arg("-");
+    command.args(codex_args(output_path));
     command.env_clear();
     command.envs(env);
     if let Some(cwd) = cwd {
@@ -201,6 +193,21 @@ async fn run_codex(
         Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
         Err(error) => Err(error.to_string()),
     }
+}
+
+fn codex_args(output_path: &Path) -> Vec<OsString> {
+    [
+        "exec",
+        "--ephemeral",
+        "--ignore-rules",
+        "--sandbox",
+        "read-only",
+        "--output-last-message",
+    ]
+    .into_iter()
+    .map(OsString::from)
+    .chain([output_path.as_os_str().to_owned(), OsString::from("-")])
+    .collect()
 }
 
 fn build_prompt(status: &str, diff_stat: &str, diff: &str) -> String {
@@ -362,5 +369,34 @@ mod tests {
         assert!(prompt.contains("Git status:\nSTATUS"));
         assert!(prompt.contains("Staged diff stat:\nSTAT"));
         assert!(prompt.contains("Staged diff:\nDIFF"));
+    }
+
+    #[test]
+    fn codex_args_do_not_use_unsupported_approval_flags() {
+        let args = codex_args(Path::new("/tmp/commit-message.txt"));
+        let args: Vec<String> = args
+            .iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(
+            !args
+                .iter()
+                .any(|argument| argument.contains("--ask-for-approval")),
+            "commit message generator must not use unsupported Codex exec approval flags"
+        );
+        assert_eq!(
+            args,
+            vec![
+                "exec",
+                "--ephemeral",
+                "--ignore-rules",
+                "--sandbox",
+                "read-only",
+                "--output-last-message",
+                "/tmp/commit-message.txt",
+                "-"
+            ]
+        );
     }
 }

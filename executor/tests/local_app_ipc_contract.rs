@@ -458,6 +458,7 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
     assert_eq!(request.argv[0], "python3");
     assert_eq!(request.argv[3], "review");
     assert_eq!(request.argv[4], "turn-file-changes/0/1");
+    let review_request = request;
 
     let commit_message_response = server
         .handle_line(
@@ -476,15 +477,15 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         .unwrap();
 
     assert_eq!(commit_message_response["ok"], true);
-    let request = seen_request.lock().unwrap().clone().unwrap();
-    assert_eq!(request.argv[0], "python3");
-    assert!(request.command.contains("generate git commit message"));
-    assert!(
-        !request
-            .argv
-            .iter()
-            .any(|argument| argument.contains("--ask-for-approval")),
-        "commit message generator must not use unsupported Codex exec approval flags"
+    assert_eq!(commit_message_response["result"]["success"], false);
+    assert_eq!(
+        commit_message_response["result"]["stdout"]["success"],
+        false
+    );
+    assert_eq!(
+        seen_request.lock().unwrap().as_ref(),
+        Some(&review_request),
+        "native commit message generation must not dispatch through the generic command handler"
     );
 }
 
