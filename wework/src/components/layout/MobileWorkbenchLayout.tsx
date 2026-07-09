@@ -387,6 +387,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     codeComments={paneSession.codeCommentContexts}
                     isStreaming={paneIsResponseStreaming}
                     onPause={() => void paneSession.pauseCurrentResponse()}
+                    onCompactContext={() => void paneSession.compactContext()}
                     onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -476,6 +477,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
                 onPause={() => void paneSession.pauseCurrentResponse()}
+                onCompactContext={() => void paneSession.compactContext()}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
