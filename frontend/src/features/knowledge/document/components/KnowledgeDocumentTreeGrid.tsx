@@ -441,7 +441,8 @@ export function KnowledgeDocumentTreeGrid({
           const node = row.original.node
           if (node.kind === 'document') {
             const document = node.document
-            if (!(canManage?.(document) ?? true)) return null
+            if (!onEdit || !(canManage?.(document) ?? true)) return null
+            const label = t('common:actions.edit')
             return (
               <button
                 className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors"
@@ -449,7 +450,9 @@ export function KnowledgeDocumentTreeGrid({
                   event.stopPropagation()
                   onEdit?.(document)
                 }}
-                title={t('common:actions.edit')}
+                title={label}
+                aria-label={label}
+                data-testid={`edit-document-${document.id}`}
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
@@ -457,10 +460,12 @@ export function KnowledgeDocumentTreeGrid({
           }
 
           if (!canManageFolders || !onRenameFolder) return null
+          const label = t('document.folder.rename')
           return (
             <button
               className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors"
-              title={t('document.folder.rename')}
+              title={label}
+              aria-label={label}
               onClick={event => {
                 event.stopPropagation()
                 onRenameFolder(node.folderId, node.name)
@@ -663,6 +668,7 @@ export function KnowledgeDocumentTreeGrid({
                   <button
                     className="p-1 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
                     title={t('document.folder.create')}
+                    aria-label={t('document.folder.create')}
                     onClick={event => {
                       event.stopPropagation()
                       onCreateFolder(node.folderId)
@@ -676,6 +682,7 @@ export function KnowledgeDocumentTreeGrid({
                   <button
                     className="p-1 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
                     title={t('document.folder.delete')}
+                    aria-label={t('document.folder.delete')}
                     onClick={event => {
                       event.stopPropagation()
                       onDeleteFolder(node.folderId, node.name)
@@ -710,6 +717,14 @@ export function KnowledgeDocumentTreeGrid({
             (isIndexFailed || isNotIndexed) &&
             !showIndexingState
           const showDownload = document.source_type === 'file' && !!document.attachment_id
+          const moveLabel = t('document.folder.moveDocument')
+          const refreshLabel =
+            refreshingDocId === document.id
+              ? t('document.upload.web.refetching')
+              : t('document.upload.web.refetch')
+          const reindexLabel = t('document.document.reindex')
+          const downloadLabel = t('document.document.download')
+          const deleteLabel = t('common:actions.delete')
 
           return (
             <div className="flex items-center justify-center gap-1">
@@ -720,8 +735,9 @@ export function KnowledgeDocumentTreeGrid({
                     event.stopPropagation()
                     onMove(document)
                   }}
-                  title={t('document.folder.moveDocument')}
-                  data-testid="move-button"
+                  title={moveLabel}
+                  aria-label={moveLabel}
+                  data-testid={`move-document-${document.id}`}
                 >
                   <FolderInput className="w-3.5 h-3.5" />
                 </button>
@@ -738,11 +754,9 @@ export function KnowledgeDocumentTreeGrid({
                     onRefresh(document)
                   }}
                   disabled={refreshingDocId === document.id}
-                  title={
-                    refreshingDocId === document.id
-                      ? t('document.upload.web.refetching')
-                      : t('document.upload.web.refetch')
-                  }
+                  title={refreshLabel}
+                  aria-label={refreshLabel}
+                  data-testid={`refresh-document-${document.id}`}
                 >
                   <CloudDownload
                     className={`w-4 h-4 ${refreshingDocId === document.id ? 'animate-pulse' : ''}`}
@@ -756,7 +770,9 @@ export function KnowledgeDocumentTreeGrid({
                     event.stopPropagation()
                     onReindex?.(document)
                   }}
-                  title={t('document.document.reindex')}
+                  title={reindexLabel}
+                  aria-label={reindexLabel}
+                  data-testid={`reindex-document-${document.id}`}
                 >
                   <RotateCcw className="w-4 h-4" />
                 </button>
@@ -768,7 +784,9 @@ export function KnowledgeDocumentTreeGrid({
                     event.stopPropagation()
                     handleDocumentDownload(document)
                   }}
-                  title={t('document.document.download')}
+                  title={downloadLabel}
+                  aria-label={downloadLabel}
+                  data-testid={`download-document-${document.id}`}
                 >
                   <Download className="w-4 h-4" />
                 </button>
@@ -780,7 +798,9 @@ export function KnowledgeDocumentTreeGrid({
                     event.stopPropagation()
                     onDelete(document)
                   }}
-                  title={t('common:actions.delete')}
+                  title={deleteLabel}
+                  aria-label={deleteLabel}
+                  data-testid={`delete-document-${document.id}`}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>

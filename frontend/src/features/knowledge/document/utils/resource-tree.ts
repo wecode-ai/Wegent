@@ -52,7 +52,12 @@ function groupDocumentsByFolder(documents: KnowledgeDocument[]) {
   const documentsByFolderId = new Map<number, KnowledgeDocument[]>()
   for (const document of documents) {
     const folderId = document.folder_id ?? 0
-    documentsByFolderId.set(folderId, [...(documentsByFolderId.get(folderId) ?? []), document])
+    const folderDocuments = documentsByFolderId.get(folderId)
+    if (folderDocuments) {
+      folderDocuments.push(document)
+    } else {
+      documentsByFolderId.set(folderId, [document])
+    }
   }
   return documentsByFolderId
 }

@@ -184,4 +184,52 @@ describe('KnowledgeDocumentTreeGrid', () => {
 
     expect(onSortChange).toHaveBeenCalledWith('size', 'desc')
   })
+
+  it('renders icon actions only when handlers exist and exposes stable selectors', () => {
+    const onEdit = jest.fn()
+    const onDelete = jest.fn()
+    const folders: KnowledgeFolder[] = []
+    const documents = [createDocument({ id: 11, name: 'root.txt', folder_id: 0 })]
+    const { nodes, index } = buildKnowledgeResourceTree(folders, documents)
+
+    const { rerender } = render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={folders}
+        documents={documents}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+      />
+    )
+
+    expect(screen.queryByTestId('edit-document-11')).not.toBeInTheDocument()
+
+    rerender(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={folders}
+        documents={documents}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('edit-document-11'))
+    fireEvent.click(screen.getByTestId('delete-document-11'))
+
+    expect(screen.getByLabelText('common:actions.edit')).toBeInTheDocument()
+    expect(screen.getByLabelText('common:actions.delete')).toBeInTheDocument()
+    expect(onEdit).toHaveBeenCalledWith(documents[0])
+    expect(onDelete).toHaveBeenCalledWith(documents[0])
+  })
 })
