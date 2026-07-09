@@ -24,9 +24,13 @@ jest.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-jest.mock('@/apis/attachments', () => ({
-  downloadAttachment: jest.fn(),
-}))
+jest.mock('@/apis/attachments', () => {
+  const actual = jest.requireActual('@/apis/attachments')
+  return {
+    ...actual,
+    downloadAttachment: jest.fn(),
+  }
+})
 
 function createDocument(overrides?: Partial<KnowledgeDocument>): KnowledgeDocument {
   return {
