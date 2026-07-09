@@ -1,6 +1,7 @@
 import { Check, ChevronLeft, Folder, FolderPlus, Loader2 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isImeEnterEvent } from '@/lib/ime'
 import type { DeviceInfo } from '@/types/api'
 import {
   directoryMatchesQuery,
@@ -266,6 +267,7 @@ export function DeviceFolderPicker({
             }}
             onBlur={confirmPathInput}
             onKeyDown={event => {
+              if (isImeEnterEvent(event)) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 confirmPathInput()
@@ -314,6 +316,7 @@ export function DeviceFolderPicker({
               setError(null)
             }}
             onKeyDown={event => {
+              if (isImeEnterEvent(event)) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 void handleConfirm()

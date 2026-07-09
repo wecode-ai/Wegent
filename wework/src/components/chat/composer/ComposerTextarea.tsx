@@ -2,6 +2,7 @@ import { ClipboardList, Cpu, Package, Target } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ClipboardEventHandler, KeyboardEventHandler, ReactNode, RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { getModelCompatibilityFamily, inferModelFamily } from '@/lib/model-ui'
 import type { LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
 import type { ComposerTextTrigger, SlashCommand } from './composerAutocomplete'
@@ -854,7 +855,7 @@ export function ComposerTextarea({
       })
     }
 
-    if (event.key === 'Enter' && (isComposing || event.nativeEvent.isComposing)) {
+    if (isImeEnterEvent(event) || (event.key === 'Enter' && isComposing)) {
       suppressEnterUntilKeyUpRef.current = true
       debugComposerEvent('keydown-enter-ignored-composition', {
         stateIsComposing: isComposing,
@@ -875,7 +876,7 @@ export function ComposerTextarea({
       return
     }
 
-    if (isComposing || event.nativeEvent.isComposing) {
+    if (isComposing || isImeComposingEvent(event)) {
       return
     }
 

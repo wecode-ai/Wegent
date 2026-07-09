@@ -37,6 +37,7 @@ import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
+import { isImeEnterEvent } from '@/lib/ime'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -848,7 +849,7 @@ function UserMessageEditForm({
         disabled={submitting}
         onChange={event => setDraft(event.target.value)}
         onKeyDown={event => {
-          if (event.nativeEvent.isComposing) return
+          if (isImeEnterEvent(event)) return
           if (event.key === 'Enter' && event.shiftKey) return
           if (event.key === 'Enter') {
             event.preventDefault()
