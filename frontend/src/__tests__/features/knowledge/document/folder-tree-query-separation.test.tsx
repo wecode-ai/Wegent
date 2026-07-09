@@ -162,9 +162,10 @@ describe('FolderTree query/result separation', () => {
       />
     )
 
-    const folderRow = screen.getByRole('button', { name: /Reports/ })
-    const folderContainer = folderRow.parentElement
+    const folderRow = screen.getByText('Reports').closest('div')
+    const folderContainer = folderRow?.parentElement
 
+    expect(screen.queryByRole('button', { name: /Reports/ })).not.toBeInTheDocument()
     expect(folderContainer).toHaveTextContent('inside-folder.txt')
     expect(folderContainer).not.toHaveTextContent('root.txt')
   })
@@ -186,7 +187,7 @@ describe('FolderTree query/result separation', () => {
     const documents = [createDocument({ id: 11, name: 'child-doc.txt', folder_id: 2 })]
     const { rerender } = render(<FolderTree folders={[folder]} documents={documents} />)
 
-    fireEvent.click(screen.getByRole('button', { name: /Reports/ }).querySelector('svg')!)
+    fireEvent.click(screen.getByText('Reports').closest('div')!.querySelector('svg')!)
     expect(screen.queryByText('child-doc.txt')).not.toBeInTheDocument()
 
     rerender(<FolderTree folders={[folder]} documents={documents} activeFolderId={2} />)

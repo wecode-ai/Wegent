@@ -1329,7 +1329,10 @@ class KnowledgeService:
         if keyword:
             keyword = keyword.strip()
             if keyword:
-                query = query.filter(KnowledgeDocument.name.ilike(f"%{keyword}%"))
+                keyword_pattern = f"%{_escape_sql_like(keyword)}%"
+                query = query.filter(
+                    KnowledgeDocument.name.ilike(keyword_pattern, escape="\\")
+                )
 
         sort_columns = {
             "name": KnowledgeDocument.name,

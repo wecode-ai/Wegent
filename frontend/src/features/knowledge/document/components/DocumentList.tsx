@@ -38,7 +38,7 @@ import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { useDocuments } from '../hooks/useDocuments'
 import { useFolders } from '../hooks/useFolders'
 import { FolderTree, type SortField, type SortOrder } from './FolderTree'
-import { KnowledgeDocumentTreeGrid } from './KnowledgeDocumentTreeGrid'
+import { KnowledgeDocumentTreeGrid } from './knowledge-document-tree-grid'
 import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
@@ -394,6 +394,7 @@ export function DocumentList({
 
   // Track component mounted state to prevent updates after unmount
   const isMountedRef = useRef(true)
+  const skipNextSelectionNotifyRef = useRef(false)
 
   useEffect(() => {
     return () => {
@@ -468,6 +469,7 @@ export function DocumentList({
   // through retrieval without injecting every document into context.
   useEffect(() => {
     if (onSelectionChange) {
+      skipNextSelectionNotifyRef.current = true
       resetSelection()
       onSelectionChange([])
     }
@@ -476,6 +478,10 @@ export function DocumentList({
   // Notify parent when selection changes.
   useEffect(() => {
     if (onSelectionChange) {
+      if (skipNextSelectionNotifyRef.current) {
+        skipNextSelectionNotifyRef.current = false
+        return
+      }
       onSelectionChange(Array.from(selectedDocumentIds))
     }
   }, [selectedDocumentIds, onSelectionChange])
@@ -1032,7 +1038,7 @@ export function DocumentList({
             variant="outline"
             size="sm"
             onClick={() => setActiveFolderId(undefined)}
-            className="max-w-[220px]"
+            className="min-h-11 min-w-11 max-w-[220px]"
             data-testid="active-folder-clear"
           >
             <span className="truncate">{activeFolderName}</span>

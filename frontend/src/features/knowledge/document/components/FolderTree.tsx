@@ -257,27 +257,32 @@ function FolderRow({
       data-testid={`folder-checkbox-${node.id}`}
     />
   ) : null
+  const canActivate = Boolean(onActivate)
 
   if (compact) {
     return (
       <div
-        role="button"
-        tabIndex={0}
-        aria-pressed={active}
-        className={`flex items-center gap-2 w-full px-2 py-2 rounded-lg transition-colors text-left cursor-pointer ${
-          active ? 'bg-primary/10 text-primary' : 'hover:bg-surface'
-        }`}
+        role={canActivate ? 'button' : undefined}
+        tabIndex={canActivate ? 0 : undefined}
+        aria-pressed={canActivate ? active : undefined}
+        className={`flex items-center gap-2 w-full px-2 py-2 rounded-lg transition-colors text-left ${
+          canActivate ? 'cursor-pointer' : ''
+        } ${active ? 'bg-primary/10 text-primary' : 'hover:bg-surface'}`}
         style={{ paddingLeft: `${8 + indent}px` }}
-        onClick={() => onActivate?.(node.id)}
-        onKeyDown={e => {
-          if (e.currentTarget !== e.target) {
-            return
-          }
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            onActivate?.(node.id)
-          }
-        }}
+        onClick={canActivate ? () => onActivate?.(node.id) : undefined}
+        onKeyDown={
+          canActivate
+            ? e => {
+                if (e.currentTarget !== e.target) {
+                  return
+                }
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onActivate?.(node.id)
+                }
+              }
+            : undefined
+        }
         title={node.name}
       >
         {folderCheckbox}
@@ -314,23 +319,27 @@ function FolderRow({
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 transition-colors cursor-pointer border-b border-border min-w-[880px] ${
-        active ? 'bg-primary/10 text-primary' : 'bg-surface/50 hover:bg-surface'
-      }`}
+      className={`flex items-center gap-3 px-4 py-3 transition-colors border-b border-border min-w-[880px] ${
+        canActivate ? 'cursor-pointer' : ''
+      } ${active ? 'bg-primary/10 text-primary' : 'bg-surface/50 hover:bg-surface'}`}
       style={{ paddingLeft: `${16 + indent}px` }}
-      onClick={() => onActivate?.(node.id)}
-      role="button"
-      tabIndex={0}
-      aria-pressed={active}
-      onKeyDown={e => {
-        if (e.currentTarget !== e.target) {
-          return
-        }
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          onActivate?.(node.id)
-        }
-      }}
+      onClick={canActivate ? () => onActivate?.(node.id) : undefined}
+      role={canActivate ? 'button' : undefined}
+      tabIndex={canActivate ? 0 : undefined}
+      aria-pressed={canActivate ? active : undefined}
+      onKeyDown={
+        canActivate
+          ? e => {
+              if (e.currentTarget !== e.target) {
+                return
+              }
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onActivate?.(node.id)
+              }
+            }
+          : undefined
+      }
     >
       {folderCheckbox}
       {expanded ? (

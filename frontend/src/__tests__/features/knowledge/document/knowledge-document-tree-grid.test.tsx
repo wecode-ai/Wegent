@@ -5,7 +5,7 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 
-import { KnowledgeDocumentTreeGrid } from '@/features/knowledge/document/components/KnowledgeDocumentTreeGrid'
+import { KnowledgeDocumentTreeGrid } from '@/features/knowledge/document/components/knowledge-document-tree-grid'
 import { buildKnowledgeResourceTree } from '@/features/knowledge/document/utils/resource-tree'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 
@@ -231,5 +231,90 @@ describe('KnowledgeDocumentTreeGrid', () => {
     expect(screen.getByLabelText('common:actions.delete')).toBeInTheDocument()
     expect(onEdit).toHaveBeenCalledWith(documents[0])
     expect(onDelete).toHaveBeenCalledWith(documents[0])
+  })
+
+  it('opens only safe external source links', () => {
+    const openSpy = jest.spyOn(window, 'open').mockImplementation(() => null)
+    const folders: KnowledgeFolder[] = []
+    const unsafeDocument = createDocument({
+      id: 11,
+      name: 'unsafe.md',
+      source_type: 'web',
+      source_config: { url: 'javascript:alert(1)' },
+    })
+    const safeDocument = createDocument({
+      id: 12,
+      name: 'safe.md',
+      source_type: 'web',
+      source_config: { url: 'https://example.com/page' },
+    })
+
+    const unsafeTree = buildKnowledgeResourceTree(folders, [unsafeDocument])
+    const { rerender } = render(
+      <KnowledgeDocumentTreeGrid
+        nodes={unsafeTree.nodes}
+        treeIndex={unsafeTree.index}
+        folders={folders}
+        documents={[unsafeDocument]}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('open-document-source-11'))
+    expect(openSpy).not.toHaveBeenCalled()
+
+    const safeTree = buildKnowledgeResourceTree(folders, [safeDocument])
+    rerender(
+      <KnowledgeDocumentTreeGrid
+        nodes={safeTree.nodes}
+        treeIndex={safeTree.index}
+        folders={folders}
+        documents={[safeDocument]}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('open-document-source-12'))
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://example.com/page',
+      '_blank',
+      'noopener,noreferrer'
+    )
+
+    openSpy.mockRestore()
+  })
+
+  it('activates document rows from the keyboard', () => {
+    const onViewDetail = jest.fn()
+    const folders: KnowledgeFolder[] = []
+    const documents = [createDocument({ id: 11, name: 'root.txt', folder_id: 0 })]
+    const { nodes, index } = buildKnowledgeResourceTree(folders, documents)
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={folders}
+        documents={documents}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+        onViewDetail={onViewDetail}
+      />
+    )
+
+    fireEvent.keyDown(screen.getByRole('button', { name: /root.txt/ }), { key: 'Enter' })
+
+    expect(onViewDetail).toHaveBeenCalledWith(documents[0])
   })
 })

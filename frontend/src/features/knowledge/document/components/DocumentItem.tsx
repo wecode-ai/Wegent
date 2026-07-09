@@ -121,9 +121,9 @@ export function DocumentItem({
   const checkboxChecked = selected || includedInFolderScope
   const checkboxDisabled = includedInFolderScope
 
-  const handleCheckboxChange = (checked: boolean) => {
+  const handleCheckboxChange = (checked: boolean | 'indeterminate') => {
     if (checkboxDisabled) return
-    onSelect?.(document, checked)
+    onSelect?.(document, checked === true)
   }
 
   const handleCheckboxClick = (e: React.MouseEvent) => {
@@ -221,7 +221,11 @@ export function DocumentItem({
 
   const showSelectionColumn = Boolean(onSelect)
   const showActionsColumn =
-    showActionsColumnProp ?? Boolean(onMove || onEdit || onDelete || onRefresh || onReindex)
+    showActionsColumnProp ??
+    Boolean(onMove || onEdit || onDelete || onRefresh || onReindex || showDownload)
+  const hasManageActions = Boolean(
+    onMove || onEdit || onDelete || onRefresh || onReindex || showDownload
+  )
   const tableGridTemplate = getDocumentTableGridTemplate({
     showSelectionColumn,
     showActionsColumn,
@@ -385,7 +389,7 @@ export function DocumentItem({
             )}
           </div>
           {/* More actions dropdown - shown on hover, replaces icon */}
-          {canManage && (
+          {canManage && hasManageActions && (
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -397,10 +401,12 @@ export function DocumentItem({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="min-w-[120px]">
-                  <DropdownMenuItem onClick={handleEdit}>
-                    <Pencil className="w-3.5 h-3.5 mr-2" />
-                    {t('common:actions.edit')}
-                  </DropdownMenuItem>
+                  {onEdit && (
+                    <DropdownMenuItem onClick={handleEdit}>
+                      <Pencil className="w-3.5 h-3.5 mr-2" />
+                      {t('common:actions.edit')}
+                    </DropdownMenuItem>
+                  )}
                   {onMove && (
                     <DropdownMenuItem onClick={handleMove}>
                       <FolderInput className="w-3.5 h-3.5 mr-2" />
@@ -435,10 +441,12 @@ export function DocumentItem({
                       {t('knowledge:document.document.download')}
                     </DropdownMenuItem>
                   )}
-                  <DropdownMenuItem danger onClick={handleDelete}>
-                    <Trash2 className="w-3.5 h-3.5 mr-2" />
-                    {t('common:actions.delete')}
-                  </DropdownMenuItem>
+                  {onDelete && (
+                    <DropdownMenuItem danger onClick={handleDelete}>
+                      <Trash2 className="w-3.5 h-3.5 mr-2" />
+                      {t('common:actions.delete')}
+                    </DropdownMenuItem>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -664,6 +672,7 @@ export function DocumentItem({
                       ? t('knowledge:document.upload.web.refetching')
                       : t('knowledge:document.upload.web.refetch')
                   }
+                  data-testid={`refresh-document-${document.id}`}
                 >
                   <CloudDownload className={`w-4 h-4 ${isRefreshing ? 'animate-pulse' : ''}`} />
                 </button>
@@ -683,6 +692,7 @@ export function DocumentItem({
                       ? t('knowledge:document.document.reindexing')
                       : t('knowledge:document.document.reindex')
                   }
+                  data-testid={`reindex-document-${document.id}`}
                 >
                   <RotateCcw className={`w-4 h-4 ${showIndexingState ? 'animate-spin' : ''}`} />
                 </button>
@@ -693,18 +703,22 @@ export function DocumentItem({
                   className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
                   onClick={handleDownload}
                   title={t('knowledge:document.document.download')}
+                  data-testid={`download-document-${document.id}`}
                 >
                   <Download className="w-4 h-4" />
                 </button>
               )}
               {/* Delete button */}
-              <button
-                className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
-                onClick={handleDelete}
-                title={t('common:actions.delete')}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              {onDelete && (
+                <button
+                  className="p-1.5 rounded-md text-text-muted hover:text-error hover:bg-error/10 transition-colors"
+                  onClick={handleDelete}
+                  title={t('common:actions.delete')}
+                  data-testid={`delete-document-${document.id}`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              )}
             </>
           )}
         </div>

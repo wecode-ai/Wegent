@@ -1091,13 +1091,18 @@ class TaskKnowledgeBaseService:
                 merged_folder_ids = self._normalize_folder_ids(
                     existing_folder_ids + normalized_folder_ids
                 )
+                next_include_subfolders = (
+                    include_subfolders
+                    if normalized_folder_ids
+                    else ref.get("includeSubfolders", include_subfolders)
+                )
                 next_scope_refs.append(
                     {
                         **ref,
                         "scopeRestricted": True,
                         "explicitDocumentIds": merged_ids,
                         "folderIds": merged_folder_ids or None,
-                        "includeSubfolders": include_subfolders,
+                        "includeSubfolders": next_include_subfolders,
                         "boundBy": ref.get("boundBy") or user_name,
                         "boundAt": ref.get("boundAt")
                         or datetime.utcnow().isoformat() + "Z",

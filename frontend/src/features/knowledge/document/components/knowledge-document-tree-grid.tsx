@@ -145,6 +145,15 @@ function isSortableColumnId(columnId: string): columnId is SortableColumnId {
   return ['name', 'size', 'createdAt', 'updatedAt'].includes(columnId)
 }
 
+function canOpenExternalUrl(url: string) {
+  try {
+    const parsedUrl = new URL(url)
+    return parsedUrl.protocol === 'http:' || parsedUrl.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 export function KnowledgeDocumentTreeGrid({
   nodes,
   treeIndex,
@@ -270,6 +279,7 @@ export function KnowledgeDocumentTreeGrid({
               onCheckedChange={checked => onSelectAll(checked === true)}
               aria-label={selectAllLabel}
               className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
+              data-testid="select-all-resources-checkbox"
             />
           ) : null,
         cell: ({ row }) => {
@@ -371,9 +381,12 @@ export function KnowledgeDocumentTreeGrid({
                     className="p-1 rounded-md text-primary hover:bg-primary/10 transition-colors flex-shrink-0"
                     onClick={event => {
                       event.stopPropagation()
-                      window.open(sourceUrl, '_blank', 'noopener,noreferrer')
+                      if (canOpenExternalUrl(sourceUrl)) {
+                        window.open(sourceUrl, '_blank', 'noopener,noreferrer')
+                      }
                     }}
                     title={t('document.document.openLink')}
+                    data-testid={`open-document-source-${document.id}`}
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
                   </button>
@@ -398,6 +411,7 @@ export function KnowledgeDocumentTreeGrid({
                 aria-label={
                   isExpanded ? t('document.folder.collapse') : t('document.folder.expand')
                 }
+                data-testid={`toggle-folder-${node.folderId}`}
               >
                 {isExpanded ? (
                   <ChevronDown className="h-4 w-4" />
@@ -884,7 +898,7 @@ export function KnowledgeDocumentTreeGrid({
   const renderedVirtualItems =
     virtualItems.length > 0
       ? virtualItems
-      : tableRows.map((_, index) => ({
+      : tableRows.slice(0, Math.min(tableRows.length, 30)).map((_, index) => ({
           index,
           start: index * 48,
         }))
@@ -919,6 +933,7 @@ export function KnowledgeDocumentTreeGrid({
               type="button"
               className="inline-flex items-center gap-1 min-w-0 cursor-pointer hover:text-text-primary select-none"
               onClick={() => handleHeaderSort(header.column.id)}
+              data-testid={`sort-${header.column.id}-header`}
             >
               <span className="truncate">
                 {flexRender(header.column.columnDef.header, header.getContext())}
@@ -951,31 +966,42 @@ export function KnowledgeDocumentTreeGrid({
   const renderRow = useCallback(
     (row: (typeof tableRows)[number]) => {
       const { node } = row.original
+      const canActivateFolder = node.kind === 'folder' && Boolean(onActivateFolder)
+      const canActivateDocument = node.kind === 'document' && Boolean(onViewDetail)
+      const canActivateRow = canActivateFolder || canActivateDocument
       return (
         <div
           className={`grid items-center gap-4 px-4 py-3 transition-colors border-b border-border min-w-[880px] ${
             node.kind === 'folder'
               ? activeFolderId === node.folderId
-                ? 'bg-primary/10 text-primary cursor-pointer'
-                : 'bg-surface/50 hover:bg-surface cursor-pointer'
+                ? `bg-primary/10 text-primary ${canActivateRow ? 'cursor-pointer' : ''}`
+                : `bg-surface/50 hover:bg-surface ${canActivateRow ? 'cursor-pointer' : ''}`
               : `bg-base hover:bg-surface group ${onViewDetail ? 'cursor-pointer' : ''}`
           }`}
           style={{ gridTemplateColumns }}
           onClick={() => {
-            if (node.kind === 'folder') {
+            if (canActivateFolder) {
               onActivateFolder?.(node.folderId)
-            } else {
+            } else if (canActivateDocument) {
               onViewDetail?.(node.document)
             }
           }}
-          role={node.kind === 'folder' ? 'button' : undefined}
-          tabIndex={node.kind === 'folder' ? 0 : undefined}
-          aria-pressed={node.kind === 'folder' ? activeFolderId === node.folderId : undefined}
+          role={canActivateRow ? 'button' : undefined}
+          tabIndex={canActivateRow ? 0 : undefined}
+          aria-pressed={
+            node.kind === 'folder' && canActivateFolder
+              ? activeFolderId === node.folderId
+              : undefined
+          }
           onKeyDown={event => {
-            if (node.kind !== 'folder' || event.currentTarget !== event.target) return
+            if (!canActivateRow || event.currentTarget !== event.target) return
             if (event.key === 'Enter' || event.key === ' ') {
               event.preventDefault()
-              onActivateFolder?.(node.folderId)
+              if (canActivateFolder) {
+                onActivateFolder?.(node.folderId)
+              } else if (canActivateDocument) {
+                onViewDetail?.(node.document)
+              }
             }
           }}
         >

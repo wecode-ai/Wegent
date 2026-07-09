@@ -1701,6 +1701,12 @@ def _normalize_folder_ids(raw_folder_ids: Any) -> List[int]:
                 folder_id,
             )
             continue
+        if normalized < 0:
+            logger.warning(
+                "[_prepare_kb_tools_from_contexts] Ignore invalid folder_id=%s",
+                folder_id,
+            )
+            continue
         if normalized not in seen_folder_ids:
             seen_folder_ids.add(normalized)
             normalized_ids.append(normalized)

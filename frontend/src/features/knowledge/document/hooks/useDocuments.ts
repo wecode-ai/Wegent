@@ -283,9 +283,12 @@ export function useDocuments(options: UseDocumentsOptions) {
       requestSeqRef.current = requestSeq
       const currentKbId = knowledgeBaseIdRef.current
       if (!currentKbId) {
+        resetLocalSnapshot()
         setDocuments([])
         setTotalCount(0)
         setPage(1)
+        setLoading(false)
+        setError(null)
         return
       }
 
@@ -368,7 +371,7 @@ export function useDocuments(options: UseDocumentsOptions) {
     },
     // No page/pageSize dependencies — reads from refs instead to avoid
     // recreating on every state change which would trigger the auto-load effect.
-    [fetchServerPage, loadLocalSnapshot, t]
+    [fetchServerPage, loadLocalSnapshot, resetLocalSnapshot, t]
   )
 
   // Page navigation methods
@@ -562,7 +565,7 @@ export function useDocuments(options: UseDocumentsOptions) {
   useEffect(() => {
     setPage(1)
     setTotalCount(0)
-    if (autoLoad && knowledgeBaseId) {
+    if (autoLoad) {
       fetchDocuments(1, pageSizeRef.current)
     }
   }, [

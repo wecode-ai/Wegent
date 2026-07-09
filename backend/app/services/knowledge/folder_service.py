@@ -822,23 +822,10 @@ class KnowledgeFolderService:
     @staticmethod
     def _count_folder_subtree_docs(db: Session, folder_id: int, kind_id: int) -> int:
         """Count documents in a folder and all descendant folders."""
-        folder_rows = (
-            db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
-            .filter(KnowledgeFolder.kind_id == kind_id)
-            .all()
+        folder_ids = KnowledgeFolderService._collect_descendant_ids(
+            db, folder_id, kind_id
         )
-        children_by_parent: dict[int, list[int]] = defaultdict(list)
-        for child_id, parent_id in folder_rows:
-            children_by_parent[parent_id].append(child_id)
-
-        folder_ids: set[int] = set()
-        stack = [folder_id]
-        while stack:
-            current_id = stack.pop()
-            if current_id in folder_ids:
-                continue
-            folder_ids.add(current_id)
-            stack.extend(children_by_parent.get(current_id, []))
+        folder_ids.add(folder_id)
 
         return (
             db.query(func.count(KnowledgeDocument.id))

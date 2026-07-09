@@ -741,6 +741,10 @@ class KnowledgeOrchestrator:
             user: Current user
             knowledge_base_id: Knowledge base ID
             folder_id: Optional folder ID to filter by
+            include_subfolders: Whether to include descendant folders when folder_id is set
+            keyword: Optional document name keyword filter
+            sort_by: Sort field (name, size, createdAt, updatedAt)
+            sort_order: Sort order (asc or desc)
 
         Returns:
             KnowledgeDocumentListResponse with document list.
