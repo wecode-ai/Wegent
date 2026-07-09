@@ -1537,6 +1537,26 @@ describe('MessageList', () => {
     expect(orderedList).not.toHaveClass('pl-5')
   })
 
+  test('renders assistant markdown headings with the semantic theme color', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-headings',
+            role: 'assistant',
+            content: ['# Heading 1', '## Heading 2', '### Heading 3'].join('\n\n'),
+            status: 'done',
+            createdAt: '2026-07-09T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveClass('text-text-primary')
+    expect(screen.getByRole('heading', { level: 2 })).toHaveClass('text-text-primary')
+    expect(screen.getByRole('heading', { level: 3 })).toHaveClass('text-text-primary')
+  })
+
   test('renders assistant markdown links as reference-style inline links', () => {
     render(
       <MessageList

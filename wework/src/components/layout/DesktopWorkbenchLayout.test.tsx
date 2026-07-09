@@ -1425,7 +1425,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('renders the conversation composer as a floating overlay', () => {
+  test('renders the conversation composer as a sticky scroll footer', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1443,19 +1443,22 @@ describe('DesktopWorkbenchLayout', () => {
 
     const desktopContent = screen.getByTestId('desktop-workbench-content')
     expect(desktopContent).toHaveClass('pt-11')
-    expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe(
-      '136px'
-    )
+    expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
       'overflow-y-auto',
       'scrollbar-soft',
+      'flex',
+      'flex-col'
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
       'pb-[var(--desktop-floating-composer-clearance)]'
     )
     expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
       'overflow-x-hidden',
       'overflow-x-clip'
     )
+    expect(screen.getByTestId('desktop-chat-scroll-content')).toHaveClass('flex-1', 'shrink-0')
     expect(screen.getByTestId('desktop-chat-scroll-content')).not.toHaveClass('justify-end')
     expect(screen.getByTestId('desktop-chat-scroll-content').firstElementChild).toHaveClass(
       'w-[min(46rem,calc(100%_-_6rem))]',
@@ -1463,23 +1466,24 @@ describe('DesktopWorkbenchLayout', () => {
       'max-w-[calc(100%_-_6rem)]',
       'px-0'
     )
-    expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
-      'pointer-events-none',
-      'absolute',
-      'left-0',
-      'right-8',
+    expect(screen.getByTestId('desktop-chat-scroll-sticky-footer')).toHaveClass(
+      'sticky',
       'bottom-0',
       'z-10',
       'from-background'
     )
-    expect(screen.getByTestId('desktop-floating-composer-backdrop')).not.toHaveClass('inset-x-0')
-    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+    expect(screen.getByTestId('desktop-floating-composer-backdrop')).toHaveClass(
       'pointer-events-none',
       'absolute',
-      'bottom-2',
-      'left-1/2',
-      'z-chrome',
-      '-translate-x-1/2'
+      'inset-x-0',
+      'bottom-0',
+      'from-background'
+    )
+    expect(screen.getByTestId('desktop-floating-composer-layer')).toHaveClass(
+      'relative',
+      'w-[min(46rem,calc(100%_-_2rem))]',
+      'min-w-0',
+      'max-w-[calc(100%_-_2rem)]'
     )
     expect(screen.getByTestId('desktop-floating-composer-card')).toHaveClass('pointer-events-auto')
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
@@ -1883,7 +1887,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
-  test('positions the scroll-to-bottom button above the floating composer', () => {
+  test('positions the scroll-to-bottom button above the sticky composer footer', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1916,13 +1920,10 @@ describe('DesktopWorkbenchLayout', () => {
 
     fireEvent.scroll(scroller)
 
-    expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass(
-      'bottom-[var(--desktop-floating-composer-clearance)]',
-      'z-popover'
-    )
+    expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass('bottom-4', 'z-popover')
   })
 
-  test('reserves extra bottom space when queued messages are shown above the composer', () => {
+  test('keeps queued messages inside the sticky composer footer flow', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1947,7 +1948,11 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
+    expect(screen.getByTestId('desktop-chat-scroll-sticky-footer')).toHaveClass(
+      'sticky',
+      'bottom-0'
+    )
+    expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
       'pb-[var(--desktop-floating-composer-clearance)]'
     )
   })
