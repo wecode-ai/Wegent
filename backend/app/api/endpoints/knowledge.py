@@ -43,12 +43,14 @@ from app.schemas.knowledge import (
     KnowledgeDocumentCreate,
     KnowledgeDocumentListResponse,
     KnowledgeDocumentResponse,
+    KnowledgeDocumentSortField,
     KnowledgeDocumentUpdate,
     KnowledgeFolderCreate,
     KnowledgeFolderResponse,
     KnowledgeFolderUpdate,
     PersonalKnowledgeBaseGroup,
     ResourceScope,
+    SortOrder,
 )
 from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.schemas.summary import KnowledgeBaseSummaryUpdateRequest
@@ -593,6 +595,22 @@ def list_documents(
     folder_id: Optional[int] = Query(
         default=None, ge=0, description="Filter documents by folder (None = all)"
     ),
+    include_subfolders: bool = Query(
+        default=False,
+        description="Whether folder_id includes descendant folders",
+    ),
+    keyword: Optional[str] = Query(
+        default=None,
+        description="Search keyword for document names",
+    ),
+    sort_by: KnowledgeDocumentSortField = Query(
+        default=KnowledgeDocumentSortField.CREATED_AT,
+        description="Document sort field",
+    ),
+    sort_order: SortOrder = Query(
+        default=SortOrder.DESC,
+        description="Document sort order",
+    ),
     limit: int = Query(
         default=DEFAULT_KNOWLEDGE_LIST_LIMIT,
         ge=1,
@@ -617,6 +635,10 @@ def list_documents(
             folder_id=folder_id,
             limit=limit,
             offset=offset,
+            include_subfolders=include_subfolders,
+            keyword=keyword,
+            sort_by=sort_by.value,
+            sort_order=sort_order.value,
         )
     except ValueError as e:
         raise HTTPException(

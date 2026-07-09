@@ -96,6 +96,10 @@ export interface ListDocumentsParams {
   limit?: number
   offset?: number
   folder_id?: number
+  include_subfolders?: boolean
+  keyword?: string
+  sort_by?: 'name' | 'size' | 'createdAt' | 'updatedAt'
+  sort_order?: 'asc' | 'desc'
 }
 
 /**
@@ -114,6 +118,18 @@ export async function listDocuments(
   }
   if (params?.folder_id !== undefined) {
     searchParams.set('folder_id', String(params.folder_id))
+  }
+  if (params?.include_subfolders !== undefined) {
+    searchParams.set('include_subfolders', String(params.include_subfolders))
+  }
+  if (params?.keyword) {
+    searchParams.set('keyword', params.keyword)
+  }
+  if (params?.sort_by) {
+    searchParams.set('sort_by', params.sort_by)
+  }
+  if (params?.sort_order) {
+    searchParams.set('sort_order', params.sort_order)
   }
   const query = searchParams.toString()
   return apiClient.get<KnowledgeDocumentListResponse>(

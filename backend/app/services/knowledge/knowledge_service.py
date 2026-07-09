@@ -880,6 +880,29 @@ class KnowledgeService:
         )
 
     @staticmethod
+    def get_document_counts(
+        db: Session,
+        knowledge_base_ids: list[int],
+    ) -> dict[int, int]:
+        """Get total document counts for multiple knowledge bases in one query."""
+        from sqlalchemy import func
+
+        if not knowledge_base_ids:
+            return {}
+
+        results = (
+            db.query(
+                KnowledgeDocument.kind_id,
+                func.count(KnowledgeDocument.id).label("count"),
+            )
+            .filter(KnowledgeDocument.kind_id.in_(knowledge_base_ids))
+            .group_by(KnowledgeDocument.kind_id)
+            .all()
+        )
+
+        return {kb_id: count for kb_id, count in results}
+
+    @staticmethod
     def _update_document_count_cache(
         db: Session,
         knowledge_base_id: int,
@@ -1250,6 +1273,10 @@ class KnowledgeService:
         *,
         offset: int = 0,
         limit: int = 50,
+        include_subfolders: bool = False,
+        keyword: str | None = None,
+        sort_by: str = "createdAt",
+        sort_order: str = "desc",
     ) -> tuple[list[KnowledgeDocument], int]:
         """List documents with offset/limit pagination."""
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -1263,11 +1290,64 @@ class KnowledgeService:
         )
 
         if folder_id is not None:
-            query = query.filter(KnowledgeDocument.folder_id == folder_id)
+            if folder_id > 0:
+                folder = (
+                    db.query(KnowledgeFolder)
+                    .filter(
+                        KnowledgeFolder.id == folder_id,
+                        KnowledgeFolder.kind_id == knowledge_base_id,
+                    )
+                    .first()
+                )
+                if folder is None:
+                    raise ValueError("Folder not found in this knowledge base")
+
+            if include_subfolders:
+                folder_rows = (
+                    db.query(KnowledgeFolder.id, KnowledgeFolder.parent_id)
+                    .filter(KnowledgeFolder.kind_id == knowledge_base_id)
+                    .all()
+                )
+                children_by_parent: dict[int, list[int]] = {}
+                for child_id, parent_id in folder_rows:
+                    children_by_parent.setdefault(parent_id, []).append(child_id)
+
+                folder_ids: set[int] = set()
+                stack = [folder_id]
+                while stack:
+                    current_id = stack.pop()
+                    if current_id in folder_ids:
+                        continue
+                    folder_ids.add(current_id)
+                    stack.extend(children_by_parent.get(current_id, []))
+
+                folder_ids.add(folder_id)
+                query = query.filter(KnowledgeDocument.folder_id.in_(folder_ids))
+            else:
+                query = query.filter(KnowledgeDocument.folder_id == folder_id)
+
+        if keyword:
+            keyword = keyword.strip()
+            if keyword:
+                keyword_pattern = f"%{_escape_sql_like(keyword)}%"
+                query = query.filter(
+                    KnowledgeDocument.name.ilike(keyword_pattern, escape="\\")
+                )
+
+        sort_columns = {
+            "name": KnowledgeDocument.name,
+            "size": KnowledgeDocument.file_size,
+            "createdAt": KnowledgeDocument.created_at,
+            "updatedAt": KnowledgeDocument.updated_at,
+        }
+        sort_column = sort_columns.get(sort_by, KnowledgeDocument.created_at)
+        ordered_column = (
+            sort_column.asc() if sort_order == "asc" else sort_column.desc()
+        )
 
         total = query.count()
         items = (
-            query.order_by(KnowledgeDocument.created_at.desc())
+            query.order_by(ordered_column, KnowledgeDocument.id.desc())
             .offset(offset)
             .limit(limit)
             .all()
@@ -1966,7 +2046,7 @@ class KnowledgeService:
 
         # Batch fetch document counts for all KBs to avoid N+1 queries
         all_kb_ids = [kb.id for kb in created_kbs] + [kb.id for kb in shared_kbs]
-        document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
+        document_counts = KnowledgeService.get_document_counts(db, all_kb_ids)
 
         # Build response lists using batched counts
         created_by_me = []
@@ -2236,7 +2316,7 @@ class KnowledgeService:
                 + [kb.id for kb in remaining_shared_group_kbs]
             )
         )
-        document_counts = KnowledgeService.get_active_document_counts(db, all_kb_ids)
+        document_counts = KnowledgeService.get_document_counts(db, all_kb_ids)
 
         owner_user_ids: set[int] = set()
         for kb in personal_created:

@@ -81,7 +81,7 @@ export function Pagination({
   totalPages,
   totalCount,
   pageSize,
-  pageSizeOptions = [50, 100, 200],
+  pageSizeOptions = [50, 100, 500],
   showPageSizeSelector = true,
   onGoToPage,
   onPageSizeChange,
