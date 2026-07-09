@@ -409,6 +409,80 @@ describe('MessageList', () => {
     expect(screen.getByTestId('file-changes-card')).toHaveTextContent('查看更改')
   })
 
+  test('does not show file change hover diff for the turn currently open in review', () => {
+    vi.useFakeTimers()
+    try {
+      const onOpenFileChangesReview = vi.fn()
+      render(
+        <MessageList
+          fileChangesDiffPreviewDisabledSubtaskId="42"
+          devices={[
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'Device 1',
+              status: 'online',
+              is_default: false,
+            },
+          ]}
+          onLoadFileChangesDiff={vi.fn().mockResolvedValue('')}
+          onRevertFileChanges={vi.fn()}
+          onOpenFileChangesReview={onOpenFileChangesReview}
+          messages={[
+            {
+              id: 'assistant-42',
+              subtaskId: '42',
+              role: 'assistant',
+              content: 'Done',
+              status: 'done',
+              createdAt: '2026-06-11T10:00:00Z',
+              fileChanges: {
+                version: 1,
+                status: 'active',
+                artifact_id: 'turn-42',
+                device_id: 'device-1',
+                workspace_path: '/workspace/project',
+                file_count: 1,
+                additions: 1,
+                deletions: 1,
+                files: [
+                  {
+                    path: 'wework/src/components/chat/FileChangesCard.tsx',
+                    change_type: 'modified',
+                    additions: 1,
+                    deletions: 1,
+                    binary: false,
+                  },
+                ],
+                diff: [
+                  'diff --git a/wework/src/components/chat/FileChangesCard.tsx b/wework/src/components/chat/FileChangesCard.tsx',
+                  '--- a/wework/src/components/chat/FileChangesCard.tsx',
+                  '+++ b/wework/src/components/chat/FileChangesCard.tsx',
+                  '@@ -1 +1 @@',
+                  '-old component',
+                  '+new component',
+                ].join('\n'),
+              },
+            },
+          ]}
+        />
+      )
+
+      fireEvent.pointerEnter(screen.getByTestId('file-change-trigger'))
+      act(() => vi.advanceTimersByTime(500))
+      expect(screen.queryByTestId('file-change-diff-preview')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /FileChangesCard\.tsx/ }))
+      expect(onOpenFileChangesReview).toHaveBeenCalledTimes(1)
+      expect(onOpenFileChangesReview.mock.calls[0][0].subtaskId).toBe('42')
+      expect(onOpenFileChangesReview.mock.calls[0][0].focusFilePath).toBe(
+        'wework/src/components/chat/FileChangesCard.tsx'
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('renders cancelled assistant turns like stopped Codex turns', () => {
     const commandBlock: ProcessingBlock = {
       id: 'call-1',

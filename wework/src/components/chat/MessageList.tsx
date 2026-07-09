@@ -79,6 +79,7 @@ interface MessageListProps {
     defaultFileTreeVisible?: boolean
     focusFilePath?: string
   }) => void
+  fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
@@ -130,6 +131,7 @@ export const MessageList = memo(function MessageList({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
@@ -315,6 +317,7 @@ export const MessageList = memo(function MessageList({
                   onLoadFileChangesDiff={onLoadFileChangesDiff}
                   onRevertFileChanges={onRevertFileChanges}
                   onOpenFileChangesReview={onOpenFileChangesReview}
+                  fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
                   onRequestUserInputSubmit={onRequestUserInputSubmit}
                   onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -371,6 +374,10 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onRevertFileChanges !== next.onRevertFileChanges ? 'onRevertFileChanges' : null,
     previous.onOpenFileChangesReview !== next.onOpenFileChangesReview
       ? 'onOpenFileChangesReview'
+      : null,
+    previous.fileChangesDiffPreviewDisabledSubtaskId !==
+    next.fileChangesDiffPreviewDisabledSubtaskId
+      ? 'fileChangesDiffPreviewDisabledSubtaskId'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
     previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
@@ -1394,6 +1401,7 @@ function AssistantMessage({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
@@ -1421,6 +1429,7 @@ function AssistantMessage({
     defaultFileTreeVisible?: boolean
     focusFilePath?: string
   }) => void
+  fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
@@ -1549,6 +1558,9 @@ function AssistantMessage({
               onLoadDiff={onLoadFileChangesDiff}
               onRevert={onRevertFileChanges}
               onOpenReview={onOpenFileChangesReview}
+              diffPreviewDisabled={
+                fileChangesDiffPreviewDisabledSubtaskId === String(message.subtaskId)
+              }
             />
           ) : null}
         </div>

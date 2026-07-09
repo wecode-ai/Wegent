@@ -22,6 +22,7 @@ interface FileChangesCardProps {
   subtaskId: string
   summary: TurnFileChangesSummary
   deviceOnline: boolean
+  diffPreviewDisabled?: boolean
   onLoadDiff: (subtaskId: string, fileChanges: TurnFileChangesSummary) => Promise<string>
   onRevert: (
     subtaskId: string,
@@ -45,11 +46,13 @@ function FileChangeRow({
   file,
   summary,
   disabled,
+  diffPreviewDisabled = false,
   onPreview,
 }: {
   file: TurnFileChangeItem
   summary: TurnFileChangesSummary
   disabled: boolean
+  diffPreviewDisabled?: boolean
   onPreview: () => void
 }) {
   const { t } = useTranslation('chat')
@@ -76,9 +79,9 @@ function FileChangeRow({
         ref={diffPreviewTriggerRef}
         data-testid="file-change-trigger"
         className="group/file-change-trigger relative min-w-0 flex-1"
-        onPointerEnter={openDiffPreviewAfterDelay}
+        onPointerEnter={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
         onPointerLeave={closeDiffPreview}
-        onFocus={openDiffPreviewAfterDelay}
+        onFocus={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
         onBlur={closeDiffPreview}
       >
         <button
@@ -136,11 +139,13 @@ function FileChangeSummaryTrigger({
   file,
   summary,
   disabled,
+  diffPreviewDisabled = false,
   onPreview,
 }: {
   file: TurnFileChangeItem
   summary: TurnFileChangesSummary
   disabled: boolean
+  diffPreviewDisabled?: boolean
   onPreview: () => void
 }) {
   const { t } = useTranslation('chat')
@@ -164,9 +169,9 @@ function FileChangeSummaryTrigger({
       ref={diffPreviewTriggerRef}
       data-testid="file-change-trigger"
       className="group/file-change-trigger relative min-w-0 flex-1 self-stretch"
-      onPointerEnter={openDiffPreviewAfterDelay}
+      onPointerEnter={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
       onPointerLeave={closeDiffPreview}
-      onFocus={openDiffPreviewAfterDelay}
+      onFocus={diffPreviewDisabled ? undefined : openDiffPreviewAfterDelay}
       onBlur={closeDiffPreview}
     >
       <button
@@ -594,6 +599,7 @@ export function FileChangesCard({
   subtaskId,
   summary,
   deviceOnline,
+  diffPreviewDisabled,
   onLoadDiff,
   onRevert,
   onOpenReview,
@@ -673,6 +679,7 @@ export function FileChangesCard({
               file={singleFile}
               summary={summary}
               disabled={reviewDisabled}
+              diffPreviewDisabled={diffPreviewDisabled}
               onPreview={() => openReview(singleFile.path)}
             />
           ) : (
@@ -729,6 +736,7 @@ export function FileChangesCard({
                 file={file}
                 summary={summary}
                 disabled={reviewDisabled}
+                diffPreviewDisabled={diffPreviewDisabled}
                 onPreview={() => openReview(file.path)}
               />
             ))}

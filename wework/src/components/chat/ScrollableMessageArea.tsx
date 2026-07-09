@@ -72,6 +72,7 @@ interface ScrollableMessageAreaProps {
     defaultFileTreeVisible?: boolean
     focusFilePath?: string
   }) => void
+  fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
@@ -124,6 +125,10 @@ function areScrollableMessageAreaPropsEqual(
     previous.onOpenFileChangesReview !== next.onOpenFileChangesReview
       ? 'onOpenFileChangesReview'
       : null,
+    previous.fileChangesDiffPreviewDisabledSubtaskId !==
+    next.fileChangesDiffPreviewDisabledSubtaskId
+      ? 'fileChangesDiffPreviewDisabledSubtaskId'
+      : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
     previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
       ? 'onRequestUserInputSubmit'
@@ -174,6 +179,7 @@ function ScrollableMessagePaneContent({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
@@ -732,6 +738,7 @@ function ScrollableMessagePaneContent({
                 onLoadFileChangesDiff={onLoadFileChangesDiff}
                 onRevertFileChanges={onRevertFileChanges}
                 onOpenFileChangesReview={onOpenFileChangesReview}
+                fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
