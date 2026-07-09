@@ -171,15 +171,19 @@ def validate_multimodal_dispatch(
         (knowledge_base.json or {}).get("spec", {}).get("multimodalAnalysisModelRef")
     )
 
-    # 2. Attachment must exist.
-    attachment = (
-        db.query(SubtaskContext)
-        .filter(
-            SubtaskContext.id == attachment_id,
-            SubtaskContext.context_type == ContextType.ATTACHMENT.value,
-        )
-        .first()
+    # 2. Attachment must exist AND be owned by the uploader. The converter
+    # builds an internal download path from this attachment id, so accepting any
+    # id would let one user analyze another user's attachment. The context
+    # access helper enforces ownership; reject non-attachment contexts too.
+    from app.services.context import context_service
+
+    attachment = context_service.get_context_optional(
+        db=db,
+        context_id=attachment_id,
+        user_id=uploader.id,
     )
+    if attachment and attachment.context_type != ContextType.ATTACHMENT.value:
+        attachment = None
     if not attachment:
         raise ModelRefResolutionError(
             "MULTIMODAL_ATTACHMENT_NOT_FOUND",

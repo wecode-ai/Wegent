@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
+import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getKnowledgeBase } from '@/apis/knowledge'
@@ -68,6 +69,12 @@ export function EditKnowledgeBaseDialog({
     buildSubmitFields: buildMultimodalSubmitFields,
     formProps: multimodalFormProps,
   } = useMultimodalKBConfig()
+  // Gate prompt overrides by the global pipeline switch, the same way
+  // buildMultimodalSubmitFields() gates multimodal_analysis_enabled. Otherwise
+  // saving a previously-enabled KB after the switch is turned off would send
+  // enabled=false alongside the (non-blank) prompt text.
+  const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
+  const effectiveMultimodalEnabled = multimodalFeatureEnabled && multimodalAnalysisEnabled
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>({})
@@ -179,10 +186,10 @@ export function EditKnowledgeBaseDialog({
         ...buildMultimodalSubmitFields(),
         // For edit, send "" (never null) so the backend always applies the value:
         // a blank string clears the override (revert to system default).
-        multimodal_analysis_video_prompt: multimodalAnalysisEnabled
+        multimodal_analysis_video_prompt: effectiveMultimodalEnabled
           ? multimodalVideoPrompt || ''
           : '',
-        multimodal_analysis_image_prompt: multimodalAnalysisEnabled
+        multimodal_analysis_image_prompt: effectiveMultimodalEnabled
           ? multimodalImagePrompt || ''
           : '',
         guided_questions: validGuidedQuestions,

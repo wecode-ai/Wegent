@@ -1508,14 +1508,18 @@ class KnowledgeOrchestrator:
         # Multimodal pre-flight gate: resolves dispatch ctx for video/image files
         # (model/api_key/download path) BEFORE document creation so a failure
         # leaves no orphan. No-op for non-multimodal files (normal path proceeds).
-        multimodal_dispatch_ctx = resolve_dispatch_or_none(
-            db,
-            knowledge_base,
-            settings,
-            file_extension=data.file_extension,
-            attachment_id=data.attachment_id,
-            uploader=user,
-        )
+        # Skip when indexing is disabled — callers may store a video/image
+        # document without analyzing it immediately; the gate runs on reindex.
+        multimodal_dispatch_ctx = None
+        if trigger_indexing:
+            multimodal_dispatch_ctx = resolve_dispatch_or_none(
+                db,
+                knowledge_base,
+                settings,
+                file_extension=data.file_extension,
+                attachment_id=data.attachment_id,
+                uploader=user,
+            )
 
         # Create document
         document = KnowledgeService.create_document(

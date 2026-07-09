@@ -129,10 +129,20 @@ export function ReanalyzeMultimodalDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+            data-testid="reanalyze-multimodal-cancel"
+          >
             {t('common:actions.cancel')}
           </Button>
-          <Button variant="primary" onClick={handleSubmit} disabled={submitting}>
+          <Button
+            variant="primary"
+            onClick={handleSubmit}
+            disabled={submitting}
+            data-testid="reanalyze-multimodal-submit"
+          >
             {submitting ? t('document.multimodal.reanalyzing') : t('document.multimodal.reanalyze')}
           </Button>
         </DialogFooter>

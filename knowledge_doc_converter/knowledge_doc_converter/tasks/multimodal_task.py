@@ -193,7 +193,10 @@ def convert_multimodal_task(
 
     def _image_deadline_exceeded() -> bool:
         """True if an image task has run past its shorter soft deadline."""
-        return image_deadline is not None and time.monotonic() > image_deadline
+        # image_deadline is computed from time.perf_counter(); use the same
+        # clock here. Mixing perf_counter and monotonic is incorrect even if
+        # they happen to share a clock on Linux.
+        return image_deadline is not None and time.perf_counter() > image_deadline
 
     staged_object_name: Optional[str] = None
     tmp_path: Optional[str] = None
@@ -286,9 +289,23 @@ def convert_multimodal_task(
             # the backend internal endpoint (bound to task execution, not queue
             # wait time). The converter calls the endpoint with the internal
             # service token.
-            video_download_url = get_model_config_fetcher().fetch_video_download_url(
-                video_download_url_path
-            )
+            try:
+                video_download_url = (
+                    get_model_config_fetcher().fetch_video_download_url(
+                        video_download_url_path
+                    )
+                )
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code if exc.response is not None else 0
+                if 400 <= status < 500:
+                    raise PermanentError(
+                        "video_download_url_rejected",
+                        f"Backend rejected video download URL resolve (status={status})",
+                    ) from exc
+                raise TransientError(
+                    "video_download_url_unavailable",
+                    f"Backend video download URL resolve failed (status={status})",
+                ) from exc
             if not video_download_url:
                 raise TransientError(
                     "video_download_url_unresolved",

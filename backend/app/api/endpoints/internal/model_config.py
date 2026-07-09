@@ -18,7 +18,7 @@ free of sensitive config (P5 fix) while reusing the single canonical resolver
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -54,7 +54,10 @@ class ModelConfigResolveRequest(BaseModel):
     model_ref: Dict[str, Any]
     uploader_id: int
     uploader_name: Optional[str] = None
-    media_type: str  # "video" | "image"
+    # Literal gives compile-time safety and automatic Pydantic 422 validation,
+    # so an unexpected value cannot silently skip both capability checks below
+    # (which only trigger for "video" and "image" respectively).
+    media_type: Literal["video", "image"]
 
 
 class ModelConfigResolveResponse(BaseModel):
@@ -95,7 +98,7 @@ def resolve_model_config(
             user_name=request.uploader_name,
         )
     except ModelRefResolutionError as exc:
-        raise HTTPException(status_code=400, detail=f"{exc.code}: {exc}")
+        raise HTTPException(status_code=400, detail=f"{exc.code}: {exc}") from exc
 
     if not cfg:
         raise HTTPException(

@@ -40,7 +40,15 @@ export function useMultimodalDocActions(
   // Normalize file extension to dot-prefixed form.
   const normalizedExt = `.${(document.file_extension || '').replace(/^\.+/, '')}`
   const isMultimodalDoc = isVideoFileName(document.name) || isImageExtension(normalizedExt)
-  const canReanalyze = featureEnabled && isMultimodalDoc && !!onReanalyze && !showIndexingState
+  // Gate on source_type=file + attachment_id: a table/web doc could have a
+  // multimodal-looking name (e.g. "demo.mp4") but has no attachment to stage.
+  const canReanalyze =
+    featureEnabled &&
+    isMultimodalDoc &&
+    document.source_type === 'file' &&
+    !!document.attachment_id &&
+    !!onReanalyze &&
+    !showIndexingState
 
   const handleReanalyze = useCallback(
     (e: React.MouseEvent) => {

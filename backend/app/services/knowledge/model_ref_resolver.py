@@ -30,6 +30,12 @@ from app.services.chat.config.model_resolver import (
 
 logger = logging.getLogger(__name__)
 
+# Supported model_ref.type values. Any other type used to fall through to the
+# non-public branch of _lookup_model_spec, which queries by namespace WITHOUT a
+# user_id filter — with namespace="default" that could resolve another user's
+# personal model and decrypt its config. Reject unknown types up-front.
+VALID_MODEL_REF_TYPES = frozenset({"public", "user", "group"})
+
 
 class ModelRefResolutionError(ValueError):
     """Raised when a model reference is structurally invalid or unresolved.
@@ -66,6 +72,17 @@ def resolve_model_config_by_ref(
     if not model_name:
         raise ModelRefResolutionError(
             "invalid_model_ref", f"missing 'name': {model_ref}"
+        )
+    if model_type not in VALID_MODEL_REF_TYPES:
+        raise ModelRefResolutionError(
+            "invalid_model_ref", f"unsupported 'type': {model_type}"
+        )
+    if model_type == "group" and model_namespace == "default":
+        # group models live in a named group namespace; the default namespace is
+        # personal, so a "group" ref against it would query without a user_id
+        # filter and could match another user's personal model.
+        raise ModelRefResolutionError(
+            "invalid_model_ref", "group model refs must use a non-default namespace"
         )
 
     logger.info(

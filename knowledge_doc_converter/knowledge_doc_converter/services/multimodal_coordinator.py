@@ -146,6 +146,13 @@ class MultimodalConversionCoordinator:
                     "staging_file_too_large",
                     f"Staging proxy rejected file (too large): {status}",
                 ) from exc
+            if status in (401, 403):
+                # Auth/permission errors never succeed on retry — classify as
+                # permanent so the worker stops instead of wasting retries.
+                raise PermanentError(
+                    "staging_auth_error",
+                    f"Staging proxy auth/permission error (status={status})",
+                ) from exc
             if 500 <= status < 600:
                 raise TransientError(
                     "staging_proxy_server",

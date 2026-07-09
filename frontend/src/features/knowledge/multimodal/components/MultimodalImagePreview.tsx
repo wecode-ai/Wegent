@@ -44,7 +44,9 @@ function useImageBlob(
   error: boolean
 } {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  // Start in the loading state when enabled so the spinner shows immediately,
+  // instead of a brief error/placeholder flash before the effect runs.
+  const [isLoading, setIsLoading] = useState(enabled)
   const [error, setError] = useState(false)
 
   useEffect(() => {
@@ -158,6 +160,9 @@ function ImageZoomOverlay({
     <div
       className="fixed inset-0 z-[9999] flex bg-black/80 backdrop-blur-sm overflow-auto"
       style={{ pointerEvents: 'auto' }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt}
       onPointerDown={e => e.stopPropagation()}
       onClick={onClose}
       onWheel={e => e.stopPropagation()}
@@ -172,6 +177,7 @@ function ImageZoomOverlay({
           onClick={handleZoomOut}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
           title="Zoom out"
+          data-testid="image-zoom-out"
         >
           <ZoomOut className="h-5 w-5" />
         </Button>
@@ -184,6 +190,7 @@ function ImageZoomOverlay({
           onClick={handleZoomIn}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
           title="Zoom in"
+          data-testid="image-zoom-in"
         >
           <ZoomIn className="h-5 w-5" />
         </Button>
@@ -193,6 +200,7 @@ function ImageZoomOverlay({
           onClick={handleRotate}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
           title="Rotate"
+          data-testid="image-rotate"
         >
           <RotateCw className="h-5 w-5" />
         </Button>
@@ -202,6 +210,7 @@ function ImageZoomOverlay({
           onClick={onClose}
           className="h-10 w-10 bg-black/50 hover:bg-black/70 text-white"
           title="Close"
+          data-testid="image-zoom-close"
         >
           <X className="h-5 w-5" />
         </Button>
@@ -265,6 +274,15 @@ export function MultimodalImagePreview({
       <img
         src={blobUrl}
         alt={alt}
+        tabIndex={0}
+        role="button"
+        data-testid="multimodal-image-preview"
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setShowZoom(true)
+          }
+        }}
         onClick={() => setShowZoom(true)}
         loading="lazy"
         className="cursor-zoom-in rounded-lg border border-border max-h-[600px] max-w-full h-auto hover:border-primary transition-colors"

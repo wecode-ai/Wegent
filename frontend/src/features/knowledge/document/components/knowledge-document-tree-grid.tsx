@@ -740,8 +740,16 @@ export function KnowledgeDocumentTreeGrid({
             !showIndexingState
           const normalizedExt = `.${(document.file_extension || '').replace(/^\.+/, '')}`
           const isMultimodalDoc = isVideoFileName(document.name) || isImageExtension(normalizedExt)
+          // Gate on source_type=file + attachment_id like showDownload: a table
+          // or web doc could have a multimodal-looking name (e.g. "demo.mp4")
+          // but has no attachment to stage/re-analyze.
           const canReanalyze =
-            multimodalFeatureEnabled && isMultimodalDoc && !!onReanalyze && !showIndexingState
+            multimodalFeatureEnabled &&
+            isMultimodalDoc &&
+            document.source_type === 'file' &&
+            !!document.attachment_id &&
+            !!onReanalyze &&
+            !showIndexingState
           const showDownload = document.source_type === 'file' && !!document.attachment_id
           const moveLabel = t('document.folder.moveDocument')
           const refreshLabel =
