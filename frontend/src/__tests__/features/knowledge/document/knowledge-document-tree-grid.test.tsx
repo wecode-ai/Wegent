@@ -185,6 +185,31 @@ describe('KnowledgeDocumentTreeGrid', () => {
     expect(onSortChange).toHaveBeenCalledWith('size', 'desc')
   })
 
+  it('keeps horizontal scrolling owned by the outer table viewport', () => {
+    const folders: KnowledgeFolder[] = []
+    const documents = [createDocument({ id: 11, name: 'root.txt', folder_id: 0 })]
+    const { nodes, index } = buildKnowledgeResourceTree(folders, documents)
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={folders}
+        documents={documents}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+      />
+    )
+
+    expect(screen.getByTestId('knowledge-document-treegrid-virtual-scroll')).toHaveClass(
+      'overflow-y-auto',
+      'overflow-x-hidden'
+    )
+  })
+
   it('renders icon actions only when handlers exist and exposes stable selectors', () => {
     const onEdit = jest.fn()
     const onDelete = jest.fn()

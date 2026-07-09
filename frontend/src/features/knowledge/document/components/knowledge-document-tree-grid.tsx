@@ -1037,7 +1037,7 @@ export function KnowledgeDocumentTreeGrid({
       ))}
       <div
         ref={scrollParentRef}
-        className="max-h-[70vh] overflow-y-auto"
+        className="max-h-[70vh] overflow-y-auto overflow-x-hidden"
         data-testid="knowledge-document-treegrid-virtual-scroll"
       >
         <div
