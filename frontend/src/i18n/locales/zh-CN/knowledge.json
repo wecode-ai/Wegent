@@ -242,6 +242,9 @@
       "selectGroup": "选择分组"
     },
     "folder": {
+      "folderType": "文件夹",
+      "expand": "展开文件夹",
+      "collapse": "收起文件夹",
       "docCount": "{{count}} 个文档",
       "create": "新建文件夹",
       "createTitle": "新建文件夹",

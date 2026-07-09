@@ -242,6 +242,9 @@
       "selectGroup": "Select Group"
     },
     "folder": {
+      "folderType": "Folder",
+      "expand": "Expand folder",
+      "collapse": "Collapse folder",
       "docCount": "{{count}} docs",
       "create": "Create Folder",
       "createTitle": "New Folder",

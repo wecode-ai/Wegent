@@ -89,6 +89,8 @@
     "@react-aria/utils": "^3.32.0",
     "@replit/codemirror-vim": "^6.3.0",
     "@tabler/icons-react": "^3.34.1",
+    "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "3.14.2",
     "@types/katex": "^0.16.8",
     "@types/prismjs": "^1.26.6",
     "@uiw/react-markdown-editor": "^6.1.4",
