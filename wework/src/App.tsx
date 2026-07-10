@@ -74,6 +74,14 @@ function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
   const { activeTab, isNativeApp } = useChromeTabs(path)
+  const isAuxiliaryRoute =
+    (!isNativeApp && activeTab?.mode === 'iframe' && Boolean(activeTab.url)) ||
+    path === '/plugins/manage' ||
+    path === '/plugins/create' ||
+    path === '/plugins' ||
+    path === '/apps'
+  const [hasMountedWorkbench, setHasMountedWorkbench] = useState(() => !isAuxiliaryRoute)
+  if (!isAuxiliaryRoute && !hasMountedWorkbench) setHasMountedWorkbench(true)
 
   useEffect(() => {
     if (isLoading || !user || isNativeApp || !activeTab?.url) return
@@ -92,25 +100,32 @@ function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
     return null
   }
 
-  // iframe-based apps (Wegent, etc.)
-  if (!isNativeApp && activeTab?.mode === 'iframe' && activeTab.url) {
-    return <AppIframe src={activeTab.url} title={activeTab.label} />
-  }
-
-  // native WeWork routes
+  const auxiliaryPage =
+    !isNativeApp && activeTab?.mode === 'iframe' && activeTab.url ? (
+      <AppIframe src={activeTab.url} title={activeTab.label} />
+    ) : path === '/plugins/manage' ? (
+      <PluginManagementPage />
+    ) : path === '/plugins/create' ? (
+      <PluginCreatePage />
+    ) : path === '/plugins' ? (
+      <PluginsPage />
+    ) : path === '/apps' ? (
+      <AppsPage />
+    ) : null
+  // Keep the workbench mounted while another top-level surface is visible. The
+  // composer, terminals and in-app browser own live, non-serializable state, so
+  // reconstructing them after every route change is both lossy and expensive.
   return (
     <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
-      {path === '/plugins/manage' ? (
-        <PluginManagementPage />
-      ) : path === '/plugins/create' ? (
-        <PluginCreatePage />
-      ) : path === '/plugins' ? (
-        <PluginsPage />
-      ) : path === '/apps' ? (
-        <AppsPage />
-      ) : (
-        <WorkbenchPage />
+      {(!auxiliaryPage || hasMountedWorkbench) && (
+        <div
+          className={cn('h-full', auxiliaryPage && 'hidden')}
+          aria-hidden={Boolean(auxiliaryPage)}
+        >
+          <WorkbenchPage />
+        </div>
       )}
+      {auxiliaryPage}
     </WorkbenchProvider>
   )
 }
