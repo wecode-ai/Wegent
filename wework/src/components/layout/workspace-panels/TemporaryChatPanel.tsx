@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MessageCircle } from 'lucide-react'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
@@ -16,6 +16,10 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
 
 const SIDE_CHAT_MESSAGE_LIST_CLASS = 'w-full max-w-none px-5 pb-4 pt-5 lg:pl-14'
+
+function isBatchableRuntimePaneMessageAction(action: RuntimePaneMessageAction): boolean {
+  return action.type === 'assistant_chunk' || action.type === 'block_updated'
+}
 
 function createUserMessage(content: string): WorkbenchMessage {
   const createdAt = new Date().toISOString()
@@ -55,11 +59,64 @@ export function TemporaryChatPanel({
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [loadingFullTranscript, setLoadingFullTranscript] = useState(false)
+  const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
+  const messageActionFrameRef = useRef<number | null>(null)
 
-  const dispatchMessages = useCallback((action: RuntimePaneMessageAction) => {
-    setMessages(current =>
-      reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(current, action)
-    )
+  const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
+    if (actions.length === 0) return
+    setMessages(current => {
+      let nextMessages = current
+      for (const action of actions) {
+        nextMessages = reduceWorkbenchMessages<Attachment, TurnFileChangesSummary>(
+          nextMessages,
+          action
+        )
+      }
+      return nextMessages
+    })
+  }, [])
+
+  const flushPendingMessageActions = useCallback(() => {
+    if (messageActionFrameRef.current !== null) {
+      cancelAnimationFrame(messageActionFrameRef.current)
+      messageActionFrameRef.current = null
+    }
+    const pendingActions = pendingMessageActionsRef.current
+    if (pendingActions.length === 0) return
+    pendingMessageActionsRef.current = []
+    applyMessageActions(pendingActions)
+  }, [applyMessageActions])
+
+  const dispatchMessages = useCallback(
+    (action: RuntimePaneMessageAction) => {
+      if (!isBatchableRuntimePaneMessageAction(action)) {
+        flushPendingMessageActions()
+        applyMessageActions([action])
+        return
+      }
+
+      pendingMessageActionsRef.current.push(action)
+      if (messageActionFrameRef.current !== null) return
+      messageActionFrameRef.current = requestAnimationFrame(() => {
+        messageActionFrameRef.current = null
+        const pendingActions = pendingMessageActionsRef.current
+        if (pendingActions.length === 0) return
+        pendingMessageActionsRef.current = []
+        applyMessageActions(pendingActions)
+      })
+    },
+    [applyMessageActions, flushPendingMessageActions]
+  )
+
+  useEffect(() => {
+    return () => {
+      if (messageActionFrameRef.current !== null) {
+        cancelAnimationFrame(messageActionFrameRef.current)
+        messageActionFrameRef.current = null
+      }
+      pendingMessageActionsRef.current = []
+    }
   }, [])
 
   useEffect(() => {
@@ -80,6 +137,24 @@ export function TemporaryChatPanel({
       cancelled = true
     }
   }, [address, loadRuntimeTranscriptForPane])
+
+  const loadFullTranscript = useCallback(async () => {
+    if (!address || loadingFullTranscript) return
+    setLoadingFullTranscript(true)
+    try {
+      const transcript = await loadRuntimeTranscriptForPane(address, {
+        includeFullContent: true,
+        refresh: true,
+      })
+      if (transcript.messages.length > 0) {
+        setMessages(transcript.messages)
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : '加载完整输出失败')
+    } finally {
+      setLoadingFullTranscript(false)
+    }
+  }, [address, loadRuntimeTranscriptForPane, loadingFullTranscript])
 
   useEffect(() => {
     if (!address) return
@@ -180,6 +255,8 @@ export function TemporaryChatPanel({
           className="min-h-0 flex-1"
           messageListClassName={SIDE_CHAT_MESSAGE_LIST_CLASS}
           scrollTestId="right-workspace-chat-scroll-area"
+          onLoadFullTranscript={loadFullTranscript}
+          loadingFullTranscript={loadingFullTranscript}
         />
       )}
       <div className="shrink-0 bg-background px-4 py-3">

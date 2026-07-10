@@ -35,6 +35,8 @@ class RuntimeTranscriptRequest(RuntimeTaskAddress):
 
     limit: Optional[int] = Field(default=None, ge=1, le=200)
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
+    after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
+    include_full_content: bool = Field(default=False, alias="includeFullContent")
 
 
 class RuntimeFileChangesRevertRequest(BaseModel):
@@ -361,8 +363,13 @@ class RuntimeTranscriptResponse(BaseModel):
     title: Optional[str] = None
     messages: list[NormalizedRuntimeMessage] = Field(default_factory=list)
     context_usage: Optional[dict[str, Any]] = Field(default=None, alias="contextUsage")
+    full_content: bool = Field(default=False, alias="fullContent")
+    range_start: Optional[int] = Field(default=None, alias="rangeStart")
+    range_end: Optional[int] = Field(default=None, alias="rangeEnd")
     has_more_before: bool = Field(default=False, alias="hasMoreBefore")
     before_cursor: Optional[str] = Field(default=None, alias="beforeCursor")
+    has_more_after: bool = Field(default=False, alias="hasMoreAfter")
+    after_cursor: Optional[str] = Field(default=None, alias="afterCursor")
     parse_error: Optional[str] = Field(default=None, alias="parseError")
 
 
