@@ -1,0 +1,56 @@
+---
+sidebar_position: 33
+---
+
+# Codex 插件运行时
+
+Wework 的插件能力兼容 Codex plugin、skill 和 app 机制。插件页负责发现、安装、创建和管理插件；对话运行时负责把用户选中的 skill/app 以结构化 mention 传给 Codex app-server，而不是把展示用文本当成普通 prompt。
+
+## 页面入口
+
+桌面左侧菜单中，插件入口固定在第三位：新对话、搜索、插件、云端工作。进入插件页后：
+
+- 顶部展示插件市场、已安装插件和搜索入口。
+- 右上角刷新按钮重新读取当前市场。
+- 右上角创建入口进入 Codex plugin creator 风格的创建页。
+- 管理入口进入已安装插件、skill 和 app 的启停与卸载视图。
+
+插件市场不是本地模式和云端模式的二选一能力。Wework 允许用户添加多个命名市场，市场可以来自 GitHub 仓库、远程地址或本地 `marketplace.json`/目录。没有市场时展示欢迎页，引导用户添加市场或进入管理页。
+
+## 市场和安装
+
+市场数据由 Wework 前端通过本机 executor 的 Codex app-server 请求读取。远程 GitHub 市场会被 clone 到本地缓存目录，后续列表读取使用缓存中的 marketplace 数据和插件目录。安装、卸载、刷新和市场删除都走 Codex app-server 方法，Wework 不维护一套独立的插件安装状态。
+
+前端只保存用户配置的市场列表和当前选中的市场。插件是否已安装、skill/app 是否可用，以及插件详情中的内容列表，都以 Codex app-server 返回结果为准。
+
+## 独立 Codex Home
+
+Wework 使用独立的 Codex home，避免直接污染用户命令行 Codex 的配置目录。默认路径来自 executor home 下的 `codex` 子目录，也可以通过 `WEGENT_CODEX_HOME` 显式覆盖。
+
+为了复用用户已有登录态，Wework Codex home 会软链用户 `~/.codex/auth.json`。如果目标位置存在失效软链，会先移除再重新创建；如果不是 Unix 系统，则复制 auth 文件。插件、市场缓存和 Wework 运行时配置继续存放在 Wework 自己的 Codex home 中。
+
+首次启动时，如果 Wework Codex home 还没有初始化，而本机存在原生 `~/.codex`，应用启动阶段会显示迁移选择。用户可以选择：
+
+- 创建新的 Wework Codex home，只复用 auth 链接。
+- 从原生 Codex home 迁移配置到 Wework Codex home。
+- 是否启用 Codex 远端 apps 拉取。这个开关只控制远端 app 初始化，不代表特定内置能力。
+
+迁移完成后状态写入 Wework Codex home，插件页面和对话运行时都继续从同一个 Codex app-server 读取插件状态。设置页也暴露远端 apps 开关，便于用户后续修改自己的 Wework Codex 配置。
+
+## 对话运行时
+
+用户在输入框中选择 skill、app 或插件时，编辑器插入结构化 badge，并在提交时序列化为 Codex app-server 支持的 mention 输入：
+
+- skill 使用 `[$name](skill://path)`。
+- app 使用 `[$name](app://connector_id)`。
+- plugin 使用 `[$name](plugin://plugin_name@marketplace_name)`。
+
+executor 在发送 `turn/input` 前解析这些 markdown mention，并构造成 Responses API 风格的 `input` text element。这样 Codex 可以识别真实的 skill/app/plugin，而不是只看到展示文本。
+
+未被用户选择的插件不会自动注入普通对话。已安装插件只是让 Codex app-server 能发现其 skill/app；是否启用仍由 Codex app-server 的插件状态和用户在对话中的选择共同决定。
+
+从插件详情或市场列表点击“在对话中试用”时，Wework 会按 Codex 协议写入单条 plugin mention，而不是同时写入 plugin 和 skill 两条 mention。试用内容会进入新对话草稿，相关模板会显示在输入框上方；用户发送后，消息气泡继续把 `plugin://` mention 渲染成 badge，避免把协议字符串作为普通文本展示。
+
+## Backend 上传
+
+Backend 提供已安装插件包的解析和上传辅助能力，用于读取 Codex 插件包中的 manifest、skill 和 app 元数据。解析逻辑只负责服务端存储和展示，不替代 Wework 本地 Codex app-server 的安装状态。

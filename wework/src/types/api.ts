@@ -982,6 +982,18 @@ export interface LocalDeviceSkill {
   mtime?: number
 }
 
+export interface LocalDeviceApp {
+  id: string
+  name: string
+  description?: string | null
+  logoUrl?: string | null
+  installUrl?: string | null
+  isAccessible?: boolean
+  isEnabled?: boolean
+  pluginDisplayNames?: string[]
+  source?: 'codex-app' | string
+}
+
 export interface SkillDirectoryMove {
   source: string
   from: string
@@ -1554,6 +1566,13 @@ export interface PluginSkillComponent {
 export interface PluginPathComponent {
   name: string
   path: string
+  description?: string | null
+  category?: string | null
+  canonicalConnectorId?: string | null
+  logoUrl?: string | null
+  logoUrlDark?: string | null
+  materializedAppIds?: string[]
+  unavailableReason?: string | null
 }
 
 export interface PluginMCPComponent {
@@ -1564,6 +1583,8 @@ export interface PluginMCPComponent {
 export interface InstalledPluginComponents {
   skills: PluginSkillComponent[]
   commands: PluginPathComponent[]
+  templates?: PluginPathComponent[]
+  apps?: PluginPathComponent[]
   agents: PluginPathComponent[]
   hooks: PluginPathComponent[]
   mcps: PluginMCPComponent[]
@@ -1587,6 +1608,24 @@ export interface InstalledPluginPackageRef {
   sizeBytes: number
 }
 
+export interface PluginInterface {
+  displayName?: string | null
+  shortDescription?: string | null
+  longDescription?: string | null
+  developerName?: string | null
+  category?: string | null
+  capabilities?: string[]
+  websiteUrl?: string | null
+  privacyPolicyUrl?: string | null
+  termsOfServiceUrl?: string | null
+  defaultPrompt?: string[] | null
+  brandColor?: string | null
+  composerIcon?: string | null
+  logo?: string | null
+  logoDark?: string | null
+  screenshots?: string[]
+}
+
 export interface InstalledPlugin {
   apiVersion: string
   kind: 'InstalledPlugin'
@@ -1602,6 +1641,7 @@ export interface InstalledPlugin {
     componentStates?: Record<string, boolean>
     manifest: Record<string, unknown>
     components: InstalledPluginComponents
+    interface?: PluginInterface | null
     packageRef?: InstalledPluginPackageRef | null
     sourcePayload?: Record<string, unknown> | null
   }
@@ -1612,6 +1652,38 @@ export interface InstalledPlugin {
 
 export interface InstalledPluginListResponse {
   items: InstalledPlugin[]
+}
+
+export interface PluginMarketplaceItem {
+  id: string | number
+  remotePluginId: string
+  name: string
+  displayName: string
+  description: string
+  version?: string | null
+  author?: string | null
+  visibility: 'personal' | 'workspace' | 'public'
+  featured: boolean
+  installed: boolean
+  installedPluginId?: string | number | null
+  enabled: boolean
+  sourceType: 'marketplace'
+  interface?: PluginInterface | null
+  components: InstalledPluginComponents
+  manifest: Record<string, unknown>
+  ownerUserId: number
+}
+
+export interface PluginMarketplaceListResponse {
+  items: PluginMarketplaceItem[]
+}
+
+export interface PluginMarketplacePublishResponse {
+  item: PluginMarketplaceItem
+}
+
+export interface PluginMarketplaceInstallResponse {
+  plugin: InstalledPlugin
 }
 
 export interface InstalledPluginUpdateRequest {

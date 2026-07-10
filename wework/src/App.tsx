@@ -7,6 +7,7 @@ import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PluginsPage } from '@/pages/PluginsPage'
+import { PluginCreatePage } from '@/pages/PluginCreatePage'
 import { PluginManagementPage } from '@/pages/PluginManagementPage'
 import { AppsPage } from '@/pages/AppsPage'
 import { stripAppBasePath } from '@/config/runtime'
@@ -19,6 +20,7 @@ import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { AppUpdateTitlebarButton } from '@/components/topnav/AppUpdateTitlebarButton'
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
+import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
 import {
@@ -100,6 +102,8 @@ function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
     <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
       {path === '/plugins/manage' ? (
         <PluginManagementPage />
+      ) : path === '/plugins/create' ? (
+        <PluginCreatePage />
       ) : path === '/plugins' ? (
         <PluginsPage />
       ) : path === '/apps' ? (
@@ -290,42 +294,46 @@ function AppShell() {
   }
 
   return (
-    <LocalRuntimeInitializer startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}>
-      <LocalExecutorCloudBridge />
-      <div
-        className={cn(
-          'h-dvh overflow-hidden bg-surface',
-          titlebarOverlaysContent ? 'relative' : 'flex flex-col'
-        )}
+    <CodexHomeInitializer>
+      <LocalRuntimeInitializer
+        startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}
       >
-        {showChromeTitlebar && (
-          <ChromeTitlebar
-            tabs={tabs}
-            activeKey={activeAppKey}
-            onNavigate={navigateToApp}
-            beforeTabs={
-              activeAppKey === 'wework' ? (
-                <TitlebarSidebarToggle />
-              ) : (
-                <TitlebarSidebarTogglePlaceholder />
-              )
-            }
-            afterTabs={<AppUpdateTitlebarButton />}
-            iconOnlyTabs={isTauri}
-            className={
-              titlebarOverlaysContent
-                ? 'absolute inset-x-0 top-0 z-system bg-transparent'
-                : undefined
-            }
-          />
-        )}
+        <LocalExecutorCloudBridge />
         <div
-          className={cn('min-h-0 overflow-hidden', titlebarOverlaysContent ? 'h-full' : 'flex-1')}
+          className={cn(
+            'h-dvh overflow-hidden bg-surface',
+            titlebarOverlaysContent ? 'relative' : 'flex flex-col'
+          )}
         >
-          <AppRoutes onWorkbenchStartupReadyChange={setWorkbenchStartupReady} />
+          {showChromeTitlebar && (
+            <ChromeTitlebar
+              tabs={tabs}
+              activeKey={activeAppKey}
+              onNavigate={navigateToApp}
+              beforeTabs={
+                activeAppKey === 'wework' ? (
+                  <TitlebarSidebarToggle />
+                ) : (
+                  <TitlebarSidebarTogglePlaceholder />
+                )
+              }
+              afterTabs={<AppUpdateTitlebarButton />}
+              iconOnlyTabs={isTauri}
+              className={
+                titlebarOverlaysContent
+                  ? 'absolute inset-x-0 top-0 z-system bg-transparent'
+                  : undefined
+              }
+            />
+          )}
+          <div
+            className={cn('min-h-0 overflow-hidden', titlebarOverlaysContent ? 'h-full' : 'flex-1')}
+          >
+            <AppRoutes onWorkbenchStartupReadyChange={setWorkbenchStartupReady} />
+          </div>
         </div>
-      </div>
-    </LocalRuntimeInitializer>
+      </LocalRuntimeInitializer>
+    </CodexHomeInitializer>
   )
 }
 

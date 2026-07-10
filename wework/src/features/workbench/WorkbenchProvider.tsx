@@ -5,12 +5,14 @@ import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { getActiveWorkbenchDeviceId } from '@/lib/workbench-device'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import type {
+  LocalDeviceApp,
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
+  PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
   RuntimeTaskAddress,
@@ -31,6 +33,12 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
+import {
+  consumePluginTrial,
+  FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
+  LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+  PLUGIN_TRIAL_QUEUED_EVENT,
+} from '@/features/plugins/pluginTrial'
 import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
@@ -50,6 +58,7 @@ import {
 } from './runtimeContextUsage'
 import {
   findSelectableProject,
+  findProjectDeviceWorkspace,
   findRuntimeTask,
   getRememberedStandaloneDeviceId,
   getRuntimeTaskRouteKey,
@@ -65,6 +74,7 @@ import {
 export type { WorkbenchServices } from './workbenchServices'
 
 const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
+const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
 
 type ProjectWorkPreferencePatch = {
   executionMode?: ProjectExecutionMode
@@ -155,6 +165,8 @@ export function WorkbenchProvider({
   const localSkillsCacheRef = useRef<
     Map<string, { expiresAt: number; skills: LocalDeviceSkill[] }>
   >(new Map())
+  const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
+  const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   const currentRuntimeTaskRunning = useMemo(
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
@@ -176,28 +188,71 @@ export function WorkbenchProvider({
     standaloneChatKey: state.standaloneChatKey,
   })
   const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>({})
+  const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
+    Record<string, PluginPathComponent[]>
+  >({})
   const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
+  const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const setDraftInput = useCallback(
     (value: string) => {
       setDraftInputByScope(current => {
         if ((current[projectChatScopeKey] ?? '') === value) return current
         return { ...current, [projectChatScopeKey]: value }
       })
+      if (!value.trim()) {
+        setTrialTemplatesByScope(current => {
+          if (!current[projectChatScopeKey]) return current
+          const next = { ...current }
+          delete next[projectChatScopeKey]
+          return next
+        })
+      }
     },
     [projectChatScopeKey]
   )
-  const activeDeviceId =
-    state.currentRuntimeTask?.deviceId ??
-    getActiveWorkbenchDeviceId({
-      currentProject: activeProject,
-      standaloneDeviceId: state.standaloneDeviceId,
+  const consumeQueuedPluginTrial = useCallback(() => {
+    const trial = consumePluginTrial()
+    if (!trial) return
+    const nextStandaloneChatKey = state.currentRuntimeTask
+      ? state.standaloneChatKey
+      : state.standaloneChatKey + 1
+    const nextScopeKey = getProjectChatScopeKey({
+      currentRuntimeTask: null,
+      standaloneChatKey: nextStandaloneChatKey,
     })
-  const activeDeviceIdRef = useRef(activeDeviceId)
+    dispatch({
+      type: 'project_cleared',
+      standaloneDeviceId: getRememberedStandaloneDeviceId(
+        user,
+        state.devices,
+        state.standaloneDeviceId
+      ),
+      standaloneWorkspacePath: null,
+      startFreshChat: !state.currentRuntimeTask,
+    })
+    setDraftInputByScope(current => ({ ...current, [nextScopeKey]: trial.input }))
+    setTrialTemplatesByScope(current => ({ ...current, [nextScopeKey]: trial.templates }))
+    navigateTo('/')
+    window.dispatchEvent(
+      new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
+        detail: { expectedValue: trial.input },
+      })
+    )
+  }, [
+    state.currentRuntimeTask,
+    state.devices,
+    state.standaloneChatKey,
+    state.standaloneDeviceId,
+    user,
+  ])
 
   useEffect(() => {
-    activeDeviceIdRef.current = activeDeviceId
-  }, [activeDeviceId])
-
+    queueMicrotask(consumeQueuedPluginTrial)
+    window.addEventListener(PLUGIN_TRIAL_QUEUED_EVENT, consumeQueuedPluginTrial)
+    return () => {
+      window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, consumeQueuedPluginTrial)
+    }
+  }, [consumeQueuedPluginTrial])
   useEffect(() => {
     const socketClient = resolvedServices.socketClient
     if (!socketClient) return undefined
@@ -550,6 +605,7 @@ export function WorkbenchProvider({
         state.standaloneDeviceId
       ),
       standaloneWorkspacePath: null,
+      startFreshChat: true,
     })
     navigateTo('/')
   }, [state.devices, state.standaloneDeviceId, user])
@@ -793,21 +849,68 @@ export function WorkbenchProvider({
   const stableRevertTurnFileChanges = useStableEvent(runtimeMessaging.revertTurnFileChanges)
 
   const listLocalSkills = useCallback(async () => {
-    const activeDeviceId = activeDeviceIdRef.current
-    if (!activeDeviceId) return []
+    const selectedProjectWorkspace = findProjectDeviceWorkspace(
+      state.runtimeWork,
+      activeProject?.id,
+      state.selectedDeviceWorkspaceId
+    )
+    const cwd =
+      state.currentRuntimeTask?.workspacePath ??
+      selectedProjectWorkspace?.workspacePath ??
+      state.standaloneWorkspacePath ??
+      null
+    const cwds = cwd ? [cwd] : []
+    const cacheKey = cwds.length > 0 ? cwds.join('\u0000') : 'default'
 
-    const cached = localSkillsCacheRef.current.get(activeDeviceId)
+    const cached = localSkillsCacheRef.current.get(cacheKey)
     if (cached && cached.expiresAt > Date.now()) {
       return cached.skills
     }
 
-    const skills = await executorClient.commands.listSkills(activeDeviceId)
-    localSkillsCacheRef.current.set(activeDeviceId, {
+    const skills = await localPluginApi.listSkills({ cwds })
+    localSkillsCacheRef.current.set(cacheKey, {
       expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
       skills,
     })
     return skills
-  }, [executorClient])
+  }, [
+    activeProject?.id,
+    localPluginApi,
+    state.currentRuntimeTask?.workspacePath,
+    state.runtimeWork,
+    state.selectedDeviceWorkspaceId,
+    state.standaloneWorkspacePath,
+  ])
+
+  const listLocalApps = useCallback(async () => {
+    const cached = localAppsCacheRef.current
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.apps
+    }
+
+    let apps: LocalDeviceApp[] = []
+    try {
+      apps = await localPluginApi.listApps()
+    } catch (error) {
+      console.warn('[Wework] Failed to load local Codex apps; continuing with skills only.', error)
+    }
+    localAppsCacheRef.current = {
+      expiresAt: Date.now() + LOCAL_SKILLS_CACHE_TTL_MS,
+      apps,
+    }
+    return apps
+  }, [localPluginApi])
+
+  useEffect(() => {
+    const clearLocalSkillCache = () => {
+      localSkillsCacheRef.current.clear()
+      localAppsCacheRef.current = null
+    }
+    window.addEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
+    return () => {
+      window.removeEventListener(LOCAL_PLUGIN_SKILLS_CHANGED_EVENT, clearLocalSkillCache)
+    }
+  }, [])
 
   const workspaceFileApi = useMemo(
     () => ({
@@ -848,6 +951,7 @@ export function WorkbenchProvider({
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
+      trialTemplates,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -868,6 +972,7 @@ export function WorkbenchProvider({
       removeAttachment: attachmentSelection.removeAttachment,
       resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills,
+      listLocalApps,
     }),
     [
       attachmentSelection.addExistingAttachment,
@@ -879,10 +984,12 @@ export function WorkbenchProvider({
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
       draftInput,
+      trialTemplates,
       handleBlockedModelSelect,
       currentContextUsage,
       isOptionsLocked,
       listLocalSkills,
+      listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
       modelSelection.selectedModel,
@@ -906,6 +1013,7 @@ export function WorkbenchProvider({
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
+      trialTemplates,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -926,6 +1034,7 @@ export function WorkbenchProvider({
       removeAttachment: attachmentSelection.removeAttachment,
       resetAttachments: attachmentSelection.resetAttachments,
       listLocalSkills,
+      listLocalApps,
     }),
     [
       attachmentSelection.addExistingAttachment,
@@ -937,9 +1046,11 @@ export function WorkbenchProvider({
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
       draftInput,
+      trialTemplates,
       handleBlockedModelSelect,
       currentContextUsage,
       listLocalSkills,
+      listLocalApps,
       modelSelection.isSelectionReady,
       modelSelection.models,
       modelSelection.selectedModel,

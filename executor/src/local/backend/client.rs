@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{future::Future, path::Path, pin::Pin, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use serde_json::Map;
 use serde_json::{json, Value};
@@ -17,8 +23,6 @@ use super::{
 
 const REGISTER_EVENT: &str = "device:register";
 const HEARTBEAT_EVENT: &str = "device:heartbeat";
-const CODEX_AUTH_TARGET_PATH: &str = "~/.codex/auth.json";
-
 #[derive(Clone)]
 pub struct LocalBackendClient<T>
 where
@@ -175,10 +179,15 @@ where
 }
 
 pub fn build_runtime_auth_file_report(home: &Path) -> Value {
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"));
+    let target_path = codex_home.join("auth.json");
     json!({
         "codex": {
-            "target_path": CODEX_AUTH_TARGET_PATH,
-            "exists": home.join(".codex").join("auth.json").is_file(),
+            "target_path": target_path.to_string_lossy(),
+            "exists": target_path.is_file(),
         }
     })
 }

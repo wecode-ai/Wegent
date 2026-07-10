@@ -1,5 +1,6 @@
 import type {
   Attachment,
+  LocalDeviceApp,
   LocalDeviceSkill,
   ModelOptions,
   RuntimeContextUsage,
@@ -53,6 +54,7 @@ interface ProjectChatComposerProps {
   onRemoveAttachment: (attachmentId: number) => void
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
+  onListLocalApps?: () => Promise<LocalDeviceApp[]>
   projectWork: ProjectWorkControls
   showProjectWorkBar?: boolean
   isStreaming?: boolean
@@ -170,6 +172,7 @@ export function ProjectChatComposer({
   onRemoveAttachment,
   onClearCodeComments,
   onListLocalSkills,
+  onListLocalApps,
   projectWork,
   showProjectWorkBar = true,
   isStreaming = false,
@@ -252,17 +255,16 @@ export function ProjectChatComposer({
         onDrop={handleDrop}
         onSubmit={event => {
           event.preventDefault()
-          const submittedValue = event.currentTarget.querySelector('textarea')?.value
           debugComposerEvent('project-form-submit', {
             canSend,
             propValue: textMetrics(value),
-            submittedValue: textMetrics(submittedValue),
+            submittedValue: textMetrics(value),
             attachmentsCount: attachments.length,
             codeCommentsCount: codeComments.length,
             disabled,
             isStreaming,
           })
-          if (canSend) onSubmit(submittedValue)
+          if (canSend) onSubmit(value)
         }}
       >
         <AttachmentBadges
@@ -292,9 +294,10 @@ export function ProjectChatComposer({
           placeholder={placeholder}
           rows={2}
           onPasteFiles={onFileSelect}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-6 text-text-primary outline-none placeholder:text-text-muted/55"
+          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-6 text-text-secondary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
+          onListLocalApps={onListLocalApps}
           models={models}
           selectedModel={selectedModel}
           selectedModelOptions={selectedModelOptions}

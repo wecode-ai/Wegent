@@ -43,10 +43,11 @@ pub(super) struct DefaultCapabilityReporter {
 impl DefaultCapabilityReporter {
     pub(super) fn new() -> Self {
         let home = home_dir();
+        let codex_home = codex_home_dir(&home);
         Self {
             reporter: GlobalCapabilityReporter::new(
-                home.join(".claude").join("skills"),
-                home.join(".claude").join("plugins"),
+                codex_home.join("skills"),
+                codex_home.join("plugins"),
                 ManagedCapabilityManifest::new(default_manifest_path()),
             ),
         }
@@ -84,8 +85,11 @@ pub(super) fn default_capability_sync_handler(
     config: &LocalBackendConfig,
 ) -> CapabilitySyncHandler<HttpPackageProvider> {
     let home = home_dir();
+    let codex_home = codex_home_dir(&home);
     let store =
-        GlobalCapabilityStore::new(default_manifest_path(), home.join(".claude").join("skills"));
+        GlobalCapabilityStore::new(default_manifest_path(), home.join(".claude").join("skills"))
+            .with_codex_skills_dir(codex_home.join("skills"))
+            .with_codex_plugins_dir(codex_home.join("plugins"));
     CapabilitySyncHandler::with_package_provider(
         config.auth_token.clone(),
         store,
@@ -342,4 +346,51 @@ fn home_dir() -> PathBuf {
         .or_else(|_| env::var("USERPROFILE"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn codex_home_dir(home: &Path) -> PathBuf {
+    env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn restore_env(key: &str, value: Option<std::ffi::OsString>) {
+        if let Some(value) = value {
+            env::set_var(key, value);
+        } else {
+            env::remove_var(key);
+        }
+    }
+
+    #[test]
+    fn codex_home_dir_prefers_codex_home_env() {
+        let _lock = crate::test_env::lock();
+        let old_codex_home = env::var_os("CODEX_HOME");
+        let home = PathBuf::from("/tmp/user-home");
+        let codex_home = PathBuf::from("/tmp/wework-codex-home");
+
+        env::set_var("CODEX_HOME", &codex_home);
+
+        assert_eq!(codex_home_dir(&home), codex_home);
+
+        restore_env("CODEX_HOME", old_codex_home);
+    }
+
+    #[test]
+    fn codex_home_dir_defaults_to_user_codex_home() {
+        let _lock = crate::test_env::lock();
+        let old_codex_home = env::var_os("CODEX_HOME");
+        let home = PathBuf::from("/tmp/user-home");
+
+        env::remove_var("CODEX_HOME");
+
+        assert_eq!(codex_home_dir(&home), home.join(".codex"));
+
+        restore_env("CODEX_HOME", old_codex_home);
+    }
 }

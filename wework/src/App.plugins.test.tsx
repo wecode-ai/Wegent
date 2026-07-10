@@ -19,6 +19,31 @@ vi.mock('@/tauri/localExecutor', () => ({
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
 }))
 
+vi.mock('@/features/local-runtime/LocalRuntimeInitializer', () => ({
+  LocalRuntimeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/features/local-runtime/CodexHomeInitializer', () => ({
+  CodexHomeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/api/local/codexPlugins', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/local/codexPlugins')>()
+  return {
+    ...actual,
+    createLocalCodexPluginApi: () => ({
+      ...actual.createLocalCodexPluginApi(),
+      codexHomeMigrationStatus: vi.fn().mockResolvedValue({
+        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        nativeCodexHome: '/Users/test/.codex',
+        weworkCodexHomeExists: true,
+        nativeCodexHomeExists: true,
+        shouldPromptMigration: false,
+      }),
+    }),
+  }
+})
+
 const mockViewport = vi.hoisted(() => ({
   isMobile: false,
 }))
@@ -563,13 +588,15 @@ describe('App plugins route', () => {
     vi.unstubAllEnvs()
   })
 
-  test('does not expose the plugins page from the desktop sidebar', async () => {
+  test('opens the plugins page from the desktop sidebar', async () => {
     window.history.pushState({}, '', '/')
 
     render(<App />)
 
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
-    expect(window.location.pathname).toBe('/')
+    await userEvent.click(screen.getByTestId('plugins-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
   })
 
   test('renders the plugins page on direct /plugins visit', async () => {
@@ -583,14 +610,14 @@ describe('App plugins route', () => {
 
     expect(pluginsDragRegion).toHaveAttribute('data-tauri-drag-region')
     expect(screen.getByTestId('plugins-topbar-drag-region')).toContainElement(pluginsDragRegion)
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('tab', { name: '技能' }))
-    expect(await screen.findByText('wehot')).toBeInTheDocument()
-    expect(screen.queryByText('找不到技能')).not.toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/system-skills?category=system&page=1&pageSize=20',
-      expect.objectContaining({ method: 'GET' })
-    )
+    expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '插件' })).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-search-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-installed-strip')).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '技能' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'MCP' })).not.toBeInTheDocument()
   })
 
   test('collapses and expands the desktop sidebar on plugin routes', async () => {
@@ -598,15 +625,14 @@ describe('App plugins route', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
   test('does not reserve traffic light space on collapsed plugin routes in Tauri', async () => {
@@ -619,7 +645,7 @@ describe('App plugins route', () => {
 
     render(<App />)
 
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
     expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
     expect(screen.getByTestId('plugins-topbar')).toHaveClass('md:pl-6')
@@ -634,11 +660,10 @@ describe('App plugins route', () => {
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
 
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
   test('uses the mobile shell for plugins route at the shared mobile breakpoint', async () => {
@@ -649,23 +674,25 @@ describe('App plugins route', () => {
 
     expect(screen.getByTestId('open-mobile-drawer-button')).toBeInTheDocument()
     expect(screen.queryByTestId('collapse-sidebar-button')).not.toBeInTheDocument()
-    expect(screen.getByTestId('plugins-create-button')).toHaveClass('h-11', 'w-11')
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-create-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-marketplace-selector')).not.toBeInTheDocument()
   })
 
-  test('hides plugins from the mobile settings menu', async () => {
+  test('opens plugins from the mobile settings menu', async () => {
     mockViewport.isMobile = true
     window.history.pushState({}, '', '/plugins')
 
     render(<App />)
 
-    expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('open-mobile-drawer-button'))
     await userEvent.click(screen.getByTestId('mobile-settings-button'))
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
-    expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-settings-plugins-button')).toBeInTheDocument()
     expect(window.location.pathname).toBe('/plugins')
   })
 
@@ -680,27 +707,6 @@ describe('App plugins route', () => {
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
   })
 
-  test('switches to the MCP catalog from the plugins page', async () => {
-    window.history.pushState({}, '', '/plugins')
-
-    render(<App />)
-
-    await userEvent.click(screen.getByRole('tab', { name: 'MCP' }))
-
-    expect(screen.getByRole('tab', { name: 'MCP' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByPlaceholderText('搜索 MCP')).toBeInTheDocument()
-    expect(await screen.findByText('MCP Router')).toBeInTheDocument()
-    expect(await screen.findByText('Hot Search MCP')).toBeInTheDocument()
-    expect(screen.queryByPlaceholderText('供应商 Token')).not.toBeInTheDocument()
-    expect(fetch).toHaveBeenCalledWith(
-      '/api/mcp-providers/mcp_router/servers',
-      expect.objectContaining({ method: 'POST' })
-    )
-    expect(
-      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/mcps/installed'))
-    ).toBe(false)
-  })
-
   test('navigates to plugin management from the manage button', async () => {
     window.history.pushState({}, '', '/plugins')
 
@@ -709,7 +715,7 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('plugins-manage-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins/manage'))
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
     expect(screen.getByText('管理')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '插件 0' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'MCP 1' })).toBeInTheDocument()
@@ -723,15 +729,13 @@ describe('App plugins route', () => {
 
     render(<App />)
 
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-search-button')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('搜索插件')).toBeInTheDocument()
     expect(await screen.findByText('暂无已安装插件')).toBeInTheDocument()
-    await waitFor(() =>
-      expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/installed',
-        expect.objectContaining({ method: 'GET' })
-      )
-    )
+    expect(
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/plugins/installed'))
+    ).toBe(false)
   })
 
   test('keeps installed plugin switch knobs anchored inside the track', async () => {

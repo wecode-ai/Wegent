@@ -48,6 +48,26 @@ vi.mock('@/tauri/localExecutor', () => ({
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
 }))
 
+vi.mock('@/features/local-runtime/LocalRuntimeInitializer', () => ({
+  LocalRuntimeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/features/local-runtime/CodexHomeInitializer', () => ({
+  CodexHomeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/api/local/codexPlugins', () => ({
+  createLocalCodexPluginApi: () => ({
+    codexHomeMigrationStatus: vi.fn().mockResolvedValue({
+      weworkCodexHome: '/Users/test/.wegent-executor/codex',
+      nativeCodexHome: '/Users/test/.codex',
+      weworkCodexHomeExists: true,
+      nativeCodexHomeExists: true,
+      shouldPromptMigration: false,
+    }),
+  }),
+}))
+
 vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
 }))

@@ -11,6 +11,7 @@ from fastapi import HTTPException
 
 from app.schemas.installed_plugin import (
     InstalledPluginComponents,
+    PluginInterface,
     PluginMCPComponent,
     PluginPathComponent,
     PluginSkillComponent,
@@ -21,7 +22,7 @@ MAX_PLUGIN_PACKAGE_SIZE_BYTES = 50 * 1024 * 1024
 
 
 class ClaudePluginParser:
-    """Parse and validate Claude Code plugin ZIP packages."""
+    """Parse and validate Codex-compatible plugin ZIP packages."""
 
     def parse_package(self, package_bytes: bytes) -> PluginUploadInfo:
         if len(package_bytes) > MAX_PLUGIN_PACKAGE_SIZE_BYTES:
@@ -30,9 +31,9 @@ class ClaudePluginParser:
         try:
             with zipfile.ZipFile(self._bytes_reader(package_bytes)) as archive:
                 self._validate_archive_paths(archive)
-                root = self._detect_plugin_root(archive)
-                manifest = self._read_json(archive, f"{root}.claude-plugin/plugin.json")
-                components = self._parse_components(archive, root)
+                root, manifest_relative_path = self._detect_plugin_root(archive)
+                manifest = self._read_json(archive, f"{root}{manifest_relative_path}")
+                components = self._parse_components(archive, root, manifest)
         except zipfile.BadZipFile as exc:
             raise HTTPException(status_code=400, detail="Invalid plugin ZIP") from exc
 
@@ -45,12 +46,13 @@ class ClaudePluginParser:
 
         return PluginUploadInfo(
             name=name,
-            displayName=str(manifest.get("displayName") or name),
-            description=str(manifest.get("description") or ""),
+            displayName=self._display_name(manifest, name),
+            description=self._description(manifest),
             version=str(manifest.get("version")) if manifest.get("version") else None,
             author=self._format_author(manifest.get("author")),
             manifest=manifest,
             components=components,
+            interface=self._parse_interface(manifest),
         )
 
     @staticmethod
@@ -82,19 +84,30 @@ class ClaudePluginParser:
                     detail=f"Unsafe path in plugin ZIP: {member.filename}",
                 )
 
-    def _detect_plugin_root(self, archive: zipfile.ZipFile) -> str:
-        candidates = [
-            name
-            for name in archive.namelist()
-            if name.endswith(".claude-plugin/plugin.json")
-        ]
+    def _detect_plugin_root(self, archive: zipfile.ZipFile) -> tuple[str, str]:
+        supported_manifests = (
+            ".codex-plugin/plugin.json",
+            ".claude-plugin/plugin.json",
+        )
+        candidates = []
+        for name in archive.namelist():
+            for relative_path in supported_manifests:
+                if name.endswith(relative_path):
+                    candidates.append((name, relative_path))
         if not candidates:
             raise HTTPException(
                 status_code=400,
-                detail="Claude Code plugin must include .claude-plugin/plugin.json",
+                detail="Codex plugin must include .codex-plugin/plugin.json",
             )
-        manifest_path = sorted(candidates, key=len)[0]
-        return manifest_path[: -len(".claude-plugin/plugin.json")]
+        # Prefer Codex-native manifests when both layouts are present.
+        manifest_path, relative_path = sorted(
+            candidates,
+            key=lambda item: (
+                0 if item[1].startswith(".codex-plugin") else 1,
+                len(item[0]),
+            ),
+        )[0]
+        return manifest_path[: -len(relative_path)], relative_path
 
     def _read_json(self, archive: zipfile.ZipFile, path: str) -> Dict[str, Any]:
         try:
@@ -111,7 +124,7 @@ class ClaudePluginParser:
         return data
 
     def _parse_components(
-        self, archive: zipfile.ZipFile, root: str
+        self, archive: zipfile.ZipFile, root: str, manifest: Dict[str, Any]
     ) -> InstalledPluginComponents:
         names = [name for name in archive.namelist() if not name.endswith("/")]
         return InstalledPluginComponents(
@@ -119,12 +132,93 @@ class ClaudePluginParser:
             commands=self._parse_markdown_files(root, names, "commands"),
             agents=self._parse_markdown_files(root, names, "agents"),
             hooks=self._parse_json_file_components(root, names, "hooks"),
-            mcps=self._parse_mcps(archive, root),
+            mcps=self._parse_mcps(archive, root, manifest),
             lsps=self._parse_json_file_components(root, names, ".lsp.json"),
             monitors=self._parse_json_file_components(root, names, "monitors"),
             bins=self._parse_bin_files(root, names),
             settings=self._read_optional_json(archive, f"{root}settings.json"),
         )
+
+    def _display_name(self, manifest: Dict[str, Any], fallback: str) -> str:
+        direct = str(manifest.get("displayName") or "").strip()
+        if direct:
+            return direct
+        interface = manifest.get("interface")
+        if isinstance(interface, dict):
+            display_name = str(interface.get("displayName") or "").strip()
+            if display_name:
+                return display_name
+        return fallback
+
+    def _description(self, manifest: Dict[str, Any]) -> str:
+        direct = str(manifest.get("description") or "").strip()
+        if direct:
+            return direct
+        interface = manifest.get("interface")
+        if isinstance(interface, dict):
+            return str(
+                interface.get("shortDescription")
+                or interface.get("longDescription")
+                or ""
+            )
+        return ""
+
+    def _parse_interface(self, manifest: Dict[str, Any]) -> PluginInterface | None:
+        raw = manifest.get("interface")
+        if not isinstance(raw, dict):
+            return None
+
+        return PluginInterface(
+            displayName=self._optional_string(raw.get("displayName")),
+            shortDescription=self._optional_string(raw.get("shortDescription")),
+            longDescription=self._optional_string(raw.get("longDescription")),
+            developerName=self._optional_string(raw.get("developerName")),
+            category=self._optional_string(raw.get("category")),
+            capabilities=[
+                str(item).strip()
+                for item in raw.get("capabilities") or []
+                if str(item).strip()
+            ],
+            websiteUrl=self._optional_string(
+                raw.get("websiteUrl") or raw.get("websiteURL")
+            ),
+            privacyPolicyUrl=self._optional_string(
+                raw.get("privacyPolicyUrl") or raw.get("privacyPolicyURL")
+            ),
+            termsOfServiceUrl=self._optional_string(
+                raw.get("termsOfServiceUrl") or raw.get("termsOfServiceURL")
+            ),
+            defaultPrompt=self._default_prompts(raw.get("defaultPrompt")),
+            brandColor=self._optional_string(raw.get("brandColor")),
+            composerIcon=self._optional_string(raw.get("composerIcon")),
+            logo=self._optional_string(raw.get("logo")),
+            logoDark=self._optional_string(raw.get("logoDark")),
+            screenshots=[
+                str(item).strip()
+                for item in raw.get("screenshots") or []
+                if str(item).strip()
+            ],
+        )
+
+    @staticmethod
+    def _optional_string(value: Any) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    def _default_prompts(self, value: Any) -> list[str] | None:
+        if isinstance(value, str):
+            prompt = value.strip()
+            return [prompt] if prompt else None
+        if isinstance(value, list):
+            prompts = [
+                str(item).strip()
+                for item in value
+                if isinstance(item, str) and item.strip()
+            ]
+            return prompts[:3] or None
+        return None
 
     def _parse_skills(
         self, archive: zipfile.ZipFile, root: str, names: Iterable[str]
@@ -187,9 +281,17 @@ class ClaudePluginParser:
         ]
 
     def _parse_mcps(
-        self, archive: zipfile.ZipFile, root: str
+        self, archive: zipfile.ZipFile, root: str, manifest: Dict[str, Any]
     ) -> list[PluginMCPComponent]:
-        data = self._read_optional_json(archive, f"{root}.mcp.json")
+        raw = manifest.get("mcpServers")
+        if isinstance(raw, dict):
+            data = {"mcpServers": raw}
+        elif isinstance(raw, str) and raw.strip():
+            data = self._read_optional_json(
+                archive, self._join_root_path(root, raw.strip())
+            )
+        else:
+            data = self._read_optional_json(archive, f"{root}.mcp.json")
         if not data:
             return []
         servers = data.get("mcpServers") if isinstance(data, dict) else None
@@ -202,6 +304,10 @@ class ClaudePluginParser:
             )
             for name, server in sorted(servers.items())
         ]
+
+    def _join_root_path(self, root: str, path: str) -> str:
+        normalized = path[2:] if path.startswith("./") else path
+        return f"{root}{normalized}"
 
     def _read_optional_json(
         self, archive: zipfile.ZipFile, path: str

@@ -25,6 +25,10 @@ const runtimeConfigMock = vi.hoisted(() => ({
     cloudDeviceScalingWikiUrl: '',
   },
 }))
+const localCodexPluginApiMock = vi.hoisted(() => ({
+  readCodexLocalConfig: vi.fn(),
+  updateCodexLocalConfig: vi.fn(),
+}))
 
 vi.mock('@/config/runtime', () => ({
   getRuntimeConfig: () => runtimeConfigMock.value,
@@ -59,6 +63,10 @@ vi.mock('@/api/local/runtimeAuthStatus', () => ({
     sizeBytes: 128,
     error: null,
   }),
+}))
+
+vi.mock('@/api/local/codexPlugins', () => ({
+  createLocalCodexPluginApi: () => localCodexPluginApiMock,
 }))
 
 vi.mock('@/api/devices', () => ({
@@ -266,6 +274,18 @@ describe('ConnectionsSettingsPage', () => {
       moved: [],
       links: [],
     })
+    localCodexPluginApiMock.readCodexLocalConfig.mockResolvedValue({
+      codexHome: '/Users/crystal/.wegent-executor/codex',
+      configPath: '/Users/crystal/.wegent-executor/codex/config.toml',
+      remoteAppsEnabled: false,
+    })
+    localCodexPluginApiMock.updateCodexLocalConfig.mockImplementation(patch =>
+      Promise.resolve({
+        codexHome: '/Users/crystal/.wegent-executor/codex',
+        configPath: '/Users/crystal/.wegent-executor/codex/config.toml',
+        remoteAppsEnabled: Boolean(patch.remoteAppsEnabled),
+      })
+    )
     createDeviceApiMock.mockReturnValue(api)
     projectApi.listWorktrees.mockResolvedValue({ total: 0, devices: [] })
     projectApi.deleteWorktree.mockResolvedValue({
@@ -793,6 +813,25 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByTestId('skill-management-result')).toHaveTextContent(
       '/Users/crystal/.agents/skills'
     )
+  })
+
+  test('updates the local Codex remote apps setting from skill settings', async () => {
+    window.history.pushState({}, '', '/settings/skills')
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const toggle = await screen.findByTestId('codex-plugin-remote-apps-toggle')
+    expect(toggle).not.toBeChecked()
+
+    await userEvent.click(toggle)
+
+    await waitFor(() => {
+      expect(localCodexPluginApiMock.updateCodexLocalConfig).toHaveBeenCalledWith({
+        remoteAppsEnabled: true,
+      })
+    })
+    expect(toggle).toBeChecked()
   })
 
   test('loads skill devices through the connected cloud API client', async () => {
