@@ -1052,7 +1052,6 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
   const status = appUpdate?.status ?? 'idle'
   const error = appUpdate?.error ?? null
   const busy = status === 'checking' || status === 'installing'
-  const visibleForDebug = import.meta.env.DEV
 
   const showErrorTooltip = () => {
     if (!error || !buttonRef.current) return
@@ -1063,7 +1062,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
     })
   }
 
-  if (!appUpdate || (!availableUpdate && !visibleForDebug)) return null
+  if (!appUpdate || !availableUpdate) return null
 
   const title = availableUpdate
     ? formatSidebarTemplate(
@@ -2006,6 +2005,7 @@ export function DesktopSidebar({
   })
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
   const usesOverlayTitlebar = isTauriRuntime()
+  const hasAvailableAppUpdate = Boolean(useOptionalAppUpdate()?.availableUpdate)
   const sidebarAccount = getSidebarAccountSummary(user, t('workbench.account_fallback', '当前账号'))
   const workbenchAppLabel = t('workbench.app_wework')
   const appsAppLabel = t('workbench.apps')
@@ -2706,7 +2706,10 @@ export function DesktopSidebar({
                   setImNotificationMenuOpen(false)
                   setSettingsMenuOpen(open => !open)
                 }}
-                className="flex h-[60px] min-w-0 flex-1 items-center gap-3 rounded-[10px] py-2 pl-1.5 pr-10 text-left text-[rgb(var(--color-sidebar-text-primary))] transition-[padding] group-hover/account:pr-[72px] group-focus-within/account:pr-[72px]"
+                className={cn(
+                  'flex h-[60px] min-w-0 flex-1 items-center gap-3 rounded-[10px] py-2 pl-1.5 text-left text-[rgb(var(--color-sidebar-text-primary))]',
+                  hasAvailableAppUpdate ? 'pr-[72px]' : 'pr-10'
+                )}
                 title={t('workbench.settings', '设置')}
                 aria-label={t('workbench.settings', '设置')}
                 aria-expanded={settingsMenuOpen}
@@ -2724,14 +2727,16 @@ export function DesktopSidebar({
                 </span>
               </button>
               <div className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
-                <div className="max-w-0 translate-x-1 overflow-hidden opacity-0 transition-[max-width,opacity,transform] duration-150 group-hover/account:max-w-8 group-hover/account:translate-x-0 group-hover/account:opacity-100 group-focus-within/account:max-w-8 group-focus-within/account:translate-x-0 group-focus-within/account:opacity-100">
-                  <SidebarAppUpdateButton
-                    onBeforeInstall={() => {
-                      setSettingsMenuOpen(false)
-                      setImNotificationMenuOpen(false)
-                    }}
-                  />
-                </div>
+                {hasAvailableAppUpdate && (
+                  <div data-testid="sidebar-app-update-action">
+                    <SidebarAppUpdateButton
+                      onBeforeInstall={() => {
+                        setSettingsMenuOpen(false)
+                        setImNotificationMenuOpen(false)
+                      }}
+                    />
+                  </div>
+                )}
                 <GlobalImNotificationBell
                   devices={devices}
                   imNotificationSettings={imNotificationSettings}
