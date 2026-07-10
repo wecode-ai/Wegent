@@ -59,7 +59,6 @@ export interface ResponseApiStreamState {
 }
 
 const runtimeTaskPlans = new Map<string, RuntimePlanEventPayload>()
-let latestRuntimeTaskPlan: RuntimePlanEventPayload | null = null
 
 function runtimeTaskPlanKey(
   payload: Pick<RuntimePlanEventPayload, 'deviceId' | 'taskId'>
@@ -73,10 +72,6 @@ export function getCachedRuntimeTaskPlan(
 ): RuntimePlanEventPayload | null {
   const key = runtimeTaskPlanKey(address)
   return key ? (runtimeTaskPlans.get(key) ?? null) : null
-}
-
-export function getLatestRuntimeTaskPlan(): RuntimePlanEventPayload | null {
-  return latestRuntimeTaskPlan
 }
 
 export function createResponseApiStreamState(): ResponseApiStreamState {
@@ -738,7 +733,6 @@ export function emitResponseApiEvent(
     }
     const planKey = runtimeTaskPlanKey(payload)
     if (planKey) runtimeTaskPlans.set(planKey, payload)
-    latestRuntimeTaskPlan = payload
     handlers.onRuntimePlanUpdated?.(payload)
     return
   }

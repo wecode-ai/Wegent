@@ -55,7 +55,7 @@ import type {
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
-import { getCachedRuntimeTaskPlan, getLatestRuntimeTaskPlan } from '@/stream/responseApiStream'
+import { getCachedRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { useWorkbenchPaneActive } from './workbenchPaneStack'
 
 interface WorkbenchPaneSessionOptions {
@@ -328,7 +328,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     const syncCachedPlan = () => {
       const cachedPlan = currentRuntimeTaskLoadTarget
         ? getCachedRuntimeTaskPlan(currentRuntimeTaskLoadTarget.address)
-        : getLatestRuntimeTaskPlan()
+        : null
       if (import.meta.env.DEV) {
         console.warn('[Wework] Runtime task plan cache sync', {
           currentRuntimeTaskId: currentRuntimeTaskLoadTarget?.address ?? null,
@@ -336,7 +336,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           stepCount: cachedPlan?.plan.length ?? 0,
         })
       }
-      if (cachedPlan) setTaskPlan(cachedPlan)
+      setTaskPlan(cachedPlan?.plan.length ? cachedPlan : null)
     }
 
     syncCachedPlan()
