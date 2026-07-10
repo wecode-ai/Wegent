@@ -403,9 +403,12 @@ export async function uploadAttachment(
 ): Promise<AttachmentResponse> {
   const token = getToken()
 
-  // Validate file size before upload
-  if (!isValidFileSize(file.size)) {
-    throw new Error(`文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`)
+  // Validate file size before upload. Videos use the larger 1 GB limit so a
+  // KB video that passed the queue-stage check (useBatchAttachment) is not
+  // re-rejected here at upload time.
+  const sizeLimit = isVideoFileName(file.name) ? MAX_VIDEO_FILE_SIZE : MAX_FILE_SIZE
+  if (file.size > sizeLimit) {
+    throw new Error(`文件大小超过 ${sizeLimit / (1024 * 1024)} MB 限制`)
   }
 
   const formData = new FormData()
