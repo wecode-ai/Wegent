@@ -44,6 +44,7 @@ tar = "0.4"
 tf-rust-socketio = { version = "0.8.1", features = ["async"] }
 thiserror = "2.0"
 tokio = { version = "1.48", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+toml_edit = "0.22"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]

@@ -34,6 +34,7 @@ use claude_code::{
     restore_claude_plugin_cache, run_pre_execute_hook,
 };
 pub use claude_options::{extract_claude_options, ClaudeOptions};
+pub(crate) use codex::{combined_codex_developer_instructions, strip_wework_browser_instructions};
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
     CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurn, CodexAppServerTurnOptions,

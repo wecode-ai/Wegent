@@ -37,6 +37,14 @@ On first startup, if the Wework Codex home has not been initialized and a native
 
 After initialization, the state is written into the Wework Codex home, and both the plugin pages and chat runtime read plugin state from the same Codex app-server. The settings page also exposes the remote apps switch so users can later update their Wework Codex config.
 
+### Runtime Config Normalization
+
+Before starting the Codex app-server, the executor parses and normalizes `config.toml` in the Wework Codex home. It creates a missing config, writes `pragmatic` when personality is absent, and migrates the legacy `instructions` field to `developer_instructions`. In current Codex versions, `instructions` completely replaces the model's base instructions; leaving user copy there removes built-in personality, commentary, and progress-update rules. Wework therefore no longer uses that field for custom instructions.
+
+Custom instructions from Settings → Context are read and written through Codex app-server `config/read` and `config/batchWrite`. Writes merge the user's copy with Wework embedded-browser routing instructions and use `reloadUserConfig` to update loaded threads. Startup normalization is idempotent, uses TOML parsing and atomic file replacement, and preserves existing file permissions; newly created config files use mode `0600` on Unix.
+
+The interaction style uses the same `config.toml` as its single source of truth. Selecting Friendly or Pragmatic updates personality through `config/batchWrite`; Wework no longer stores personality in localStorage or repeats it as an override on every thread or turn request.
+
 ## Chat Runtime
 
 When a user selects a skill, app, or plugin in the composer, the editor inserts a structured badge and serializes it on submit as a Codex app-server-compatible mention:

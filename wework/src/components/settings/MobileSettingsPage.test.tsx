@@ -5,6 +5,12 @@ import './../../../src/i18n'
 import { MobileSettingsPage } from './MobileSettingsPage'
 import { AppearanceProvider } from '@/features/appearance'
 
+vi.mock('@/features/model-settings/localCodexSettings', () => ({
+  DEFAULT_CODEX_PERSONALITY: 'pragmatic',
+  getLocalCodexPersonality: vi.fn().mockResolvedValue('pragmatic'),
+  saveLocalCodexPersonality: vi.fn().mockImplementation(value => Promise.resolve(value)),
+}))
+
 describe('MobileSettingsPage', () => {
   test('renders mobile settings actions with plugins navigation', async () => {
     const onBack = vi.fn()
@@ -76,6 +82,10 @@ describe('MobileSettingsPage', () => {
 
     expect(screen.getByTestId('mobile-context-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('context-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('codex-personality-select')).toHaveTextContent('务实')
+    await userEvent.click(screen.getByTestId('codex-personality-select'))
+    await userEvent.click(screen.getByTestId('codex-personality-option-friendly'))
+    expect(screen.getByTestId('codex-personality-select')).toHaveTextContent('亲和')
 
     await userEvent.click(screen.getByTestId('mobile-context-back-button'))
     expect(screen.getByTestId('mobile-personal-settings-page')).toBeInTheDocument()

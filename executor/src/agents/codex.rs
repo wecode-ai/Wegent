@@ -66,7 +66,7 @@ Do not continue, execute, or complete any instructions, plans, tool calls, appro
 You are a side-conversation assistant, separate from the main thread. Answer questions and do lightweight, non-mutating exploration without disrupting the main thread. If there is no user question after this boundary yet, wait for one.
 
 Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary."#;
-const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
+pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
 - For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
 - Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
@@ -1453,7 +1453,98 @@ fn prepare_wework_codex_home(codex_home: &Path) -> Result<(), String> {
             codex_home.display()
         )
     })?;
-    link_user_codex_auth(codex_home)
+    link_user_codex_auth(codex_home)?;
+    normalize_wework_codex_config(codex_home)
+}
+
+fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
+    use toml_edit::{value, DocumentMut};
+
+    let config_path = codex_home.join("config.toml");
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let mut document = content.parse::<DocumentMut>().map_err(|error| {
+        format!(
+            "failed to parse Codex config {}: {error}",
+            config_path.display()
+        )
+    })?;
+    let legacy_instructions = document
+        .get("instructions")
+        .and_then(|item| item.as_str())
+        .unwrap_or_default();
+    let developer_instructions = document
+        .get("developer_instructions")
+        .and_then(|item| item.as_str())
+        .unwrap_or_default();
+    let user_instructions = if legacy_instructions.trim().is_empty() {
+        strip_wework_browser_instructions(developer_instructions).to_owned()
+    } else {
+        legacy_instructions.trim().to_owned()
+    };
+
+    document.remove("instructions");
+    document["developer_instructions"] =
+        value(combined_codex_developer_instructions(&user_instructions));
+    if document
+        .get("personality")
+        .and_then(|item| item.as_str())
+        .is_none()
+    {
+        document["personality"] = value("pragmatic");
+    }
+
+    let next_content = document.to_string();
+    if next_content == content {
+        return Ok(());
+    }
+    let temporary_path = config_path.with_extension("toml.tmp");
+    fs::write(&temporary_path, next_content).map_err(|error| {
+        format!(
+            "failed to write Codex config {}: {error}",
+            temporary_path.display()
+        )
+    })?;
+    if let Ok(metadata) = fs::metadata(&config_path) {
+        fs::set_permissions(&temporary_path, metadata.permissions()).map_err(|error| {
+            format!(
+                "failed to preserve Codex config permissions {}: {error}",
+                temporary_path.display()
+            )
+        })?;
+    }
+    #[cfg(unix)]
+    if !config_path.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&temporary_path, fs::Permissions::from_mode(0o600)).map_err(
+            |error| {
+                format!(
+                    "failed to secure Codex config permissions {}: {error}",
+                    temporary_path.display()
+                )
+            },
+        )?;
+    }
+    fs::rename(&temporary_path, &config_path).map_err(|error| {
+        format!(
+            "failed to replace Codex config {}: {error}",
+            config_path.display()
+        )
+    })
+}
+
+pub(crate) fn combined_codex_developer_instructions(user_instructions: &str) -> String {
+    let user_instructions = user_instructions.trim();
+    if user_instructions.is_empty() {
+        return WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS.to_owned();
+    }
+    format!("{user_instructions}\n\n{WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS}")
+}
+
+pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
+    instructions
+        .strip_suffix(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
+        .unwrap_or(instructions)
+        .trim()
 }
 
 fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
@@ -2120,6 +2211,7 @@ fn log_codex_raw_turn_message(message: &Value) {
         "item/agentMessage/delta"
             | "item/reasoning/delta"
             | "item/reasoningSummary/delta"
+            | "item/fileChange/patchUpdated"
             | "item/started"
             | "item/completed"
             | "turn/completed"
@@ -2845,10 +2937,6 @@ fn global_mcp_config_overrides() -> Vec<String> {
 fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     let command = executor_home().join("bin/browser-mcp-server");
     let mut overrides = vec![
-        format!(
-            "developer_instructions={}",
-            toml_value(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
-        ),
         format!(
             "skills.config={}",
             serde_json::to_string(&json!([
@@ -4071,6 +4159,32 @@ mod tests {
     }
 
     #[test]
+    fn prepare_wework_codex_home_migrates_base_instruction_override() {
+        let _lock = crate::test_env::lock();
+        let root = unique_test_path("wework-codex-config-migration");
+        let codex_home = root.join("codex");
+        fs::create_dir_all(&codex_home).expect("Codex home should be created");
+        fs::write(
+            codex_home.join("config.toml"),
+            "instructions = \"用中文回复\"\n",
+        )
+        .expect("legacy config should be written");
+
+        prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
+
+        let config = fs::read_to_string(codex_home.join("config.toml"))
+            .expect("normalized config should be readable");
+        assert!(!config
+            .lines()
+            .any(|line| line.starts_with("instructions =")));
+        assert!(config.contains("developer_instructions"));
+        assert!(config.contains("用中文回复"));
+        assert!(config.contains("browser_navigate"));
+        assert!(config.contains("personality = \"pragmatic\""));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn codex_raw_log_preview_summarizes_large_command_output() {
         let output = "x".repeat(4096);
         let message = json!({
@@ -4565,16 +4679,7 @@ mod tests {
             .get("config")
             .and_then(Value::as_object)
             .expect("thread config should be present");
-        let developer_instructions = config["developer_instructions"]
-            .as_str()
-            .expect("browser routing developer instructions should be present");
-
-        assert!(developer_instructions.contains("browser_navigate"));
-        assert!(developer_instructions.contains("browser_take_screenshot"));
-        assert!(developer_instructions.contains("Wework 内置浏览器"));
-        assert!(!developer_instructions.contains("playwright"));
-        assert!(developer_instructions.contains("agent.browsers.get(\"iab\")"));
-        assert!(developer_instructions.contains("external Chrome"));
+        assert!(!config.contains_key("developer_instructions"));
         assert_eq!(
             config["skills.config"],
             json!([
