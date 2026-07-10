@@ -825,6 +825,38 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugin-marketplace-actions-101')).not.toBeInTheDocument()
   })
 
+  test('reads local plugin detail when trying an installed marketplace plugin in chat', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'local-openai',
+          displayName: 'OpenAI',
+          path: '/Users/test/.codex/plugins/marketplaces/openai',
+        },
+      ],
+      installedPluginNames: ['documents'],
+    })
+
+    render(<PluginsWorkspace />)
+
+    await userEvent.click(await screen.findByTestId('plugin-marketplace-install-101'))
+
+    await waitFor(() =>
+      expectCodexAppServerRequest('plugin/read', {
+        marketplacePath: '/Users/test/.codex/plugins/marketplaces/openai',
+        pluginName: 'documents',
+      })
+    )
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toContain(
+      'plugin://documents@local-openai'
+    )
+  })
+
   test('opens marketplace plugin detail from the plugin row', async () => {
     render(<PluginsWorkspace />)
 
@@ -899,7 +931,7 @@ describe('PluginsWorkspace', () => {
     )
   })
 
-  test('quickly adds the OpenAI official marketplace', async () => {
+  test('quickly selects the OpenAI official marketplace', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -911,8 +943,8 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(await screen.findByTestId('plugins-add-marketplace-button'))
     await userEvent.click(screen.getByTestId('plugins-add-openai-marketplace-button'))
 
-    expectCodexAppServerRequest('marketplace/add', {
-      source: 'https://github.com/openai/plugins',
+    expectCodexAppServerRequest('plugin/list', {
+      marketplaceKinds: ['local'],
     })
   })
 
@@ -1000,69 +1032,7 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-publish-empty-button')).not.toBeInTheDocument()
   })
 
-  test('prompts to migrate the native Codex home on first Wework plugin setup', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    vi.mocked(isTauri).mockReturnValue(true)
-    const marketplace = {
-      name: 'local-team',
-      displayName: 'Team',
-      path: '/Users/test/marketplace.json',
-    }
-    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
-      if (command === 'local_executor_codex_home_migration_status') {
-        return Promise.resolve({
-          weworkCodexHome: '/Users/test/.wegent-executor/codex',
-          nativeCodexHome: '/Users/test/.codex',
-          weworkCodexHomeExists: false,
-          nativeCodexHomeExists: true,
-          shouldPromptMigration: true,
-        })
-      }
-      if (command === 'local_executor_migrate_native_codex_home') {
-        return Promise.resolve({
-          weworkCodexHome: '/Users/test/.wegent-executor/codex',
-          nativeCodexHome: '/Users/test/.codex',
-          weworkCodexHomeExists: true,
-          nativeCodexHomeExists: true,
-          shouldPromptMigration: false,
-        })
-      }
-      if (command === 'local_executor_ensure_started') {
-        return Promise.resolve({ running: true, ready: true })
-      }
-      if (command === 'local_executor_request') {
-        const request = args as {
-          method?: string
-          params?: { method?: string }
-        }
-        if (request.params?.method === 'plugin/list') {
-          return Promise.resolve({
-            marketplaces: [codexMarketplaceResponse(marketplace, new Set(), false)],
-          })
-        }
-        if (request.params?.method === 'plugin/installed') {
-          return Promise.resolve({
-            marketplaces: [codexMarketplaceResponse(marketplace, new Set(), true)],
-          })
-        }
-      }
-      return Promise.resolve({})
-    })
-
-    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
-
-    expect(await screen.findByTestId('plugins-codex-migration-dialog')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('plugins-codex-migration-confirm-button'))
-
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith('local_executor_migrate_native_codex_home')
-    )
-  })
-
-  test('quickly adds the OpenAI official marketplace from the empty state', async () => {
+  test('quickly selects the OpenAI official marketplace from the empty state', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
@@ -1074,8 +1044,8 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-add-openai-marketplace-empty-button'))
 
-    expectCodexAppServerRequest('marketplace/add', {
-      source: 'https://github.com/openai/plugins',
+    expectCodexAppServerRequest('plugin/list', {
+      marketplaceKinds: ['local'],
     })
   })
 

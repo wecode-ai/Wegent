@@ -6,6 +6,7 @@ import type {
   LocalDeviceApp,
   LocalDeviceSkill,
   ModelOptions,
+  PluginPathComponent,
   ProjectExecutionMode,
   ProjectWithTasks,
   RuntimeContextUsage,
@@ -30,6 +31,7 @@ export interface ProjectChatControls {
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
   isModelSelectionReady?: boolean
+  trialTemplates?: PluginPathComponent[]
   selectedSkills: SkillRef[]
   attachments: Attachment[]
   uploadingFiles: Map<string, { file: File; progress: number }>
@@ -113,6 +115,55 @@ export interface ChatSubmitOptions {
   guideWhenBusy?: boolean
 }
 
+function PluginTrialTemplateStrip({ templates }: { templates: PluginPathComponent[] }) {
+  const { t } = useTranslation('common')
+  const visibleTemplates = templates.filter(template => !template.unavailableReason).slice(0, 8)
+  if (visibleTemplates.length === 0) return null
+
+  return (
+    <section
+      className="mb-2 rounded-2xl border border-border/70 bg-background px-3 py-3 shadow-[0_10px_32px_rgba(0,0,0,0.06)]"
+      data-testid="plugin-trial-template-strip"
+      aria-label={t('workbench.plugin_trial_templates', '模板')}
+    >
+      <div className="mb-2 text-[13px] font-medium leading-5 text-text-muted">
+        {t('workbench.plugin_trial_templates', '模板')}
+      </div>
+      <div className="flex gap-3 overflow-x-auto pb-1">
+        {visibleTemplates.map(template => (
+          <div
+            key={template.path}
+            className="w-[132px] shrink-0 rounded-xl border border-border/70 bg-surface/50 p-3"
+            data-testid="plugin-trial-template-card"
+          >
+            <div className="mb-3 flex h-[72px] items-center justify-center rounded-lg border border-border/60 bg-background">
+              {template.logoUrl || template.logoUrlDark ? (
+                <img
+                  src={template.logoUrl || template.logoUrlDark || ''}
+                  alt=""
+                  className="h-9 w-9 object-contain"
+                />
+              ) : (
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted text-sm font-medium text-text-secondary">
+                  {template.name.slice(0, 1).toUpperCase()}
+                </span>
+              )}
+            </div>
+            <div className="truncate text-[13px] font-medium leading-5 text-text-primary">
+              {template.name}
+            </div>
+            {template.description ? (
+              <div className="mt-0.5 line-clamp-2 text-xs leading-4 text-text-muted">
+                {template.description}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 export function ChatInput({
   value,
   onChange,
@@ -156,6 +207,7 @@ export function ChatInput({
     selectedModel: null,
     selectedModelOptions: {},
     isModelSelectionReady: true,
+    trialTemplates: [],
     selectedSkills: [],
     attachments: [],
     uploadingFiles: new Map(),
@@ -224,6 +276,7 @@ export function ChatInput({
       <div className="w-full">
         {queuePanel}
         {errorBanner}
+        <PluginTrialTemplateStrip templates={controls.trialTemplates ?? []} />
         {displayedGoal && !goalDraftActive && (
           <GoalStatusBar
             goal={displayedGoal}
@@ -296,6 +349,7 @@ export function ChatInput({
     <div className="w-full">
       {queuePanel}
       {errorBanner}
+      <PluginTrialTemplateStrip templates={controls.trialTemplates ?? []} />
       {displayedGoal && !goalDraftActive && (
         <GoalStatusBar
           goal={displayedGoal}

@@ -4786,6 +4786,22 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('composer-input')).toHaveTextContent('')
   })
 
+  test('hydrates queued plugin trial input into a fresh standalone chat', async () => {
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@OpenAI Bundled) ',
+        pluginName: 'Documents',
+      })
+    )
+
+    renderWorkbench(<ProjectSendProbe />)
+
+    await waitFor(() => expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('1'))
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
   test('sends a follow-up message after setting a goal in an existing runtime task', async () => {
     const sendRuntimeMessage = vi.fn().mockResolvedValue({
       accepted: true,

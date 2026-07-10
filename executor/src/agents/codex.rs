@@ -1413,7 +1413,7 @@ fn spawn_codex_app_server(
     for config_override in &launch_config.config_overrides {
         command.arg("-c").arg(config_override);
     }
-    command.arg("app-server").arg("--stdio");
+    command.arg("app-server");
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }

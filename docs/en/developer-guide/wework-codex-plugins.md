@@ -29,17 +29,27 @@ Wework uses a separate Codex home so it does not write directly into the user's 
 
 To reuse the user's existing login, Wework links the user's `~/.codex/auth.json` into the Wework Codex home. If the target is a stale symlink, it is removed and recreated; on non-Unix systems the auth file is copied. Plugins, marketplace caches, and Wework runtime config remain under Wework's own Codex home.
 
+On first startup, if the Wework Codex home has not been initialized and a native `~/.codex` directory exists, the app shows a migration choice during startup. The user can choose to:
+
+- Create a new Wework Codex home and only reuse the auth link.
+- Migrate config from the native Codex home into the Wework Codex home.
+- Enable or disable Codex remote app fetching. This switch only controls remote app initialization and does not refer to any specific bundled capability.
+
+After initialization, the state is written into the Wework Codex home, and both the plugin pages and chat runtime read plugin state from the same Codex app-server. The settings page also exposes the remote apps switch so users can later update their Wework Codex config.
+
 ## Chat Runtime
 
-When a user selects a skill or app in the composer, the editor inserts a structured badge and serializes it on submit as a Codex app-server-compatible mention:
+When a user selects a skill, app, or plugin in the composer, the editor inserts a structured badge and serializes it on submit as a Codex app-server-compatible mention:
 
 - Skills use `[$name](skill://path)`.
 - Apps use `[$name](app://connector_id)`.
-- Plugins use `[$name](plugin://plugin_id)`.
+- Plugins use `[$name](plugin://plugin_name@marketplace_name)`.
 
 Before sending `turn/input`, the executor parses those markdown mentions and builds Responses API-style `input` text elements. This lets Codex receive the actual skill/app/plugin reference instead of only the display text.
 
 Plugins that the user has not selected are not injected into ordinary conversations automatically. Installing a plugin only makes its skills and apps discoverable to the Codex app-server; activation still depends on Codex app-server plugin state and the user's selection in the conversation.
+
+When the user clicks "Try in chat" from plugin detail or marketplace rows, Wework writes one plugin mention according to the Codex protocol instead of writing both plugin and skill mentions. The trial content is placed into a new chat draft, and related templates are shown above the composer. After the user sends the message, the message bubble still renders `plugin://` mentions as badges so protocol strings are not shown as plain text.
 
 ## Backend Upload
 

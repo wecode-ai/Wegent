@@ -19,6 +19,31 @@ vi.mock('@/tauri/localExecutor', () => ({
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
 }))
 
+vi.mock('@/features/local-runtime/LocalRuntimeInitializer', () => ({
+  LocalRuntimeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/features/local-runtime/CodexHomeInitializer', () => ({
+  CodexHomeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/api/local/codexPlugins', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/local/codexPlugins')>()
+  return {
+    ...actual,
+    createLocalCodexPluginApi: () => ({
+      ...actual.createLocalCodexPluginApi(),
+      codexHomeMigrationStatus: vi.fn().mockResolvedValue({
+        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        nativeCodexHome: '/Users/test/.codex',
+        weworkCodexHomeExists: true,
+        nativeCodexHomeExists: true,
+        shouldPromptMigration: false,
+      }),
+    }),
+  }
+})
+
 const mockViewport = vi.hoisted(() => ({
   isMobile: false,
 }))

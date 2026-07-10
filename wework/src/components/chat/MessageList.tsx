@@ -1303,13 +1303,14 @@ function MessageHoverActions({
   )
 }
 
-const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
+const CODEX_MENTION_LINK_PATTERN =
+  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+))\)/g
 
-function localSkillTokenTestId(name: string): string {
+function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
-function displayLocalSkillName(name: string): string {
+function displayCodexMentionName(name: string): string {
   return name
     .split(/[-_\s]+/)
     .filter(Boolean)
@@ -1317,32 +1318,45 @@ function displayLocalSkillName(name: string): string {
     .join(' ')
 }
 
+function codexMentionKind(href: string): 'skill' | 'app' | 'plugin' {
+  if (href.startsWith('app://')) return 'app'
+  if (href.startsWith('plugin://')) return 'plugin'
+  return 'skill'
+}
+
 function renderUserContent(content: string) {
   const parts: ReactNode[] = []
   let offset = 0
 
-  for (const match of content.matchAll(LOCAL_SKILL_LINK_PATTERN)) {
+  for (const match of content.matchAll(CODEX_MENTION_LINK_PATTERN)) {
     const start = match.index ?? 0
     const text = content.slice(offset, start)
     if (text) {
       parts.push(<span key={`text-${offset}`}>{text}</span>)
     }
 
-    const skillName = match[1]
-    const href = match[2]
+    const mentionName = match[2]
+    const href = match[3]
+    const mentionKind = codexMentionKind(href)
+    const tokenTestId = codexMentionTokenTestId(mentionName)
+    const testId =
+      mentionKind === 'skill'
+        ? `sent-local-skill-token-${tokenTestId}`
+        : `sent-${mentionKind}-token-${tokenTestId}`
+    const iconTestId =
+      mentionKind === 'skill'
+        ? `sent-local-skill-icon-${tokenTestId}`
+        : `sent-${mentionKind}-icon-${tokenTestId}`
     parts.push(
       <a
-        key={`skill-${start}`}
+        key={`${mentionKind}-${start}`}
         href={href}
-        data-testid={`sent-local-skill-token-${localSkillTokenTestId(skillName)}`}
+        data-testid={testId}
         className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-[13px] font-medium leading-none text-blue-600 no-underline"
         onClick={event => event.preventDefault()}
       >
-        <Package
-          data-testid={`sent-local-skill-icon-${localSkillTokenTestId(skillName)}`}
-          className="h-3.5 w-3.5 shrink-0 text-blue-600"
-        />
-        <span className="min-w-0 truncate">{displayLocalSkillName(skillName)}</span>
+        <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        <span className="min-w-0 truncate">{displayCodexMentionName(mentionName)}</span>
       </a>
     )
     offset = start + match[0].length

@@ -1,16 +1,37 @@
-import type { InstalledPlugin } from '@/types/api'
+import type { InstalledPlugin, PluginPathComponent } from '@/types/api'
 
 const PLUGIN_TRIAL_STORAGE_KEY = 'wework:pending-plugin-trial'
+export const PLUGIN_TRIAL_QUEUED_EVENT = 'wework:plugin-trial-queued'
 export const LOCAL_PLUGIN_SKILLS_CHANGED_EVENT = 'wework:local-plugin-skills-changed'
 export const FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT = 'wework:focus-plugin-trial-composer'
 
 interface PendingPluginTrial {
   input: string
   pluginName: string
+  templates: PluginPathComponent[]
 }
 
 function firstPluginSkill(plugin: InstalledPlugin) {
   return plugin.spec.components.skills.find(skill => skill.path && skill.name)
+}
+
+function sourcePayload(plugin: InstalledPlugin): Record<string, unknown> {
+  const payload = plugin.spec.sourcePayload
+  return payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {}
+}
+
+function pluginMentionPath(plugin: InstalledPlugin): string | null {
+  const payload = sourcePayload(plugin)
+  const pluginName =
+    (typeof payload.pluginName === 'string' && payload.pluginName.trim()) ||
+    (typeof payload.remotePluginId === 'string' && payload.remotePluginId.trim()) ||
+    plugin.spec.source.pluginKey
+  const marketplaceName =
+    (typeof payload.marketplaceName === 'string' && payload.marketplaceName.trim()) ||
+    plugin.metadata.namespace
+  if (typeof pluginName !== 'string' || !pluginName.trim()) return null
+  if (typeof marketplaceName !== 'string' || !marketplaceName.trim()) return null
+  return `plugin://${pluginName}@${marketplaceName}`
 }
 
 function skillFilePath(path: string): string {
@@ -35,12 +56,20 @@ function escapeRegExp(value: string): string {
 
 export function pluginTrialInput(plugin: InstalledPlugin): string | null {
   const skill = firstPluginSkill(plugin)
-  if (!skill) return null
-  const reference = `[$${skill.name}](skill://${skillFilePath(skill.path)})`
+  const pluginPath = pluginMentionPath(plugin)
+  const pluginName = plugin.spec.displayName || plugin.spec.source.pluginKey
+  const reference =
+    pluginPath && pluginName
+      ? `[$${pluginName}](${pluginPath})`
+      : skill
+        ? `[$${skill.name}](skill://${skillFilePath(skill.path)})`
+        : null
+  if (!reference) return null
   const defaultPrompt = firstDefaultPrompt(plugin.spec.interface?.defaultPrompt)
   if (!defaultPrompt) return `${reference} `
 
-  const skillTokenPattern = new RegExp(`\\$${escapeRegExp(skill.name)}\\b`, 'g')
+  const skillTokenPattern = skill ? new RegExp(`\\$${escapeRegExp(skill.name)}\\b`, 'g') : null
+  if (!skillTokenPattern) return `${reference} ${defaultPrompt}`
   const promptWithReference = defaultPrompt.replace(skillTokenPattern, reference)
   if (promptWithReference !== defaultPrompt) return `${promptWithReference} `
 
@@ -53,21 +82,32 @@ export function queuePluginTrial(plugin: InstalledPlugin): boolean {
   const payload: PendingPluginTrial = {
     input,
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
+    templates: plugin.spec.components.templates ?? plugin.spec.components.commands ?? [],
   }
   window.sessionStorage.setItem(PLUGIN_TRIAL_STORAGE_KEY, JSON.stringify(payload))
+  window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT))
   return true
 }
 
-export function consumePluginTrialInput(): string | null {
+export function consumePluginTrial(): PendingPluginTrial | null {
   const raw = window.sessionStorage.getItem(PLUGIN_TRIAL_STORAGE_KEY)
   if (!raw) return null
   window.sessionStorage.removeItem(PLUGIN_TRIAL_STORAGE_KEY)
   try {
     const payload = JSON.parse(raw) as Partial<PendingPluginTrial>
-    return typeof payload.input === 'string' && payload.input.trim() ? payload.input : null
+    if (typeof payload.input !== 'string' || !payload.input.trim()) return null
+    return {
+      input: payload.input,
+      pluginName: typeof payload.pluginName === 'string' ? payload.pluginName : '',
+      templates: Array.isArray(payload.templates) ? payload.templates : [],
+    }
   } catch {
     return null
   }
+}
+
+export function consumePluginTrialInput(): string | null {
+  return consumePluginTrial()?.input ?? null
 }
 
 export function notifyLocalPluginSkillsChanged() {

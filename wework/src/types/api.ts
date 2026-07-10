@@ -1547,6 +1547,13 @@ export interface PluginSkillComponent {
 export interface PluginPathComponent {
   name: string
   path: string
+  description?: string | null
+  category?: string | null
+  canonicalConnectorId?: string | null
+  logoUrl?: string | null
+  logoUrlDark?: string | null
+  materializedAppIds?: string[]
+  unavailableReason?: string | null
 }
 
 export interface PluginMCPComponent {
@@ -1557,6 +1564,7 @@ export interface PluginMCPComponent {
 export interface InstalledPluginComponents {
   skills: PluginSkillComponent[]
   commands: PluginPathComponent[]
+  templates?: PluginPathComponent[]
   apps?: PluginPathComponent[]
   agents: PluginPathComponent[]
   hooks: PluginPathComponent[]

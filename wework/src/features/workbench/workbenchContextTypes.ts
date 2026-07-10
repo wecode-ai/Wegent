@@ -13,6 +13,7 @@ import type {
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
+  PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
   ProjectWithTasks,
@@ -107,6 +108,7 @@ export interface WorkbenchContextValue {
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string
+    trialTemplates: PluginPathComponent[]
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>

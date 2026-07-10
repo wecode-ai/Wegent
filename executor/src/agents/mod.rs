@@ -102,7 +102,7 @@ pub fn resolve_codex_binary_path(value: &str) -> String {
 }
 
 pub fn build_codex_app_server_command(binary: &str) -> CommandSpec {
-    CommandSpec::new(binary).arg("app-server").arg("--stdio")
+    CommandSpec::new(binary).arg("app-server")
 }
 
 fn resolve_claude_binary() -> String {

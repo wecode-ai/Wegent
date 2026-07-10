@@ -40,7 +40,7 @@ import type {
   SystemSkillCatalogItem,
   SystemSkillProviderError,
 } from '@/types/api'
-import type { LocalCodexHomeMigrationStatus, LocalCodexMarketplace } from '@/api/local/codexPlugins'
+import type { LocalCodexMarketplace } from '@/api/local/codexPlugins'
 import { type InstalledPluginItem } from './PluginManagementRows'
 import { ConfirmUninstallDialog, type CatalogItem } from './PluginCatalogSections'
 import { CustomMcpDialog, type CustomMcpFormState } from './McpManagementSections'
@@ -113,9 +113,8 @@ const SYSTEM_SKILL_PAGE_SIZE = 20
 const MARKETPLACE_SECTION_COLLAPSED_COUNT = 6
 const OPENAI_OFFICIAL_MARKETPLACE = {
   name: 'OpenAI 官方市场',
-  path: 'https://github.com/openai/plugins',
+  path: 'openai-curated',
 }
-const CODEX_MIGRATION_DISMISSED_STORAGE_KEY = 'wework.plugins.codexMigrationDismissed'
 const emptyCustomMcpForm: CustomMcpFormState = {
   name: '',
   displayName: '',
@@ -334,9 +333,10 @@ function marketplaceSectionTitle(item: PluginMarketplaceItem): string {
   return 'Other'
 }
 
-function tryPluginInChat(plugin: InstalledPlugin) {
-  queuePluginTrial(plugin)
-  navigateTo('/')
+function tryPluginInChat(plugin: InstalledPlugin): boolean {
+  const queued = queuePluginTrial(plugin)
+  if (queued) navigateTo('/')
+  return queued
 }
 
 function localMarketplaceKey(id: string): string {
@@ -669,61 +669,6 @@ function PluginMarketplaceLoadingSkeleton({ message, hint }: { message: string; 
   )
 }
 
-function CodexMigrationDialog({
-  status,
-  isMigrating,
-  onDismiss,
-  onMigrate,
-}: {
-  status: LocalCodexHomeMigrationStatus
-  isMigrating: boolean
-  onDismiss: () => void
-  onMigrate: () => void
-}) {
-  return (
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4">
-      <div
-        role="dialog"
-        aria-modal="true"
-        data-testid="plugins-codex-migration-dialog"
-        className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-2xl"
-      >
-        <div className="space-y-2">
-          <h2 className="text-base font-medium text-text-primary">迁移本机 Codex 插件配置？</h2>
-          <p className="text-sm leading-6 text-text-secondary">
-            检测到本机已有 Codex 目录，但 WeWork 的插件运行目录还没有初始化。可以复制现有 Codex
-            插件、技能和市场缓存作为 WeWork 的初始配置。
-          </p>
-        </div>
-        <div className="mt-4 space-y-1 rounded-lg bg-surface px-3 py-2 text-xs leading-5 text-text-muted">
-          <div className="truncate">来源：{status.nativeCodexHome}</div>
-          <div className="truncate">目标：{status.weworkCodexHome}</div>
-        </div>
-        <div className="mt-5 flex justify-end gap-2">
-          <button
-            type="button"
-            data-testid="plugins-codex-migration-dismiss-button"
-            className="h-8 rounded-lg px-3 text-[13px] font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
-            onClick={onDismiss}
-            disabled={isMigrating}
-          >
-            暂不迁移
-          </button>
-          <button
-            type="button"
-            data-testid="plugins-codex-migration-confirm-button"
-            className="h-8 rounded-lg bg-text-primary px-3 text-[13px] font-medium text-background transition-colors hover:bg-text-primary/90 disabled:cursor-wait disabled:opacity-70"
-            onClick={onMigrate}
-            disabled={isMigrating}
-          >
-            {isMigrating ? '迁移中...' : '迁移'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 interface PluginsWorkspaceProps {
   sidebarCollapsed?: boolean
   topBarLeftActions?: ReactNode
@@ -779,9 +724,6 @@ export function PluginsWorkspace({
   const [pendingMarketplaceDelete, setPendingMarketplaceDelete] =
     useState<PendingMarketplaceDelete | null>(null)
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>([])
-  const [codexMigrationStatus, setCodexMigrationStatus] =
-    useState<LocalCodexHomeMigrationStatus | null>(null)
-  const [isMigratingCodexHome, setIsMigratingCodexHome] = useState(false)
   const [, setSystemSkillState] = useState<SystemSkillState>({
     items: [],
     providerErrors: [],
@@ -1127,20 +1069,16 @@ export function PluginsWorkspace({
     setMarketplaceRefreshTick(previous => previous + 1)
   }
 
-  const dismissCodexMigration = () => {
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem(CODEX_MIGRATION_DISMISSED_STORAGE_KEY, '1')
-    }
-    setCodexMigrationStatus(null)
-  }
-
-  const migrateCodexHome = () => {
-    setIsMigratingCodexHome(true)
+  const tryLocalInstalledPluginInChat = (pluginId: string | number) => {
     localPluginApi
-      .migrateNativeCodexHome()
-      .then(() => {
-        dismissCodexMigration()
-        refreshMarketplace()
+      .readInstalledPluginForTrial(pluginId)
+      .then(plugin => {
+        if (!tryPluginInChat(plugin)) {
+          setPluginMarketplaceState(previous => ({
+            ...previous,
+            error: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
+          }))
+        }
       })
       .catch((error: Error) => {
         setPluginMarketplaceState(previous => ({
@@ -1148,7 +1086,6 @@ export function PluginsWorkspace({
           error: error.message,
         }))
       })
-      .finally(() => setIsMigratingCodexHome(false))
   }
 
   const installMarketplacePlugin = (item: PluginMarketplaceItem) => {
@@ -1162,7 +1099,17 @@ export function PluginsWorkspace({
           : (installedPlugins.find(
               plugin => String(plugin.id) === String(item.installedPluginId)
             ) ?? null)
-      tryPluginInChat((installed ?? toMarketplaceInstalledPluginItem(item)).raw)
+      const trialPluginId = installed?.id ?? item.installedPluginId ?? item.id
+      if (selectedMarketplace.kind === 'local') {
+        tryLocalInstalledPluginInChat(trialPluginId)
+        return
+      }
+      if (!tryPluginInChat((installed ?? toMarketplaceInstalledPluginItem(item)).raw)) {
+        setPluginMarketplaceState(previous => ({
+          ...previous,
+          error: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
+        }))
+      }
       return
     }
     if (installingMarketplacePluginIds.has(item.id)) {
@@ -1255,7 +1202,17 @@ export function PluginsWorkspace({
 
   const addOpenAIOfficialMarketplace = () => {
     setShowAddMarketplaceMenu(false)
-    persistMarketplace(OPENAI_OFFICIAL_MARKETPLACE)
+    setMarketplaceConfigError(null)
+    setIsSavingMarketplace(true)
+    localPluginApi
+      .selectOpenAIOfficialMarketplace()
+      .then(applyLocalMarketplaceState)
+      .catch((error: Error) => {
+        setMarketplaceConfigError(error.message)
+      })
+      .finally(() => {
+        setIsSavingMarketplace(false)
+      })
   }
 
   const deleteMarketplace = () => {
@@ -1434,32 +1391,6 @@ export function PluginsWorkspace({
       isCurrent = false
     }
   }, [activeTab, loadMcpProviderServers, mcpApi])
-
-  useEffect(() => {
-    let isCurrent = true
-    if (
-      typeof window !== 'undefined' &&
-      window.localStorage.getItem(CODEX_MIGRATION_DISMISSED_STORAGE_KEY) === '1'
-    ) {
-      return () => {
-        isCurrent = false
-      }
-    }
-
-    localPluginApi
-      .codexHomeMigrationStatus()
-      .then(status => {
-        if (!isCurrent) return
-        setCodexMigrationStatus(status.shouldPromptMigration ? status : null)
-      })
-      .catch(() => {
-        if (isCurrent) setCodexMigrationStatus(null)
-      })
-
-    return () => {
-      isCurrent = false
-    }
-  }, [localPluginApi])
 
   useEffect(() => {
     let isCurrent = true
@@ -1647,7 +1578,19 @@ export function PluginsWorkspace({
       <PluginDetailView
         plugin={selectedPlugin}
         onBack={() => setSelectedPluginId(null)}
-        onToggle={() => tryPluginInChat(selectedPlugin.raw)}
+        onToggle={() => {
+          const sourceType = selectedPlugin.raw.spec.source.type
+          if (sourceType === 'marketplace') {
+            tryLocalInstalledPluginInChat(selectedPlugin.id)
+            return
+          }
+          if (!tryPluginInChat(selectedPlugin.raw)) {
+            setPluginMarketplaceState(previous => ({
+              ...previous,
+              error: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
+            }))
+          }
+        }}
         onComponentToggle={(componentKey, enabled) =>
           togglePluginComponent(selectedPlugin.id, componentKey, enabled)
         }
@@ -1684,7 +1627,16 @@ export function PluginsWorkspace({
         onBack={() => setSelectedMarketplacePluginId(null)}
         onToggle={() => {
           if (isInstalled && installedDetail) {
-            tryPluginInChat(installedDetail.raw)
+            if (selectedMarketplace?.kind === 'local') {
+              tryLocalInstalledPluginInChat(installedDetail.id)
+              return
+            }
+            if (!tryPluginInChat(installedDetail.raw)) {
+              setPluginMarketplaceState(previous => ({
+                ...previous,
+                error: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
+              }))
+            }
             return
           }
           installMarketplacePlugin(selectedMarketplacePlugin)
@@ -2370,14 +2322,6 @@ export function PluginsWorkspace({
             </div>
           </form>
         </div>
-      )}
-      {codexMigrationStatus && (
-        <CodexMigrationDialog
-          status={codexMigrationStatus}
-          isMigrating={isMigratingCodexHome}
-          onDismiss={dismissCodexMigration}
-          onMigrate={migrateCodexHome}
-        />
       )}
     </main>
   )

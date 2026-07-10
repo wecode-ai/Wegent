@@ -10,7 +10,7 @@ export function BufferedChatInput({ value, onChange, onSubmit, ...props }: ChatI
   const setDraft = useCallback(
     (nextDraft: string) => {
       setDraftState({ sourceValue: value, draft: nextDraft })
-      if (value.includes('skill://')) {
+      if (value.includes('skill://') || value.includes('plugin://')) {
         onChange(nextDraft)
       }
     },

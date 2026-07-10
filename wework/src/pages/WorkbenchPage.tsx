@@ -13,25 +13,13 @@ import { shouldUseMobileWorkbenchLayout } from '@/lib/workbench-layout-mode'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
 import { syncTrayMenuState } from '@/tauri/trayNavigation'
-import {
-  consumePluginTrialInput,
-  FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
-} from '@/features/plugins/pluginTrial'
-
-interface PendingPluginTrialInjection {
-  input: string
-  targetStandaloneChatKey: number
-}
-
 export function WorkbenchPage() {
   const isMobileViewport = useIsMobile()
   const isTauri = isTauriRuntime()
-  const { state, runtimeTaskReminders, projectChat, startStandaloneChat } = useWorkbench()
+  const { state, runtimeTaskReminders } = useWorkbench()
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const { trayUnreadEnabled, trayRunningEnabled, trayUsageEnabled } = taskReminders.preferences
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
-  const [pendingPluginTrialInjection, setPendingPluginTrialInjection] =
-    useState<PendingPluginTrialInjection | null>(null)
   const trayMenuTaskGroups = useMemo(
     () =>
       buildTrayMenuTaskGroups(state.runtimeWork, {
@@ -66,40 +54,6 @@ export function WorkbenchPage() {
       tooltip: trayTooltip,
     })
   }, [trayMenuTaskGroups, codexUsage.trayTitle, trayTooltip, trayUsageEnabled])
-
-  useEffect(() => {
-    const trialInput = consumePluginTrialInput()
-    if (!trialInput) return
-    const targetStandaloneChatKey = state.standaloneChatKey + 1
-    const frame = window.requestAnimationFrame(() => {
-      setPendingPluginTrialInjection({
-        input: trialInput,
-        targetStandaloneChatKey,
-      })
-      startStandaloneChat()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [projectChat.input, startStandaloneChat, state.currentRuntimeTask, state.standaloneChatKey])
-
-  useEffect(() => {
-    if (!pendingPluginTrialInjection) return
-    if (state.currentRuntimeTask) {
-      return
-    }
-    if (state.standaloneChatKey !== pendingPluginTrialInjection.targetStandaloneChatKey) {
-      return
-    }
-    projectChat.setInput(pendingPluginTrialInjection.input)
-    const frame = window.requestAnimationFrame(() => {
-      setPendingPluginTrialInjection(null)
-      window.dispatchEvent(
-        new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
-          detail: { expectedValue: pendingPluginTrialInjection.input },
-        })
-      )
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [pendingPluginTrialInjection, projectChat, state.currentRuntimeTask, state.standaloneChatKey])
 
   useEffect(() => {
     if (!isTauri) {

@@ -371,6 +371,27 @@ pub struct CodexHomeMigrationStatus {
     should_prompt_migration: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexHomeInitializeOptions {
+    migrate_native_home: bool,
+    remote_apps_enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalConfigPatch {
+    remote_apps_enabled: Option<bool>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalConfig {
+    codex_home: String,
+    config_path: String,
+    remote_apps_enabled: bool,
+}
+
 struct LocalExecutorLogTail {
     path: String,
     content: String,
@@ -931,16 +952,174 @@ fn native_codex_home_path() -> Result<PathBuf, String> {
 fn codex_home_migration_status() -> Result<CodexHomeMigrationStatus, String> {
     let executor_home = local_executor_home_path()?;
     let wework_codex_home = wework_codex_home_path(&executor_home.display().to_string())?;
+    let wework_codex_config = wework_codex_home.join("config.toml");
     let native_codex_home = native_codex_home_path()?;
     let wework_codex_home_exists = wework_codex_home.exists();
+    let wework_codex_config_exists = wework_codex_config.exists();
     let native_codex_home_exists = native_codex_home.exists();
     Ok(CodexHomeMigrationStatus {
         wework_codex_home: wework_codex_home.display().to_string(),
         native_codex_home: native_codex_home.display().to_string(),
         wework_codex_home_exists,
         native_codex_home_exists,
-        should_prompt_migration: !wework_codex_home_exists && native_codex_home_exists,
+        should_prompt_migration: !wework_codex_config_exists && native_codex_home_exists,
     })
+}
+
+fn wework_codex_config_path() -> Result<(PathBuf, PathBuf), String> {
+    let executor_home = local_executor_home_path()?;
+    let codex_home = wework_codex_home_path(&executor_home.display().to_string())?;
+    let config_path = codex_home.join("config.toml");
+    Ok((codex_home, config_path))
+}
+
+fn read_remote_apps_enabled_from_config(content: &str) -> bool {
+    let mut in_features = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_features = trimmed == "[features]";
+            continue;
+        }
+        if !in_features || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix("apps") else {
+            continue;
+        };
+        if !rest.trim_start().starts_with('=') {
+            continue;
+        }
+        return rest
+            .trim_start()
+            .trim_start_matches('=')
+            .trim()
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            == "true";
+    }
+    false
+}
+
+fn read_codex_local_config() -> Result<CodexLocalConfig, String> {
+    let (codex_home, config_path) = wework_codex_config_path()?;
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    Ok(CodexLocalConfig {
+        codex_home: codex_home.display().to_string(),
+        config_path: config_path.display().to_string(),
+        remote_apps_enabled: read_remote_apps_enabled_from_config(&content),
+    })
+}
+
+fn set_remote_apps_enabled_in_config(content: &str, enabled: bool) -> String {
+    let apps_line = format!("apps = {enabled}");
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let mut features_start = None;
+    let mut features_end = lines.len();
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if features_start.is_some() {
+                features_end = index;
+                break;
+            }
+            if trimmed == "[features]" {
+                features_start = Some(index);
+            }
+        }
+    }
+
+    if let Some(start) = features_start {
+        for line in lines.iter_mut().take(features_end).skip(start + 1) {
+            let trimmed = line.trim_start();
+            let Some(rest) = trimmed.strip_prefix("apps") else {
+                continue;
+            };
+            if rest.trim_start().starts_with('=') {
+                let indent_len = line.len() - trimmed.len();
+                *line = format!("{}{}", " ".repeat(indent_len), apps_line);
+                return format!("{}\n", lines.join("\n"));
+            }
+        }
+        lines.insert(start + 1, apps_line);
+        return format!("{}\n", lines.join("\n"));
+    }
+
+    let mut next = content.trim_end().to_string();
+    if !next.is_empty() {
+        next.push_str("\n\n");
+    }
+    next.push_str("[features]\n");
+    next.push_str(&apps_line);
+    next.push('\n');
+    next
+}
+
+fn write_codex_remote_apps_enabled(enabled: bool) -> Result<CodexLocalConfig, String> {
+    let (codex_home, config_path) = wework_codex_config_path()?;
+    fs::create_dir_all(&codex_home)
+        .map_err(|error| format!("failed to create {}: {error}", codex_home.display()))?;
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let next_content = set_remote_apps_enabled_in_config(&content, enabled);
+    fs::write(&config_path, next_content)
+        .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+    read_codex_local_config()
+}
+
+fn copy_codex_initialization_entry(source: &Path, destination: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+    let metadata = fs::symlink_metadata(source)
+        .map_err(|error| format!("failed to inspect {}: {error}", source.display()))?;
+    if metadata.is_dir() {
+        copy_directory_recursive(source, destination)
+    } else if metadata.is_file() {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+        }
+        fs::copy(source, destination).map_err(|error| {
+            format!(
+                "failed to copy {} to {}: {error}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+        Ok(())
+    } else {
+        Ok(())
+    }
+}
+
+fn copy_codex_initialization_files(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
+
+    let entries = [
+        "config.toml",
+        "auth.json",
+        "AGENTS.md",
+        "models_cache.json",
+        "plugins",
+        "skills",
+        "cache",
+        "vendor_imports",
+    ];
+    for entry in entries {
+        let source_path = source.join(entry);
+        let destination_path = destination.join(entry);
+        log::info!(
+            "Codex home initialization copying entry: source={}, destination={}",
+            source_path.display(),
+            destination_path.display()
+        );
+        copy_codex_initialization_entry(&source_path, &destination_path)?;
+    }
+    Ok(())
 }
 
 fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
@@ -1849,16 +2028,61 @@ pub async fn local_executor_codex_home_migration_status() -> Result<CodexHomeMig
 }
 
 #[tauri::command]
-pub async fn local_executor_migrate_native_codex_home() -> Result<CodexHomeMigrationStatus, String>
+pub async fn local_executor_read_codex_local_config() -> Result<CodexLocalConfig, String> {
+    read_codex_local_config()
+}
+
+#[tauri::command]
+pub async fn local_executor_update_codex_local_config(
+    patch: CodexLocalConfigPatch,
+) -> Result<CodexLocalConfig, String> {
+    if let Some(enabled) = patch.remote_apps_enabled {
+        return write_codex_remote_apps_enabled(enabled);
+    }
+    read_codex_local_config()
+}
+
+#[tauri::command]
+pub async fn local_executor_initialize_codex_home(
+    options: CodexHomeInitializeOptions,
+) -> Result<CodexHomeMigrationStatus, String>
 {
     let status = codex_home_migration_status()?;
-    if !status.should_prompt_migration {
-        return Ok(status);
+    log::info!(
+        "Codex home initialization started: migrate_native_home={}, remote_apps_enabled={}, should_prompt_migration={}, native={}, wework={}",
+        options.migrate_native_home,
+        options.remote_apps_enabled,
+        status.should_prompt_migration,
+        status.native_codex_home,
+        status.wework_codex_home
+    );
+    if options.migrate_native_home && status.should_prompt_migration {
+        let source = PathBuf::from(&status.native_codex_home);
+        let destination = PathBuf::from(&status.wework_codex_home);
+        copy_codex_initialization_files(&source, &destination)?;
+    } else {
+        let destination = PathBuf::from(&status.wework_codex_home);
+        fs::create_dir_all(&destination)
+            .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
     }
-    let source = PathBuf::from(&status.native_codex_home);
-    let destination = PathBuf::from(&status.wework_codex_home);
-    copy_directory_recursive(&source, &destination)?;
-    codex_home_migration_status()
+    write_codex_remote_apps_enabled(options.remote_apps_enabled)?;
+    let next_status = codex_home_migration_status()?;
+    log::info!(
+        "Codex home initialization finished: should_prompt_migration={}, wework={}",
+        next_status.should_prompt_migration,
+        next_status.wework_codex_home
+    );
+    Ok(next_status)
+}
+
+#[tauri::command]
+pub async fn local_executor_migrate_native_codex_home() -> Result<CodexHomeMigrationStatus, String>
+{
+    local_executor_initialize_codex_home(CodexHomeInitializeOptions {
+        migrate_native_home: true,
+        remote_apps_enabled: false,
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1996,6 +2220,68 @@ mod tests {
 
         assert_eq!(label, "Local executor diagnostic");
         assert!(!label.contains("stderr"));
+    }
+
+    #[test]
+    fn codex_local_config_remote_apps_defaults_to_disabled() {
+        assert!(!read_remote_apps_enabled_from_config(""));
+        assert!(!read_remote_apps_enabled_from_config("[features]\n"));
+        assert!(!read_remote_apps_enabled_from_config("[features]\napps = false\n"));
+        assert!(!read_remote_apps_enabled_from_config("[other]\napps = true\n"));
+    }
+
+    #[test]
+    fn codex_local_config_remote_apps_reads_features_section() {
+        let content = r#"
+model = "gpt-5.5"
+
+[features]
+apps = true # enables remote apps
+
+[projects."/tmp/example"]
+trust_level = "trusted"
+"#;
+
+        assert!(read_remote_apps_enabled_from_config(content));
+    }
+
+    #[test]
+    fn codex_local_config_remote_apps_updates_existing_value() {
+        let content = r#"
+model = "gpt-5.5"
+
+[features]
+  apps = true
+shell_environment_policy = "inherit"
+"#;
+
+        let next = set_remote_apps_enabled_in_config(content, false);
+
+        assert!(next.contains("[features]\n  apps = false\nshell_environment_policy"));
+        assert!(next.contains("model = \"gpt-5.5\""));
+    }
+
+    #[test]
+    fn codex_local_config_remote_apps_inserts_features_section() {
+        let next = set_remote_apps_enabled_in_config("model = \"gpt-5.5\"\n", false);
+
+        assert_eq!(next, "model = \"gpt-5.5\"\n\n[features]\napps = false\n");
+    }
+
+    #[test]
+    fn codex_local_config_remote_apps_adds_to_existing_features_section() {
+        let content = r#"
+[features]
+shell_environment_policy = "inherit"
+
+[mcp_servers.example]
+command = "example"
+"#;
+
+        let next = set_remote_apps_enabled_in_config(content, true);
+
+        assert!(next.contains("[features]\napps = true\nshell_environment_policy"));
+        assert!(next.contains("[mcp_servers.example]\ncommand = \"example\""));
     }
 
     #[test]

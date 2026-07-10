@@ -30,6 +30,16 @@ export interface LocalCodexHomeMigrationStatus {
   shouldPromptMigration: boolean
 }
 
+export interface LocalCodexLocalConfig {
+  codexHome: string
+  configPath: string
+  remoteAppsEnabled: boolean
+}
+
+export interface LocalCodexLocalConfigPatch {
+  remoteAppsEnabled?: boolean
+}
+
 export interface LocalCodexMarketplace {
   id: string
   name: string
@@ -38,7 +48,13 @@ export interface LocalCodexMarketplace {
 
 export interface LocalCodexPluginApi {
   codexHomeMigrationStatus(): Promise<LocalCodexHomeMigrationStatus>
-  migrateNativeCodexHome(): Promise<LocalCodexHomeMigrationStatus>
+  initializeCodexHome(options: {
+    migrateNativeHome: boolean
+    remoteAppsEnabled: boolean
+  }): Promise<LocalCodexHomeMigrationStatus>
+  migrateNativeCodexHome(remoteAppsEnabled?: boolean): Promise<LocalCodexHomeMigrationStatus>
+  readCodexLocalConfig(): Promise<LocalCodexLocalConfig>
+  updateCodexLocalConfig(patch: LocalCodexLocalConfigPatch): Promise<LocalCodexLocalConfig>
   readState(params?: {
     q?: string
     marketplaceId?: string
@@ -53,6 +69,8 @@ export interface LocalCodexPluginApi {
     refresh?: boolean
   }): Promise<PluginMarketplaceListResponse>
   selectMarketplace(id: string): Promise<LocalCodexPluginsState>
+  selectOpenAIOfficialMarketplace(): Promise<LocalCodexPluginsState>
+  readInstalledPluginForTrial(id: string | number): Promise<InstalledPlugin>
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
   upsertMarketplace(data: {
@@ -115,7 +133,17 @@ interface CodexPluginDetail {
   }>
   hooks?: Array<{ key: string; eventName?: string }>
   apps?: Array<{ id: string; name: string; description?: string | null }>
-  appTemplates?: Array<{ templateId: string; name: string; description?: string | null }>
+  appTemplates?: Array<{
+    templateId: string
+    name: string
+    description?: string | null
+    category?: string | null
+    canonicalConnectorId?: string | null
+    logoUrl?: string | null
+    logoUrlDark?: string | null
+    materializedAppIds?: string[]
+    reason?: string | null
+  }>
   mcpServers?: string[]
 }
 
@@ -152,6 +180,7 @@ interface CodexSkillsListEntry {
 }
 
 const SELECTED_MARKETPLACE_STORAGE_KEY = 'wework.plugins.selectedCodexMarketplace'
+const OPENAI_CURATED_MARKETPLACE_ID = 'openai-curated'
 
 let cachedState: LocalCodexPluginsState | null = null
 
@@ -259,8 +288,16 @@ function pluginComponents(detail?: CodexPluginDetail | null): InstalledPluginCom
     ...(detail.appTemplates ?? []).map(template => ({
       name: template.name,
       path: template.templateId,
+      description: template.description ?? null,
+      category: template.category ?? null,
+      canonicalConnectorId: template.canonicalConnectorId ?? null,
+      logoUrl: template.logoUrl ?? null,
+      logoUrlDark: template.logoUrlDark ?? null,
+      materializedAppIds: template.materializedAppIds ?? [],
+      unavailableReason: template.reason ?? null,
     })),
   ]
+  components.templates = components.commands
   return components
 }
 
@@ -402,6 +439,19 @@ function filteredMarketplaces(
   return marketplaces.filter(marketplace => marketplace.name === normalized)
 }
 
+async function readPluginDetail(
+  marketplace: LocalCodexMarketplace,
+  pluginName: string
+): Promise<CodexPluginDetail> {
+  const localMarketplace = isLocalMarketplacePath(marketplace.path)
+  const response = await codexAppServerRequest<{ plugin: CodexPluginDetail }>('plugin/read', {
+    marketplacePath: localMarketplace ? marketplace.path : null,
+    remoteMarketplaceName: localMarketplace ? null : marketplace.id,
+    pluginName,
+  })
+  return response.plugin
+}
+
 function filterPluginItems(
   items: PluginMarketplaceItem[],
   query?: string
@@ -427,13 +477,7 @@ async function readState(
       featuredPluginIds?: string[]
     }>('plugin/list', {
       cwds: null,
-      marketplaceKinds: [
-        'local',
-        'vertical',
-        'workspace-directory',
-        'shared-with-me',
-        'created-by-me-remote',
-      ],
+      marketplaceKinds: ['local'],
     }),
     codexAppServerRequest<{ marketplaces: CodexPluginMarketplaceEntry[] }>('plugin/installed', {
       cwds: null,
@@ -477,6 +521,11 @@ async function readState(
 }
 
 export function createLocalCodexPluginApi(): LocalCodexPluginApi {
+  const defaultCodexLocalConfig: LocalCodexLocalConfig = {
+    codexHome: '',
+    configPath: '',
+    remoteAppsEnabled: false,
+  }
   return {
     codexHomeMigrationStatus() {
       if (!isTauriRuntime()) {
@@ -490,7 +539,7 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       }
       return invoke<LocalCodexHomeMigrationStatus>('local_executor_codex_home_migration_status')
     },
-    migrateNativeCodexHome() {
+    initializeCodexHome(options) {
       if (!isTauriRuntime()) {
         return Promise.resolve({
           weworkCodexHome: '',
@@ -500,7 +549,27 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
           shouldPromptMigration: false,
         })
       }
-      return invoke<LocalCodexHomeMigrationStatus>('local_executor_migrate_native_codex_home')
+      return invoke<LocalCodexHomeMigrationStatus>('local_executor_initialize_codex_home', {
+        options,
+      })
+    },
+    migrateNativeCodexHome(remoteAppsEnabled = false) {
+      return this.initializeCodexHome({
+        migrateNativeHome: true,
+        remoteAppsEnabled,
+      })
+    },
+    readCodexLocalConfig() {
+      if (!isTauriRuntime()) {
+        return Promise.resolve(defaultCodexLocalConfig)
+      }
+      return invoke<LocalCodexLocalConfig>('local_executor_read_codex_local_config')
+    },
+    updateCodexLocalConfig(patch) {
+      if (!isTauriRuntime()) {
+        return Promise.resolve({ ...defaultCodexLocalConfig, ...patch })
+      }
+      return invoke<LocalCodexLocalConfig>('local_executor_update_codex_local_config', { patch })
     },
     readState(params = {}) {
       return readState({
@@ -558,6 +627,78 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     selectMarketplace(id) {
       rememberSelectedMarketplaceId(id)
       return readState({ marketplaceId: id })
+    },
+    selectOpenAIOfficialMarketplace() {
+      rememberSelectedMarketplaceId(OPENAI_CURATED_MARKETPLACE_ID)
+      return readState({ marketplaceId: OPENAI_CURATED_MARKETPLACE_ID, refresh: true })
+    },
+    async readInstalledPluginForTrial(id) {
+      const currentState = cachedState ?? (await readState())
+      const installed = currentState.installedPlugins.find(
+        plugin => String(installedPluginId(plugin)) === String(id)
+      )
+      if (!installed) throw new Error('Codex plugin is not installed')
+      const sourcePayload = installed.spec.sourcePayload
+      const payload =
+        sourcePayload && typeof sourcePayload === 'object'
+          ? (sourcePayload as Record<string, unknown>)
+          : null
+      const marketplaceId =
+        typeof payload?.marketplaceName === 'string'
+          ? payload.marketplaceName
+          : installed.metadata.namespace
+      const pluginName =
+        typeof payload?.pluginName === 'string'
+          ? payload.pluginName
+          : installed.spec.source.pluginKey
+      const marketplace = currentState.marketplaces.find(
+        marketplace => marketplace.id === marketplaceId
+      )
+      if (!marketplace) throw new Error('Codex marketplace not found for installed plugin')
+      const summary = currentState.marketplaceItems.find(
+        item => String(item.installedPluginId ?? item.id) === String(id)
+      )
+      const detail = await readPluginDetail(marketplace, pluginName)
+      return toInstalledPlugin(
+        {
+          name: marketplace.id,
+          path: marketplace.path,
+          interface: {
+            displayName: marketplace.name,
+          },
+          plugins: [],
+        },
+        {
+          id: String(id),
+          remotePluginId:
+            typeof payload?.remotePluginId === 'string'
+              ? payload.remotePluginId
+              : (summary?.remotePluginId ?? String(id)),
+          localVersion: installed.spec.version ?? summary?.version ?? null,
+          name: pluginName,
+          source:
+            installed.spec.manifest && typeof installed.spec.manifest === 'object'
+              ? (installed.spec.manifest.source as Record<string, unknown> | undefined)
+              : undefined,
+          installed: true,
+          enabled: installed.spec.enabled,
+          installPolicy:
+            typeof installed.spec.manifest?.installPolicy === 'string'
+              ? installed.spec.manifest.installPolicy
+              : undefined,
+          authPolicy:
+            typeof installed.spec.manifest?.authPolicy === 'string'
+              ? installed.spec.manifest.authPolicy
+              : undefined,
+          availability:
+            typeof installed.spec.manifest?.availability === 'string'
+              ? installed.spec.manifest.availability
+              : undefined,
+          interface: installed.spec.interface ?? summary?.interface ?? null,
+          keywords: [],
+        },
+        detail
+      )
     },
     async deleteMarketplace(id) {
       await codexAppServerRequest('marketplace/remove', {

@@ -12,6 +12,7 @@ import type {
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
   ModelSelectionConfig,
+  PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
   RuntimeTaskAddress,
@@ -32,7 +33,12 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { RuntimeTaskCloseGuard } from './RuntimeTaskCloseGuard'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
-import { LOCAL_PLUGIN_SKILLS_CHANGED_EVENT } from '@/features/plugins/pluginTrial'
+import {
+  consumePluginTrial,
+  FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
+  LOCAL_PLUGIN_SKILLS_CHANGED_EVENT,
+  PLUGIN_TRIAL_QUEUED_EVENT,
+} from '@/features/plugins/pluginTrial'
 import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
@@ -68,6 +74,7 @@ import {
 export type { WorkbenchServices } from './workbenchServices'
 
 const LOCAL_SKILLS_CACHE_TTL_MS = 30_000
+const EMPTY_PLUGIN_TRIAL_TEMPLATES: PluginPathComponent[] = []
 
 type ProjectWorkPreferencePatch = {
   executionMode?: ProjectExecutionMode
@@ -181,16 +188,71 @@ export function WorkbenchProvider({
     standaloneChatKey: state.standaloneChatKey,
   })
   const [draftInputByScope, setDraftInputByScope] = useState<Record<string, string>>({})
+  const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
+    Record<string, PluginPathComponent[]>
+  >({})
   const draftInput = draftInputByScope[projectChatScopeKey] ?? ''
+  const trialTemplates = trialTemplatesByScope[projectChatScopeKey] ?? EMPTY_PLUGIN_TRIAL_TEMPLATES
   const setDraftInput = useCallback(
     (value: string) => {
       setDraftInputByScope(current => {
         if ((current[projectChatScopeKey] ?? '') === value) return current
         return { ...current, [projectChatScopeKey]: value }
       })
+      if (!value.trim()) {
+        setTrialTemplatesByScope(current => {
+          if (!current[projectChatScopeKey]) return current
+          const next = { ...current }
+          delete next[projectChatScopeKey]
+          return next
+        })
+      }
     },
     [projectChatScopeKey]
   )
+  const consumeQueuedPluginTrial = useCallback(() => {
+    const trial = consumePluginTrial()
+    if (!trial) return
+    const nextStandaloneChatKey = state.currentRuntimeTask
+      ? state.standaloneChatKey
+      : state.standaloneChatKey + 1
+    const nextScopeKey = getProjectChatScopeKey({
+      currentRuntimeTask: null,
+      standaloneChatKey: nextStandaloneChatKey,
+    })
+    dispatch({
+      type: 'project_cleared',
+      standaloneDeviceId: getRememberedStandaloneDeviceId(
+        user,
+        state.devices,
+        state.standaloneDeviceId
+      ),
+      standaloneWorkspacePath: null,
+      startFreshChat: !state.currentRuntimeTask,
+    })
+    setDraftInputByScope(current => ({ ...current, [nextScopeKey]: trial.input }))
+    setTrialTemplatesByScope(current => ({ ...current, [nextScopeKey]: trial.templates }))
+    navigateTo('/')
+    window.dispatchEvent(
+      new CustomEvent(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, {
+        detail: { expectedValue: trial.input },
+      })
+    )
+  }, [
+    state.currentRuntimeTask,
+    state.devices,
+    state.standaloneChatKey,
+    state.standaloneDeviceId,
+    user,
+  ])
+
+  useEffect(() => {
+    queueMicrotask(consumeQueuedPluginTrial)
+    window.addEventListener(PLUGIN_TRIAL_QUEUED_EVENT, consumeQueuedPluginTrial)
+    return () => {
+      window.removeEventListener(PLUGIN_TRIAL_QUEUED_EVENT, consumeQueuedPluginTrial)
+    }
+  }, [consumeQueuedPluginTrial])
   useEffect(() => {
     const socketClient = resolvedServices.socketClient
     if (!socketClient) return undefined
@@ -889,6 +951,7 @@ export function WorkbenchProvider({
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
+      trialTemplates,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -921,6 +984,7 @@ export function WorkbenchProvider({
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
       draftInput,
+      trialTemplates,
       handleBlockedModelSelect,
       currentContextUsage,
       isOptionsLocked,
@@ -949,6 +1013,7 @@ export function WorkbenchProvider({
       selectedModelOptions: modelSelection.selectedModelOptions,
       isModelSelectionReady: modelSelection.isSelectionReady,
       input: draftInput,
+      trialTemplates,
       selectedSkills: skillSelection.selectedSkills,
       attachments: attachmentSelection.attachments,
       uploadingFiles: attachmentSelection.uploadingFiles,
@@ -981,6 +1046,7 @@ export function WorkbenchProvider({
       attachmentSelection.resetAttachments,
       attachmentSelection.uploadingFiles,
       draftInput,
+      trialTemplates,
       handleBlockedModelSelect,
       currentContextUsage,
       listLocalSkills,
