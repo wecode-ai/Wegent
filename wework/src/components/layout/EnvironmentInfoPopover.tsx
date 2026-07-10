@@ -50,10 +50,12 @@ interface EnvironmentInfoPopoverProps {
 
 type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
 
-const POPOVER_WIDTH = 340
+const POPOVER_WIDTH = 300
 const POPOVER_GAP = 8
 const VIEWPORT_MARGIN = 16
 const AUTO_OPEN_MIN_VIEWPORT_WIDTH = 1280
+const CONVERSATION_PANEL_GAP = 16
+const CONVERSATION_CONTENT_SELECTOR = '[data-testid="desktop-floating-composer-layer"]'
 
 interface PopoverPosition {
   left: number
@@ -73,8 +75,27 @@ function getEnvironmentPopoverPosition(anchor: DOMRect, container: HTMLElement):
   }
 }
 
-function shouldAutoOpenEnvironmentInfo() {
-  return typeof window !== 'undefined' && window.innerWidth >= AUTO_OPEN_MIN_VIEWPORT_WIDTH
+function canAutoOpenEnvironmentInfo(
+  anchor: DOMRect,
+  container: HTMLElement
+): { open: boolean; position: PopoverPosition } {
+  const position = getEnvironmentPopoverPosition(anchor, container)
+  if (window.innerWidth < AUTO_OPEN_MIN_VIEWPORT_WIDTH) {
+    return { open: false, position }
+  }
+
+  const conversationContent = container.querySelector(CONVERSATION_CONTENT_SELECTOR)
+  if (!conversationContent) {
+    return { open: true, position }
+  }
+
+  const containerRect = container.getBoundingClientRect()
+  const conversationRect = conversationContent.getBoundingClientRect()
+  const panelLeft = containerRect.left + position.left
+  return {
+    open: panelLeft >= conversationRect.right + CONVERSATION_PANEL_GAP,
+    position,
+  }
 }
 
 export function EnvironmentInfoPopover({
@@ -91,7 +112,7 @@ export function EnvironmentInfoPopover({
   onOpenChangesReview,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [open, setOpen] = useState(shouldAutoOpenEnvironmentInfo)
+  const [open, setOpen] = useState(false)
   const [workspacePathCopied, setWorkspacePathCopied] = useState(false)
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
@@ -102,6 +123,7 @@ export function EnvironmentInfoPopover({
   const rootRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const commitPanelRef = useRef<HTMLFormElement>(null)
+  const userToggledOpenRef = useRef(false)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
   const device = info.deviceId
@@ -130,6 +152,7 @@ export function EnvironmentInfoPopover({
 
   function handleOpenChangesReview() {
     onOpenChangesReview?.()
+    userToggledOpenRef.current = true
     setOpen(false)
   }
 
@@ -216,13 +239,47 @@ export function EnvironmentInfoPopover({
     )
   }, [popoverContainer])
 
+  const synchronizeAutoOpenState = useCallback(() => {
+    if (userToggledOpenRef.current || !rootRef.current || !popoverContainer) return
+
+    const next = canAutoOpenEnvironmentInfo(
+      rootRef.current.getBoundingClientRect(),
+      popoverContainer
+    )
+    setPopoverPosition(next.position)
+    setOpen(next.open)
+  }, [popoverContainer])
+
   function handleToggleOpen() {
+    userToggledOpenRef.current = true
     const nextOpen = !open
     setOpen(nextOpen)
     if (nextOpen) {
       void onRefresh?.()
     }
   }
+
+  useLayoutEffect(() => {
+    synchronizeAutoOpenState()
+  }, [synchronizeAutoOpenState])
+
+  useEffect(() => {
+    if (userToggledOpenRef.current || !popoverContainer) return
+
+    window.addEventListener('resize', synchronizeAutoOpenState)
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(synchronizeAutoOpenState) : null
+    resizeObserver?.observe(popoverContainer)
+    const conversationContent = popoverContainer.querySelector(CONVERSATION_CONTENT_SELECTOR)
+    if (conversationContent instanceof HTMLElement) {
+      resizeObserver?.observe(conversationContent)
+    }
+
+    return () => {
+      window.removeEventListener('resize', synchronizeAutoOpenState)
+      resizeObserver?.disconnect()
+    }
+  }, [popoverContainer, synchronizeAutoOpenState])
 
   useLayoutEffect(() => {
     if (!open || !popoverContainer) return
@@ -241,6 +298,7 @@ export function EnvironmentInfoPopover({
         !popoverRef.current?.contains(target) &&
         !commitPanelRef.current?.contains(target)
       ) {
+        userToggledOpenRef.current = true
         setOpen(false)
       }
     }
@@ -293,7 +351,7 @@ export function EnvironmentInfoPopover({
             ref={popoverRef}
             data-testid="environment-info-popover"
             style={popoverStyle}
-            className="absolute z-system w-[340px] max-w-[calc(100%-2rem)] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
+            className="absolute z-system w-[300px] max-w-[calc(100%-2rem)] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
           >
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[13px] font-medium text-text-primary">

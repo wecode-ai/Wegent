@@ -200,7 +200,7 @@ describe('WorkspacePanelActions', () => {
       expect(workspaceContainer).toContainElement(popover)
       expect(popover).toHaveClass('absolute')
       expect(popover).not.toHaveClass('fixed')
-      expect(popover).toHaveStyle({ left: '924px', top: '48px' })
+      expect(popover).toHaveStyle({ left: '964px', top: '48px' })
     } finally {
       rectSpy.mockRestore()
       workspaceContainer.remove()
@@ -214,6 +214,48 @@ describe('WorkspacePanelActions', () => {
 
     expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+  })
+
+  test('keeps environment info collapsed when it would overlap the conversation content', () => {
+    setWindowWidth(1600)
+    const workspaceContainer = document.createElement('main')
+    const conversationContent = document.createElement('div')
+    conversationContent.dataset.testid = 'desktop-floating-composer-layer'
+    workspaceContainer.append(conversationContent)
+    document.body.append(workspaceContainer)
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function () {
+        if (this === workspaceContainer) {
+          return createRect({ left: 200, top: 0, width: 1200, height: 720 })
+        }
+        if (this === conversationContent) {
+          return createRect({ left: 480, top: 100, width: 700, height: 300 })
+        }
+        if (this.querySelector('[data-testid="environment-info-button"]')) {
+          return createRect({ left: 1360, top: 8, width: 32, height: 32 })
+        }
+        return createRect({ left: 0, top: 0, width: 0, height: 0 })
+      })
+
+    try {
+      render(
+        <WorkspacePanelActions
+          {...baseProps}
+          mode="environment"
+          environmentInfoPopoverContainer={workspaceContainer}
+        />
+      )
+
+      expect(screen.getByTestId('environment-info-button')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      )
+      expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    } finally {
+      rectSpy.mockRestore()
+      workspaceContainer.remove()
+    }
   })
 
   test('positions environment info popover from the trigger instead of the viewport edge', async () => {

@@ -5196,7 +5196,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
-      'w-[340px]',
+      'w-[300px]',
       'bg-background',
       'text-text-primary',
       'border-border',
