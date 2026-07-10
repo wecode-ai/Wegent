@@ -3,8 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
-import { createProjectApi } from '@/api/projects'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
 import {
@@ -73,10 +71,6 @@ vi.mock('@/api/devices', () => ({
   createDeviceApi: vi.fn(),
 }))
 
-vi.mock('@/api/projects', () => ({
-  createProjectApi: vi.fn(),
-}))
-
 vi.mock('@/api/users', () => ({
   createUserApi: vi.fn(),
 }))
@@ -105,8 +99,6 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 }))
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
-const createHttpClientMock = vi.mocked(createHttpClient)
-const createProjectApiMock = vi.mocked(createProjectApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
 const getLocalExecutorDeviceIdMock = vi.mocked(getLocalExecutorDeviceId)
@@ -161,43 +153,6 @@ function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   })
 }
 
-function connectedCloudConnection(
-  overrides: Partial<CloudConnectionContextValue> = {}
-): CloudConnectionContextValue {
-  return {
-    status: 'connected',
-    backendUrl: 'https://cloud.example.com',
-    apiBaseUrl: 'https://cloud.example.com/api',
-    socketBaseUrl: 'https://cloud.example.com',
-    socketPath: '/socket.io',
-    token: 'cloud-token',
-    tokenExpiresAt: null,
-    user: { id: 7, user_name: 'crystal', email: 'crystal@example.com' },
-    connectedAt: '2026-07-09T00:00:00.000Z',
-    error: null,
-    isConnected: true,
-    serviceKey: 'cloud:https://cloud.example.com/api',
-    connectWithAuthorization: vi.fn(),
-    refreshUser: vi.fn(),
-    disconnect: vi.fn(),
-    ...overrides,
-  }
-}
-
-function disconnectedCloudConnection(
-  overrides: Partial<CloudConnectionContextValue> = {}
-): CloudConnectionContextValue {
-  return {
-    ...DISCONNECTED_STATE,
-    isConnected: false,
-    serviceKey: 'disconnected',
-    connectWithAuthorization: vi.fn(),
-    refreshUser: vi.fn(),
-    disconnect: vi.fn(),
-    ...overrides,
-  }
-}
-
 describe('ConnectionsSettingsPage', () => {
   const api = {
     getAllDevices: vi.fn(),
@@ -213,11 +168,6 @@ describe('ConnectionsSettingsPage', () => {
     getMetrics: vi.fn(),
     getMetricsHistory: vi.fn(),
     getVncConfig: vi.fn(),
-    setupSharedSkills: vi.fn(),
-  }
-  const projectApi = {
-    listWorktrees: vi.fn(),
-    deleteWorktree: vi.fn(),
   }
   const userApi = {
     updateCurrentUser: vi.fn(),
@@ -264,16 +214,6 @@ describe('ConnectionsSettingsPage', () => {
       signature: 'signature',
       sandbox_id: 'sandbox-1',
     })
-    api.setupSharedSkills.mockResolvedValue({
-      success: true,
-      status: 'configured',
-      shared_path: '/Users/crystal/.agents/skills',
-      shared_created: true,
-      legacy_paths: ['/Users/crystal/.codex/skills', '/Users/crystal/.claude/skills'],
-      moved_count: 2,
-      moved: [],
-      links: [],
-    })
     localCodexPluginApiMock.readCodexLocalConfig.mockResolvedValue({
       codexHome: '/Users/crystal/.wegent-executor/codex',
       configPath: '/Users/crystal/.wegent-executor/codex/config.toml',
@@ -287,13 +227,6 @@ describe('ConnectionsSettingsPage', () => {
       })
     )
     createDeviceApiMock.mockReturnValue(api)
-    projectApi.listWorktrees.mockResolvedValue({ total: 0, devices: [] })
-    projectApi.deleteWorktree.mockResolvedValue({
-      worktree_id: '1386',
-      path: '/workspace/worktrees/1386/Wegent',
-      deleted_task_ids: [],
-    })
-    createProjectApiMock.mockReturnValue(projectApi as ReturnType<typeof createProjectApi>)
     userApi.getRuntimeConfig.mockResolvedValue({
       runtime: 'codex',
       display_name: 'Codex',
@@ -375,6 +308,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('settings-nav-general')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]'
     )
+    expect(screen.queryByTestId('settings-nav-worktrees')).not.toBeInTheDocument()
   })
 
   test('adds titlebar clearance for the settings back button in Tauri', () => {
@@ -606,6 +540,9 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('local-codex-model-row')).toHaveTextContent('设备认证')
     const cloudSyncSection = screen.getByTestId('runtime-config-cloud-sync')
     expect(cloudSyncSection).toHaveClass('bg-background')
+    expect(screen.getByTestId('runtime-config-shared-auth-unavailable')).toHaveClass(
+      'border-dashed'
+    )
     expect(
       within(screen.getByTestId('model-interface-settings')).getByText('模型接口')
     ).toBeInTheDocument()
@@ -706,122 +643,15 @@ describe('ConnectionsSettingsPage', () => {
     expect(userApi.updateProxyConfig).not.toHaveBeenCalled()
   })
 
-  test('opens worktree settings from the coding settings navigation', async () => {
-    api.getAllDevices.mockResolvedValue([])
-    projectApi.listWorktrees.mockResolvedValue({
-      total: 2,
-      devices: [
-        {
-          device_id: 'device-1',
-          device_name: 'Crystal Mac',
-          device_status: 'online',
-          available: true,
-          items: [
-            {
-              worktree_id: '1386',
-              project_name: 'Wegent',
-              path: '/workspace/worktrees/1386/Wegent',
-              project: {
-                id: 7,
-                name: 'Wegent',
-                source_path: 'd837/Wegent',
-              },
-              task: {
-                id: 1386,
-                title: 'Fix sidebar persistence',
-                status: 'RUNNING',
-                project_id: 7,
-              },
-            },
-          ],
-        },
-        {
-          device_id: 'device-2',
-          device_name: 'Linux Builder',
-          device_status: 'offline',
-          available: true,
-          items: [
-            {
-              worktree_id: '1387',
-              project_name: 'Wegent',
-              path: '/workspace/worktrees/1387/Wegent',
-              project: {
-                id: 7,
-                name: 'Wegent',
-                source_path: 'd837/Wegent',
-              },
-              task: null,
-            },
-          ],
-        },
-      ],
-    })
-
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-    await userEvent.click(screen.getByTestId('settings-nav-worktrees'))
-
-    expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
-    expect(screen.getByText('编码')).toBeInTheDocument()
-    expect(screen.getByTestId('worktrees-refresh-button')).toHaveAccessibleName('刷新')
-    expect(screen.getByTestId('worktrees-refresh-button')).not.toHaveTextContent('刷新')
-    const projectGroup = await screen.findByTestId('worktree-project-group')
-    expect(projectGroup).toHaveTextContent('Wegent')
-    const metadata = within(projectGroup).getByTestId('worktree-project-metadata')
-    expect(metadata).toHaveTextContent('d837/Wegent')
-    expect(metadata).toHaveTextContent('Crystal Mac')
-    expect(metadata).toHaveTextContent('Linux Builder')
-    expect(await screen.findByText('/workspace/worktrees/1386/Wegent')).toBeInTheDocument()
-    expect(screen.getByText('/workspace/worktrees/1387/Wegent')).toBeInTheDocument()
-    expect(screen.getByTestId('worktree-task-link-1386')).toHaveTextContent(
-      'Fix sidebar persistence'
-    )
-    expect(screen.getByTestId('worktree-task-missing-1387')).toHaveTextContent('未关联会话')
-    expect(screen.getByText('Crystal Mac')).toHaveClass('text-text-muted')
-    expect(screen.getByText('Linux Builder')).toHaveClass('text-text-muted')
-    within(projectGroup)
-      .getAllByTestId('worktree-row')
-      .forEach(row => {
-        expect(row).not.toHaveTextContent('Crystal Mac')
-        expect(row).not.toHaveTextContent('Linux Builder')
-      })
-    expect(screen.queryByText('device-1')).not.toBeInTheDocument()
-    expect(screen.queryByText('1386')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('worktree-device-device-1')).not.toBeInTheDocument()
-    expect(projectApi.listWorktrees).toHaveBeenCalledTimes(1)
-
-    await userEvent.click(screen.getByTestId('worktree-task-link-1386'))
-
-    expect(window.location.pathname).toBe('/settings/worktrees')
-  })
-
-  test('configures shared skills from the coding settings navigation', async () => {
-    api.getAllDevices.mockResolvedValue([localDevice()])
-
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-    await userEvent.click(screen.getByTestId('settings-nav-skills'))
-
-    expect(await screen.findByTestId('skill-settings-page')).toBeInTheDocument()
-    expect(screen.getByTestId('skill-management-device-select')).toHaveValue('local-device')
-
-    await userEvent.click(screen.getByTestId('skill-management-enable-button'))
-
-    await waitFor(() => {
-      expect(api.setupSharedSkills).toHaveBeenCalledWith('local-device')
-    })
-    expect(await screen.findByTestId('skill-management-result')).toHaveTextContent(
-      '/Users/crystal/.agents/skills'
-    )
-  })
-
-  test('updates the local Codex remote apps setting from skill settings', async () => {
-    window.history.pushState({}, '', '/settings/skills')
+  test('updates the local Codex remote apps setting from plugin settings', async () => {
+    window.history.pushState({}, '', '/settings/plugins')
     api.getAllDevices.mockResolvedValue([localDevice()])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
 
     const toggle = await screen.findByTestId('codex-plugin-remote-apps-toggle')
+    expect(screen.getByTestId('settings-category-integrations')).toHaveTextContent('集成')
+    expect(screen.getByTestId('settings-nav-plugins')).toHaveTextContent('插件')
     expect(toggle).not.toBeChecked()
 
     await userEvent.click(toggle)
@@ -832,142 +662,6 @@ describe('ConnectionsSettingsPage', () => {
       })
     })
     expect(toggle).toBeChecked()
-  })
-
-  test('loads skill devices through the connected cloud API client', async () => {
-    window.history.pushState({}, '', '/settings/skills')
-    const cloudConnection = connectedCloudConnection()
-    api.getAllDevices.mockResolvedValue([localDevice()])
-
-    render(
-      <CloudConnectionContext.Provider value={cloudConnection}>
-        <ConnectionsSettingsPage onBack={vi.fn()} />
-      </CloudConnectionContext.Provider>
-    )
-
-    expect(await screen.findByTestId('skill-settings-page')).toBeInTheDocument()
-    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
-
-    const cloudClientOptions = createHttpClientMock.mock.calls
-      .map(([options]) => options)
-      .find(
-        (options): options is { baseUrl: string; getToken: () => string | null } =>
-          typeof options === 'object' &&
-          options !== null &&
-          'baseUrl' in options &&
-          options.baseUrl === 'https://cloud.example.com/api' &&
-          'getToken' in options &&
-          typeof options.getToken === 'function'
-      )
-
-    expect(cloudClientOptions).toBeDefined()
-    expect(cloudClientOptions?.getToken()).toBe('cloud-token')
-    expect(screen.getByTestId('skill-management-device-select')).toHaveValue('local-device')
-    expect(screen.getByTestId('skill-management-enable-button')).not.toBeDisabled()
-  })
-
-  test('loads skill devices through the local API when cloud is disconnected', async () => {
-    window.history.pushState({}, '', '/settings/skills')
-    const cloudConnection = disconnectedCloudConnection()
-    api.getAllDevices.mockResolvedValue([localDevice()])
-
-    render(
-      <CloudConnectionContext.Provider value={cloudConnection}>
-        <ConnectionsSettingsPage onBack={vi.fn()} />
-      </CloudConnectionContext.Provider>
-    )
-
-    expect(await screen.findByTestId('skill-settings-page')).toBeInTheDocument()
-    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
-
-    const localClientOptions = createHttpClientMock.mock.calls
-      .map(([options]) => options)
-      .find(
-        (options): options is { baseUrl: string } =>
-          typeof options === 'object' &&
-          options !== null &&
-          'baseUrl' in options &&
-          options.baseUrl === '/api'
-      )
-
-    expect(localClientOptions).toBeDefined()
-    expect(screen.queryByTestId('skill-management-error')).not.toBeInTheDocument()
-    expect(screen.getByTestId('skill-management-device-select')).toHaveValue('local-device')
-    expect(screen.getByTestId('skill-management-enable-button')).not.toBeDisabled()
-  })
-
-  test('shows a single empty worktree state without device groups', async () => {
-    api.getAllDevices.mockResolvedValue([])
-    projectApi.listWorktrees.mockResolvedValue({
-      total: 0,
-      devices: [
-        {
-          device_id: 'device-empty',
-          device_name: 'Empty Device',
-          device_status: 'online',
-          available: true,
-          items: [],
-        },
-      ],
-    })
-
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-    await userEvent.click(screen.getByTestId('settings-nav-worktrees'))
-
-    expect(await screen.findByText('尚无工作树')).toBeInTheDocument()
-    expect(screen.getByText('创建的工作树将显示在此处。')).toHaveClass('text-text-secondary')
-    expect(screen.queryByText('此设备暂无工作树')).not.toBeInTheDocument()
-    expect(screen.queryByText('Empty Device')).not.toBeInTheDocument()
-  })
-
-  test('deletes a worktree from the worktree settings page', async () => {
-    api.getAllDevices.mockResolvedValue([])
-    projectApi.listWorktrees
-      .mockResolvedValueOnce({
-        total: 1,
-        devices: [
-          {
-            device_id: 'device-1',
-            device_name: 'Crystal Mac',
-            device_status: 'online',
-            available: true,
-            items: [
-              {
-                worktree_id: '1386',
-                project_name: 'Wegent',
-                path: '/workspace/worktrees/1386/Wegent',
-                project: {
-                  id: 7,
-                  name: 'Wegent',
-                  source_path: 'd837/Wegent',
-                },
-              },
-            ],
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ total: 0, devices: [] })
-
-    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
-
-    await userEvent.click(screen.getByTestId('settings-nav-worktrees'))
-    await userEvent.click(await screen.findByTestId('delete-worktree-button-1386'))
-
-    expect(screen.getByTestId('confirm-delete-worktree-dialog')).toHaveTextContent(
-      '将删除这个工作树目录，并一并删除使用该工作树的任务。'
-    )
-
-    await userEvent.click(screen.getByTestId('confirm-delete-worktree-button'))
-
-    await waitFor(() =>
-      expect(projectApi.deleteWorktree).toHaveBeenCalledWith({
-        device_id: 'device-1',
-        worktree_id: '1386',
-        project_id: 7,
-      })
-    )
-    expect(projectApi.listWorktrees).toHaveBeenCalledTimes(2)
   })
 
   test('opens appearance settings from the browser path on reload', () => {
@@ -1250,7 +944,7 @@ describe('ConnectionsSettingsPage', () => {
     const terminalButton = screen.getByTestId('connection-terminal-button-device-1')
     const moreButton = screen.getByTestId('connection-more-button-device-1')
 
-    expect(deviceCard).toHaveClass('bg-surface', 'border-border')
+    expect(deviceCard).toHaveClass('bg-background', 'border-border')
     expect(deviceCard).not.toHaveClass('bg-white')
     expect(terminalButton).toHaveClass('bg-background', 'text-text-primary')
     expect(moreButton).toHaveClass('bg-background', 'text-text-secondary')

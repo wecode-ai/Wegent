@@ -124,7 +124,7 @@ export function ContextSettingsPage() {
         </p>
       </div>
 
-      <section className="mt-6 overflow-hidden rounded-lg border border-border bg-surface">
+      <section className="mt-6 overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-2.5">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.context_settings_terminal_title')}
@@ -159,7 +159,7 @@ export function ContextSettingsPage() {
 
       <CodexPersonalitySettings />
 
-      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
         <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-text-primary">

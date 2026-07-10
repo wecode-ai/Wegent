@@ -170,7 +170,7 @@ export function GeneralSettingsPage() {
         </p>
       </div>
 
-      <section className="mt-6 overflow-hidden rounded-lg border border-border bg-surface">
+      <section className="mt-6 overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-2.5">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.general_settings_language_title')}
@@ -215,7 +215,7 @@ export function GeneralSettingsPage() {
         </div>
       </section>
 
-      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-3">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.general_settings_startup')}
@@ -230,7 +230,7 @@ export function GeneralSettingsPage() {
         })}
       </section>
 
-      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-2.5">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.general_settings_background_title')}
@@ -247,7 +247,7 @@ export function GeneralSettingsPage() {
         })}
       </section>
 
-      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-2.5">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.general_settings_system_tray_title')}
