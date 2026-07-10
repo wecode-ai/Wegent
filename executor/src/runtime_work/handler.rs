@@ -20,6 +20,7 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
+        combined_codex_developer_instructions, strip_wework_browser_instructions,
         CodexActiveTurnCallback, CodexAppServerClient, CodexAppServerTurnOptions,
         CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
     },
@@ -341,6 +342,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
+            "runtime.codex.personality.read" => self.read_codex_personality().await,
+            "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
@@ -515,11 +518,24 @@ impl RuntimeWorkRpcHandler {
             )
             .await
             .map_err(|error| AppIpcError::new("codex_instructions_read_failed", error))?;
-        let instructions = response
-            .get("config")
-            .and_then(|config| config.get("instructions"))
+        let config = response.get("config").unwrap_or(&Value::Null);
+        let developer_instructions = config
+            .get("developer_instructions")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        let user_developer_instructions = strip_wework_browser_instructions(developer_instructions);
+        let legacy_instructions = config
+            .get("instructions")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let instructions =
+            if user_developer_instructions.is_empty() && !legacy_instructions.trim().is_empty() {
+                self.write_codex_developer_instructions(legacy_instructions)
+                    .await?;
+                legacy_instructions
+            } else {
+                user_developer_instructions
+            };
         Ok(json!({ "instructions": instructions }))
     }
 
@@ -536,28 +552,96 @@ impl RuntimeWorkRpcHandler {
                 "instructions must be a string",
             ));
         };
-        let trimmed = instructions.trim();
-        let value = if trimmed.is_empty() {
-            Value::Null
-        } else {
-            Value::String(instructions.to_owned())
-        };
         let response = self
-            .codex_app_server
+            .write_codex_developer_instructions(instructions)
+            .await?;
+        Ok(json!({
+            "instructions": instructions.trim(),
+            "configPath": response.get("filePath").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    async fn write_codex_developer_instructions(
+        &self,
+        instructions: &str,
+    ) -> Result<Value, AppIpcError> {
+        let value = Value::String(combined_codex_developer_instructions(instructions));
+        self.codex_app_server
             .request(
-                "config/value/write",
+                "config/batchWrite",
                 json!({
-                    "keyPath": "instructions",
-                    "value": value,
-                    "mergeStrategy": "replace",
+                    "edits": [
+                        {
+                            "keyPath": "developer_instructions",
+                            "value": value,
+                            "mergeStrategy": "replace",
+                        },
+                        {
+                            "keyPath": "instructions",
+                            "value": Value::Null,
+                            "mergeStrategy": "replace",
+                        }
+                    ],
                     "filePath": Value::Null,
                     "expectedVersion": Value::Null,
+                    "reloadUserConfig": true,
                 }),
             )
             .await
-            .map_err(|error| AppIpcError::new("codex_instructions_write_failed", error))?;
+            .map_err(|error| AppIpcError::new("codex_instructions_write_failed", error))
+    }
+
+    async fn read_codex_personality(&self) -> Result<Value, AppIpcError> {
+        let response = self
+            .codex_app_server
+            .request(
+                "config/read",
+                json!({
+                    "includeLayers": false,
+                    "cwd": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_personality_read_failed", error))?;
+        let personality = response
+            .get("config")
+            .and_then(|config| config.get("personality"))
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "friendly" | "pragmatic"))
+            .unwrap_or("pragmatic");
+        Ok(json!({ "personality": personality }))
+    }
+
+    async fn write_codex_personality(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let personality = payload
+            .get("personality")
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "friendly" | "pragmatic"))
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "invalid_request",
+                    "personality must be friendly or pragmatic",
+                )
+            })?;
+        let response = self
+            .codex_app_server
+            .request(
+                "config/batchWrite",
+                json!({
+                    "edits": [{
+                        "keyPath": "personality",
+                        "value": personality,
+                        "mergeStrategy": "replace",
+                    }],
+                    "filePath": Value::Null,
+                    "expectedVersion": Value::Null,
+                    "reloadUserConfig": true,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_personality_write_failed", error))?;
         Ok(json!({
-            "instructions": if trimmed.is_empty() { "" } else { instructions },
+            "personality": personality,
             "configPath": response.get("filePath").cloned().unwrap_or(Value::Null),
         }))
     }
@@ -5398,6 +5482,30 @@ mod tests {
 
         let error = result.expect_err("non-string instructions should be rejected");
         assert_eq!(error.code, "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn codex_personality_write_rejects_unsupported_value() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.personality.write",
+                "payload": {"personality": "default"}
+            }))
+            .await;
+
+        let error = result.expect_err("unsupported personality should be rejected");
+        assert_eq!(error.code, "invalid_request");
+    }
+
+    #[test]
+    fn codex_developer_instructions_preserve_user_copy_and_browser_routing() {
+        let combined = combined_codex_developer_instructions("用中文回复");
+
+        assert!(combined.contains("用中文回复"));
+        assert!(combined.contains("browser_navigate"));
+        assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
     }
 
     #[tokio::test]

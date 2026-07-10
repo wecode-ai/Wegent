@@ -11,6 +11,7 @@ import {
   updateAppPreferences,
   type AppPreferences,
 } from '@/tauri/appPreferences'
+import { CodexPersonalitySettings } from './CodexPersonalitySettings'
 
 export function ContextSettingsPage() {
   const { t } = useTranslation('common')
@@ -155,6 +156,8 @@ export function ContextSettingsPage() {
           </label>
         </div>
       </section>
+
+      <CodexPersonalitySettings />
 
       <section className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">

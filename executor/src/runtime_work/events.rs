@@ -7,7 +7,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{json, Map, Value};
 use tokio::sync::broadcast;
 
-use crate::{codex_phase::CodexAgentMessagePhaseTracker, protocol::ExecutionRequest};
+use crate::{
+    codex_phase::CodexAgentMessagePhaseTracker, logging::log_executor_event,
+    protocol::ExecutionRequest,
+};
 
 use super::{
     codex_notifications::{codex_notification, debug_ignored_codex_notification},
@@ -722,8 +725,41 @@ impl CodexNotificationEventMapper {
             request.cwd().unwrap_or_default(),
             "streaming",
         ) else {
+            log_executor_event(
+                "codex patch update mapping dropped",
+                &[
+                    ("local_task_id", local_task_id.to_owned()),
+                    ("item_id", notification_item_id(params).unwrap_or_default()),
+                    (
+                        "changes",
+                        params
+                            .get("changes")
+                            .and_then(Value::as_array)
+                            .map(Vec::len)
+                            .unwrap_or_default()
+                            .to_string(),
+                    ),
+                ],
+            );
             return;
         };
+
+        log_executor_event(
+            "codex patch update mapped",
+            &[
+                ("local_task_id", local_task_id.to_owned()),
+                ("block_id", block_id.clone()),
+                (
+                    "changes",
+                    params
+                        .get("changes")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default()
+                        .to_string(),
+                ),
+            ],
+        );
 
         emit_response_event(
             event_tx,
