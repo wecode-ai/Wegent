@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Loader2, Terminal } from 'lucide-react'
+import { Check, Loader2, Save, Terminal } from 'lucide-react'
+import {
+  getLocalCodexInstructions,
+  saveLocalCodexInstructions,
+} from '@/api/local/codexInstructions'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   defaultAppPreferences,
@@ -14,28 +18,56 @@ export function ContextSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [instructions, setInstructions] = useState('')
+  const [savedInstructions, setSavedInstructions] = useState('')
+  const [instructionsLoading, setInstructionsLoading] = useState(true)
+  const [instructionsSaving, setInstructionsSaving] = useState(false)
+  const [instructionsSaved, setInstructionsSaved] = useState(false)
+  const [instructionsError, setInstructionsError] = useState<string | null>(null)
+
+  const instructionsDirty = instructions !== savedInstructions
 
   useEffect(() => {
     let cancelled = false
 
-    getAppPreferences()
-      .then(nextPreferences => {
+    const load = async () => {
+      try {
+        const nextPreferences = await getAppPreferences()
         if (!cancelled) {
           setPreferences(nextPreferences)
           setError(null)
         }
-      })
-      .catch(fetchError => {
+      } catch (fetchError) {
         console.error('[Wework] Failed to load context settings', fetchError)
         if (!cancelled) {
           setError(t('workbench.context_settings_load_failed'))
         }
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) {
           setLoading(false)
         }
-      })
+      }
+
+      try {
+        const nextInstructions = await getLocalCodexInstructions()
+        if (!cancelled) {
+          setInstructions(nextInstructions.instructions)
+          setSavedInstructions(nextInstructions.instructions)
+          setInstructionsError(null)
+        }
+      } catch (fetchError) {
+        console.error('[Wework] Failed to load Wework custom instructions', fetchError)
+        if (!cancelled) {
+          setInstructionsError(t('workbench.context_settings_wework_instructions_load_failed'))
+        }
+      } finally {
+        if (!cancelled) {
+          setInstructionsLoading(false)
+        }
+      }
+    }
+
+    void load()
 
     return () => {
       cancelled = true
@@ -60,6 +92,23 @@ export function ContextSettingsPage() {
       setError(t('workbench.context_settings_save_failed'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleSaveInstructions = async () => {
+    setInstructionsSaving(true)
+    setInstructionsSaved(false)
+    setInstructionsError(null)
+    try {
+      const response = await saveLocalCodexInstructions(instructions)
+      setInstructions(response.instructions)
+      setSavedInstructions(response.instructions)
+      setInstructionsSaved(true)
+    } catch (saveError) {
+      console.error('[Wework] Failed to save Wework custom instructions', saveError)
+      setInstructionsError(t('workbench.context_settings_wework_instructions_save_failed'))
+    } finally {
+      setInstructionsSaving(false)
     }
   }
 
@@ -104,6 +153,72 @@ export function ContextSettingsPage() {
             <span className="absolute inset-0 rounded-full bg-muted transition peer-checked:bg-text-primary peer-disabled:opacity-50" />
             <span className="absolute left-1 h-5 w-5 rounded-full bg-background shadow transition peer-checked:translate-x-5 peer-disabled:opacity-70" />
           </label>
+        </div>
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
+        <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-text-primary">
+              {t('workbench.context_settings_wework_instructions_title')}
+            </h2>
+            <p className="mt-1 text-xs leading-5 text-text-secondary">
+              {t('workbench.context_settings_wework_instructions_description')}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="context-wework-instructions-save-button"
+            disabled={instructionsLoading || instructionsSaving || !instructionsDirty}
+            onClick={() => void handleSaveInstructions()}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-text-primary px-3 text-[13px] font-medium leading-[18px] text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {instructionsSaving ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : instructionsSaved && !instructionsDirty ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <Save className="h-4 w-4" />
+            )}
+            <span>
+              {instructionsSaving
+                ? t('workbench.context_settings_wework_instructions_saving')
+                : instructionsSaved && !instructionsDirty
+                  ? t('workbench.context_settings_wework_instructions_saved')
+                  : t('workbench.context_settings_wework_instructions_save')}
+            </span>
+          </button>
+        </div>
+        <div className="px-4 py-4">
+          {instructionsLoading ? (
+            <div className="flex min-h-40 items-center gap-2 text-sm text-text-secondary">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {t('common.loading', '加载中...')}
+            </div>
+          ) : (
+            <textarea
+              data-testid="context-wework-instructions-textarea"
+              value={instructions}
+              onChange={event => {
+                setInstructions(event.target.value)
+                setInstructionsSaved(false)
+              }}
+              placeholder={t('workbench.context_settings_wework_instructions_placeholder')}
+              className="min-h-40 w-full resize-y rounded-lg border border-border bg-background p-3 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted focus:border-primary"
+            />
+          )}
+          {instructionsError ? (
+            <p
+              data-testid="context-wework-instructions-error"
+              className="mt-3 text-xs text-red-500"
+            >
+              {instructionsError}
+            </p>
+          ) : (
+            <p className="mt-3 text-xs leading-5 text-text-secondary">
+              {t('workbench.context_settings_wework_instructions_hint')}
+            </p>
+          )}
         </div>
       </section>
 

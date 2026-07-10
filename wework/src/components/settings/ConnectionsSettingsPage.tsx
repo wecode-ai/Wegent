@@ -96,30 +96,28 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: SlidersHorizontal,
     label: 'settings_nav_general',
     fallback: '通用',
+    category: 'personal',
   },
   {
     key: 'connections',
     icon: Globe2,
     label: 'settings_nav_connections',
     fallback: '云端连接',
+    category: 'personal',
   },
   {
     key: 'appearance',
     icon: Palette,
     label: 'settings_nav_appearance',
     fallback: '外观',
+    category: 'personal',
   },
   {
     key: 'context',
     icon: Terminal,
     label: 'settings_nav_context',
     fallback: '上下文',
-  },
-  {
-    key: 'about',
-    icon: Info,
-    label: 'settings_nav_about',
-    fallback: '关于',
+    category: 'personal',
   },
   {
     key: 'model-settings',
@@ -140,6 +138,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Keyboard,
     label: 'settings_nav_keyboard_shortcuts',
     fallback: '快捷键',
+    category: 'personal',
+  },
+  {
+    key: 'about',
+    icon: Info,
+    label: 'settings_nav_about',
+    fallback: '关于',
     category: 'personal',
   },
   {
@@ -192,6 +197,7 @@ function getSettingsNavFromPath(path: string): string {
 }
 
 function getSettingsNavPath(key: string): string {
+  if (key === 'context') return '/settings/personal/context'
   if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
   if (key === 'keyboard-shortcuts') return '/settings/personal/keyboard-shortcuts'

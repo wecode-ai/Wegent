@@ -53,7 +53,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           <button
             type="button"
             data-testid="mobile-general-back-button"
-            onClick={() => setActivePage('menu')}
+            onClick={() => setActivePage('personal')}
             className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
@@ -79,7 +79,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           <button
             type="button"
             data-testid="mobile-appearance-back-button"
-            onClick={() => setActivePage('menu')}
+            onClick={() => setActivePage('personal')}
             className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
@@ -105,7 +105,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           <button
             type="button"
             data-testid="mobile-context-back-button"
-            onClick={() => setActivePage('menu')}
+            onClick={() => setActivePage('personal')}
             className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
@@ -157,7 +157,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           <button
             type="button"
             data-testid="mobile-about-back-button"
-            onClick={() => setActivePage('menu')}
+            onClick={() => setActivePage('personal')}
             className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
             aria-label={t('workbench.settings_back_to_app', '返回')}
           >
@@ -249,6 +249,40 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
         <section className="mt-8 space-y-3">
           <button
             type="button"
+            data-testid="mobile-settings-general-button"
+            onClick={() => setActivePage('general')}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+          >
+            <SlidersHorizontal className="h-5 w-5 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">{t('workbench.settings_nav_general')}</span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+          </button>
+          <button
+            type="button"
+            data-testid="mobile-settings-appearance-button"
+            onClick={() => setActivePage('appearance')}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+          >
+            <Palette className="h-5 w-5 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.settings_nav_appearance', '外观')}
+            </span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+          </button>
+          <button
+            type="button"
+            data-testid="mobile-settings-context-button"
+            onClick={() => setActivePage('context')}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+          >
+            <Terminal className="h-5 w-5 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.settings_nav_context', '上下文')}
+            </span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+          </button>
+          <button
+            type="button"
             data-testid="mobile-settings-model-settings-button"
             onClick={() => setActivePage('model-settings')}
             className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
@@ -256,6 +290,18 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
             <UserRound className="h-5 w-5 shrink-0 text-text-secondary" />
             <span className="min-w-0 flex-1 truncate">
               {t('workbench.settings_nav_model_settings', '模型')}
+            </span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+          </button>
+          <button
+            type="button"
+            data-testid="mobile-settings-about-button"
+            onClick={() => setActivePage('about')}
+            className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+          >
+            <Info className="h-5 w-5 shrink-0 text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('workbench.settings_nav_about', '关于')}
             </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>
@@ -312,28 +358,6 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
       </header>
 
       <section className="mt-8 space-y-3">
-        <button
-          type="button"
-          data-testid="mobile-settings-general-button"
-          onClick={() => setActivePage('general')}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <SlidersHorizontal className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">{t('workbench.settings_nav_general')}</span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
-        <button
-          type="button"
-          data-testid="mobile-settings-appearance-button"
-          onClick={() => setActivePage('appearance')}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <Palette className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">
-            {t('workbench.settings_nav_appearance', '外观')}
-          </span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
         {SHOW_PLUGINS_NAVIGATION && (
           <button
             type="button"
@@ -350,18 +374,6 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
         )}
         <button
           type="button"
-          data-testid="mobile-settings-context-button"
-          onClick={() => setActivePage('context')}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <Terminal className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">
-            {t('workbench.settings_nav_context', '上下文')}
-          </span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
-        <button
-          type="button"
           data-testid="mobile-settings-personal-button"
           onClick={() => setActivePage('personal')}
           className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
@@ -369,18 +381,6 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           <UserRound className="h-5 w-5 shrink-0 text-text-secondary" />
           <span className="min-w-0 flex-1 truncate">
             {t('workbench.settings_nav_personal', '个人')}
-          </span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
-        </button>
-        <button
-          type="button"
-          data-testid="mobile-settings-about-button"
-          onClick={() => setActivePage('about')}
-          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
-        >
-          <Info className="h-5 w-5 shrink-0 text-text-secondary" />
-          <span className="min-w-0 flex-1 truncate">
-            {t('workbench.settings_nav_about', '关于')}
           </span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
         </button>

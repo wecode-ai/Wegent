@@ -339,6 +339,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.instructions.read" => self.read_codex_instructions().await,
+            "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
@@ -498,6 +500,65 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({
             "data": models,
             "providers": provider_results,
+        }))
+    }
+
+    async fn read_codex_instructions(&self) -> Result<Value, AppIpcError> {
+        let response = self
+            .codex_app_server
+            .request(
+                "config/read",
+                json!({
+                    "includeLayers": false,
+                    "cwd": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_instructions_read_failed", error))?;
+        let instructions = response
+            .get("config")
+            .and_then(|config| config.get("instructions"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        Ok(json!({ "instructions": instructions }))
+    }
+
+    async fn write_codex_instructions(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let Some(instructions) = payload.get("instructions") else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "instructions must be a string",
+            ));
+        };
+        let Some(instructions) = instructions.as_str() else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "instructions must be a string",
+            ));
+        };
+        let trimmed = instructions.trim();
+        let value = if trimmed.is_empty() {
+            Value::Null
+        } else {
+            Value::String(instructions.to_owned())
+        };
+        let response = self
+            .codex_app_server
+            .request(
+                "config/value/write",
+                json!({
+                    "keyPath": "instructions",
+                    "value": value,
+                    "mergeStrategy": "replace",
+                    "filePath": Value::Null,
+                    "expectedVersion": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_instructions_write_failed", error))?;
+        Ok(json!({
+            "instructions": if trimmed.is_empty() { "" } else { instructions },
+            "configPath": response.get("filePath").cloned().unwrap_or(Value::Null),
         }))
     }
 
@@ -5322,6 +5383,21 @@ mod tests {
             .expect("restart should return success");
 
         assert_eq!(result["restarted"], true);
+    }
+
+    #[tokio::test]
+    async fn codex_instructions_write_rejects_non_string_payload() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.instructions.write",
+                "payload": {"instructions": 1}
+            }))
+            .await;
+
+        let error = result.expect_err("non-string instructions should be rejected");
+        assert_eq!(error.code, "invalid_request");
     }
 
     #[tokio::test]

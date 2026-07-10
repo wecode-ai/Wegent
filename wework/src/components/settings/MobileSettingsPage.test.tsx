@@ -17,11 +17,12 @@ describe('MobileSettingsPage', () => {
     )
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-settings-appearance-button')).toHaveTextContent('外观')
+    expect(screen.queryByTestId('mobile-settings-general-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-settings-appearance-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-settings-context-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-settings-about-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-settings-plugins-button')).toHaveTextContent('插件')
-    expect(screen.getByTestId('mobile-settings-context-button')).toHaveTextContent('上下文')
     expect(screen.getByTestId('mobile-settings-personal-button')).toHaveTextContent('个人')
-    expect(screen.getByTestId('mobile-settings-about-button')).toHaveTextContent('关于')
     expect(screen.getByTestId('mobile-settings-worktrees-button')).toHaveTextContent('工作树')
     expect(screen.getByTestId('mobile-settings-archived-conversations-button')).toHaveTextContent(
       '已归档对话'
@@ -30,6 +31,10 @@ describe('MobileSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('mobile-settings-personal-button'))
     expect(screen.getByTestId('mobile-personal-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-settings-general-button')).toHaveTextContent('通用')
+    expect(screen.getByTestId('mobile-settings-appearance-button')).toHaveTextContent('外观')
+    expect(screen.getByTestId('mobile-settings-about-button')).toHaveTextContent('关于')
+    expect(screen.getByTestId('mobile-settings-context-button')).toHaveTextContent('上下文')
     expect(screen.getByTestId('mobile-settings-model-settings-button')).toHaveTextContent('模型')
 
     await userEvent.click(screen.getByTestId('mobile-personal-back-button'))
@@ -49,13 +54,14 @@ describe('MobileSettingsPage', () => {
       </AppearanceProvider>
     )
 
+    await userEvent.click(screen.getByTestId('mobile-settings-personal-button'))
     await userEvent.click(screen.getByTestId('mobile-settings-appearance-button'))
 
     expect(screen.getByTestId('mobile-appearance-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-appearance-back-button'))
-    expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-personal-settings-page')).toBeInTheDocument()
   })
 
   test('opens context settings on mobile', async () => {
@@ -65,13 +71,14 @@ describe('MobileSettingsPage', () => {
       </AppearanceProvider>
     )
 
+    await userEvent.click(screen.getByTestId('mobile-settings-personal-button'))
     await userEvent.click(screen.getByTestId('mobile-settings-context-button'))
 
     expect(screen.getByTestId('mobile-context-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('context-settings-page')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-context-back-button'))
-    expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-personal-settings-page')).toBeInTheDocument()
   })
 
   test('opens about settings on mobile', async () => {
@@ -81,6 +88,7 @@ describe('MobileSettingsPage', () => {
       </AppearanceProvider>
     )
 
+    await userEvent.click(screen.getByTestId('mobile-settings-personal-button'))
     await userEvent.click(screen.getByTestId('mobile-settings-about-button'))
 
     expect(screen.getByTestId('mobile-about-settings-page')).toBeInTheDocument()
@@ -90,6 +98,6 @@ describe('MobileSettingsPage', () => {
     expect(screen.getByTestId('about-link-discord')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-about-back-button'))
-    expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('mobile-personal-settings-page')).toBeInTheDocument()
   })
 })

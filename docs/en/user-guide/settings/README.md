@@ -75,6 +75,15 @@ Desktop Wework settings can show archived Project and Conversation chats. Deleti
 
 Desktop Wework's **General** settings control the interface language, whether the main window is shown after launch, and whether the app keeps running after the main window is closed. When background running is enabled, closing the main window releases the main WebView resources without stopping running tasks. Users can click the system tray icon to reopen the main window.
 
+### Wework Context Settings
+
+In desktop Wework, the left settings menu groups **General**, **Cloud connection**, **Appearance**, **Context**, **Models**, **Proxy**, **Keyboard shortcuts**, and **About** under **Personal**. On mobile, the settings home keeps a **Personal** entry; opening it provides General, Appearance, Context, Models, and About.
+
+Use **Settings → Personal → Context** to configure two local context behaviors:
+
+- **Terminal context injection**: Controls whether new tasks automatically include the current terminal context.
+- **Wework custom instructions**: Saves local Wework instruction text and affects newly started tasks. Saving an empty value removes the local instruction configuration.
+
 ---
 
 ## 🚀 Configuration Workflow
