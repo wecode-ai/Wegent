@@ -303,6 +303,8 @@
     "app_update_available": "Version {{version}} is available",
     "app_update_install": "Update to {{version}}",
     "app_update_installing": "Installing update...",
+    "app_update_downloading": "Downloading update",
+    "app_update_downloading_progress": "Downloading update {{progress}}%",
     "app_update_installing_short": "Updating",
     "app_update_titlebar_button": "Update",
     "app_update_up_to_date": "Already up to date",
