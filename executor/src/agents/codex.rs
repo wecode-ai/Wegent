@@ -764,7 +764,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         initial_thread_name,
         initial_thread_goal,
         notifications,
-        cancellation,
+        mut cancellation,
         request_user_input_answers,
         thread_started,
         active_turn_started,
@@ -900,6 +900,12 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         if let Some(model) = model_id(request) {
             turn_fields.push(("model", model));
+        }
+        if cancellation_requested(&mut cancellation) {
+            return Ok(CodexAppServerTurn {
+                thread_id,
+                outcome: cancelled_execution_outcome(),
+            });
         }
         log_executor_event("codex shared turn request started", &turn_fields);
         client.mark_thread_active(&thread_id).await;
@@ -1226,7 +1232,9 @@ async fn read_shared_turn_notifications(
                     options.cancellation = None;
                     cancel_requested = true;
                     if let Some(turn_id) = options.active_turn_id.as_deref() {
-                        interrupt_shared_turn(client, thread_id, turn_id).await?;
+                        if !interrupt_shared_turn(client, thread_id, turn_id).await? {
+                            return Ok(cancelled_execution_outcome());
+                        }
                     }
                     continue;
                 }
@@ -1265,7 +1273,9 @@ async fn read_shared_turn_notifications(
             options.active_turn_id = Some(turn_id);
             if cancel_requested {
                 if let Some(turn_id) = options.active_turn_id.as_deref() {
-                    interrupt_shared_turn(client, thread_id, turn_id).await?;
+                    if !interrupt_shared_turn(client, thread_id, turn_id).await? {
+                        return Ok(cancelled_execution_outcome());
+                    }
                 }
             }
         }
@@ -1328,8 +1338,8 @@ async fn interrupt_shared_turn(
     client: &CodexAppServerClient,
     thread_id: &str,
     turn_id: &str,
-) -> Result<(), String> {
-    client
+) -> Result<bool, String> {
+    match client
         .request_existing(
             "turn/interrupt",
             json!({
@@ -1338,7 +1348,32 @@ async fn interrupt_shared_turn(
             }),
         )
         .await
-        .map(|_| ())
+    {
+        Ok(_) => Ok(true),
+        Err(error) if turn_is_already_inactive(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn cancellation_requested(cancellation: &mut Option<oneshot::Receiver<()>>) -> bool {
+    let Some(receiver) = cancellation.as_mut() else {
+        return false;
+    };
+    if receiver.try_recv().is_err() {
+        return false;
+    }
+    *cancellation = None;
+    true
+}
+
+fn turn_is_already_inactive(error: &str) -> bool {
+    error.to_ascii_lowercase().contains("no active turn")
+}
+
+fn cancelled_execution_outcome() -> ExecutionOutcome {
+    ExecutionOutcome::Cancelled {
+        message: "codex app-server turn cancelled".to_owned(),
+    }
 }
 
 async fn answer_shared_request_user_input(
@@ -4060,8 +4095,36 @@ fn extract_text(item: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use tokio::sync::oneshot;
 
     use super::*;
+
+    #[test]
+    fn cancellation_requested_consumes_a_pending_signal() {
+        let (sender, receiver) = oneshot::channel();
+        sender
+            .send(())
+            .expect("cancellation signal should be delivered");
+        let mut cancellation = Some(receiver);
+
+        assert!(cancellation_requested(&mut cancellation));
+        assert!(cancellation.is_none());
+    }
+
+    #[test]
+    fn cancellation_requested_ignores_an_open_channel_without_a_signal() {
+        let (_sender, receiver) = oneshot::channel();
+        let mut cancellation = Some(receiver);
+
+        assert!(!cancellation_requested(&mut cancellation));
+        assert!(cancellation.is_some());
+    }
+
+    #[test]
+    fn inactive_turn_interrupt_error_is_treated_as_already_cancelled() {
+        assert!(turn_is_already_inactive("no active turn to interrupt"));
+        assert!(!turn_is_already_inactive("request timed out"));
+    }
 
     #[test]
     fn wework_codex_home_defaults_to_executor_home_codex() {
