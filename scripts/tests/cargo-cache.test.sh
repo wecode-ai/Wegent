@@ -20,7 +20,7 @@ fail() {
   exit 1
 }
 
-test_worktree_target_isolation() {
+test_worktrees_share_component_target() {
   local root="$1"
   local first="$root/first/Wegent"
   local second="$root/second/Wegent"
@@ -39,8 +39,8 @@ test_worktree_target_isolation() {
     printf "%s" "$CARGO_TARGET_DIR"
   ' _ "$PROJECT_DIR/scripts/lib/cargo-cache.sh" "$second")"
 
-  [ "$first_target" != "$second_target" ] || fail "worktrees share a target directory"
-  [[ "$first_target" == "$root/cache/executor/worktrees/"* ]] || fail "unexpected target path"
+  [ "$first_target" = "$second_target" ] || fail "worktrees use different target directories"
+  [ "$first_target" = "$root/cache/executor" ] || fail "unexpected target path: $first_target"
 }
 
 test_explicit_target_is_preserved() {
@@ -68,7 +68,7 @@ test_sccache_is_configured_when_available() {
     configure_wegent_cargo_target_dir "$2" executor
     printf "%s|%s|%s|%s" "$RUSTC_WRAPPER" "$CARGO_INCREMENTAL" "$WEGENT_SCCACHE_AUTO" "$SCCACHE_BASEDIRS"
   ' _ "$PROJECT_DIR/scripts/lib/cargo-cache.sh" "$root/project")"
-  [ "$actual" = "$root/bin/sccache|0|1|$canonical_project:$root/home/.cache/wegent/cargo-target/executor/worktrees/project-$(printf '%s' "$canonical_project" | cksum | awk '{print $1}')" ] \
+  [ "$actual" = "$root/bin/sccache|0|1|$canonical_project:$root/home/.cache/wegent/cargo-target/executor" ] \
     || fail "sccache was not configured with normalized paths: $actual"
 }
 
@@ -111,7 +111,7 @@ cleanup() {
 main() {
   TEST_ROOT="$(mktemp -d)"
   trap cleanup EXIT
-  test_worktree_target_isolation "$TEST_ROOT"
+  test_worktrees_share_component_target "$TEST_ROOT"
   test_explicit_target_is_preserved "$TEST_ROOT"
   test_sccache_is_configured_when_available "$TEST_ROOT"
   test_sccache_is_installed_with_homebrew "$TEST_ROOT"
