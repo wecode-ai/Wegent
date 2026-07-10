@@ -8,6 +8,7 @@ import {
   Palette,
   SlidersHorizontal,
   Sparkles,
+  Terminal,
   UserRound,
 } from 'lucide-react'
 import { useState } from 'react'
@@ -15,6 +16,7 @@ import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettings
 import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
+import { ContextSettingsPage } from './ContextSettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
 import { SkillSettingsPage } from './SkillSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
@@ -32,6 +34,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
     | 'menu'
     | 'general'
     | 'appearance'
+    | 'context'
     | 'about'
     | 'personal'
     | 'model-settings'
@@ -87,6 +90,32 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
         </header>
         <div className="mt-6 min-h-0 flex-1 overflow-auto">
           <AppearanceSettingsPage />
+        </div>
+      </main>
+    )
+  }
+
+  if (activePage === 'context') {
+    return (
+      <main
+        data-testid="mobile-context-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-context-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app', '返回')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">{t('workbench.settings_nav_context', '上下文')}</h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <ContextSettingsPage />
         </div>
       </main>
     )
@@ -319,6 +348,18 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
             <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
           </button>
         )}
+        <button
+          type="button"
+          data-testid="mobile-settings-context-button"
+          onClick={() => setActivePage('context')}
+          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+        >
+          <Terminal className="h-5 w-5 shrink-0 text-text-secondary" />
+          <span className="min-w-0 flex-1 truncate">
+            {t('workbench.settings_nav_context', '上下文')}
+          </span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+        </button>
         <button
           type="button"
           data-testid="mobile-settings-personal-button"

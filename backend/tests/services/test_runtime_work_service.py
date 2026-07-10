@@ -1707,6 +1707,12 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
                 localTaskId="codex-1",
             ),
             message="continue",
+            additionalContext={
+                "wework.terminal.current": {
+                    "kind": "application",
+                    "value": "terminal output",
+                }
+            },
         ),
     )
 
@@ -1721,6 +1727,12 @@ async def test_send_runtime_message_normalizes_runtime_rpc_failure_without_task_
             "deviceId": "device-1",
             "taskId": "codex-1",
             "message": "continue",
+            "additionalContext": {
+                "wework.terminal.current": {
+                    "kind": "application",
+                    "value": "terminal output",
+                }
+            },
         },
         timeout_seconds=600,
     )
@@ -1765,6 +1777,12 @@ async def test_send_runtime_guidance_dispatches_to_owned_device_without_task_row
             ),
             message="use this context",
             clientGuidanceId="guide-1",
+            additionalContext={
+                "wework.terminal.current": {
+                    "kind": "application",
+                    "value": "terminal output",
+                }
+            },
         ),
     )
 
@@ -1781,6 +1799,12 @@ async def test_send_runtime_guidance_dispatches_to_owned_device_without_task_row
             "taskId": "codex-1",
             "message": "use this context",
             "clientGuidanceId": "guide-1",
+            "additionalContext": {
+                "wework.terminal.current": {
+                    "kind": "application",
+                    "value": "terminal output",
+                }
+            },
         },
         timeout_seconds=600,
     )

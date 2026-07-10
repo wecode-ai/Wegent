@@ -28,6 +28,7 @@ import type { RequestUserInputPayload } from '@/components/chat/RequestUserInput
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
+import { readRuntimeTerminalAdditionalContext } from '@/lib/runtime-terminal-context'
 import type {
   Attachment,
   ModelOptions,
@@ -773,6 +774,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const messageAttachments = message.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
+      const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message: message.content,
@@ -785,6 +787,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         ...(message.modelOptions ? { modelOptions: message.modelOptions } : {}),
         ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
+        ...(additionalContext ? { additionalContext } : {}),
       })
       if (sent) {
         setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
@@ -827,11 +830,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const runtimeModelFields = options.appendUserMessage
         ? getRuntimeModelFields(runtimeModelOverride)
         : {}
+      const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
       const sent = await sendRuntimePaneMessage({
         address: currentRuntimeTask,
         message,
         ...runtimeModelFields,
         ...(options.appendUserMessage ? {} : { requestUserInputResponse: response }),
+        ...(additionalContext ? { additionalContext } : {}),
       })
       if (sent) {
         setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
@@ -879,6 +884,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       const messageAttachments = message.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
+      const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
       const editedMessage = createLocalUserMessage(submittedContent, messageAttachments, {
         runtimeGoalRequest: message.runtimeGoalRequest === true,
       })
@@ -890,6 +896,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         ...getRuntimeModelFields(),
         ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
         ...(attachments.length > 0 ? { attachments } : {}),
+        ...(additionalContext ? { additionalContext } : {}),
       }
 
       setSendPhase('submitting')
@@ -1078,10 +1085,12 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       })
 
       try {
+        const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
         const result = await sendRuntimePaneGuidance({
           address: currentRuntimeTask,
           message: queuedMessage.content,
           clientGuidanceId: id,
+          ...(additionalContext ? { additionalContext } : {}),
         })
         if (!result.sent && result.code === 'no_active_turn') {
           const sent = await sendRuntimeMessage(queuedMessage, { appendLocalMessage: false })

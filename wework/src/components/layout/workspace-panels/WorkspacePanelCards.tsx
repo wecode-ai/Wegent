@@ -745,6 +745,10 @@ export function WorkspacePanelCards({
             key={session.session_id}
             sessionId={session.session_id}
             active={panelActive && isActive}
+            taskId={workspaceTarget?.taskId}
+            workspacePath={activeWorkspacePath}
+            cwd={session.cwd ?? activeWorkspacePath}
+            title={getTerminalSessionLabel(session)}
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
@@ -754,6 +758,10 @@ export function WorkspacePanelCards({
             key={session.session_id}
             sessionId={session.session_id}
             active={panelActive && isActive}
+            taskId={workspaceTarget?.taskId}
+            workspacePath={activeWorkspacePath}
+            cwd={session.path ?? session.cwd ?? activeWorkspacePath}
+            title={getTerminalSessionLabel(session)}
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}

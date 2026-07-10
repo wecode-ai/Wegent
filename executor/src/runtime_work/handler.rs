@@ -1446,11 +1446,21 @@ impl RuntimeWorkRpcHandler {
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
-        let Some(thread_id) = runtime_session_id_from_payload(&payload).or_else(|| {
-            existing_link
-                .as_ref()
-                .and_then(runtime_session_id_from_link)
-        }) else {
+        let recovered_link = self
+            .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
+            .await;
+        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+            .or_else(|| {
+                existing_link
+                    .as_ref()
+                    .and_then(runtime_session_id_from_link)
+            })
+            .or_else(|| {
+                recovered_link
+                    .as_ref()
+                    .and_then(runtime_session_id_from_link)
+            })
+        else {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -1484,8 +1494,8 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
-        let ephemeral =
-            request.ephemeral || existing_link.as_ref().is_some_and(|link| link.ephemeral);
+        let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
+        let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         let direct_thread_id = ephemeral.then(|| thread_id.clone());
         let resume_thread_id = (!ephemeral).then_some(thread_id);
 
@@ -1622,9 +1632,19 @@ impl RuntimeWorkRpcHandler {
                 "text": message,
             }
         ]);
+        let additional_context = payload
+            .get("additionalContext")
+            .or_else(|| payload.get("additional_context"))
+            .filter(|value| value.is_object())
+            .cloned();
         match self
             .codex_app_server
-            .steer_turn(&active_turn.thread_id, &active_turn.turn_id, steer_input)
+            .steer_turn(
+                &active_turn.thread_id,
+                &active_turn.turn_id,
+                steer_input,
+                additional_context,
+            )
             .await
         {
             Ok(turn_id) => Ok(json!({
@@ -2995,6 +3015,43 @@ impl RuntimeWorkRpcHandler {
         Ok(link)
     }
 
+    async fn recover_send_task_link(
+        &self,
+        payload: &Value,
+        local_task_id: &str,
+        existing_link: Option<&RuntimeTaskLink>,
+    ) -> Option<RuntimeTaskLink> {
+        if existing_link
+            .and_then(runtime_session_id_from_link)
+            .is_some()
+        {
+            return existing_link.cloned();
+        }
+
+        let workspace_path = workspace_path(payload).unwrap_or_default();
+        let mut workspace_matches = Vec::new();
+        for link in self.collect_links(false).await {
+            if link.local_task_id == local_task_id
+                || link.thread_id.as_deref() == Some(local_task_id)
+            {
+                return Some(link);
+            }
+
+            if !workspace_path.is_empty()
+                && link.workspace_path == workspace_path
+                && runtime_session_id_from_link(&link).is_some()
+            {
+                workspace_matches.push(link);
+            }
+        }
+
+        if workspace_matches.len() == 1 {
+            workspace_matches.pop()
+        } else {
+            None
+        }
+    }
+
     async fn thread_messages(&self, thread_id: &str) -> Vec<Value> {
         if let Some(cached) = self.transcript_cache.get(thread_id, false, false) {
             return cached.messages;
@@ -3722,7 +3779,7 @@ impl CodexThreadListCache {
 fn codex_thread_list_params(archived: bool, cursor: Option<&str>) -> Value {
     let mut params = json!({
         "limit": CODEX_THREAD_LIST_PAGE_SIZE,
-        "sortKey": "recency_at",
+        "sortKey": "updated_at",
         "sortDirection": "desc",
         "sourceKinds": CODEX_THREAD_SOURCE_KINDS,
         "archived": archived,

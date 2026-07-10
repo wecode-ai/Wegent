@@ -432,6 +432,11 @@ class RuntimeSendRequest(BaseModel):
         default=None,
         alias="requestUserInputResponse",
     )
+    additional_context: Optional[dict[str, dict[str, Any]]] = Field(
+        default=None,
+        alias="additionalContext",
+        validation_alias=AliasChoices("additionalContext", "additional_context"),
+    )
 
 
 class RuntimeSendResponse(BaseModel):
@@ -453,6 +458,11 @@ class RuntimeGuidanceRequest(BaseModel):
         default=None,
         alias="clientGuidanceId",
         validation_alias=AliasChoices("clientGuidanceId", "client_guidance_id"),
+    )
+    additional_context: Optional[dict[str, dict[str, Any]]] = Field(
+        default=None,
+        alias="additionalContext",
+        validation_alias=AliasChoices("additionalContext", "additional_context"),
     )
 
 
