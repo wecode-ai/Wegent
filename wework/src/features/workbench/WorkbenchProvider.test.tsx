@@ -4742,7 +4742,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       globalThis.dispatchEvent(new Event('wework-runtime-plan-updated'))
     })
 
-    await waitFor(() => expect(screen.getByTestId('runtime-plan-progress-button')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-plan-progress-button')).toBeInTheDocument()
+    )
 
     await userEvent.click(screen.getByText('start new plan scope chat'))
 
