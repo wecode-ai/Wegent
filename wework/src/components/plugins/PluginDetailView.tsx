@@ -292,7 +292,7 @@ export function PluginDetailView({
     <main className="min-w-0 flex-1 overflow-y-auto bg-background text-text-primary">
       <DesktopTopBar
         testId="plugin-detail-topbar"
-        className="sticky top-0 z-40 h-12 bg-background/95 pl-20 pr-5 backdrop-blur-xl md:h-[52px] md:pr-7"
+        className="sticky top-0 z-40 h-12 bg-background/95 pl-5 pr-5 backdrop-blur-xl md:h-[52px] md:pl-7 md:pr-7"
         dragRegionClassName="hidden md:block"
         left={
           <nav
