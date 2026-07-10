@@ -379,12 +379,11 @@ function WeworkDevInstanceBadge() {
       data-testid="wework-dev-instance-badge"
       className="group pointer-events-auto fixed bottom-3 right-3 z-critical max-w-[min(460px,calc(100vw-1.5rem))]"
     >
-      <div className="ml-auto max-w-[min(360px,calc(100vw-1.5rem))] truncate rounded-md border border-border/80 bg-background/95 px-2.5 py-1.5 text-xs font-medium text-text-secondary shadow-[0_8px_24px_rgba(0,0,0,0.12)] backdrop-blur">
-        Debug Wework: <span className="text-text-primary">{info.title}</span>
+      <div className="ml-auto max-w-[min(240px,calc(100vw-1.5rem))] truncate rounded-md border border-border/80 bg-background/95 px-2.5 py-1.5 text-xs font-medium text-text-secondary shadow-[0_8px_24px_rgba(0,0,0,0.12)] backdrop-blur">
+        <span className="text-text-primary">{info.title}</span>
       </div>
       <div className="pointer-events-none absolute bottom-full right-0 w-[min(460px,calc(100vw-1.5rem))] translate-y-1 pb-2 text-xs opacity-0 transition group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100">
         <div className="rounded-lg border border-border/80 bg-background/98 p-2 shadow-[0_18px_48px_rgba(0,0,0,0.18)] backdrop-blur">
-          <div className="mb-1 px-2 py-1 font-semibold text-text-primary">Debug Wework</div>
           <div className="space-y-1">
             {rows.map(row => (
               <div

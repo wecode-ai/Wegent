@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createProjectApi } from '@/api/projects'
@@ -83,6 +83,14 @@ describe('WorkspacePanelActions', () => {
     setWindowWidth(originalInnerWidth)
   })
 
+  test('hides environment info while a task is being created', () => {
+    render(<WorkspacePanelActions {...baseProps} environmentInfoVisible={false} />)
+
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
+  })
+
   test('keeps environment info action visible after environment refresh resolves empty context', () => {
     const { rerender } = render(<WorkspacePanelActions {...baseProps} />)
 
@@ -147,6 +155,19 @@ describe('WorkspacePanelActions', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
   })
 
+  test('opens environment info as a floating panel when the dock is collapsed', async () => {
+    setWindowWidth(1024)
+    render(
+      <WorkspacePanelActions {...baseProps} mode="environment" environmentInfoDocked={false} />
+    )
+
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    expect(screen.getByTestId('environment-info-popover')).toHaveClass('fixed', 'z-system')
+  })
+
   test('renders environment info in its dedicated right-side container', () => {
     setWindowWidth(1280)
     const workspaceContainer = document.createElement('main')
@@ -170,23 +191,23 @@ describe('WorkspacePanelActions', () => {
     }
   })
 
-  test('keeps environment info collapsed by default when the workspace is narrow', () => {
-    setWindowWidth(1279)
-
-    render(<WorkspacePanelActions {...baseProps} mode="environment" />)
+  test('keeps environment info collapsed by default when the dock is unavailable', () => {
+    render(
+      <WorkspacePanelActions {...baseProps} mode="environment" environmentInfoDocked={false} />
+    )
 
     expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
 
-  test('closes environment info when the workspace becomes narrow', () => {
-    setWindowWidth(1280)
-    render(<WorkspacePanelActions {...baseProps} mode="environment" />)
+  test('closes environment info when the dock becomes unavailable', () => {
+    const { rerender } = render(<WorkspacePanelActions {...baseProps} mode="environment" />)
 
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
 
-    setWindowWidth(1279)
-    act(() => window.dispatchEvent(new Event('resize')))
+    rerender(
+      <WorkspacePanelActions {...baseProps} mode="environment" environmentInfoDocked={false} />
+    )
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
