@@ -227,7 +227,14 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
     const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
     setter?.call(element, value)
   } else {
-    element.replaceChildren(document.createTextNode(value))
+    const selection = window.getSelection()
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    range.collapse(false)
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    document.execCommand('selectAll', false)
+    document.execCommand('insertText', false, value)
   }
 
   element.dispatchEvent(

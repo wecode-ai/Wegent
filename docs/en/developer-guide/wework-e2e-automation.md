@@ -49,12 +49,15 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 
 ## Desktop Task-Flow E2E
 
-`wework/e2e/desktop/task-flow.e2e.mjs` covers the real task execution path in a local workspace:
+`wework/e2e/desktop/task-flow.e2e.mjs` covers the real task lifecycle in a local workspace:
 
 1. Builds and starts the real Tauri Wework application, opening an isolated workspace with `--open-workspace`.
 2. Starts the real `wegent-executor` sidecar, which starts a real `codex app-server`.
 3. Fills in a task and clicks send in the native WebView, then waits for the real conversation to render.
 4. Verifies the request issued by Codex to the model service, the workspace file written by a real Codex tool call, and the final UI response.
+5. Sends a follow-up in the same conversation and verifies its request and rendered response.
+6. Starts a streaming response, cancels it through the desktop UI, and verifies the stopped state and closed model stream.
+7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback OpenAI Responses-compatible service as a custom Codex model provider. That service returns deterministic tool calls and final text; the tool call is still executed by real Codex in the isolated workspace.
 
@@ -64,7 +67,7 @@ The environment needs Rust, Tauri build dependencies, and a real Codex binary. T
 CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
-Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Tauri application binaries. A supplied application must be built with the desktop E2E Vite environment variables. Test artifacts and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
+Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Tauri application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
 
 ## Responses API Mock
 
