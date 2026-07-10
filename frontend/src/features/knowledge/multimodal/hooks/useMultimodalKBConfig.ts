@@ -13,7 +13,6 @@
 import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { SummaryModelRef } from '@/types/knowledge'
-import { useMultimodalFeatureEnabled } from './useMultimodalFeatureEnabled'
 
 export interface MultimodalKBConfig {
   multimodalAnalysisEnabled: boolean
@@ -33,9 +32,6 @@ export interface MultimodalKBSubmitFields {
 
 export function useMultimodalKBConfig() {
   const { t } = useTranslation('knowledge')
-  // When the global pipeline switch is off, force every submit to disabled so
-  // an already-enabled KB being edited does not silently keep enabled=true.
-  const featureEnabled = useMultimodalFeatureEnabled()
   const [multimodalAnalysisEnabled, setMultimodalAnalysisEnabled] = useState(false)
   const [multimodalAnalysisModelRef, setMultimodalAnalysisModelRef] =
     useState<SummaryModelRef | null>(null)
@@ -55,12 +51,12 @@ export function useMultimodalKBConfig() {
 
   /** Validate; returns true if valid. Sets error state on failure. */
   function validate(): boolean {
-    // Gate by the global switch too: when the pipeline is off, the multimodal
-    // section is hidden (users can't fix a missing model ref) and buildSubmitFields
-    // forces enabled=false anyway — so a stale enabled=true + missing modelRef
-    // must not block the whole KB edit from submitting.
-    const effectiveEnabled = featureEnabled && multimodalAnalysisEnabled
-    if (effectiveEnabled && !multimodalAnalysisModelRef) {
+    // Require a model whenever the user has toggled multimodal ON, regardless of
+    // the global pipeline switch. The global switch controls whether the
+    // pipeline RUNS (conversion_pipeline), not whether the KB can be configured
+    // — silently allowing enabled=true with no model left the config in a state
+    // that always failed at dispatch time.
+    if (multimodalAnalysisEnabled && !multimodalAnalysisModelRef) {
       setMultimodalAnalysisModelError(t('document.multimodal.modelRequired'))
       return false
     }
@@ -75,13 +71,15 @@ export function useMultimodalKBConfig() {
 
   /** Assemble the multimodal fields for the create/update request payload. */
   function buildSubmitFields(): MultimodalKBSubmitFields {
-    // Globally disabled → emit a clean disabled payload, ignoring local state.
-    const effectiveEnabled = featureEnabled && multimodalAnalysisEnabled
+    // Submit the user's raw toggle intent. The global pipeline switch
+    // (useMultimodalFeatureEnabled) gates whether the pipeline RUNS, not whether
+    // the KB config is saved — gating the submitted value here caused "toggle on
+    // but multimodal stays off after create" when the switch was off or unresolved.
     return {
-      multimodal_analysis_enabled: effectiveEnabled,
-      multimodal_analysis_model_ref: effectiveEnabled ? multimodalAnalysisModelRef : null,
-      multimodal_analysis_video_prompt: effectiveEnabled ? multimodalVideoPrompt : null,
-      multimodal_analysis_image_prompt: effectiveEnabled ? multimodalImagePrompt : null,
+      multimodal_analysis_enabled: multimodalAnalysisEnabled,
+      multimodal_analysis_model_ref: multimodalAnalysisEnabled ? multimodalAnalysisModelRef : null,
+      multimodal_analysis_video_prompt: multimodalAnalysisEnabled ? multimodalVideoPrompt : null,
+      multimodal_analysis_image_prompt: multimodalAnalysisEnabled ? multimodalImagePrompt : null,
     }
   }
 
