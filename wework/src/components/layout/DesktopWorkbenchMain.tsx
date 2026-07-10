@@ -391,6 +391,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const isTauri = isTauriRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
+  const [workbenchMainElement, setWorkbenchMainElement] = useState<HTMLElement | null>(null)
+  const setWorkbenchMainRef = useCallback((element: HTMLElement | null) => {
+    workbenchMainRef.current = element
+    setWorkbenchMainElement(element)
+  }, [])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
     loading: false,
@@ -1048,6 +1053,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       devices={devices}
       workspaceTarget={workspaceTarget}
       environmentInfo={environmentInfo}
+      environmentInfoPopoverContainer={workbenchMainElement}
       onRefreshEnvironmentInfo={refreshEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
       onCommitAndPushEnvironmentChanges={commitAndPushEnvironmentChanges}
@@ -1241,7 +1247,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   return (
     <main
-      ref={workbenchMainRef}
+      ref={setWorkbenchMainRef}
       className={cn(
         'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden bg-background',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',

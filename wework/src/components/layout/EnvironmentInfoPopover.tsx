@@ -16,7 +16,15 @@ import {
   Upload,
   CornerDownLeft,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -28,6 +36,7 @@ import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
+  popoverContainer: HTMLElement | null
   devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
   onCommitChanges?: (message: string) => Promise<void>
@@ -44,6 +53,7 @@ type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
 const POPOVER_WIDTH = 340
 const POPOVER_GAP = 8
 const VIEWPORT_MARGIN = 16
+const AUTO_OPEN_MIN_VIEWPORT_WIDTH = 1280
 
 interface PopoverPosition {
   left: number
@@ -54,17 +64,22 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
 }
 
-function getEnvironmentPopoverPosition(anchor: DOMRect): PopoverPosition {
-  const viewportWidth = window.innerWidth || document.documentElement.clientWidth
-  const maxLeft = Math.max(VIEWPORT_MARGIN, viewportWidth - POPOVER_WIDTH - VIEWPORT_MARGIN)
+function getEnvironmentPopoverPosition(anchor: DOMRect, container: HTMLElement): PopoverPosition {
+  const containerRect = container.getBoundingClientRect()
+  const maxLeft = Math.max(VIEWPORT_MARGIN, containerRect.width - POPOVER_WIDTH - VIEWPORT_MARGIN)
   return {
-    left: clamp(anchor.right - POPOVER_WIDTH, VIEWPORT_MARGIN, maxLeft),
-    top: Math.max(VIEWPORT_MARGIN, anchor.bottom + POPOVER_GAP),
+    left: clamp(anchor.right - containerRect.left - POPOVER_WIDTH, VIEWPORT_MARGIN, maxLeft),
+    top: Math.max(VIEWPORT_MARGIN, anchor.bottom - containerRect.top + POPOVER_GAP),
   }
+}
+
+function shouldAutoOpenEnvironmentInfo() {
+  return typeof window !== 'undefined' && window.innerWidth >= AUTO_OPEN_MIN_VIEWPORT_WIDTH
 }
 
 export function EnvironmentInfoPopover({
   info,
+  popoverContainer,
   devices = [],
   onRefresh,
   onCommitChanges,
@@ -76,7 +91,7 @@ export function EnvironmentInfoPopover({
   onOpenChangesReview,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(shouldAutoOpenEnvironmentInfo)
   const [workspacePathCopied, setWorkspacePathCopied] = useState(false)
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
@@ -194,22 +209,25 @@ export function EnvironmentInfoPopover({
     await handleCommitPanelAction('commit')
   }
 
+  const updatePopoverPosition = useCallback(() => {
+    if (!rootRef.current || !popoverContainer) return
+    setPopoverPosition(
+      getEnvironmentPopoverPosition(rootRef.current.getBoundingClientRect(), popoverContainer)
+    )
+  }, [popoverContainer])
+
   function handleToggleOpen() {
     const nextOpen = !open
-    if (nextOpen && rootRef.current) {
-      setPopoverPosition(getEnvironmentPopoverPosition(rootRef.current.getBoundingClientRect()))
-    }
     setOpen(nextOpen)
-
     if (nextOpen) {
       void onRefresh?.()
     }
   }
 
-  const updatePopoverPosition = useCallback(() => {
-    if (!rootRef.current) return
-    setPopoverPosition(getEnvironmentPopoverPosition(rootRef.current.getBoundingClientRect()))
-  }, [])
+  useLayoutEffect(() => {
+    if (!open || !popoverContainer) return
+    updatePopoverPosition()
+  }, [open, popoverContainer, updatePopoverPosition])
 
   useEffect(() => {
     if (!open) {
@@ -230,13 +248,21 @@ export function EnvironmentInfoPopover({
     document.addEventListener('pointerdown', handlePointerDown)
     window.addEventListener('resize', updatePopoverPosition)
     window.addEventListener('scroll', updatePopoverPosition, true)
+    const resizeObserver =
+      popoverContainer && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(updatePopoverPosition)
+        : null
+    if (resizeObserver && popoverContainer) {
+      resizeObserver.observe(popoverContainer)
+    }
 
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown)
       window.removeEventListener('resize', updatePopoverPosition)
       window.removeEventListener('scroll', updatePopoverPosition, true)
+      resizeObserver?.disconnect()
     }
-  }, [open, updatePopoverPosition])
+  }, [open, popoverContainer, updatePopoverPosition])
 
   const popoverStyle: CSSProperties | undefined = popoverPosition
     ? {
@@ -261,13 +287,13 @@ export function EnvironmentInfoPopover({
       </button>
 
       {open &&
-        typeof document !== 'undefined' &&
+        popoverContainer &&
         createPortal(
           <div
             ref={popoverRef}
             data-testid="environment-info-popover"
             style={popoverStyle}
-            className="fixed z-system w-[340px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
+            className="absolute z-system w-[340px] max-w-[calc(100%-2rem)] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
           >
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[13px] font-medium text-text-primary">
@@ -472,7 +498,7 @@ export function EnvironmentInfoPopover({
               </p>
             )}
           </div>,
-          document.body
+          popoverContainer
         )}
       {open &&
         commitFormOpen &&

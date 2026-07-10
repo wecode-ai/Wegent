@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createProjectApi } from '@/api/projects'
 import { openExternalUrl } from '@/lib/external-links'
 import { isLocalTerminalAvailable, openLocalWorkspace } from '@/lib/local-terminal'
@@ -32,6 +32,14 @@ const openExternalUrlMock = vi.mocked(openExternalUrl)
 const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startCodeServerSessionMock = vi.fn()
+const originalInnerWidth = window.innerWidth
+
+function setWindowWidth(width: number) {
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    value: width,
+  })
+}
 
 function createRect({
   left,
@@ -63,6 +71,7 @@ const baseProps = {
     deletions: '-0',
     executionTarget: 'local' as const,
   },
+  environmentInfoPopoverContainer: document.body,
   onRefreshEnvironmentInfo: vi.fn(),
   onCommitEnvironmentChanges: vi.fn(),
   onCommitAndPushEnvironmentChanges: vi.fn(),
@@ -80,6 +89,7 @@ const baseProps = {
 describe('WorkspacePanelActions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    setWindowWidth(originalInnerWidth)
     isLocalTerminalAvailableMock.mockReturnValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
     startCodeServerSessionMock.mockResolvedValue({
@@ -90,6 +100,10 @@ describe('WorkspacePanelActions', () => {
       startCodeServerSession: startCodeServerSessionMock,
     } as unknown as ReturnType<typeof createProjectApi>)
     openExternalUrlMock.mockResolvedValue(true)
+  })
+
+  afterEach(() => {
+    setWindowWidth(originalInnerWidth)
   })
 
   test('keeps environment info action visible after environment refresh resolves empty context', () => {
@@ -139,10 +153,72 @@ describe('WorkspacePanelActions', () => {
     expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
   })
 
+  test('opens environment info by default when the workspace is wide', () => {
+    setWindowWidth(1280)
+
+    render(<WorkspacePanelActions {...baseProps} mode="environment" />)
+
+    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+  })
+
+  test('positions environment info relative to the workspace container', () => {
+    setWindowWidth(1280)
+    const workspaceContainer = document.createElement('main')
+    document.body.append(workspaceContainer)
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function () {
+        if (this === workspaceContainer) {
+          return createRect({ left: 220, top: 0, width: 1280, height: 720 })
+        }
+        if (this.querySelector('[data-testid="environment-info-button"]')) {
+          return createRect({ left: 1452, top: 8, width: 32, height: 32 })
+        }
+        return createRect({ left: 0, top: 0, width: 0, height: 0 })
+      })
+
+    try {
+      render(
+        <WorkspacePanelActions
+          {...baseProps}
+          mode="environment"
+          environmentInfoPopoverContainer={workspaceContainer}
+        />
+      )
+
+      const popover = screen.getByTestId('environment-info-popover')
+      expect(workspaceContainer).toContainElement(popover)
+      expect(popover).toHaveClass('absolute')
+      expect(popover).not.toHaveClass('fixed')
+      expect(popover).toHaveStyle({ left: '924px', top: '48px' })
+    } finally {
+      rectSpy.mockRestore()
+      workspaceContainer.remove()
+    }
+  })
+
+  test('keeps environment info collapsed by default when the workspace is narrow', () => {
+    setWindowWidth(1279)
+
+    render(<WorkspacePanelActions {...baseProps} mode="environment" />)
+
+    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+  })
+
   test('positions environment info popover from the trigger instead of the viewport edge', async () => {
     const rectSpy = vi
       .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function () {
+        if (this === document.body) {
+          return createRect({
+            left: 0,
+            top: 0,
+            width: window.innerWidth,
+            height: window.innerHeight,
+          })
+        }
         if (this.querySelector('[data-testid="environment-info-button"]')) {
           return createRect({ left: 88, top: 8, width: 32, height: 32 })
         }
