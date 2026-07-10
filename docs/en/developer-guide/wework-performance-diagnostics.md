@@ -70,6 +70,20 @@ WEGENT_CODEX_STREAM_DEBUG=1          # enable raw Codex delta / classification d
 WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # enable runtime work cache/emit mapping details
 ```
 
+## Streaming Message Rendering
+
+Wework separates high-frequency executor text deltas from the visible Markdown cadence. Message state still receives and retains the complete content in real time, while `AssistantMarkdown` uses a lightweight buffer to advance visible text on browser frames. It catches up adaptively when the backlog grows, then retains a small character reserve and drains it slowly near the tail to smooth executor bursts and short delivery gaps. The renderer immediately aligns with complete content when streaming ends, content is replaced, or an update is not append-only, preserving final-message correctness.
+
+Streaming messages skip full Pretext height measurement and use a stable offscreen intrinsic height. Completed messages are measured precisely and cached. Height lookup first uses the message object and width, avoiding repeated full-text hashes for unchanged historical messages during every stream update. Stable props and memo boundaries also keep the composer, workspace actions, right workspace, and bottom terminal from rerendering for every text delta.
+
+Distinguish these cases when investigating streaming stalls:
+
+- The frame rate is stable but output alternates between fast and slow: inspect stream `message` event intervals. Executor batching or network/IPC delivery gaps are usually responsible.
+- Long frames, dense style recalculation, or Markdown parsing appear: check whether code bypasses the text buffer, destabilizes Streamdown component references, or reintroduces per-character DOM animation.
+- GC time is unexpectedly high: verify whether Web Inspector has **Heap Allocations** enabled. That instrument can significantly amplify GC during longer recordings and should be disabled when diagnosing interaction smoothness alone.
+
+Streaming-buffer unit tests live in `wework/src/components/chat/useBufferedStreamingText.test.ts`. Changes to the reserve or advance rate must continue to cover Unicode boundaries, non-append updates, and immediate alignment when streaming ends.
+
 ## Collected Data
 
 When enabled, the diagnostics module records:
