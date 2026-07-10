@@ -41,30 +41,6 @@ function setWindowWidth(width: number) {
   })
 }
 
-function createRect({
-  left,
-  top,
-  width,
-  height,
-}: {
-  left: number
-  top: number
-  width: number
-  height: number
-}): DOMRect {
-  return {
-    x: left,
-    y: top,
-    left,
-    top,
-    width,
-    height,
-    right: left + width,
-    bottom: top + height,
-    toJSON: () => ({}),
-  } as DOMRect
-}
-
 const baseProps = {
   environmentInfo: {
     additions: '+0',
@@ -171,21 +147,10 @@ describe('WorkspacePanelActions', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
   })
 
-  test('positions environment info relative to the workspace container', () => {
+  test('renders environment info in its dedicated right-side container', () => {
     setWindowWidth(1280)
     const workspaceContainer = document.createElement('main')
     document.body.append(workspaceContainer)
-    const rectSpy = vi
-      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
-      .mockImplementation(function () {
-        if (this === workspaceContainer) {
-          return createRect({ left: 220, top: 0, width: 1280, height: 720 })
-        }
-        if (this.querySelector('[data-testid="environment-info-button"]')) {
-          return createRect({ left: 1452, top: 8, width: 32, height: 32 })
-        }
-        return createRect({ left: 0, top: 0, width: 0, height: 0 })
-      })
 
     try {
       render(
@@ -198,11 +163,9 @@ describe('WorkspacePanelActions', () => {
 
       const popover = screen.getByTestId('environment-info-popover')
       expect(workspaceContainer).toContainElement(popover)
-      expect(popover).toHaveClass('absolute')
-      expect(popover).not.toHaveClass('fixed')
-      expect(popover).toHaveStyle({ left: '964px', top: '48px' })
+      expect(popover).toHaveClass('w-[240px]')
+      expect(popover).not.toHaveClass('absolute', 'fixed')
     } finally {
-      rectSpy.mockRestore()
       workspaceContainer.remove()
     }
   })
@@ -214,79 +177,6 @@ describe('WorkspacePanelActions', () => {
 
     expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
-  })
-
-  test('keeps environment info collapsed when it would overlap the conversation content', () => {
-    setWindowWidth(1600)
-    const workspaceContainer = document.createElement('main')
-    const conversationContent = document.createElement('div')
-    conversationContent.dataset.testid = 'desktop-floating-composer-layer'
-    workspaceContainer.append(conversationContent)
-    document.body.append(workspaceContainer)
-    const rectSpy = vi
-      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
-      .mockImplementation(function () {
-        if (this === workspaceContainer) {
-          return createRect({ left: 200, top: 0, width: 1200, height: 720 })
-        }
-        if (this === conversationContent) {
-          return createRect({ left: 480, top: 100, width: 700, height: 300 })
-        }
-        if (this.querySelector('[data-testid="environment-info-button"]')) {
-          return createRect({ left: 1360, top: 8, width: 32, height: 32 })
-        }
-        return createRect({ left: 0, top: 0, width: 0, height: 0 })
-      })
-
-    try {
-      render(
-        <WorkspacePanelActions
-          {...baseProps}
-          mode="environment"
-          environmentInfoPopoverContainer={workspaceContainer}
-        />
-      )
-
-      expect(screen.getByTestId('environment-info-button')).toHaveAttribute(
-        'aria-expanded',
-        'false'
-      )
-      expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
-    } finally {
-      rectSpy.mockRestore()
-      workspaceContainer.remove()
-    }
-  })
-
-  test('positions environment info popover from the trigger instead of the viewport edge', async () => {
-    const rectSpy = vi
-      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
-      .mockImplementation(function () {
-        if (this === document.body) {
-          return createRect({
-            left: 0,
-            top: 0,
-            width: window.innerWidth,
-            height: window.innerHeight,
-          })
-        }
-        if (this.querySelector('[data-testid="environment-info-button"]')) {
-          return createRect({ left: 88, top: 8, width: 32, height: 32 })
-        }
-        return createRect({ left: 0, top: 0, width: 0, height: 0 })
-      })
-
-    try {
-      render(<WorkspacePanelActions {...baseProps} mode="environment" />)
-
-      await userEvent.click(screen.getByTestId('environment-info-button'))
-
-      const popover = await screen.findByTestId('environment-info-popover')
-      expect(popover).toHaveStyle({ left: '16px', top: '48px' })
-      expect(popover).not.toHaveClass('right-6', 'top-[76px]')
-    } finally {
-      rectSpy.mockRestore()
-    }
   })
 
   test('opens local workspaces with the default VS Code titlebar action', async () => {

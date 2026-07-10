@@ -391,10 +391,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const isTauri = isTauriRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
-  const [workbenchMainElement, setWorkbenchMainElement] = useState<HTMLElement | null>(null)
-  const setWorkbenchMainRef = useCallback((element: HTMLElement | null) => {
-    workbenchMainRef.current = element
-    setWorkbenchMainElement(element)
+  const environmentInfoPanelRef = useRef<HTMLElement | null>(null)
+  const [environmentInfoPanelElement, setEnvironmentInfoPanelElement] =
+    useState<HTMLElement | null>(null)
+  const setEnvironmentInfoPanelRef = useCallback((element: HTMLElement | null) => {
+    environmentInfoPanelRef.current = element
+  }, [])
+  useLayoutEffect(() => {
+    setEnvironmentInfoPanelElement(environmentInfoPanelRef.current)
   }, [])
   const continueInIm = useRuntimeTaskContinueInIm(currentRuntimeTask)
   const [reviewState, setReviewState] = useState<DesktopReviewState>({
@@ -1053,7 +1057,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       devices={devices}
       workspaceTarget={workspaceTarget}
       environmentInfo={environmentInfo}
-      environmentInfoPopoverContainer={workbenchMainElement}
+      environmentInfoPopoverContainer={environmentInfoPanelElement}
       environmentInfoVisible={Boolean(currentRuntimeTask || currentProject)}
       onRefreshEnvironmentInfo={refreshEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
@@ -1248,7 +1252,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
 
   return (
     <main
-      ref={setWorkbenchMainRef}
+      ref={workbenchMainRef}
       className={cn(
         'absolute inset-x-0 bottom-0 flex min-w-0 flex-1 flex-col overflow-hidden bg-background',
         'transition-[margin] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
@@ -1301,16 +1305,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           data-testid="desktop-workbench-content"
           className={cn(
-            'relative flex min-w-0 flex-none flex-col overflow-hidden',
+            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto] overflow-hidden',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
           style={{ width: chatColumnWidth }}
         >
           {isBootstrapping ? (
-            <div className="flex flex-1" data-testid="desktop-workbench-loading" />
+            <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
           ) : hasConversation ? (
-            <div className="relative min-h-0 flex-1 overflow-hidden">
+            <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
               <ScrollableMessageArea
                 messages={paneMessages}
                 loading={paneSession.transcriptLoading}
@@ -1482,7 +1486,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               />
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center px-10">
+            <div className="flex min-w-0 flex-1 items-center justify-center px-10">
               <div
                 className={cn(
                   DESKTOP_COMPOSER_FRAME_CLASS,
@@ -1538,6 +1542,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               </div>
             </div>
           )}
+          <aside
+            ref={setEnvironmentInfoPanelRef}
+            data-testid="environment-info-panel-container"
+            className="relative z-popover h-full w-0 shrink-0 overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[>[data-testid=environment-info-popover]]:w-[252px]"
+          />
         </div>
         {rightPanelOpen && (
           <div

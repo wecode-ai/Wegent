@@ -5195,8 +5195,14 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('environment-info-panel-container')).toContainElement(
+      screen.getByTestId('environment-info-popover')
+    )
+    expect(screen.getByTestId('desktop-workbench-content')).toContainElement(
+      screen.getByTestId('environment-info-panel-container')
+    )
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
-      'w-[300px]',
+      'w-[240px]',
       'bg-background',
       'text-text-primary',
       'border-border',
