@@ -120,6 +120,24 @@ async function appendProcessOutput(stream, destination) {
   })
 }
 
+async function fillComposerUntilSendEnabled(control, selector) {
+  let lastError
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await control.command('fill', selector, { value: TASK_PROMPT })
+    try {
+      await control.command('waitFor', '[data-testid="send-message-button"]', {
+        enabled: true,
+        timeoutMs: 3_000,
+      })
+      return
+    } catch (error) {
+      lastError = error
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+  }
+  throw lastError
+}
+
 function createSse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
 }
@@ -549,8 +567,7 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await control.command('fill', composerSelector, { value: TASK_PROMPT })
-    await control.command('waitFor', '[data-testid="send-message-button"]', { enabled: true })
+    await fillComposerUntilSendEnabled(control, composerSelector)
     await control.command('click', '[data-testid="send-message-button"]')
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: COMPLETION_TEXT,
