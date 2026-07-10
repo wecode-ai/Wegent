@@ -8,7 +8,6 @@ import {
   Code2,
   Copy,
   ExternalLink,
-  GitBranch,
   Globe2,
   Info,
   Keyboard,
@@ -62,8 +61,7 @@ import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettings
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
-import { SkillSettingsPage } from './SkillSettingsPage'
-import { WorktreesSettingsPage } from './WorktreesSettingsPage'
+import { PluginSettingsPage } from './PluginSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -80,7 +78,7 @@ interface ConnectionsSettingsPageProps {
   autoOpenAddCloudDeviceDialog?: boolean
 }
 
-type SettingsCategory = 'personal' | 'coding' | 'archived'
+type SettingsCategory = 'personal' | 'integrations' | 'archived'
 
 interface SettingsNavItem {
   key: string
@@ -148,18 +146,11 @@ const settingsNavItems: SettingsNavItem[] = [
     category: 'personal',
   },
   {
-    key: 'skills',
+    key: 'plugins',
     icon: Package,
-    label: 'settings_nav_skills',
-    fallback: '技能',
-    category: 'coding',
-  },
-  {
-    key: 'worktrees',
-    icon: GitBranch,
-    label: 'settings_nav_worktrees',
-    fallback: '工作树',
-    category: 'coding',
+    label: 'settings_nav_plugins',
+    fallback: '插件',
+    category: 'integrations',
   },
   {
     key: 'archived-conversations',
@@ -175,9 +166,9 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
     label: 'settings_category_personal',
     fallback: '个人',
   },
-  coding: {
-    label: 'settings_category_coding',
-    fallback: '编码',
+  integrations: {
+    label: 'settings_category_integrations',
+    fallback: '集成',
   },
   archived: {
     label: 'settings_category_archived',
@@ -544,7 +535,7 @@ function CloudDeviceConnectionInfoDialog({
           {rows.map(row => (
             <div
               key={row.key}
-              className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
+              className="flex items-center gap-3 rounded-md border border-border bg-background px-3 py-2"
             >
               <div className="w-20 shrink-0 text-xs text-text-secondary">{row.label}</div>
               <div className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
@@ -774,7 +765,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     <>
       <div
         data-testid={`connection-device-${device.device_id}`}
-        className="rounded-lg border border-border bg-surface p-3"
+        className="rounded-lg border border-border bg-background p-3"
       >
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-2">
@@ -1004,7 +995,7 @@ function DeviceSection({
         {showScaleWiki && (
           <div
             data-testid="connection-scale-wiki"
-            className="rounded-lg border border-border bg-surface px-4 py-3"
+            className="rounded-lg border border-border bg-background px-4 py-3"
           >
             <div className="flex items-start gap-3">
               <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
@@ -1117,7 +1108,7 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
           {models.slice(0, 8).map(model => (
             <div
               key={`${model.type}:${model.name}:${model.namespace ?? ''}`}
-              className="flex min-h-11 items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2"
+              className="flex min-h-11 items-center gap-3 rounded-lg border border-border bg-background px-3 py-2"
             >
               <Code2 className="h-4 w-4 shrink-0 text-text-secondary" />
               <div className="min-w-0 flex-1">
@@ -1218,7 +1209,7 @@ function ConnectionsDeviceSettingsPage({
             </div>
           </section>
 
-          <section className="mt-4 rounded-lg border border-dashed border-border bg-surface p-5">
+          <section className="mt-4 rounded-lg border border-dashed border-border bg-background p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-primary">
@@ -1515,10 +1506,8 @@ export function ConnectionsSettingsPage({
           <ProxySettingsPage />
         ) : activeNav === 'keyboard-shortcuts' ? (
           <KeyboardShortcutsSettingsPage />
-        ) : activeNav === 'skills' ? (
-          <SkillSettingsPage />
-        ) : activeNav === 'worktrees' ? (
-          <WorktreesSettingsPage />
+        ) : activeNav === 'plugins' ? (
+          <PluginSettingsPage />
         ) : activeNav === 'archived-conversations' ? (
           <ArchivedConversationsSettingsPage />
         ) : (

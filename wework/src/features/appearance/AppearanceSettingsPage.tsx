@@ -15,13 +15,7 @@ const themeModes: Array<{
   { mode: 'system', icon: Monitor, labelKey: 'appearance_system', fallback: '系统' },
 ]
 
-function SettingRow({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}) {
+function SettingRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-h-[58px] items-center justify-between gap-4 border-b border-border px-4 last:border-b-0">
       <span className="min-w-0 text-sm font-medium text-text-primary">{label}</span>
@@ -35,10 +29,7 @@ export function AppearanceSettingsPage() {
   const { appearance, resolvedMode, setAppearance, resetAppearance } = useAppearance()
 
   return (
-    <div
-      data-testid="appearance-settings-page"
-      className="mx-auto w-full max-w-[880px] pb-10"
-    >
+    <div data-testid="appearance-settings-page" className="mx-auto w-full max-w-[880px] pb-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-normal text-text-primary">
@@ -52,14 +43,14 @@ export function AppearanceSettingsPage() {
           type="button"
           data-testid="appearance-reset-button"
           onClick={resetAppearance}
-          className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
+          className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
         >
           <RotateCcw className="h-4 w-4" />
           {t('workbench.appearance_reset', '恢复默认')}
         </button>
       </div>
 
-      <section className="mt-8 overflow-hidden rounded-lg border border-border bg-surface">
+      <section className="mt-8 overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-3">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.appearance_theme', '主题')}
@@ -120,7 +111,7 @@ export function AppearanceSettingsPage() {
           </div>
           <div className="overflow-hidden rounded-lg border border-border bg-background">
             <SettingRow label={t('workbench.appearance_accent', '强调色')}>
-              <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-surface px-2">
+              <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-background px-2">
                 <input
                   data-testid="appearance-accent-input"
                   type="color"
@@ -139,9 +130,7 @@ export function AppearanceSettingsPage() {
                   data-testid="appearance-sidebar-translucent-toggle"
                   type="checkbox"
                   checked={appearance.sidebarTranslucent}
-                  onChange={event =>
-                    setAppearance({ sidebarTranslucent: event.target.checked })
-                  }
+                  onChange={event => setAppearance({ sidebarTranslucent: event.target.checked })}
                   className="peer sr-only"
                 />
                 <span className="absolute inset-0 rounded-full bg-muted transition peer-checked:bg-text-primary" />
@@ -168,7 +157,7 @@ export function AppearanceSettingsPage() {
         </div>
       </section>
 
-      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-3">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.appearance_fonts', '字体')}

@@ -310,7 +310,7 @@ export function ProxySettingsPage() {
           data-testid="proxy-config-refresh-button"
           onClick={() => void loadProxyConfig(true)}
           disabled={loading || refreshing}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-surface text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           aria-label={t('workbench.proxy_config_refresh')}
           title={t('workbench.proxy_config_refresh')}
         >

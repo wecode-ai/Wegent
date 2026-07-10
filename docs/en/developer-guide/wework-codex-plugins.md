@@ -17,6 +17,8 @@ In the desktop sidebar, the plugin entry is fixed as the third primary action: N
 
 Plugin marketplaces are not split into local and cloud modes. Wework shows the OpenAI official marketplace returned by Codex app-server by default and lets users add multiple named marketplaces. Custom marketplaces can come from GitHub repositories, remote addresses, or local `marketplace.json` files/directories. When no marketplace is available, Wework shows a welcome page that guides the user to add a custom marketplace or open management.
 
+Codex plugin runtime configuration is available under Settings → Integrations → Plugins and currently exposes the remote Apps / Connectors switch. Settings no longer includes a standalone worktree management page or an action panel that migrates Claude and Codex skill directories into shared symlinks. Worktree lifecycle is managed by conversation flows, while skill and plugin content is managed through the plugin pages and Codex app-server.
+
 ## Marketplace and Install
 
 Marketplace data is read through the Codex app-server exposed by the local executor. List requests do not restrict `marketplaceKinds`, allowing Codex to return both local marketplaces and the `openai-curated-remote` official marketplace according to the active feature flags and authentication state. Custom remote GitHub marketplaces are cloned into a local cache directory, and later reads use the cached marketplace data and plugin folders. Install, uninstall, refresh, and custom marketplace removal all go through Codex app-server methods; Wework does not maintain a separate installed-plugin state.

@@ -459,7 +459,7 @@ function CodexOfficialModelsSection({
           <span>{error}</span>
         </div>
       ) : providers.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-surface px-3 py-3 text-sm text-text-secondary">
+        <div className="rounded-lg border border-dashed border-border bg-background px-3 py-3 text-sm text-text-secondary">
           {t('workbench.codex_official_models_empty')}
         </div>
       ) : (
@@ -1311,7 +1311,7 @@ function DisconnectedCloudModelsSection({
   return (
     <div
       data-testid="cloud-models-section"
-      className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-surface px-3 py-3 text-text-muted"
+      className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-background px-3 py-3 text-text-muted"
     >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -1378,7 +1378,10 @@ function DisconnectedCloudCodexSyncSection({
       <CodexSettingsGroup title={t('workbench.codex_settings_auth_group_title')}>
         <LocalCodexModelRow status={status} loading={loading} error={error} onRefresh={onRefresh} />
 
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-surface px-4 py-3 text-text-muted">
+        <div
+          data-testid="runtime-config-shared-auth-unavailable"
+          className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-dashed border-border bg-background px-4 py-3 text-text-muted"
+        >
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-text-secondary">
