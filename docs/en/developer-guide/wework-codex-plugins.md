@@ -47,6 +47,10 @@ Custom instructions from Settings → Context are read and written through Codex
 
 The interaction style uses the same `config.toml` as its single source of truth. Selecting Friendly or Pragmatic updates personality through `config/batchWrite`; Wework no longer stores personality in localStorage or repeats it as an override on every thread or turn request.
 
+## Model List
+
+Wework requests the model catalog from the Codex app-server's `model/list` method through the local executor, then uses the returned provider and model array order unchanged in the model picker. The frontend does not reorder official or default models or custom providers, and does not add models that Codex did not return. The request uses `includeHidden: false`, so models Codex marks as hidden are not displayed.
+
 ## Chat Runtime
 
 When a user selects a skill, app, or plugin in the composer, the editor inserts a structured badge and serializes it on submit as a Codex app-server-compatible mention:
