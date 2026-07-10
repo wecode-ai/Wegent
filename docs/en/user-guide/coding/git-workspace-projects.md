@@ -66,6 +66,24 @@ The worktree ID is the task ID. The task stores `git_worktree` as the execution 
 
 “New worktree” is available only for new conversations in projects bound to a local execution device, local directory, and a directory that is currently a Git repository. Existing tasks lock the execution directory so a task cannot switch workspaces midway. If the directory is not currently a Git repository, the composer still shows “Local mode”, but it does not show “New worktree” or the source branch selector. After the user manually turns that directory into a Git repository, no project configuration change is needed before selecting a new worktree again.
 
+## Commit and Push Changes
+
+In desktop Wework, open **Environment info** in the upper-right corner, then select **Commit or push** to run one of these actions in the current task or project's actual workspace directory:
+
+- **Commit** stages all tracked and untracked changes and creates a local commit.
+- **Commit and push** creates a local commit, then pushes the current branch.
+- **Push** pushes the current branch without creating another commit.
+
+You can enter the commit message manually. When the field is empty, Wework first verifies that the staged diff contains changes, then asks Codex on the execution device to generate a one-line commit message from that diff. When there are no changes to commit, Wework reports the error without invoking AI. AI generation requires an authenticated, working Codex installation on the execution device.
+
+Push always publishes the current local branch to a branch with the same name on `origin` and configures it as the upstream, equivalent to:
+
+```bash
+git push -u origin <current-branch>
+```
+
+This prevents an incorrectly configured old upstream such as `master` from receiving commits from a differently named local branch. Push is rejected with an error in detached HEAD state because there is no current branch name. While Wework generates a message, commits, or pushes, **Environment info** shows the current progress; Git or Codex errors remain visible in the panel for troubleshooting.
+
 ## Browse Workspace Files and Add Code Comments
 
 In desktop Wework, open the right workspace panel to browse files from the current task or project in read-only mode. The file tree reads the workspace directory from the currently bound execution device; existing tasks prefer the task workspace, and new conversations prefer the current project workspace.
