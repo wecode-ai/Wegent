@@ -686,8 +686,8 @@ def _select_prompt(
     Precedence: ``prompt_override`` (the document/KB-resolved effective prompt)
     wins over the shared default. A blank/whitespace override is ignored so an
     empty override falls back to the default (defensive). For video the
-    ``{{VIDEO_FILENAME}}`` placeholder is substituted with the original
-    filename's stem in BOTH the default and any override that includes it.
+    ``{{VIDEO_FILENAME}}`` placeholder, when present in an override, is
+    substituted with the original filename's stem.
     """
     override = (prompt_override or "").strip()
     if override:

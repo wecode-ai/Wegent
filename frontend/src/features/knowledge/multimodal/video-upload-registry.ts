@@ -7,18 +7,18 @@
  *
  * KB video uploads bypass the generic attachment upload (100 MB, binary) and
  * use a two-phase object-storage contract: the registered uploader sends the
- * binary to the configured object storage (Weibo file platform / GCS / OSS),
- * then calls the backend `/knowledge-documents/attachments/video-upload/complete`
- * endpoint to register metadata. The binary never reaches the generic
+ * binary to the configured object storage (GCS / OSS / ...), then calls the
+ * backend `/knowledge-documents/attachments/video-upload/complete` endpoint
+ * to register metadata. The binary never reaches the generic
  * `/attachments/upload` path.
  *
  * Open-source default: no uploader registered (null) → KB video files are
  * rejected at the queue stage with a "video upload unavailable" message.
- * Internal deployments register a Weibo (or GCS) uploader via
- * `registerVideoUploader()` in `wecode/`.
+ * Internal deployments register a concrete uploader via
+ * `registerVideoUploader()`.
  *
  * Mirrors the backend VideoUploadProvider + the existing video-download-registry
- * pattern (registry + null default + wecode registers).
+ * pattern (registry + null default + provider registers).
  */
 
 export type VideoUploadResult = {
@@ -45,7 +45,7 @@ export interface VideoUploader {
 let uploader: VideoUploader | null = null
 
 /**
- * Register a KB video uploader (internal wecode deployments).
+ * Register a KB video uploader (internal deployments).
  * Pass null to clear.
  */
 export function registerVideoUploader(fn: VideoUploader | null): void {

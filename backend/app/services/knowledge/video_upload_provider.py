@@ -5,12 +5,12 @@
 
 KB video uploads do NOT use the generic ``/attachments/upload`` path (which
 stores bytes via ``StorageBackend.save`` under a 100 MB cap). Videos are too
-large for in-memory storage and belong on object storage (Weibo file platform
-/ GCS / OSS). The contract is two-phase:
+large for in-memory storage and belong on object storage (GCS / OSS / ...).
+The contract is two-phase:
 
   1. ``init_upload`` — the backend returns the target the *frontend* uploads
-     the binary to (presigned URL / Weibo endpoint / GCS resumable session).
-     The binary never enters backend memory.
+     the binary to (presigned URL / GCS resumable session / ...). The binary
+     never enters backend memory.
   2. ``complete_upload`` — after the frontend upload, the backend stores only
      metadata (object key + ``storage_backend`` marker) in ``type_data``. No
      binary is persisted on the backend.
@@ -18,12 +18,10 @@ large for in-memory storage and belong on object storage (Weibo file platform
 The open-source build ships ``NoOpVideoUploadProvider``: KB video upload is
 rejected with a clear ``video_upload_not_configured`` error, mirroring
 ``NoOpStagingProvider``. Internal deployments register a concrete provider
-(e.g. ``WeiboVideoUploadProvider``) via ``register_video_upload_provider()``
-in ``wecode/`` — the framework is the seam.
+via ``register_video_upload_provider()`` — the framework is the seam.
 
 Mirrors the existing multimodal isolation pattern (MediaStagingProvider,
-video-download-registry, weibo_multimodal_patch): Protocol + NoOp default +
-wecode fills in.
+video-download-registry): Protocol + NoOp default + provider fills in.
 """
 
 from __future__ import annotations
@@ -62,8 +60,8 @@ class VideoUploadCompleteResult:
     """
 
     attachment_id: int
-    storage_backend: str  # "weibo" | "gcs" | "oss" | ...
-    object_key: str  # fid / object key — provider-specific
+    storage_backend: str  # "gcs" | "oss" | ...
+    object_key: str  # object key — provider-specific
 
 
 class VideoUploadProvider(Protocol):
@@ -115,7 +113,7 @@ _provider: Optional[VideoUploadProvider] = None
 
 
 def register_video_upload_provider(provider: VideoUploadProvider) -> None:
-    """Register a concrete provider (internal wecode deployments)."""
+    """Register a concrete provider (internal deployments)."""
     global _provider
     _provider = provider
 
