@@ -14,6 +14,8 @@ When Wework creates a local built-in Terminal PTY, it injects:
 - `WEWORK_PARENT_PROJECT`: the current project name.
 - `WEWORK_PARENT_WORKSPACE`: the current workspace path.
 
+Task titles are limited to 60 Unicode characters before they are displayed in the frontend or written to `WEWORK_PARENT_TITLE`. Longer titles end with an ellipsis so oversized content cannot affect debug instance labels or Terminal startup.
+
 These values are written only when the Terminal session is created. Existing Terminal sessions do not update after task switches or frontend hot reloads; close and reopen the Terminal to receive fresh context.
 
 ## Dev Script Variables

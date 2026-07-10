@@ -73,7 +73,10 @@ import {
   type DesktopReviewMetadata,
   type DesktopReviewState,
 } from './desktopWorkbenchPaneTypes'
-import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  findRuntimeTask,
+  truncateRuntimeTaskTitle,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
@@ -366,7 +369,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isBootstrapping = state.isBootstrapping
   const runtimeWork = state.runtimeWork
   const devices = state.devices
-  const runtimeTaskTitle = findRuntimeTask(runtimeWork, currentRuntimeTask)?.title.trim() || null
+  const runtimeTaskTitle = truncateRuntimeTaskTitle(
+    findRuntimeTask(runtimeWork, currentRuntimeTask)?.title
+  )
   const [rightPanelOpen, setRightPanelOpen] = useState(
     () => initialBlankBrowserMigration?.rightPanelOpen ?? false
   )
