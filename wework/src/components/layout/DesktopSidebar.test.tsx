@@ -162,6 +162,7 @@ describe('DesktopSidebar', () => {
     renderSidebar()
 
     expect(screen.getByTestId('settings-button')).toHaveClass('h-[60px]', 'min-w-0', 'flex-1')
+    expect(screen.getByTestId('settings-button')).toHaveClass('pr-10')
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice@example.com')
@@ -181,41 +182,27 @@ describe('DesktopSidebar', () => {
     })
 
     const button = screen.getByTestId('sidebar-app-update-button')
+    const action = screen.getByTestId('sidebar-app-update-action')
     expect(button).toHaveClass('h-8', 'w-8')
     expect(button).toHaveAttribute('title', '更新到 0.1.1')
+    expect(action).not.toHaveClass('max-w-0', 'opacity-0', 'overflow-hidden')
+    expect(screen.getByTestId('settings-button')).toHaveClass('pr-[72px]')
 
     await userEvent.click(button)
 
     expect(installUpdate).toHaveBeenCalledTimes(1)
   })
 
-  test('keeps the account-row update icon visible in debug mode for checking updates', async () => {
-    const checkNow = vi.fn().mockResolvedValue(null)
-    renderSidebar({}, undefined, { availableUpdate: null, checkNow })
-
-    const button = screen.getByTestId('sidebar-app-update-button')
-    expect(button).toHaveAttribute('title', '检查更新')
-
-    await userEvent.click(button)
-
-    expect(checkNow).toHaveBeenCalledTimes(1)
-  })
-
-  test('shows the app update error near the account-row update icon', async () => {
+  test('does not show an update icon without an available update', () => {
     renderSidebar({}, undefined, {
       availableUpdate: null,
       status: 'error',
       error: 'updater does not have any endpoints set',
     })
 
-    const button = screen.getByTestId('sidebar-app-update-button')
-    expect(button).toHaveAttribute('title', 'updater does not have any endpoints set')
-    expect(screen.queryByTestId('sidebar-app-update-error')).not.toBeInTheDocument()
-    await userEvent.hover(button)
-
-    expect(await screen.findByTestId('sidebar-app-update-error')).toHaveTextContent(
-      'updater does not have any endpoints set'
-    )
+    expect(screen.queryByTestId('sidebar-app-update-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-app-update-action')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-button')).toHaveClass('pr-10')
   })
 
   test('keeps the resize handle hit area on the sidebar edge', () => {
