@@ -95,12 +95,12 @@ describe('simple team edit utils', () => {
   })
 
   it('resolves built-in executor mode from shell name', () => {
-    expect(resolveSimpleExecutorFromBot({ ...bot, shell_name: 'Chat', shell_type: 'Chat' })).toEqual(
-      {
-        mode: 'simple',
-        customShellName: '',
-      }
-    )
+    expect(
+      resolveSimpleExecutorFromBot({ ...bot, shell_name: 'Chat', shell_type: 'Chat' })
+    ).toEqual({
+      mode: 'simple',
+      customShellName: '',
+    })
     expect(
       resolveSimpleExecutorFromBot({
         ...bot,

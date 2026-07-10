@@ -20,13 +20,26 @@ setup_logging(
     log_level=settings.LOG_LEVEL,
 )
 
+
+def _include_tasks() -> list[str]:
+    """Build the task module include list.
+
+    The MinerU conversion task is always included. The multimodal analysis task
+    is included only when ``MULTIMODAL_ENABLED`` is set, so a worker that does
+    not opt in to multimodal analysis never imports the Gemini SDK dependency
+    (and never registers the multimodal queue consumer).
+    """
+    tasks = ["knowledge_doc_converter.tasks.conversion_task"]
+    if settings.MULTIMODAL_ENABLED:
+        tasks.append("knowledge_doc_converter.tasks.multimodal_task")
+    return tasks
+
+
 celery_app = Celery(
     "knowledge_doc_converter",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
-    include=[
-        "knowledge_doc_converter.tasks.conversion_task",
-    ],
+    include=_include_tasks(),
 )
 
 celery_app.conf.update(

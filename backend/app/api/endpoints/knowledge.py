@@ -18,6 +18,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
+from app.api.endpoints._knowledge_multimodal import (
+    multimodal_create_kwargs,
+    multimodal_update_kwargs,
+)
 from app.api.knowledge_document_side_effects import (
     schedule_kb_summary_updates_after_deletion,
 )
@@ -52,6 +56,7 @@ from app.schemas.knowledge import (
     ResourceScope,
     SortOrder,
 )
+from app.schemas.knowledge_multimodal import DocumentReindexRequest
 from app.schemas.knowledge_qa_history import QAHistoryResponse
 from app.schemas.summary import KnowledgeBaseSummaryUpdateRequest
 from app.services.knowledge import (
@@ -324,6 +329,33 @@ def get_organization_namespace(
     }
 
 
+@router.get("/multimodal-default-prompts")
+@trace_sync("get_multimodal_default_prompts", "knowledge.api")
+def get_multimodal_default_prompts(
+    current_user: User = Depends(security.get_current_user),
+):
+    """Return the system default multimodal analysis prompts.
+
+    Used by the frontend to prefill the prompt editors in the KB create/edit,
+    upload advanced settings, and "modify prompt & re-analyze" dialogs. The
+    values are the single source of truth from ``shared.models.multimodal_prompts``
+    (the same constants the converter falls back to at runtime).
+
+    ``enabled`` mirrors the global ``KNOWLEDGE_MULTIMODAL_ENABLED`` switch so the
+    frontend can hide the entire multimodal UI when the pipeline is disabled.
+    """
+    from shared.models.multimodal_prompts import (
+        DEFAULT_IMAGE_PROMPT,
+        DEFAULT_VIDEO_PROMPT,
+    )
+
+    return {
+        "enabled": settings.KNOWLEDGE_MULTIMODAL_ENABLED,
+        "video_prompt": DEFAULT_VIDEO_PROMPT,
+        "image_prompt": DEFAULT_IMAGE_PROMPT,
+    }
+
+
 def _add_initial_kb_members(
     db: Session,
     kb_id: int,
@@ -405,6 +437,7 @@ def create_knowledge_base(
             rag_config_mode=data.rag_config_mode,
             retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_model_ref=data.summary_model_ref,
+            **multimodal_create_kwargs(data),
         )
 
         # Add initial members if provided
@@ -491,6 +524,7 @@ def update_knowledge_base(
             guided_questions=data.guided_questions,
             max_calls_per_conversation=data.max_calls_per_conversation,
             exempt_calls_before_check=data.exempt_calls_before_check,
+            multimodal_update_fields=multimodal_update_kwargs(data),
         )
         add_span_event(
             "knowledge.base.updated",
@@ -736,6 +770,7 @@ def update_document(
 @trace_async("reindex_document", "knowledge.api")
 async def reindex_document(
     document_id: int,
+    payload: Optional[DocumentReindexRequest] = None,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -746,16 +781,28 @@ async def reindex_document(
     and embedding model. Only works for documents in knowledge bases with
     RAG configured.
 
+    An optional body may carry ``multimodal_analysis_prompt``: when present it
+    is written into the document's ``source_config`` (overriding the KB default)
+    before re-dispatch, enabling the "modify prompt & re-analyze" flow to reuse
+    this endpoint. A blank value clears the document override (revert to the
+    KB default). Absent body / field = leave the stored prompt unchanged.
+
     Returns:
         Success message indicating reindex has started
     """
     try:
-        # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic)
+        # Use Orchestrator for unified business logic (REST API and MCP tools share the same logic).
+        # The optional multimodal prompt override is forwarded to the orchestrator, which persists
+        # it into the document's source_config AFTER the access check — so an unauthorized caller
+        # cannot poison the stored prompt. None = leave unchanged; "" = clear (revert to KB default).
         result = knowledge_orchestrator.reindex_document(
             db=db,
             user=current_user,
             document_id=document_id,
             trigger_summary=False,  # Don't re-generate summary on reindex
+            multimodal_prompt_override=(
+                payload.multimodal_analysis_prompt if payload else None
+            ),
         )
         add_span_event(
             "knowledge.document.reindex.scheduled",

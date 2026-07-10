@@ -45,6 +45,7 @@ from shared.utils.attachment_block import (
     truncate_for_injection,
 )
 from shared.utils.crypto import decrypt_attachment, encrypt_attachment
+from shared.utils.multimodal_ext import multimodal_media_type
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +257,28 @@ class ContextService:
         extension: str,
     ) -> Optional[TruncationInfo]:
         """Parse attachment data and update context fields."""
+        # Video attachments are not text-parseable and cannot be inlined as
+        # base64 for the model — skip text extraction and leave the binary
+        # stored as-is. Images are NOT skipped: they go through the parser
+        # below so their base64 is extracted and sent to vision models (chat
+        # image upload). KB multimodal files use a separate context path
+        # (create_knowledge_base_context), so this only governs chat attachments.
+        if multimodal_media_type(extension) == "video":
+            context.extracted_text = ""
+            context.text_length = 0
+            context.image_base64 = ""
+            context.status = ContextStatus.READY.value
+            context.type_data = {
+                **(context.type_data or {}),
+                "is_truncated": False,
+            }
+            logger.info(
+                "Skipping text parse for multimodal file: context=%s ext=%s",
+                context.id,
+                extension,
+            )
+            return None
+
         truncation_info = None
         try:
             parse_result: ParseResult = self.parser.parse(binary_data, extension)

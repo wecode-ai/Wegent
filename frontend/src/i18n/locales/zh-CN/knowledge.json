@@ -428,10 +428,12 @@
         "viewChunks": "查看分段",
         "splitterType": "分段类型",
         "splitterSubtype": "分段子类型",
-        "qaPairsDetected": "已识别 {{count}} 个问答对"
+        "qaPairsDetected": "已识别 {{count}} 个问答对",
+        "contentUpdatedAt": "变更时间"
       },
       "downloadFailed": "下载文件失败",
-      "fetchFailed": "获取文档失败"
+      "fetchFailed": "获取文档失败",
+      "reanalyze": "修改提示词重新分析"
     },
     "upload": {
       "dropzoneHint": "一次最多选择 {{max}} 个文件",
@@ -457,7 +459,7 @@
       "textRequired": "请输入文本内容",
       "insert": "插入",
       "clickToRename": "点击修改文件名",
-      "unsupportedFileType": "暂不支持图片文件，后续版本将支持",
+      "unsupportedFileType": "多媒体文件需要在该知识库启用多模态分析后才能上传",
       "addTable": "添加数据表",
       "tableHint": "输入数据表的链接和名称，即可将其添加到知识库。",
       "tableUrlHint": "请输入有效的多维表URL，确保链接可访问且有读取权限。目前支持钉钉多维表。",
@@ -510,7 +512,8 @@
         "refetchSuccess": "网页内容已更新",
         "refetchFailed": "重新抓取失败",
         "refetchConfirm": "确定要重新抓取此网页吗？系统将重新获取网页内容并更新文档。"
-      }
+      },
+      "videoModelNotSupported": "当前多模态分析模型不支持视频，请先在知识库设置中切换为支持视频的模型后再上传视频文件。"
     },
     "permission": {
       "noAccess": "您没有操作权限",
@@ -755,6 +758,38 @@
       "totalCount": "共 {{count}} 条",
       "pageSize": "每页",
       "searchHint": "搜索和排序已应用到完整查询结果"
+    },
+    "multimodal": {
+      "enableLabel": "启用多模态分析",
+      "enableDescription": "开启后允许上传视频/图片文件，由 Gemini 分析并提取内容",
+      "selectModel": "多模态分析模型",
+      "modelRequired": "请选择用于多模态分析的模型",
+      "noMultimodalModel": "暂无支持多模态分析的模型",
+      "uploadDisabled": "该知识库未开启多模态分析",
+      "costHint": "多模态分析按所用模型计费，与摘要一致",
+      "videoPromptLabel": "视频分析提示词",
+      "imagePromptLabel": "图片分析提示词",
+      "promptPlaceholder": "请输入分析提示词...",
+      "loadingPrompt": "正在加载默认提示词...",
+      "videoPromptHint": "分析视频的方式。如包含 {{VIDEO_FILENAME}} 占位符，将替换为文件名。",
+      "imagePromptHint": "自定义分析图片的方式。",
+      "resetToDefault": "恢复默认",
+      "resetToInherited": "恢复继承",
+      "promptSource": {
+        "system": "系统默认",
+        "knowledge": "继承知识库",
+        "knowledgeDefault": "继承：系统默认",
+        "document": "文档自定义",
+        "customized": "已自定义"
+      },
+      "video": "视频",
+      "image": "图片",
+      "reanalyzeTitle": "修改提示词重新分析",
+      "reanalyzeDescription": "文档：{{name}}（{{type}}）。编辑下方提示词后，将基于原始文件重新分析。",
+      "reanalyze": "重新分析",
+      "reanalyzing": "重新分析中...",
+      "reanalyzeSuccess": "已开始重新分析",
+      "reanalyzeFailed": "重新分析失败"
     }
   },
   "add_repository": "添加仓库",

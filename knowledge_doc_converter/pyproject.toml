@@ -11,6 +11,12 @@ dependencies = [
     "httpx[brotli,socks]>=0.26.0",
     "python-dotenv>=1.0.0",
     "prometheus_client>=0.20.0",
+    # Multimodal analysis (video/image → Gemini → Markdown). Required only when
+    # the multimodal task module is imported (MULTIMODAL_ENABLED). The Gemini
+    # SDK is imported lazily by gemini_analyzer, but declared here so a worker
+    # opting into multimodal analysis has it installed.
+    "langchain-google-genai>=4.0.0,<5.0.0",
+    "langchain-core>=0.3.0",
     "wegent-knowledge-engine",
     "wegent-shared",
 ]

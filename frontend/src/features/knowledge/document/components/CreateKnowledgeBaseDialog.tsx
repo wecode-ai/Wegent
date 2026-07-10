@@ -30,6 +30,7 @@ import type {
   RagConfigMode,
 } from '@/types/knowledge'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 
 /** Available group for selection */
 export interface AvailableGroup {
@@ -50,6 +51,10 @@ interface CreateKnowledgeBaseDialogProps {
     rag_config_mode?: RagConfigMode
     summary_enabled?: boolean
     summary_model_ref?: SummaryModelRef | null
+    multimodal_analysis_enabled?: boolean
+    multimodal_analysis_model_ref?: SummaryModelRef | null
+    multimodal_analysis_video_prompt?: string | null
+    multimodal_analysis_image_prompt?: string | null
     guided_questions?: string[]
     max_calls_per_conversation: number
     exempt_calls_before_check: number
@@ -125,6 +130,13 @@ export function CreateKnowledgeBaseDialog({
   const [summaryEnabled, setSummaryEnabled] = useState(true)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
+  const {
+    validate: validateMultimodal,
+    clearError: clearMultimodalError,
+    reset: resetMultimodal,
+    buildSubmitFields: buildMultimodalSubmitFields,
+    formProps: multimodalFormProps,
+  } = useMultimodalKBConfig()
   const [guidedQuestions, setGuidedQuestions] = useState<string[]>([])
   const [ragConfigMode, setRagConfigMode] = useState<RagConfigMode>('auto')
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>(
@@ -168,6 +180,7 @@ export function CreateKnowledgeBaseDialog({
   const handleSubmit = async () => {
     setError('')
     setSummaryModelError('')
+    clearMultimodalError()
 
     if (!name.trim()) {
       setError(t('knowledge:document.knowledgeBase.nameRequired'))
@@ -182,6 +195,11 @@ export function CreateKnowledgeBaseDialog({
     // Validate summary model when summary is enabled
     if (summaryEnabled && !summaryModelRef) {
       setSummaryModelError(t('knowledge:document.summary.modelRequired'))
+      return
+    }
+
+    // Validate multimodal analysis model when multimodal analysis is enabled
+    if (!validateMultimodal()) {
       return
     }
 
@@ -202,6 +220,7 @@ export function CreateKnowledgeBaseDialog({
         rag_config_mode: ragConfigMode,
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
+        ...buildMultimodalSubmitFields(),
         guided_questions: validGuidedQuestions.length > 0 ? validGuidedQuestions : undefined,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
@@ -214,6 +233,7 @@ export function CreateKnowledgeBaseDialog({
       setSelectedKbType(initialKbType)
       setSummaryEnabled(true)
       setSummaryModelRef(null)
+      resetMultimodal()
       setGuidedQuestions([])
       setRagConfigMode('auto')
       setRetrievalConfig(createDefaultRetrievalConfig())
@@ -233,6 +253,7 @@ export function CreateKnowledgeBaseDialog({
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setSummaryModelError('')
+      resetMultimodal()
       setGuidedQuestions([])
       setRagConfigMode('auto')
       setRetrievalConfig(createDefaultRetrievalConfig())
@@ -364,6 +385,7 @@ export function CreateKnowledgeBaseDialog({
               setSummaryModelRef(value)
               setSummaryModelError('')
             }}
+            {...multimodalFormProps}
             knowledgeDefaultTeamId={knowledgeDefaultTeamId}
             bindModel={bindModel}
             callLimits={{ maxCalls, exemptCalls }}

@@ -428,10 +428,12 @@
         "viewChunks": "View Chunks",
         "splitterType": "Splitter Type",
         "splitterSubtype": "Splitter Subtype",
-        "qaPairsDetected": "{{count}} Q/A pairs detected"
+        "qaPairsDetected": "{{count}} Q/A pairs detected",
+        "contentUpdatedAt": "Updated"
       },
       "downloadFailed": "Failed to download file",
-      "fetchFailed": "Failed to fetch documents"
+      "fetchFailed": "Failed to fetch documents",
+      "reanalyze": "Modify prompt & re-analyze"
     },
     "upload": {
       "dropzoneHint": "Select up to {{max}} files at once",
@@ -457,7 +459,7 @@
       "textRequired": "Please enter text content",
       "insert": "Insert",
       "clickToRename": "Click to rename",
-      "unsupportedFileType": "Image files are not supported yet. Support will be added in future versions.",
+      "unsupportedFileType": "Multimedia files require multimodal analysis to be enabled for this knowledge base before uploading",
       "addTable": "Add Data Table",
       "tableHint": "Enter the table link and name to add it to your knowledge base.",
       "tableUrlHint": "Please enter a valid table URL. Ensure the link is accessible and you have read permission. Currently supports DingTalk tables.",
@@ -510,7 +512,8 @@
         "refetchSuccess": "Web page content updated",
         "refetchFailed": "Failed to re-fetch web page",
         "refetchConfirm": "Re-fetch this web page? This will retrieve the latest content from the URL and update the document."
-      }
+      },
+      "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files."
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action",
@@ -755,6 +758,38 @@
       "totalCount": "{{count}} items",
       "pageSize": "Per page",
       "searchHint": "Search and sort apply to the full query result"
+    },
+    "multimodal": {
+      "enableLabel": "Enable multimodal analysis",
+      "enableDescription": "Allow uploading video/image files, analyzed by Gemini to extract content",
+      "selectModel": "Multimodal analysis model",
+      "modelRequired": "Please select a model for multimodal analysis",
+      "noMultimodalModel": "No models support multimodal analysis",
+      "uploadDisabled": "Multimodal analysis is not enabled for this knowledge base",
+      "costHint": "Multimodal analysis is billed per the selected model, same as summaries",
+      "videoPromptLabel": "Video analysis prompt",
+      "imagePromptLabel": "Image analysis prompt",
+      "promptPlaceholder": "Enter the analysis prompt...",
+      "loadingPrompt": "Loading default prompt...",
+      "videoPromptHint": "How to analyze the video. If the {{VIDEO_FILENAME}} placeholder is included, it is replaced with the filename.",
+      "imagePromptHint": "Customize how images are analyzed.",
+      "resetToDefault": "Reset to default",
+      "resetToInherited": "Reset to inherited",
+      "promptSource": {
+        "system": "System default",
+        "knowledge": "Inherited from knowledge base",
+        "knowledgeDefault": "Inherited: system default",
+        "document": "Document custom",
+        "customized": "Customized"
+      },
+      "video": "Video",
+      "image": "Image",
+      "reanalyzeTitle": "Modify prompt & re-analyze",
+      "reanalyzeDescription": "Document: {{name}} ({{type}}). Edit the prompt below, then re-analyze from the original file.",
+      "reanalyze": "Re-analyze",
+      "reanalyzing": "Re-analyzing...",
+      "reanalyzeSuccess": "Re-analysis started",
+      "reanalyzeFailed": "Re-analysis failed"
     }
   },
   "add_repository": "Add Repository",

@@ -949,6 +949,29 @@ class SummaryService:
                 )
                 return None
 
+            # For documents that went through a conversion pipeline (video/image
+            # → Gemini Markdown, PDF → MinerU Markdown) the original attachment
+            # has no extractable text; the real content lives in the converted
+            # attachment (document.converted_attachment_id). Check it first.
+            converted_id = getattr(document, "converted_attachment_id", None)
+            if converted_id:
+                converted_ctx = (
+                    self.db.query(SubtaskContext)
+                    .filter(SubtaskContext.id == converted_id)
+                    .first()
+                )
+                if converted_ctx and converted_ctx.extracted_text:
+                    content = converted_ctx.extracted_text
+                    if len(content) > MAX_DOCUMENT_CONTENT_LENGTH:
+                        logger.warning(
+                            f"[SummaryService] Converted content too long ({len(content)} chars), truncating"
+                        )
+                        content = (
+                            content[:MAX_DOCUMENT_CONTENT_LENGTH]
+                            + "\n\n[Content truncated...]"
+                        )
+                    return content
+
             attachment_id = document.attachment_id
             if attachment_id:
                 context = (

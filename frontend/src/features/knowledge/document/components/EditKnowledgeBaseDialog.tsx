@@ -15,6 +15,8 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
+import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
+import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getKnowledgeBase } from '@/apis/knowledge'
@@ -57,6 +59,22 @@ export function EditKnowledgeBaseDialog({
   const [summaryEnabled, setSummaryEnabled] = useState(false)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
   const [summaryModelError, setSummaryModelError] = useState('')
+  const {
+    multimodalAnalysisEnabled,
+    multimodalVideoPrompt,
+    multimodalImagePrompt,
+    loadFromKB: loadMultimodalFromKB,
+    validate: validateMultimodal,
+    clearError: clearMultimodalError,
+    buildSubmitFields: buildMultimodalSubmitFields,
+    formProps: multimodalFormProps,
+  } = useMultimodalKBConfig()
+  // Gate prompt overrides by the global pipeline switch, the same way
+  // buildMultimodalSubmitFields() gates multimodal_analysis_enabled. Otherwise
+  // saving a previously-enabled KB after the switch is turned off would send
+  // enabled=false alongside the (non-blank) prompt text.
+  const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
+  const effectiveMultimodalEnabled = multimodalFeatureEnabled && multimodalAnalysisEnabled
   const [error, setError] = useState('')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [retrievalConfig, setRetrievalConfig] = useState<RetrievalConfigDraft>({})
@@ -98,6 +116,13 @@ export function EditKnowledgeBaseDialog({
       setSummaryEnabled(kb.summary_enabled || false)
       setSummaryModelRef(kb.summary_model_ref || null)
       setSummaryModelError('')
+      loadMultimodalFromKB({
+        multimodalAnalysisEnabled: kb.multimodal_analysis_enabled || false,
+        multimodalAnalysisModelRef: kb.multimodal_analysis_model_ref || null,
+        multimodalAnalysisModelError: '',
+        multimodalVideoPrompt: kb.multimodal_analysis_video_prompt ?? null,
+        multimodalImagePrompt: kb.multimodal_analysis_image_prompt ?? null,
+      })
       setShowAdvanced(false) // Reset expanded state
       // Initialize retrieval config from knowledge base
       if (kb.retrieval_config) {
@@ -118,6 +143,7 @@ export function EditKnowledgeBaseDialog({
   const handleSubmit = async () => {
     setError('')
     setSummaryModelError('')
+    clearMultimodalError()
 
     if (!name.trim()) {
       setError(t('knowledge:document.knowledgeBase.nameRequired'))
@@ -132,6 +158,11 @@ export function EditKnowledgeBaseDialog({
     // Validate summary model when summary is enabled
     if (summaryEnabled && !summaryModelRef) {
       setSummaryModelError(t('knowledge:document.summary.modelRequired'))
+      return
+    }
+
+    // Validate multimodal analysis model when multimodal analysis is enabled
+    if (!validateMultimodal()) {
       return
     }
 
@@ -152,6 +183,15 @@ export function EditKnowledgeBaseDialog({
         description: description.trim(), // Allow empty string to clear description
         summary_enabled: summaryEnabled,
         summary_model_ref: summaryEnabled ? summaryModelRef : null,
+        ...buildMultimodalSubmitFields(),
+        // For edit, send "" (never null) so the backend always applies the value:
+        // a blank string clears the override (revert to system default).
+        multimodal_analysis_video_prompt: effectiveMultimodalEnabled
+          ? multimodalVideoPrompt || ''
+          : '',
+        multimodal_analysis_image_prompt: effectiveMultimodalEnabled
+          ? multimodalImagePrompt || ''
+          : '',
         guided_questions: validGuidedQuestions,
         max_calls_per_conversation: maxCalls,
         exempt_calls_before_check: exemptCalls,
@@ -191,6 +231,7 @@ export function EditKnowledgeBaseDialog({
     if (!newOpen) {
       setError('')
       setSummaryModelError('')
+      clearMultimodalError()
     }
     onOpenChange(newOpen)
   }
@@ -234,6 +275,7 @@ export function EditKnowledgeBaseDialog({
                 setSummaryModelRef(value)
                 setSummaryModelError('')
               }}
+              {...multimodalFormProps}
               knowledgeDefaultTeamId={!kb?.summary_model_ref ? knowledgeDefaultTeamId : undefined}
               bindModel={bindModel}
               callLimits={{ maxCalls, exemptCalls }}
