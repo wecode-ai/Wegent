@@ -131,6 +131,16 @@ Backend only validates the user, device, and LocalTask ownership, then forwards 
 
 The frontend must insert the local guidance user message at the current streaming assistant position immediately when guidance sending starts, not after `runtime.tasks.guidance` returns. That insertion splits the active assistant into a frozen "before guidance" message and a continuing "after guidance" message. The continuing assistant keeps the original `subtaskId` so later stream events land after the guidance message. Later `chat:chunk` or `chat:done` events may still carry full text, so the frontend trims the text prefix recorded at split time. This keeps live streaming order consistent with the refreshed transcript order.
 
+Users can also manually compact a local Codex LocalTask from the composer's context-usage control:
+
+```text
+runtime.tasks.compact
+```
+
+The Wework App calls `runtime.tasks.compact` only through local executor IPC; there is no Backend HTTP endpoint for this action. The executor must use the LocalTask's opaque `runtimeHandle.threadId` to call Codex app-server `thread/resume`, then call `thread/compact/start`; it must not send `/compact` as a normal user message. Manual compaction uses an independent runtime subtask id, `<localTaskId>-context-compact`, so the UI can render the `context_compaction` tool block as its own completed message without settling an active assistant turn.
+
+If the current pane is still replying, Wework should block manual compaction and ask the user to wait for the current reply to finish. Automatic Codex context compaction remains part of the current turn's subtask; the frontend may display the `context_compaction` block, but it must not emit `assistant_done` or settle the current reply just because that block completed.
+
 Continuing a LocalTask may include already uploaded attachment ids that are in the ready state. Backend verifies those attachments belong to the current user and converts them into executor attachment metadata. The executor downloads and converts the files on the target device before passing them to the runtime. The frontend never sends local attachment paths directly to Backend or executor.
 
 ## Archived Conversations
@@ -152,6 +162,8 @@ POST /api/runtime-work/archived-conversations/cleanup
 ```
 
 For native Codex conversations, the executor archives, unarchives, and deletes through app-server `thread/archive`, `thread/unarchive`, and `thread/delete`; renaming uses `thread/name/set`. Archived lists come from the state DB `threads.archived` filter and are merged with the JSON LocalTask index. List responses normalize `id`, `localTaskId`, `threadId`, title, Project name, workspace path, device, source, and timestamp fields, and include grouped Project counts. Immediately after archive or unarchive, the local override from the device-side LocalTask index participates in the list if the state DB has not caught up yet, so the UI does not briefly lose the item. Project grouping must use the Project root or `groupWorkspacePath`; different worktrees under the same Project must not appear as separate Projects.
+
+If Codex `thread/list` returns a dirty state DB thread whose rollout file can no longer be located, `thread/archive` returns `no rollout found for thread id ...`. The executor treats only that explicit error as cleanup: it calls Codex `thread/delete` to remove the leftover thread record and writes a local deleted marker with TTL and count limits, so later lists no longer show the unusable record. It does not pretend that dirty thread became an archived conversation.
 
 Deleting archived conversations uses a two-phase strategy. Foreground `delete` and `delete-bulk` first write an executor-local tombstone so the item disappears from lists immediately. The actual Codex `thread/delete`, LocalTask index deletion, and worktree/attachment/log file cleanup run one item at a time in an executor background worker. The worker must wait for the current app-server `thread/delete` to finish before starting the next one. If a delete is slow, it records a slow-operation log instead of using a client-side timeout to stack more `thread/delete` calls; otherwise Codex thread store pressure can make archived list refreshes wait for a long time. The frontend submits bulk deletes in small batches and stores progress outside the page component, so leaving and re-entering Settings still shows the current delete progress.
 

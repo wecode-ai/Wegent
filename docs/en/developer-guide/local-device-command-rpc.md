@@ -101,7 +101,7 @@ Callers should bind these commands to the current LocalTask's `deviceId + worksp
 
 ### Workspace File Command Roots
 
-`workspace_tree` and `workspace_read_text_file` reject any path outside an allowed workspace root. The Backend derives the allowed roots per request (never trusting a client-supplied `WEGENT_WORKSPACE_ROOTS`) from two sources for the user and device: WeWork projects whose workspace `source` is `local_path`, and runtime `DeviceWorkspace` mappings. The latter lets runtime-local tasks browse and preview files in their own workspace even when no `local_path` project points at that directory.
+`workspace_tree` and `workspace_read_text_file` reject any path outside an allowed workspace root. The Backend derives the allowed roots per request (never trusting a client-supplied `WEGENT_WORKSPACE_ROOTS`) from two sources for the user and device: WeWork projects whose workspace `source` is `local_path` or `device_path`, and runtime `DeviceWorkspace` mappings. `local_path` represents a directory on the user's local executor. `device_path` represents a sandbox directory bound to a specific cloud or remote device. The runtime mapping lets runtime-local tasks browse and preview files in their own workspace even when no project config points at that directory.
 
 ## Executor Behavior
 

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
+import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
@@ -13,6 +14,7 @@ import {
 import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
 import { openExternalUrl } from '@/lib/external-links'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
+import { requestLocalExecutor } from '@/tauri/localExecutor'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -30,7 +32,7 @@ vi.mock('@/config/runtime', () => ({
 }))
 
 vi.mock('@/api/http', () => ({
-  createHttpClient: vi.fn(() => ({})),
+  createHttpClient: vi.fn((options: unknown) => ({ options })),
   shouldUseTauriFetch: vi.fn(() => false),
 }))
 
@@ -80,6 +82,10 @@ vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
 
+vi.mock('@/tauri/localExecutor', () => ({
+  requestLocalExecutor: vi.fn().mockResolvedValue({ restarted: true }),
+}))
+
 vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
   RemoteTerminal: ({ sessionId, active }: { sessionId: string; active: boolean }) => (
     <div
@@ -91,6 +97,7 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 }))
 
 const createDeviceApiMock = vi.mocked(createDeviceApi)
+const createHttpClientMock = vi.mocked(createHttpClient)
 const createProjectApiMock = vi.mocked(createProjectApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
@@ -144,6 +151,43 @@ function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
     },
     ...overrides,
   })
+}
+
+function connectedCloudConnection(
+  overrides: Partial<CloudConnectionContextValue> = {}
+): CloudConnectionContextValue {
+  return {
+    status: 'connected',
+    backendUrl: 'https://cloud.example.com',
+    apiBaseUrl: 'https://cloud.example.com/api',
+    socketBaseUrl: 'https://cloud.example.com',
+    socketPath: '/socket.io',
+    token: 'cloud-token',
+    tokenExpiresAt: null,
+    user: { id: 7, user_name: 'crystal', email: 'crystal@example.com' },
+    connectedAt: '2026-07-09T00:00:00.000Z',
+    error: null,
+    isConnected: true,
+    serviceKey: 'cloud:https://cloud.example.com/api',
+    connectWithAuthorization: vi.fn(),
+    refreshUser: vi.fn(),
+    disconnect: vi.fn(),
+    ...overrides,
+  }
+}
+
+function disconnectedCloudConnection(
+  overrides: Partial<CloudConnectionContextValue> = {}
+): CloudConnectionContextValue {
+  return {
+    ...DISCONNECTED_STATE,
+    isConnected: false,
+    serviceKey: 'disconnected',
+    connectWithAuthorization: vi.fn(),
+    refreshUser: vi.fn(),
+    disconnect: vi.fn(),
+    ...overrides,
+  }
 }
 
 describe('ConnectionsSettingsPage', () => {
@@ -324,6 +368,11 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.getByTestId('settings-sidebar-topbar')).toHaveClass('h-[76px]', 'pt-6', 'mb-1')
     expect(screen.getByTestId('settings-back-button')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('settings-main-titlebar-drag-region')).getByTestId(
+        'macos-titlebar-drag-region'
+      )
+    ).toHaveAttribute('data-tauri-drag-region')
   })
 
   test('keeps the cloud device creation notice visible after the create request resolves', async () => {
@@ -453,9 +502,13 @@ describe('ConnectionsSettingsPage', () => {
       await screen.findByTestId('model-settings-page')
       await userEvent.click(screen.getByTestId('local-model-add-button'))
       expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
-        '请求地址会在模型 URL 后追加 /responses'
+        '填写模型基础地址和请求路径；粘贴完整地址时会自动拆分'
       )
-      await userEvent.type(screen.getByTestId('local-model-url-input'), 'http://localhost:11434/v1')
+      const urlInput = screen.getByTestId('local-model-url-input')
+      urlInput.focus()
+      await userEvent.paste('http://localhost:11434/v1/responses')
+      expect(screen.getByTestId('local-model-url-input')).toHaveValue('http://localhost:11434/v1')
+      expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/responses')
       expect(screen.getByTestId('local-model-request-url')).toHaveTextContent(
         '请求地址：http://localhost:11434/v1/responses'
       )
@@ -515,8 +568,7 @@ describe('ConnectionsSettingsPage', () => {
       ...DISCONNECTED_STATE,
       isConnected: false,
       serviceKey: 'disconnected',
-      connectWithPassword: vi.fn(),
-      setupAdminPassword: vi.fn(),
+      connectWithAuthorization: vi.fn(),
       refreshUser: vi.fn(),
       disconnect: vi.fn(),
     }
@@ -558,7 +610,7 @@ describe('ConnectionsSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('runtime-config-sync-auth-button'))
 
-    expect(screen.getByRole('heading', { name: '云端设置' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '云端连接' })).toBeInTheDocument()
     expect(screen.getByTestId('settings-cloud-connect-button')).toHaveTextContent('连接云端')
     expect(window.location.pathname).toBe('/settings/connections')
   })
@@ -578,8 +630,60 @@ describe('ConnectionsSettingsPage', () => {
     await waitFor(() =>
       expect(userApi.updateProxyConfig).toHaveBeenCalledWith('http://127.0.0.1:7890')
     )
+    expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
+      '本地设备代理'
+    )
+    expect(screen.getByTestId('proxy-config-cloud-device-section')).toHaveTextContent(
+      '云端设备代理'
+    )
     expect(await screen.findByText('http://127.0.0.1:7890')).toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-proxy-toggle')).not.toBeInTheDocument()
+  })
+
+  test('distinguishes local and cloud proxy settings while cloud is disconnected', async () => {
+    const disconnectedConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      isConnected: false,
+      serviceKey: 'disconnected',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={disconnectedConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    await userEvent.click(screen.getByTestId('settings-nav-proxy'))
+
+    expect(await screen.findByTestId('proxy-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
+      '本地设备代理'
+    )
+    expect(screen.getByTestId('proxy-config-cloud-required')).toHaveTextContent('云端设备代理')
+    await userEvent.type(
+      screen.getByTestId('local-proxy-config-url-input'),
+      'http://127.0.0.1:7890'
+    )
+    await userEvent.click(screen.getByTestId('local-proxy-config-save-button'))
+
+    expect(requestLocalExecutor).not.toHaveBeenCalled()
+    expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('本地设备代理已保存')
+    const restartCodexButton = screen.getByTestId('local-proxy-config-restart-codex-button')
+    expect(restartCodexButton).toHaveTextContent('重启 Codex')
+    await userEvent.click(restartCodexButton)
+    await waitFor(() =>
+      expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart')
+    )
+    expect(screen.getByTestId('local-proxy-config-notice')).toHaveTextContent('Codex 已重启')
+    expect(screen.getByTestId('proxy-config-local-device-section')).toHaveTextContent(
+      'http://127.0.0.1:7890'
+    )
+    expect(userApi.getProxyConfig).not.toHaveBeenCalled()
+    expect(userApi.updateProxyConfig).not.toHaveBeenCalled()
   })
 
   test('opens worktree settings from the coding settings navigation', async () => {
@@ -689,6 +793,68 @@ describe('ConnectionsSettingsPage', () => {
     expect(await screen.findByTestId('skill-management-result')).toHaveTextContent(
       '/Users/crystal/.agents/skills'
     )
+  })
+
+  test('loads skill devices through the connected cloud API client', async () => {
+    window.history.pushState({}, '', '/settings/skills')
+    const cloudConnection = connectedCloudConnection()
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={cloudConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    expect(await screen.findByTestId('skill-settings-page')).toBeInTheDocument()
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
+
+    const cloudClientOptions = createHttpClientMock.mock.calls
+      .map(([options]) => options)
+      .find(
+        (options): options is { baseUrl: string; getToken: () => string | null } =>
+          typeof options === 'object' &&
+          options !== null &&
+          'baseUrl' in options &&
+          options.baseUrl === 'https://cloud.example.com/api' &&
+          'getToken' in options &&
+          typeof options.getToken === 'function'
+      )
+
+    expect(cloudClientOptions).toBeDefined()
+    expect(cloudClientOptions?.getToken()).toBe('cloud-token')
+    expect(screen.getByTestId('skill-management-device-select')).toHaveValue('local-device')
+    expect(screen.getByTestId('skill-management-enable-button')).not.toBeDisabled()
+  })
+
+  test('loads skill devices through the local API when cloud is disconnected', async () => {
+    window.history.pushState({}, '', '/settings/skills')
+    const cloudConnection = disconnectedCloudConnection()
+    api.getAllDevices.mockResolvedValue([localDevice()])
+
+    render(
+      <CloudConnectionContext.Provider value={cloudConnection}>
+        <ConnectionsSettingsPage onBack={vi.fn()} />
+      </CloudConnectionContext.Provider>
+    )
+
+    expect(await screen.findByTestId('skill-settings-page')).toBeInTheDocument()
+    await waitFor(() => expect(api.getAllDevices).toHaveBeenCalledTimes(1))
+
+    const localClientOptions = createHttpClientMock.mock.calls
+      .map(([options]) => options)
+      .find(
+        (options): options is { baseUrl: string } =>
+          typeof options === 'object' &&
+          options !== null &&
+          'baseUrl' in options &&
+          options.baseUrl === '/api'
+      )
+
+    expect(localClientOptions).toBeDefined()
+    expect(screen.queryByTestId('skill-management-error')).not.toBeInTheDocument()
+    expect(screen.getByTestId('skill-management-device-select')).toHaveValue('local-device')
+    expect(screen.getByTestId('skill-management-enable-button')).not.toBeDisabled()
   })
 
   test('shows a single empty worktree state without device groups', async () => {

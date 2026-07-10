@@ -27,6 +27,7 @@ import type {
 } from '@/types/api'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProcessingBlock, WorkbenchMessage } from '@/types/workbench'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import {
   getAttachmentTextPreview,
   getAttachmentTypeLabel,
@@ -37,6 +38,7 @@ import { openLocalFile } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
+import { isImeEnterEvent } from '@/lib/ime'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
@@ -52,6 +54,7 @@ import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
+import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -62,8 +65,14 @@ interface MessageListProps {
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
-  onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
+  onLoadFileChangesDiff?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
     subtaskId: string
     loadDiff: () => Promise<string>
@@ -71,10 +80,11 @@ interface MessageListProps {
     defaultFileTreeVisible?: boolean
     focusFilePath?: string
   }) => void
-  onOpenWorkspaceFile?: (path: string) => void
+  fileChangesDiffPreviewDisabledSubtaskId?: string | null
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
     content: string
@@ -122,6 +132,7 @@ export const MessageList = memo(function MessageList({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
@@ -152,8 +163,11 @@ export const MessageList = memo(function MessageList({
     editingMessageId === editableLastUserMessageId ? editingMessageId : null
   const activeSubmittingEditMessageId =
     submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
+  const lastVisibleMessage = visibleMessages.at(-1)
+  const waitingForAssistantTurn = !lastVisibleMessage || lastVisibleMessage.role === 'user'
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
+    waitingForAssistantTurn &&
     !messages.some(message => message.role === 'assistant' && message.status === 'streaming')
   const disableMessageContentVisibility =
     disableContentVisibility || isTextSelectionActive || isTauri
@@ -304,6 +318,7 @@ export const MessageList = memo(function MessageList({
                   onLoadFileChangesDiff={onLoadFileChangesDiff}
                   onRevertFileChanges={onRevertFileChanges}
                   onOpenFileChangesReview={onOpenFileChangesReview}
+                  fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
                   onRequestUserInputSubmit={onRequestUserInputSubmit}
                   onRequestUserInputIgnore={onRequestUserInputIgnore}
@@ -360,6 +375,10 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onRevertFileChanges !== next.onRevertFileChanges ? 'onRevertFileChanges' : null,
     previous.onOpenFileChangesReview !== next.onOpenFileChangesReview
       ? 'onOpenFileChangesReview'
+      : null,
+    previous.fileChangesDiffPreviewDisabledSubtaskId !==
+    next.fileChangesDiffPreviewDisabledSubtaskId
+      ? 'fileChangesDiffPreviewDisabledSubtaskId'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
     previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
@@ -566,7 +585,7 @@ function UserMessage({
   onSubmitEdit,
 }: {
   message: WorkbenchMessage
-  onOpenWorkspaceFile?: (path: string) => void
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   editable?: boolean
   editing?: boolean
   editSubmitting?: boolean
@@ -844,7 +863,7 @@ function UserMessageEditForm({
         disabled={submitting}
         onChange={event => setDraft(event.target.value)}
         onKeyDown={event => {
-          if (event.nativeEvent.isComposing) return
+          if (isImeEnterEvent(event)) return
           if (event.key === 'Enter' && event.shiftKey) return
           if (event.key === 'Enter') {
             event.preventDefault()
@@ -1383,6 +1402,7 @@ function AssistantMessage({
   onLoadFileChangesDiff,
   onRevertFileChanges,
   onOpenFileChangesReview,
+  fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
@@ -1395,8 +1415,14 @@ function AssistantMessage({
   devices: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
   onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
-  onLoadFileChangesDiff?: (subtaskId: string) => Promise<string>
-  onRevertFileChanges?: (subtaskId: string) => Promise<TurnFileChangesSummary>
+  onLoadFileChangesDiff?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<string>
+  onRevertFileChanges?: (
+    subtaskId: string,
+    fileChanges?: TurnFileChangesSummary
+  ) => Promise<TurnFileChangesSummary>
   onOpenFileChangesReview?: (request: {
     subtaskId: string
     loadDiff: () => Promise<string>
@@ -1404,10 +1430,11 @@ function AssistantMessage({
     defaultFileTreeVisible?: boolean
     focusFilePath?: string
   }) => void
-  onOpenWorkspaceFile?: (path: string) => void
+  fileChangesDiffPreviewDisabledSubtaskId?: string | null
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }) {
@@ -1442,19 +1469,9 @@ function AssistantMessage({
   const memoryCitations = message.memoryCitations ?? []
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
-  // A file referenced in the response usually belongs to this turn's changes, so
-  // route the link into the previous-turn diff review focused on that file. When
-  // the turn has no recorded changes, fall back to the workspace file panel.
-  const fileChangesSubtaskId = message.fileChanges ? message.subtaskId : undefined
-  const openFileFromLink = (path: string) => {
-    if (fileChangesSubtaskId && onLoadFileChangesDiff && onOpenFileChangesReview) {
-      onOpenFileChangesReview({
-        subtaskId: fileChangesSubtaskId,
-        loadDiff: () => onLoadFileChangesDiff(fileChangesSubtaskId),
-        reviewTitle: t('file_changes.previous_turn_label'),
-        defaultFileTreeVisible: false,
-        focusFilePath: path,
-      })
+  const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
+    if (options) {
+      onOpenWorkspaceFile?.(path, options)
       return
     }
     onOpenWorkspaceFile?.(path)
@@ -1542,6 +1559,9 @@ function AssistantMessage({
               onLoadDiff={onLoadFileChangesDiff}
               onRevert={onRevertFileChanges}
               onOpenReview={onOpenFileChangesReview}
+              diffPreviewDisabled={
+                fileChangesDiffPreviewDisabledSubtaskId === String(message.subtaskId)
+              }
             />
           ) : null}
         </div>

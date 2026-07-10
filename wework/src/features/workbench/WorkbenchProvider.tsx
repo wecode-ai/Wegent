@@ -6,6 +6,7 @@ import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { getActiveWorkbenchDeviceId } from '@/lib/workbench-device'
+import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import type {
   LocalDeviceSkill,
   ModelCompatibilityDisabledReason,
@@ -42,6 +43,11 @@ import {
   getRuntimeTaskChatScopeKey,
 } from './workbenchProviderHelpers'
 import { getRuntimePaneTaskExecution } from './runtimePaneStatus'
+import {
+  applyModelContextWindowOverride,
+  findModelForSelection,
+  modelSelectionFromRuntimeHandle,
+} from './runtimeContextUsage'
 import {
   findSelectableProject,
   findRuntimeTask,
@@ -273,7 +279,11 @@ export function WorkbenchProvider({
   )
   const modelSelectionConfig = useMemo(() => {
     if (state.currentRuntimeTask) {
-      return findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)?.modelSelection ?? null
+      return (
+        findRuntimeTask(state.runtimeWork, state.currentRuntimeTask)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(state.currentRuntimeTask.runtimeHandle) ??
+        null
+      )
     }
     return getNewChatModelSelection(currentUser) ?? null
   }, [currentUser, state.currentRuntimeTask, state.runtimeWork])
@@ -659,6 +669,25 @@ export function WorkbenchProvider({
   const stableStartNewProjectChat = useStableEvent(startNewProjectChat)
   const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
   const stableSearchRuntimeWork = useStableEvent(runtimeTasks.searchRuntimeWork)
+  const resolveRuntimeContextUsage = useCallback(
+    (address: RuntimeTaskAddress, usage: RuntimeContextUsage): RuntimeContextUsage => {
+      const taskSelection =
+        findRuntimeTask(state.runtimeWork, address)?.modelSelection ??
+        modelSelectionFromRuntimeHandle(address.runtimeHandle) ??
+        null
+      const selectedModel = modelSelection.selectedModel
+      const taskModel = findModelForSelection(modelSelection.models, taskSelection)
+      const matchingSelectedModel =
+        taskSelection?.modelName &&
+        selectedModel?.name === taskSelection.modelName &&
+        (!taskSelection.modelType || selectedModel.type === taskSelection.modelType)
+          ? selectedModel
+          : null
+
+      return applyModelContextWindowOverride(usage, taskModel ?? matchingSelectedModel)
+    },
+    [modelSelection.models, modelSelection.selectedModel, state.runtimeWork]
+  )
   const stableLoadRuntimeTranscriptForPane = useStableEvent(
     async (
       address: RuntimeTaskAddress,
@@ -666,14 +695,26 @@ export function WorkbenchProvider({
     ) => {
       const transcript = await runtimeTasks.loadRuntimeTranscriptForPane(address, options)
       if (transcript.contextUsage) {
+        const contextUsage = resolveRuntimeContextUsage(address, transcript.contextUsage)
         setContextUsageByRuntimeTask(current => ({
           ...current,
-          [getRuntimeTaskRouteKey(address)]: transcript.contextUsage!,
+          [getRuntimeTaskRouteKey(address)]: contextUsage,
         }))
       }
       return transcript
     }
   )
+
+  useEffect(() => {
+    const listener = installLocalWorkspaceOpenListener(
+      stableOpenStandaloneWorkspace,
+      stableSetWorkbenchError
+    )
+
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [stableOpenStandaloneWorkspace, stableSetWorkbenchError])
   const stableSubscribeRuntimeTaskStream = useStableEvent(
     (
       address: RuntimeTaskAddress,
@@ -682,11 +723,12 @@ export function WorkbenchProvider({
       runtimeTasks.subscribeRuntimeTaskStream(address, {
         ...handlers,
         onContextUsageUpdated: usage => {
+          const contextUsage = resolveRuntimeContextUsage(address, usage)
           setContextUsageByRuntimeTask(current => ({
             ...current,
-            [getRuntimeTaskRouteKey(address)]: usage,
+            [getRuntimeTaskRouteKey(address)]: contextUsage,
           }))
-          handlers.onContextUsageUpdated?.(usage)
+          handlers.onContextUsageUpdated?.(contextUsage)
         },
         onAssistantSettled: () => {
           dispatch({ type: 'runtime_task_settled', address })
@@ -738,6 +780,7 @@ export function WorkbenchProvider({
   const stableCreateEnvironmentBranch = useStableEvent(projectActions.createEnvironmentBranch)
   const stableSendRuntimePaneMessage = useStableEvent(runtimeMessaging.sendRuntimePaneMessage)
   const stableSendRuntimePaneGuidance = useStableEvent(runtimeMessaging.sendRuntimePaneGuidance)
+  const stableCompactRuntimePaneTask = useStableEvent(runtimeMessaging.compactRuntimePaneTask)
   const stableEditLastUserMessage = useStableEvent(runtimeMessaging.editLastUserMessage)
   const stableCancelRuntimePaneTask = useStableEvent(runtimeMessaging.cancelRuntimePaneTask)
   const stableSendCurrentInput = useStableEvent(runtimeMessaging.sendCurrentInput)
@@ -978,6 +1021,7 @@ export function WorkbenchProvider({
     createEnvironmentBranch: projectActions.createEnvironmentBranch,
     sendRuntimePaneMessage: runtimeMessaging.sendRuntimePaneMessage,
     sendRuntimePaneGuidance: runtimeMessaging.sendRuntimePaneGuidance,
+    compactRuntimePaneTask: runtimeMessaging.compactRuntimePaneTask,
     editLastUserMessage: runtimeMessaging.editLastUserMessage,
     cancelRuntimePaneTask: runtimeMessaging.cancelRuntimePaneTask,
     sendCurrentInput: runtimeMessaging.sendCurrentInput,
@@ -1051,6 +1095,7 @@ export function WorkbenchProvider({
       createEnvironmentBranch: stableCreateEnvironmentBranch,
       sendRuntimePaneMessage: stableSendRuntimePaneMessage,
       sendRuntimePaneGuidance: stableSendRuntimePaneGuidance,
+      compactRuntimePaneTask: stableCompactRuntimePaneTask,
       editLastUserMessage: stableEditLastUserMessage,
       cancelRuntimePaneTask: stableCancelRuntimePaneTask,
       sendCurrentInput: stableSendCurrentInput,
@@ -1073,6 +1118,7 @@ export function WorkbenchProvider({
       stableArchiveRuntimeTask,
       stableBindRuntimeTaskToImSessions,
       stableCancelRuntimePaneTask,
+      stableCompactRuntimePaneTask,
       stableClearRuntimeGoal,
       stableCheckoutEnvironmentBranch,
       stableCommitEnvironmentChanges,

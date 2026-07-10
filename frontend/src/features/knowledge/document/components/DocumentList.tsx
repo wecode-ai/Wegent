@@ -10,8 +10,6 @@ import {
   Upload,
   FileText,
   Search,
-  ChevronUp,
-  ChevronDown,
   BookOpen,
   Database,
   Trash2,
@@ -26,11 +24,11 @@ import {
   Pencil,
   FolderInput,
   ArrowRightLeft,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { DocumentDetailDialog } from './DocumentDetailDialog'
 import { DocumentUpload, type TableDocument } from './DocumentUpload'
@@ -40,11 +38,15 @@ import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { useDocuments } from '../hooks/useDocuments'
 import { useFolders } from '../hooks/useFolders'
 import { FolderTree, type SortField, type SortOrder } from './FolderTree'
+import { KnowledgeDocumentTreeGrid } from './knowledge-document-tree-grid'
 import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
 import { TransferToKbDialog } from './transfer-to-kb-dialog'
-import { useColumnResize } from '../hooks/useColumnResize'
+import {
+  useKnowledgeResourceSelection,
+  shouldDisableDocumentBatchActions,
+} from '../hooks/useKnowledgeResourceSelection'
 import { Pagination } from '@/components/ui/pagination'
 import { listDocuments } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
@@ -56,7 +58,6 @@ import type {
   KbGroupInfo,
 } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useUser } from '@/features/common/UserContext'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { EditKnowledgeBaseSummaryDialog } from './EditKnowledgeBaseSummaryDialog'
 import { useKnowledgeBaseSummaryEditor } from '../hooks/useKnowledgeBaseSummaryEditor'
@@ -67,6 +68,15 @@ import {
   shouldShowSummaryContent,
   shouldShowRetryButton,
 } from '../utils/summarySelectors'
+import { formatSelectionSummary } from '../utils/selection-summary'
+import {
+  buildKnowledgeResourceTree,
+  deletedFolderAffectsActiveFolder,
+  folderTreeContainsId,
+} from '../utils/resource-tree'
+
+export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
+export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
 
 /**
  * Find a document by name across all pages of a knowledge base.
@@ -216,39 +226,14 @@ function flattenFoldersForSelect(
   return result
 }
 
-function collectFolderAndDescendantIds(folders: KnowledgeFolder[], targetId: number): Set<number> {
+function findFolderName(folders: KnowledgeFolder[], targetId: number | undefined): string | null {
+  if (targetId === undefined) return null
   for (const folder of folders) {
-    if (folder.id === targetId) {
-      const ids = new Set<number>()
-      const collect = (current: KnowledgeFolder) => {
-        ids.add(current.id)
-        current.children.forEach(collect)
-      }
-      collect(folder)
-      return ids
-    }
-
-    const childIds = collectFolderAndDescendantIds(folder.children, targetId)
-    if (childIds.size > 0) return childIds
+    if (folder.id === targetId) return folder.name
+    const childName = findFolderName(folder.children, targetId)
+    if (childName) return childName
   }
-
-  return new Set()
-}
-
-function collectFolderAndAncestorIds(folders: KnowledgeFolder[], targetId: number): Set<number> {
-  const findPath = (folderList: KnowledgeFolder[], path: number[]): number[] | null => {
-    for (const folder of folderList) {
-      const nextPath = [...path, folder.id]
-      if (folder.id === targetId) return nextPath
-
-      const childPath = findPath(folder.children, nextPath)
-      if (childPath) return childPath
-    }
-
-    return null
-  }
-
-  return new Set(findPath(folders, []) ?? [])
+  return null
 }
 
 export function DocumentList({
@@ -264,10 +249,35 @@ export function DocumentList({
   onGroupClick,
   initialDocPath,
   isOrganization = false,
-  paginationEnabled = false,
+  paginationEnabled = true,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
-  const { user } = useUser()
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sortField, setSortField] = useState<SortField>('createdAt')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
+  const [activeFolderId, setActiveFolderId] = useState<number | undefined>(undefined)
+
+  // Folder state
+  const {
+    folders,
+    fetchFolders,
+    createFolder,
+    updateFolder,
+    deleteFolder,
+    moveDocument,
+    batchMove,
+  } = useFolders({ knowledgeBaseId: knowledgeBase.id })
+
+  const folderResourceTree = useMemo(() => buildKnowledgeResourceTree(folders, []), [folders])
+
+  const activeFolderScopeIds = useMemo(
+    () =>
+      activeFolderId === undefined
+        ? undefined
+        : Array.from(folderResourceTree.index.folderDescendantIds.get(activeFolderId) ?? []),
+    [folderResourceTree, activeFolderId]
+  )
+
   const {
     documents,
     loading,
@@ -287,18 +297,18 @@ export function DocumentList({
   } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
     paginationEnabled,
+    folderId: activeFolderId,
+    includeSubfolders: activeFolderId !== undefined,
+    folderScopeIds: activeFolderScopeIds,
+    keyword: searchQuery,
+    sortBy: sortField,
+    sortOrder,
   })
 
-  // Folder state
-  const {
-    folders,
-    fetchFolders,
-    createFolder,
-    updateFolder,
-    deleteFolder,
-    moveDocument,
-    batchMove,
-  } = useFolders({ knowledgeBaseId: knowledgeBase.id })
+  const resourceTree = useMemo(
+    () => buildKnowledgeResourceTree(folders, documents),
+    [folders, documents]
+  )
 
   const [showCreateFolder, setShowCreateFolder] = useState(false)
   const [createFolderParentId, setCreateFolderParentId] = useState(0)
@@ -310,11 +320,23 @@ export function DocumentList({
     if (knowledgeBase.id) {
       fetchFolders()
       setSelectedUploadFolderId(0)
+      setActiveFolderId(undefined)
     }
   }, [knowledgeBase.id, fetchFolders])
 
   // Flatten folder tree for select dropdowns
   const folderOptions = useMemo(() => flattenFoldersForSelect(folders), [folders])
+  const activeFolderName = useMemo(
+    () => findFolderName(folders, activeFolderId),
+    [folders, activeFolderId]
+  )
+  const searchPlaceholder = activeFolderName
+    ? t('document.document.searchInFolder', { folder: activeFolderName })
+    : t('document.document.search')
+
+  const handleActivateFolder = useCallback((folderId: number) => {
+    setActiveFolderId(currentFolderId => (currentFolderId === folderId ? undefined : folderId))
+  }, [])
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
@@ -325,11 +347,21 @@ export function DocumentList({
   const [viewingDoc, setViewingDoc] = useState<KnowledgeDocument | null>(null)
   const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [sortField, setSortField] = useState<SortField>('createdAt')
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const [selectedFolderIds, setSelectedFolderIds] = useState<Set<number>>(new Set())
+  const {
+    selectedDocumentIds,
+    selectedFolderIds,
+    summary: selectionSummary,
+    resetSelection,
+    setDocumentSelection,
+    selectDocument,
+    selectFolderScope,
+    selectVisibleDocuments,
+    isDocumentIncludedInFolderScope,
+    getPayload: getSelectionPayload,
+  } = useKnowledgeResourceSelection({
+    documents,
+    treeIndex: resourceTree.index,
+  })
   const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initialDocPath has been handled
@@ -351,23 +383,16 @@ export function DocumentList({
   const [isTransferring, setIsTransferring] = useState(false)
   const transferProgressText = useMemo(() => {
     if (!isTransferring) return undefined
-    const total = selectedIds.size + selectedFolderIds.size
+    const total = selectedDocumentIds.size + selectedFolderIds.size
     return t('document.document.batch.transferringProgress', {
       current: total,
       total,
     })
-  }, [isTransferring, selectedIds.size, selectedFolderIds.size, t])
-
-  // Resizable name column width (normal table mode only)
-  const {
-    widthOverride: nameColumnWidth,
-    isResizing: isColumnResizing,
-    handleMouseDown: handleNameResizeMouseDown,
-    columnRef: nameColumnRef,
-  } = useColumnResize()
+  }, [isTransferring, selectedDocumentIds.size, selectedFolderIds.size, t])
 
   // Track component mounted state to prevent updates after unmount
   const isMountedRef = useRef(true)
+  const skipNextSelectionNotifyRef = useRef(false)
 
   useEffect(() => {
     return () => {
@@ -442,49 +467,69 @@ export function DocumentList({
   // through retrieval without injecting every document into context.
   useEffect(() => {
     if (onSelectionChange) {
-      setSelectedIds(new Set())
+      skipNextSelectionNotifyRef.current = true
+      resetSelection()
       onSelectionChange([])
     }
-  }, [knowledgeBase.id, onSelectionChange])
+  }, [knowledgeBase.id, onSelectionChange, resetSelection])
 
   // Notify parent when selection changes.
   useEffect(() => {
     if (onSelectionChange) {
-      onSelectionChange(Array.from(selectedIds))
+      if (skipNextSelectionNotifyRef.current) {
+        skipNextSelectionNotifyRef.current = false
+        return
+      }
+      onSelectionChange(Array.from(selectedDocumentIds))
     }
-  }, [selectedIds, onSelectionChange])
+  }, [selectedDocumentIds, onSelectionChange])
 
-  const filteredDocuments = useMemo(() => {
-    if (!searchQuery.trim()) return documents
-    const query = searchQuery.toLowerCase()
-    return documents.filter(doc => doc.name.toLowerCase().includes(query))
-  }, [documents, searchQuery])
+  useEffect(() => {
+    resetSelection()
+  }, [activeFolderId, searchQuery, sortField, sortOrder, resetSelection])
+
+  useEffect(() => {
+    if (!folderTreeContainsId(folders, activeFolderId)) {
+      setActiveFolderId(undefined)
+      resetSelection()
+    }
+  }, [folders, activeFolderId, resetSelection])
 
   const canManageAnyDocuments = canUpload || canManageAllDocuments
+  const canManageDocumentArea = canManageAnyDocuments
+  const canManageFolderStructure = canManageDocumentArea
 
-  const canManageDocument = (document: KnowledgeDocument) =>
-    canManageAllDocuments || (canUpload && user?.id === document.user_id)
+  const canManageDocument = (_document: KnowledgeDocument) => canManageDocumentArea
 
   const canSelectDocument = (document: KnowledgeDocument) =>
-    Boolean(onSelectionChange) || (canManageAllDocuments && canManageDocument(document))
+    Boolean(onSelectionChange) || canManageDocument(document)
 
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortField(field)
-      setSortOrder('desc')
-    }
-  }
+  const folderSelectionBlocksDocumentBatchActions = selectionSummary.hasFolderScopeSelection
+  const documentBatchActionsDisabled = shouldDisableDocumentBatchActions({
+    selectedDocumentCount: selectedDocumentIds.size,
+    selectedFolderCount: selectedFolderIds.size,
+  })
 
-  const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) return null
-    return sortOrder === 'asc' ? (
-      <ChevronUp className="w-3 h-3 inline ml-1" />
-    ) : (
-      <ChevronDown className="w-3 h-3 inline ml-1" />
-    )
-  }
+  const handleOpenUpload = useCallback(() => {
+    setSelectedUploadFolderId(activeFolderId ?? 0)
+    setShowUpload(true)
+  }, [activeFolderId])
+
+  const handleGoToPage = useCallback(
+    (targetPage: number) => {
+      resetSelection()
+      goToPage(targetPage)
+    },
+    [resetSelection, goToPage]
+  )
+
+  const handlePageSizeChange = useCallback(
+    (targetPageSize: number) => {
+      resetSelection()
+      changePageSize(targetPageSize)
+    },
+    [changePageSize, resetSelection]
+  )
 
   const handleUploadComplete = async (
     attachments: { attachment: { id: number; filename: string }; file: File }[],
@@ -519,11 +564,9 @@ export function DocumentList({
 
     // Auto-select newly uploaded documents (for notebook mode context injection)
     if (onSelectionChange && newDocumentIds.length > 0) {
-      setSelectedIds(prev => {
-        const newSet = new Set(prev)
-        newDocumentIds.forEach(id => newSet.add(id))
-        return newSet
-      })
+      const nextSelectedIds = new Set(selectedDocumentIds)
+      newDocumentIds.forEach(id => nextSelectedIds.add(id))
+      setDocumentSelection(nextSelectedIds)
     }
 
     setShowUpload(false)
@@ -558,11 +601,9 @@ export function DocumentList({
 
     // Auto-select newly created document (for notebook mode context injection)
     if (onSelectionChange && result.document?.id) {
-      setSelectedIds(prev => {
-        const newSet = new Set(prev)
-        newSet.add(result.document!.id)
-        return newSet
-      })
+      const nextSelectedIds = new Set(selectedDocumentIds)
+      nextSelectedIds.add(result.document.id)
+      setDocumentSelection(nextSelectedIds)
     }
 
     setShowUpload(false)
@@ -579,111 +620,34 @@ export function DocumentList({
   }
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
-    setSelectedIds(prev => {
-      const newSet = new Set(prev)
-      if (selected) {
-        newSet.add(doc.id)
-      } else {
-        newSet.delete(doc.id)
-        // Remove every selected ancestor folder because any selected ancestor
-        // would make the backend transfer this document through folder_ids.
-        // The remaining selected docs will still recreate their folder hierarchy.
-        if (doc.folder_id && doc.folder_id > 0) {
-          const foldersToRemove = collectFolderAndAncestorIds(folders, doc.folder_id)
-          setSelectedFolderIds(prevFolderIds => {
-            const newFolderSet = new Set(prevFolderIds)
-            foldersToRemove.forEach(folderId => newFolderSet.delete(folderId))
-            return newFolderSet
-          })
-        }
-      }
-      return newSet
-    })
+    selectDocument(doc, selected)
   }
 
-  // Folder selection handler: when a folder is selected/deselected,
-  // select/deselect all documents within it (including sub-folders)
+  // Folder selection handler: folder checkbox represents a backend-resolved scope.
   const handleSelectFolder = useCallback(
     (folderId: number, selected: boolean) => {
-      // Collect all document IDs in the selected folder (recursively)
-      const collectDocIdsInFolder = (folderList: KnowledgeFolder[], targetId: number): number[] => {
-        for (const f of folderList) {
-          if (f.id === targetId) {
-            const docIds: number[] = []
-            const collectDocs = (folder: KnowledgeFolder) => {
-              const folderDocs = documents.filter(d => d.folder_id === folder.id)
-              docIds.push(...folderDocs.map(d => d.id))
-              for (const child of folder.children) {
-                collectDocs(child)
-              }
-            }
-            collectDocs(f)
-            return docIds
-          }
-          const found = collectDocIdsInFolder(f.children, targetId)
-          if (found.length > 0) return found
-        }
-        return []
-      }
-
-      const docIdsInFolder = collectDocIdsInFolder(folders, folderId)
-
-      // Prevent selecting empty folders/subtrees — the backend skips transfer
-      // when there are no documents, so allowing selection would mislead the user
-      // into thinking something will be transferred.
-      if (selected && docIdsInFolder.length === 0) {
-        return
-      }
-
-      const affectedFolderIds = collectFolderAndDescendantIds(folders, folderId)
-      setSelectedFolderIds(prev => {
-        const newSet = new Set(prev)
-        if (selected) {
-          newSet.add(folderId)
-        } else {
-          affectedFolderIds.forEach(id => newSet.delete(id))
-        }
-        return newSet
-      })
-
-      if (docIdsInFolder.length > 0) {
-        setSelectedIds(prev => {
-          const newSet = new Set(prev)
-          if (selected) {
-            docIdsInFolder.forEach(id => newSet.add(id))
-          } else {
-            docIdsInFolder.forEach(id => newSet.delete(id))
-          }
-          return newSet
-        })
-      }
+      selectFolderScope(folderId, selected)
     },
-    [folders, documents]
+    [selectFolderScope]
   )
 
   const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      setSelectedIds(new Set(filteredDocuments.map(doc => doc.id)))
-      setSelectedFolderIds(new Set()) // Clear folder selection to avoid duplicate transfer
-    } else {
-      setSelectedIds(new Set())
-      setSelectedFolderIds(new Set()) // Clear folder selection so action bar hides correctly
-    }
+    selectVisibleDocuments(checked)
   }
 
   const isAllSelected =
-    filteredDocuments.length > 0 && filteredDocuments.every(doc => selectedIds.has(doc.id))
+    documents.length > 0 && documents.every(doc => selectedDocumentIds.has(doc.id))
 
-  const isPartialSelected = filteredDocuments.some(doc => selectedIds.has(doc.id)) && !isAllSelected
+  const isPartialSelected = documents.some(doc => selectedDocumentIds.has(doc.id)) && !isAllSelected
 
   // Batch operations using batch API
   const handleBatchDelete = async () => {
-    if (selectedIds.size === 0) return
+    const payload = getSelectionPayload()
+    if (payload.documentIds.length === 0 || payload.folderIds.length > 0) return
     setBatchLoading(true)
     try {
-      await batchDelete(Array.from(selectedIds))
-      setSelectedIds(new Set())
-      setSelectedFolderIds(new Set())
+      await batchDelete(payload.documentIds)
+      resetSelection()
     } catch {
       // Error handled by hook
     } finally {
@@ -797,6 +761,10 @@ export function DocumentList({
 
   const handleDeleteFolderConfirm = async () => {
     if (!deletingFolder) return
+    if (deletedFolderAffectsActiveFolder(folders, deletingFolder.id, activeFolderId)) {
+      setActiveFolderId(undefined)
+      resetSelection()
+    }
     await deleteFolder(deletingFolder.id)
     setDeletingFolder(null)
     refresh()
@@ -830,16 +798,12 @@ export function DocumentList({
     async (targetFolderId: number) => {
       setIsBatchMoving(true)
       try {
-        const result = await batchMove(Array.from(selectedIds), targetFolderId)
+        const payload = getSelectionPayload()
+        const result = await batchMove(payload.documentIds, targetFolderId)
         if (result.success_count > 0) {
-          // Clear folder selection after batch move to prevent stale state.
-          // Moved documents no longer belong to the previously selected folders,
-          // so retaining selectedFolderIds would cause incorrect behavior in
-          // subsequent operations (e.g., transfer would re-include already-moved docs).
-          setSelectedFolderIds(new Set())
           if (result.failed_count > 0) {
             const nextSelectedIds = new Set(result.failed_ids)
-            setSelectedIds(nextSelectedIds)
+            setDocumentSelection(nextSelectedIds)
             toast({
               description: t('document.folder.batchMovePartial', {
                 success: result.success_count,
@@ -848,7 +812,7 @@ export function DocumentList({
               variant: 'destructive',
             })
           } else {
-            setSelectedIds(new Set())
+            resetSelection()
           }
           refresh()
           fetchFolders()
@@ -858,7 +822,7 @@ export function DocumentList({
         setShowBatchMove(false)
       }
     },
-    [selectedIds, batchMove, refresh, fetchFolders, t]
+    [batchMove, getSelectionPayload, setDocumentSelection, resetSelection, refresh, fetchFolders, t]
   )
 
   // Transfer handler
@@ -869,14 +833,14 @@ export function DocumentList({
         // Pass only folders that still represent complete subtree selections.
         // If a user deselects a descendant document, its selected ancestor folders
         // are removed so folder_ids cannot re-add that document during transfer.
+        const payload = getSelectionPayload()
         const result = await transfer({
-          document_ids: Array.from(selectedIds),
-          folder_ids: Array.from(selectedFolderIds),
+          document_ids: payload.documentIds,
+          folder_ids: payload.folderIds,
           target_kb_id: targetKbId,
         })
         if (result !== null) {
-          setSelectedIds(new Set())
-          setSelectedFolderIds(new Set())
+          resetSelection()
           refresh()
           fetchFolders()
           setShowTransfer(false)
@@ -885,7 +849,7 @@ export function DocumentList({
         setIsTransferring(false)
       }
     },
-    [selectedIds, selectedFolderIds, transfer, refresh, fetchFolders]
+    [getSelectionPayload, transfer, resetSelection, refresh, fetchFolders]
   )
   // Knowledge base type info
   const isNotebook = (knowledgeBase.kb_type || 'notebook') === 'notebook'
@@ -1039,7 +1003,7 @@ export function DocumentList({
                     type="text"
                     autoFocus
                     className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-                    placeholder={t('document.document.search')}
+                    placeholder={searchPlaceholder}
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     onKeyDown={e => {
@@ -1062,11 +1026,23 @@ export function DocumentList({
             <input
               type="text"
               className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
-              placeholder={t('document.document.search')}
+              placeholder={searchPlaceholder}
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
             />
           </div>
+        )}
+        {activeFolderName && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setActiveFolderId(undefined)}
+            className="min-h-11 min-w-11 max-w-[220px]"
+            data-testid="active-folder-clear"
+          >
+            <span className="truncate">{activeFolderName}</span>
+            <X className="w-3.5 h-3.5 ml-1 flex-shrink-0" />
+          </Button>
         )}
         {/* Spacer to push buttons to the right */}
         <div className="flex-1" />
@@ -1100,7 +1076,7 @@ export function DocumentList({
         </TooltipProvider>
 
         {/* Create folder button */}
-        {canUpload && (
+        {canManageFolderStructure && (
           <Button
             variant="outline"
             className="h-11 min-w-[44px]"
@@ -1113,7 +1089,7 @@ export function DocumentList({
 
         {/* Upload button */}
         {canUpload && (
-          <Button variant="primary" size="sm" onClick={() => setShowUpload(true)}>
+          <Button variant="primary" size="sm" onClick={handleOpenUpload}>
             <Upload className="w-4 h-4 mr-1" />
             {t('document.document.upload')}
           </Button>
@@ -1132,63 +1108,92 @@ export function DocumentList({
             {t('common:actions.retry')}
           </Button>
         </div>
-      ) : filteredDocuments.length > 0 || folders.length > 0 ? (
+      ) : documents.length > 0 || folders.length > 0 ? (
         <>
           {/* Batch action bar - shown when items are selected (not in notebook mode where selection is for context injection) */}
-          {canManageAllDocuments &&
-            (selectedIds.size > 0 || selectedFolderIds.size > 0) &&
-            !onSelectionChange && (
-              <div
-                className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
+          {canManageDocumentArea && selectionSummary.canTransfer && !onSelectionChange && (
+            <div
+              className={`flex items-center gap-3 ${compact ? 'px-2 py-2' : 'px-4 py-2.5'} bg-primary/5 border border-primary/20 rounded-lg`}
+            >
+              <span className="text-sm text-text-primary">
+                {formatSelectionSummary(
+                  t,
+                  'selected',
+                  selectedDocumentIds.size,
+                  selectedFolderIds.size
+                )}
+              </span>
+              <div className="flex-1" />
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowBatchMove(true)}
+                        disabled={
+                          documentBatchActionsDisabled ||
+                          batchLoading ||
+                          isBatchMoving ||
+                          isTransferring
+                        }
+                        data-testid="batch-move-button"
+                        aria-label={t('document.document.batch.move')}
+                      >
+                        <FolderInput className="w-4 h-4 mr-1" />
+                        {compact ? '' : t('document.document.batch.move')}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {folderSelectionBlocksDocumentBatchActions && (
+                    <TooltipContent>
+                      <p>{t('document.document.batch.folderScopeTransferOnly')}</p>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowTransfer(true)}
+                disabled={batchLoading || isBatchMoving || isTransferring}
+                data-testid="batch-transfer-button"
+                aria-label={t('document.document.batch.transfer')}
               >
-                <span className="text-sm text-text-primary">
-                  {selectedFolderIds.size > 0
-                    ? t('document.document.batch.selectedWithFolders', {
-                        docCount: selectedIds.size,
-                        folderCount: selectedFolderIds.size,
-                      })
-                    : t('document.document.batch.selected', { count: selectedIds.size })}
-                </span>
-                <div className="flex-1" />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowBatchMove(true)}
-                  disabled={batchLoading || isBatchMoving || isTransferring}
-                  data-testid="batch-move-button"
-                  aria-label={t('document.document.batch.move')}
-                >
-                  <FolderInput className="w-4 h-4 mr-1" />
-                  {compact ? '' : t('document.document.batch.move')}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowTransfer(true)}
-                  disabled={batchLoading || isBatchMoving || isTransferring}
-                  data-testid="batch-transfer-button"
-                  aria-label={t('document.document.batch.transfer')}
-                >
-                  <ArrowRightLeft className="w-4 h-4 mr-1" />
-                  {compact ? '' : t('document.document.batch.transfer')}
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleBatchDelete}
-                  disabled={batchLoading}
-                >
-                  <Trash2 className="w-4 h-4 mr-1" />
-                  {compact ? '' : t('document.document.batch.delete')}
-                </Button>
-              </div>
-            )}
+                <ArrowRightLeft className="w-4 h-4 mr-1" />
+                {compact ? '' : t('document.document.batch.transfer')}
+              </Button>
+              <TooltipProvider>
+                <Tooltip delayDuration={200}>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={handleBatchDelete}
+                        disabled={documentBatchActionsDisabled || batchLoading}
+                      >
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        {compact ? '' : t('document.document.batch.delete')}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {folderSelectionBlocksDocumentBatchActions && (
+                    <TooltipContent>
+                      <p>{t('document.document.batch.folderScopeTransferOnly')}</p>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          )}
 
           {/* Compact mode: Card layout */}
           {compact ? (
             <div className="space-y-2">
               {/* Select all control bar for notebook mode */}
-              {onSelectionChange && filteredDocuments.length > 0 && (
+              {onSelectionChange && documents.length > 0 && (
                 <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
                   <button
                     onClick={() => handleSelectAll(!isAllSelected)}
@@ -1206,14 +1211,14 @@ export function DocumentList({
                     </span>
                   </button>
                   <span className="text-text-muted">
-                    ({filteredDocuments.filter(doc => selectedIds.has(doc.id)).length}/
-                    {filteredDocuments.length})
+                    ({documents.filter(doc => selectedDocumentIds.has(doc.id)).length}/
+                    {documents.length})
                   </span>
                 </div>
               )}
               <FolderTree
                 folders={folders}
-                documents={filteredDocuments}
+                documents={documents}
                 compact={true}
                 onViewDetail={setViewingDoc}
                 onEdit={setEditingDoc}
@@ -1225,18 +1230,19 @@ export function DocumentList({
                 reindexingDocId={reindexingDocId}
                 canManage={canManageDocument}
                 canSelect={canSelectDocument}
-                selectedIds={selectedIds}
+                selectedIds={selectedDocumentIds}
+                includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
-                onCreateFolder={canUpload ? handleCreateFolder : undefined}
-                onRenameFolder={canUpload ? handleRenameFolder : undefined}
-                onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
-                canManageFolders={canUpload}
-                sortField={sortField}
-                sortOrder={sortOrder}
-                canSelectFolders={canManageAllDocuments && !onSelectionChange}
+                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                canManageFolders={canManageFolderStructure}
+                canSelectFolders={canManageFolderStructure && !onSelectionChange}
                 selectedFolderIds={selectedFolderIds}
                 onSelectFolder={handleSelectFolder}
+                activeFolderId={activeFolderId}
+                onActivateFolder={handleActivateFolder}
               />
               {paginationEnabled && (
                 <Pagination
@@ -1244,8 +1250,8 @@ export function DocumentList({
                   totalPages={totalPages}
                   totalCount={totalCount}
                   pageSize={pageSize}
-                  onGoToPage={goToPage}
-                  onPageSizeChange={changePageSize}
+                  onGoToPage={handleGoToPage}
+                  onPageSizeChange={handlePageSizeChange}
                   disabled={loading}
                 />
               )}
@@ -1253,152 +1259,73 @@ export function DocumentList({
           ) : (
             /* Normal mode: Table layout with folder tree - single bordered container */
             <div className="border border-border rounded-lg overflow-x-auto">
-              {/* Inner container - width determined by content, background covers all */}
-              <div className="bg-base min-w-[880px] w-fit">
-                {/* Table header */}
-                <div className="flex items-center gap-4 px-4 py-2.5 bg-surface text-xs text-text-muted font-medium border-b border-border">
-                  {/* Checkbox for select all */}
-                  {canManageAllDocuments && (
-                    <div className="flex-shrink-0">
-                      <Checkbox
-                        checked={isPartialSelected ? 'indeterminate' : isAllSelected}
-                        onCheckedChange={handleSelectAll}
-                        aria-label={
-                          paginationEnabled
-                            ? t('document.document.batch.selectCurrentPage')
-                            : t('document.document.batch.selectAll')
-                        }
-                        className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                      />
-                    </div>
-                  )}
-                  {/* Icon + Name column header */}
-                  <div
-                    ref={nameColumnRef}
-                    className={`relative flex items-center gap-2 ${nameColumnWidth ? 'flex-shrink-0' : 'flex-1 min-w-[200px]'}`}
-                    style={nameColumnWidth ? { width: `${nameColumnWidth}px` } : undefined}
-                  >
-                    {/* Icon placeholder */}
-                    <div className="w-4 h-4 flex-shrink-0" />
-                    <button
-                      type="button"
-                      className="cursor-pointer hover:text-text-primary select-none"
-                      onClick={() => handleSort('name')}
-                    >
-                      {t('document.document.columns.name')}
-                      <SortIcon field="name" />
-                    </button>
-                    {/* Column resize handle */}
-                    <div
-                      className="absolute top-0 right-0 bottom-0 w-3 cursor-col-resize z-10 group/resize flex items-center justify-center"
-                      onMouseDown={handleNameResizeMouseDown}
-                      onClick={e => e.stopPropagation()}
-                    >
-                      <div className="w-0.5 h-3/4 rounded-full bg-border group-hover/resize:bg-primary/50 transition-colors" />
-                    </div>
-                  </div>
-                  {/* Spacer to match DocumentItem edit button area */}
-                  <div className="w-7 flex-shrink-0" />
-                  <div className="w-20 flex-shrink-0 text-center">
-                    {t('document.document.columns.type')}
-                  </div>
-                  <button
-                    type="button"
-                    className="w-20 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                    onClick={() => handleSort('size')}
-                  >
-                    {t('document.document.columns.size')}
-                    <SortIcon field="size" />
-                  </button>
-                  {/* Creator column header */}
-                  <div className="w-24 flex-shrink-0 text-center">
-                    {t('document.document.columns.createdBy')}
-                  </div>
-                  <button
-                    type="button"
-                    className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                    onClick={() => handleSort('createdAt')}
-                  >
-                    {t('document.document.columns.date')}
-                    <SortIcon field="createdAt" />
-                  </button>
-                  {/* Updated date column header */}
-                  <button
-                    type="button"
-                    className="w-40 flex-shrink-0 text-center cursor-pointer hover:text-text-primary select-none"
-                    onClick={() => handleSort('updatedAt')}
-                  >
-                    {t('document.document.columns.updatedAt')}
-                    <SortIcon field="updatedAt" />
-                  </button>
-                  <div className="w-24 flex-shrink-0 text-center">
-                    {t('document.document.columns.indexStatus')}
-                  </div>
-                  {canManageAnyDocuments && (
-                    <div className="w-20 flex-shrink-0 text-center">
-                      {t('document.document.columns.actions')}
-                    </div>
-                  )}
+              <KnowledgeDocumentTreeGrid
+                nodes={resourceTree.nodes}
+                treeIndex={resourceTree.index}
+                folders={folders}
+                documents={documents}
+                showSelectionColumn={canManageDocumentArea}
+                showActionsColumn={canManageAnyDocuments}
+                sortField={sortField}
+                sortOrder={sortOrder}
+                onSortChange={(field, order) => {
+                  setSortField(field)
+                  setSortOrder(order)
+                }}
+                isAllSelected={isAllSelected}
+                isPartialSelected={isPartialSelected}
+                onSelectAll={handleSelectAll}
+                selectAllLabel={
+                  paginationEnabled
+                    ? t('document.document.batch.selectCurrentPage')
+                    : t('document.document.batch.selectAll')
+                }
+                onViewDetail={setViewingDoc}
+                onEdit={setEditingDoc}
+                onDelete={setDeletingDoc}
+                onRefresh={handleRefreshWebDocument}
+                onReindex={handleReindexDocument}
+                onMove={handleMoveDocument}
+                refreshingDocId={refreshingDocId}
+                reindexingDocId={reindexingDocId}
+                canManage={canManageDocument}
+                canSelect={canSelectDocument}
+                selectedDocumentIds={selectedDocumentIds}
+                includedInFolderScope={isDocumentIncludedInFolderScope}
+                onSelect={canManageDocumentArea ? handleSelectDoc : undefined}
+                ragConfigured={ragConfigured}
+                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                canManageFolders={canManageFolderStructure}
+                canSelectFolders={canManageFolderStructure && !onSelectionChange}
+                selectedFolderIds={selectedFolderIds}
+                onSelectFolder={handleSelectFolder}
+                activeFolderId={activeFolderId}
+                onActivateFolder={handleActivateFolder}
+              />
+              {/* Pagination bar for classic mode */}
+              {paginationEnabled && (
+                <div className="min-w-[880px] bg-base">
+                  <Pagination
+                    page={page}
+                    totalPages={totalPages}
+                    totalCount={totalCount}
+                    pageSize={pageSize}
+                    onGoToPage={handleGoToPage}
+                    onPageSizeChange={handlePageSizeChange}
+                    disabled={loading}
+                  />
                 </div>
-                {/* Document rows with folder tree - no extra border */}
-                <FolderTree
-                  folders={folders}
-                  documents={filteredDocuments}
-                  compact={false}
-                  withBorder={false}
-                  onViewDetail={setViewingDoc}
-                  onEdit={setEditingDoc}
-                  onDelete={setDeletingDoc}
-                  onRefresh={handleRefreshWebDocument}
-                  onReindex={handleReindexDocument}
-                  onMove={handleMoveDocument}
-                  refreshingDocId={refreshingDocId}
-                  reindexingDocId={reindexingDocId}
-                  canManage={canManageDocument}
-                  canSelect={doc => canSelectDocument(doc) && canManageAllDocuments}
-                  selectedIds={selectedIds}
-                  onSelect={handleSelectDoc}
-                  ragConfigured={ragConfigured}
-                  nameColumnWidth={nameColumnWidth ?? undefined}
-                  onCreateFolder={canUpload ? handleCreateFolder : undefined}
-                  onRenameFolder={canUpload ? handleRenameFolder : undefined}
-                  onDeleteFolder={canUpload ? handleDeleteFolderClick : undefined}
-                  canManageFolders={canUpload}
-                  sortField={sortField}
-                  sortOrder={sortOrder}
-                  canSelectFolders={canManageAllDocuments && !onSelectionChange}
-                  selectedFolderIds={selectedFolderIds}
-                  onSelectFolder={handleSelectFolder}
-                />
-                {/* Pagination bar for classic mode */}
-                {paginationEnabled && (
-                  <div className="min-w-[880px]">
-                    <Pagination
-                      page={page}
-                      totalPages={totalPages}
-                      totalCount={totalCount}
-                      pageSize={pageSize}
-                      onGoToPage={goToPage}
-                      onPageSizeChange={changePageSize}
-                      disabled={loading}
-                    />
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           )}
-          {/* Overlay during column resize to prevent pointer event interference */}
-          {isColumnResizing && (
-            <div className="fixed inset-0 z-50" style={{ cursor: 'col-resize' }} />
-          )}
         </>
-      ) : searchQuery ? (
+      ) : searchQuery || activeFolderId !== undefined ? (
         <div className="flex flex-col items-center justify-center py-12 text-text-secondary">
           <FileText className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('document.document.noResults')}</p>
-          {paginationEnabled && (
-            <p className="text-xs text-text-muted mt-2">{t('document.pagination.searchHint')}</p>
-          )}
+          <p className="text-xs text-text-muted mt-2">{t('document.pagination.searchHint')}</p>
         </div>
       ) : canUpload ? (
         <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
@@ -1442,7 +1369,6 @@ export function DocumentList({
         onTableAdd={handleTableAdd}
         onWebAdd={handleWebAdd}
         kbType={knowledgeBase.kb_type}
-        currentDocumentCount={documents.length}
         folderId={selectedUploadFolderId}
         folderOptions={folderOptions}
         onFolderChange={setSelectedUploadFolderId}
@@ -1511,13 +1437,13 @@ export function DocumentList({
         onConfirm={handleBatchMoveConfirm}
         isSubmitting={isBatchMoving}
         batchMode={true}
-        selectedCount={selectedIds.size}
+        selectedCount={selectedDocumentIds.size}
       />
 
       <TransferToKbDialog
         open={showTransfer}
         onOpenChange={setShowTransfer}
-        selectedDocumentCount={selectedIds.size}
+        selectedDocumentCount={selectedDocumentIds.size}
         selectedFolderCount={selectedFolderIds.size}
         currentKnowledgeBaseId={knowledgeBase.id}
         onConfirm={handleTransferConfirm}

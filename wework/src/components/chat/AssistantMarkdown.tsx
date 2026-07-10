@@ -11,6 +11,7 @@ import {
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
   'inline-flex max-w-full items-center gap-1 rounded-md px-0.5 align-baseline',
@@ -28,7 +29,7 @@ const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }
 
 export const AssistantMarkdown = memo(function AssistantMarkdown({
@@ -43,7 +44,11 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     openFileRef.current = onOpenFile
   }, [onOpenFile])
 
-  const openFile = (path: string) => {
+  const openFile = (path: string, options?: WorkspaceFileOpenOptions) => {
+    if (options) {
+      openFileRef.current?.(path, options)
+      return
+    }
     openFileRef.current?.(path)
   }
 
@@ -58,17 +63,17 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         urlTransform={url => url}
         components={{
           h1: ({ children }) => (
-            <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold">
+            <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold text-text-primary">
               {children}
             </h1>
           ),
           h2: ({ children }) => (
-            <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold">
+            <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold text-text-primary">
               {children}
             </h2>
           ),
           h3: ({ children }) => (
-            <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold">
+            <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold text-text-primary">
               {children}
             </h3>
           ),
@@ -196,6 +201,16 @@ function formatMarkdownFileTooltip(target: Extract<MarkdownLinkTarget, { kind: '
   return lineLabel ? `${target.path} (${lineLabel})` : target.path
 }
 
+function getMarkdownFileOpenOptions(
+  target: Extract<MarkdownLinkTarget, { kind: 'file' }>
+): WorkspaceFileOpenOptions | undefined {
+  if (typeof target.lineStart !== 'number') return undefined
+  return {
+    lineStart: target.lineStart,
+    lineEnd: target.lineEnd,
+  }
+}
+
 function getMarkdownFileIcon(path: string): ReactNode {
   if (/\.(?:json|jsonc)(?:[?#].*)?$/i.test(path)) {
     return (
@@ -236,7 +251,7 @@ function AssistantMarkdownLink({
   children,
 }: {
   href?: string
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
   children?: ReactNode
 }) {
   const target = classifyMarkdownLink(decodeLocalMarkdownHref(href))
@@ -255,12 +270,19 @@ function AssistantMarkdownLink({
     const filePath = target.path
     const lineLabel = formatMarkdownLineLabel(target)
     const tooltip = formatMarkdownFileTooltip(target)
+    const openOptions = getMarkdownFileOpenOptions(target)
     return (
       <button
         type="button"
         className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
         data-testid="assistant-markdown-link"
-        onClick={() => onOpenFile?.(filePath)}
+        onClick={() => {
+          if (openOptions) {
+            onOpenFile?.(filePath, openOptions)
+            return
+          }
+          onOpenFile?.(filePath)
+        }}
         aria-label={tooltip}
       >
         {icon}

@@ -118,6 +118,20 @@ export interface DeviceInfo {
   client_ip?: string | null
   runtime_transfer_host?: string | null
   app_device_id?: string | null
+  socket_device_id?: string | null
+  runtime_instance_id?: string | null
+  runtime_routes?: DeviceRuntimeRoute[]
+}
+
+export type DeviceRuntimeRouteKind = 'local-ipc' | 'cloud-relay' | 'remote-relay' | 'app-ipc'
+
+export interface DeviceRuntimeRoute {
+  kind: DeviceRuntimeRouteKind
+  device_id: string
+  runtime_device_id: string
+  device_type?: string | null
+  name?: string | null
+  status: DeviceInfo['status']
 }
 
 export interface DeviceRunningTask {
@@ -324,6 +338,8 @@ export interface RuntimeTaskSummary {
   updatedAt?: string | number | null
   running?: boolean
   status?: string | null
+  optimistic?: boolean
+  error?: string | null
   runtimeHandle?: Record<string, unknown> | null
   modelSelection?: ModelSelectionConfig | null
   parent?: Record<string, unknown> | null
@@ -489,6 +505,10 @@ export interface RuntimeSendRequest {
 
 export interface RuntimeRollbackRequest extends RuntimeSendRequest {
   messageId?: string | null
+}
+
+export interface RuntimeCompactRequest {
+  address: RuntimeTaskAddress
 }
 
 export interface RequestUserInputResponseAnswer {
@@ -814,6 +834,7 @@ export interface RuntimeTaskCreateResponse {
   taskId: string
   workspacePath: string
   runtime: RuntimeName
+  runtimeHandle?: Record<string, unknown> | null
   error?: string | null
 }
 
@@ -1598,6 +1619,8 @@ export interface ChatBlock {
   tool_name?: string
   tool_input?: Record<string, unknown>
   tool_output?: unknown
+  tool_output_truncated?: boolean
+  tool_output_original_bytes?: number
   render_payload?: unknown
   renderPayload?: unknown
   file_changes?: TurnFileChangesSummary
@@ -1621,6 +1644,11 @@ export interface ChatBlockUpdatedPayload {
   blockId: string
   content?: string
   toolOutput?: unknown
+  toolOutputDelta?: string
+  toolOutputTruncated?: boolean
+  toolOutputOriginalBytes?: number
+  tool_output_truncated?: boolean
+  tool_output_original_bytes?: number
   toolInput?: Record<string, unknown>
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'

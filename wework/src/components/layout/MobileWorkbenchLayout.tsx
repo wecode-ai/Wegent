@@ -320,8 +320,12 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 void retryFailedMessage(message.id, paneMessages)
               }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
-              onLoadFileChangesDiff={subtaskId => loadTurnFileChangesDiff(subtaskId, paneMessages)}
-              onRevertFileChanges={subtaskId => revertTurnFileChanges(subtaskId, paneMessages)}
+              onLoadFileChangesDiff={(subtaskId, fileChanges) =>
+                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
+              }
+              onRevertFileChanges={(subtaskId, fileChanges) =>
+                revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+              }
               onEditLastUserMessage={paneSession.editLastUserMessage}
               canEditLastUserMessage={canEditLastUserMessage}
               onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
@@ -387,6 +391,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     codeComments={paneSession.codeCommentContexts}
                     isStreaming={paneIsResponseStreaming}
                     onPause={() => void paneSession.pauseCurrentResponse()}
+                    onCompactContext={() => void paneSession.compactContext()}
                     onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -476,6 +481,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
                 onPause={() => void paneSession.pauseCurrentResponse()}
+                onCompactContext={() => void paneSession.compactContext()}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}

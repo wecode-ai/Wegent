@@ -30,6 +30,8 @@ const TRAY_OPEN_SETTINGS_EVENT: &str = "wework-tray-open-settings";
 #[cfg(desktop)]
 const TRAY_OPEN_TASK_EVENT: &str = "wework-tray-open-task";
 #[cfg(desktop)]
+const LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT: &str = "wework-open-local-workspace-requested";
+#[cfg(desktop)]
 const CLOSE_TO_TRAY_HINT_REQUESTED_EVENT: &str = "wework-close-to-tray-hint-requested";
 #[cfg(desktop)]
 const TRAY_MENU_OPEN_ID: &str = "open";
@@ -74,6 +76,8 @@ const TRAY_USAGE_SPACE_WIDTH: u32 = 1;
 #[cfg(desktop)]
 const TRAY_USAGE_LINE_GAP: u32 = 2;
 #[cfg(desktop)]
+const TRAY_USAGE_MAX_LINE: &str = "7d 100%";
+#[cfg(desktop)]
 const LOG_DIRECTORY_APP_NAME: &str = "Wework";
 #[cfg(desktop)]
 const LOG_DIRECTORY_VENDOR_NAME: &str = "Wegent";
@@ -85,6 +89,12 @@ const WEBVIEW_LOG_FILE_NAME: &str = "wework-frontend";
 const WEBVIEW_DEVTOOLS_ENV: &str = "WEWORK_WEBVIEW_DEVTOOLS";
 #[cfg(desktop)]
 const APP_PREFERENCES_FILE_NAME: &str = "app-preferences.json";
+#[cfg(all(desktop, target_os = "macos"))]
+const WEWORK_CLI_INSTALL_DIR: &str = ".local/bin";
+#[cfg(all(desktop, target_os = "macos"))]
+const WEWORK_CLI_INSTALL_NAME: &str = "wework";
+#[cfg(all(desktop, target_os = "macos"))]
+const WEWORK_CLI_MANAGED_MARKER: &str = "# Wework CLI launcher";
 
 #[cfg(desktop)]
 fn app_log_directory(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
@@ -298,6 +308,7 @@ struct AppPreferencesPatch {
 enum MainWindowOpenAction {
     Settings,
     Task(String),
+    LocalWorkspace,
 }
 
 #[cfg(desktop)]
@@ -305,6 +316,88 @@ enum MainWindowOpenAction {
 struct MainWindowLifecycleState {
     destroy_to_tray_in_progress: AtomicBool,
     pending_open_action: Mutex<Option<MainWindowOpenAction>>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalWorkspaceOpenRequest {
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+
+#[derive(Default)]
+struct LocalWorkspaceOpenState {
+    #[cfg(desktop)]
+    pending_requests: Mutex<Vec<LocalWorkspaceOpenRequest>>,
+}
+
+#[cfg(desktop)]
+fn parse_local_workspace_open_request(argv: &[String]) -> Option<LocalWorkspaceOpenRequest> {
+    let mut path: Option<String> = None;
+    let mut label: Option<String> = None;
+    let mut index = 1;
+
+    while index < argv.len() {
+        match argv[index].as_str() {
+            "--open-workspace" => {
+                index += 1;
+                path = argv
+                    .get(index)
+                    .and_then(|value| normalized_non_empty(value.clone()));
+            }
+            "--workspace-label" => {
+                index += 1;
+                label = argv
+                    .get(index)
+                    .and_then(|value| normalized_non_empty(value.clone()));
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+
+    path.map(|path| LocalWorkspaceOpenRequest { path, label })
+}
+
+#[cfg(desktop)]
+fn queue_local_workspace_open_request<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    request: LocalWorkspaceOpenRequest,
+) {
+    let state = app.state::<LocalWorkspaceOpenState>();
+    match state.pending_requests.lock() {
+        Ok(mut requests) => requests.push(request),
+        Err(_) => {
+            log::warn!("Failed to lock pending local workspace open requests");
+            return;
+        }
+    }
+
+    if let Err(error) = app.emit(LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT, ()) {
+        log::debug!("Local workspace open request queued before frontend listener: {error}");
+    }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn take_pending_local_workspace_open_requests(
+    app: tauri::AppHandle,
+) -> Result<Vec<LocalWorkspaceOpenRequest>, String> {
+    let state = app.state::<LocalWorkspaceOpenState>();
+    let mut requests = state
+        .pending_requests
+        .lock()
+        .map_err(|_| "Failed to lock pending local workspace open requests".to_string())?;
+    Ok(std::mem::take(&mut *requests))
+}
+
+#[cfg(not(desktop))]
+#[tauri::command]
+fn take_pending_local_workspace_open_requests(
+    _app: tauri::AppHandle,
+) -> Result<Vec<LocalWorkspaceOpenRequest>, String> {
+    Err("Local workspace open requests are only available on desktop".to_string())
 }
 
 #[cfg(desktop)]
@@ -343,6 +436,172 @@ fn write_app_preferences_impl(
         .map_err(|error| format!("Failed to serialize app preferences: {error}"))?;
     std::fs::write(path, content)
         .map_err(|error| format!("Failed to write app preferences: {error}"))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn macos_app_bundle_for_executable(
+    executable_path: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    executable_path
+        .ancestors()
+        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+        .map(std::path::Path::to_path_buf)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn wework_cli_launcher_content(
+    executable_path: &std::path::Path,
+    app_bundle_path: Option<&std::path::Path>,
+) -> String {
+    let executable = shell_single_quote(&executable_path.to_string_lossy());
+    let app_bundle = app_bundle_path
+        .map(|path| shell_single_quote(&path.to_string_lossy()))
+        .unwrap_or_else(|| "''".to_string());
+
+    format!(
+        r#"#!/usr/bin/env bash
+{WEWORK_CLI_MANAGED_MARKER}
+
+set -euo pipefail
+
+usage() {{
+  cat <<'EOF'
+Usage: wework [path]
+
+Open a local workspace in the Wework desktop app.
+
+Examples:
+  wework
+  wework .
+  wework ~/projects/my-app
+EOF
+}}
+
+if [ "${{1:-}}" = "-h" ] || [ "${{1:-}}" = "--help" ]; then
+  usage
+  exit 0
+fi
+
+if [ "$#" -gt 1 ]; then
+  echo "wework: expected at most one path argument" >&2
+  usage >&2
+  exit 2
+fi
+
+TARGET_PATH="${{1:-.}}"
+
+if [ ! -e "$TARGET_PATH" ]; then
+  echo "wework: path does not exist: $TARGET_PATH" >&2
+  exit 1
+fi
+
+if [ ! -d "$TARGET_PATH" ]; then
+  echo "wework: path is not a directory: $TARGET_PATH" >&2
+  exit 1
+fi
+
+ABSOLUTE_PATH="$(cd "$TARGET_PATH" && pwd -P)"
+APP_BUNDLE={app_bundle}
+WEWORK_EXECUTABLE={executable}
+
+if [ -x "$WEWORK_EXECUTABLE" ]; then
+  "$WEWORK_EXECUTABLE" --open-workspace "$ABSOLUTE_PATH" >/dev/null 2>&1 &
+  exit 0
+fi
+
+if [ -n "$APP_BUNDLE" ] && [ -d "$APP_BUNDLE" ]; then
+  exec open "$APP_BUNDLE" --args --open-workspace "$ABSOLUTE_PATH"
+fi
+
+echo "wework: unable to locate Wework app executable" >&2
+exit 1
+"#
+    )
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn can_replace_wework_cli_path(path: &std::path::Path) -> Result<bool, String> {
+    if let Ok(target) = std::fs::read_link(path) {
+        let target_text = target.to_string_lossy();
+        return Ok(target_text.contains("wework") || target_text.contains("WeWork"));
+    }
+
+    if !path.exists() {
+        return Ok(true);
+    }
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|error| format!("Failed to inspect existing Wework CLI file: {error}"))?;
+    Ok(content.contains(WEWORK_CLI_MANAGED_MARKER))
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn install_wework_cli_impl(
+    home_dir: &std::path::Path,
+    executable_path: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let install_dir = home_dir.join(WEWORK_CLI_INSTALL_DIR);
+    std::fs::create_dir_all(&install_dir)
+        .map_err(|error| format!("Failed to create Wework CLI install directory: {error}"))?;
+    let installed_path = install_dir.join(WEWORK_CLI_INSTALL_NAME);
+
+    if !can_replace_wework_cli_path(&installed_path)? {
+        return Err(format!(
+            "Wework CLI install path already exists and is not managed by Wework: {}",
+            installed_path.display()
+        ));
+    }
+
+    if installed_path.exists() || std::fs::symlink_metadata(&installed_path).is_ok() {
+        std::fs::remove_file(&installed_path)
+            .map_err(|error| format!("Failed to replace existing Wework CLI file: {error}"))?;
+    }
+
+    let app_bundle = macos_app_bundle_for_executable(executable_path);
+    let content = wework_cli_launcher_content(executable_path, app_bundle.as_deref());
+    std::fs::write(&installed_path, content)
+        .map_err(|error| format!("Failed to write Wework CLI launcher: {error}"))?;
+    let mut permissions = std::fs::metadata(&installed_path)
+        .map_err(|error| format!("Failed to inspect Wework CLI launcher: {error}"))?
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&installed_path, permissions)
+        .map_err(|error| format!("Failed to make Wework CLI executable: {error}"))?;
+
+    Ok(installed_path)
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn install_wework_cli_link(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let home_dir = app
+        .path()
+        .home_dir()
+        .map_err(|error| format!("Failed to locate home directory: {error}"))?;
+    let executable_path = std::env::current_exe()
+        .map_err(|error| format!("Failed to locate Wework executable: {error}"))?;
+    install_wework_cli_impl(&home_dir, &executable_path)
+}
+
+#[cfg(all(desktop, not(target_os = "macos")))]
+fn install_wework_cli_link(_app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Err("Wework CLI installation is only available on macOS".to_string())
+}
+
+#[cfg(not(desktop))]
+fn install_wework_cli_link(_app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Err("Wework CLI installation is only available on desktop".to_string())
+}
+
+#[tauri::command]
+fn install_wework_cli(app: tauri::AppHandle) -> Result<String, String> {
+    install_wework_cli_link(&app).map(|path| path.to_string_lossy().to_string())
 }
 
 #[cfg(desktop)]
@@ -1303,6 +1562,11 @@ fn emit_main_window_open_action<R: tauri::Runtime>(
                 log::warn!("Failed to emit tray task navigation event: {error}");
             }
         }
+        MainWindowOpenAction::LocalWorkspace => {
+            if let Err(error) = app.emit(LOCAL_WORKSPACE_OPEN_REQUESTED_EVENT, ()) {
+                log::warn!("Failed to emit local workspace open event: {error}");
+            }
+        }
     }
 }
 
@@ -1535,6 +1799,30 @@ struct TrayMenuStatePayload {
     pinned_more: Vec<TrayMenuTaskItem>,
     recent: Vec<TrayMenuTaskItem>,
     recent_more: Vec<TrayMenuTaskItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TrayVisualSignature {
+    usage_title: Option<String>,
+    running_count: usize,
+    show_running_status: bool,
+    unread_count: usize,
+}
+
+impl TrayVisualSignature {
+    fn from_payload(state: &TrayMenuStatePayload) -> Self {
+        Self {
+            usage_title: state.usage_title.clone(),
+            running_count: state.running_count,
+            show_running_status: state.show_running_status,
+            unread_count: state.unread_count,
+        }
+    }
+}
+
+#[derive(Default)]
+struct TrayVisualState {
+    signature: std::sync::Mutex<Option<TrayVisualSignature>>,
 }
 
 #[cfg(desktop)]
@@ -1781,6 +2069,30 @@ fn tray_usage_line_width(line: &str) -> u32 {
 }
 
 #[cfg(desktop)]
+fn tray_status_meter_slot_width(icon_size: u32) -> u32 {
+    if icon_size == 0 {
+        0
+    } else {
+        TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP - TRAY_STATUS_METER_TEXT_GAP_OFFSET
+    }
+}
+
+#[cfg(desktop)]
+fn tray_usage_text_x(icon_size: u32) -> u32 {
+    icon_size
+        + tray_status_meter_slot_width(icon_size)
+        + TRAY_USAGE_ICON_TEXT_GAP
+        + TRAY_USAGE_TEXT_LEFT_EXTRA_GAP
+}
+
+#[cfg(desktop)]
+fn tray_usage_canvas_width(icon_size: u32) -> u32 {
+    tray_usage_text_x(icon_size)
+        + tray_usage_line_width(TRAY_USAGE_MAX_LINE)
+        + TRAY_USAGE_ICON_LEFT_PADDING
+}
+
+#[cfg(desktop)]
 fn draw_tray_usage_text(buffer: &mut [u8], width: u32, x: u32, y: u32, line: &str) {
     let mut cursor_x = x;
     for character in line.chars() {
@@ -1800,10 +2112,8 @@ fn draw_tray_usage_text(buffer: &mut [u8], width: u32, x: u32, y: u32, line: &st
                             let pixel_y = y + row_index as u32 * TRAY_USAGE_ICON_SCALE + dy;
                             let offset = ((pixel_y * width + pixel_x) * 4) as usize;
                             if offset + 3 < buffer.len() {
-                                buffer[offset] = 255;
-                                buffer[offset + 1] = 255;
-                                buffer[offset + 2] = 255;
-                                buffer[offset + 3] = 255;
+                                buffer[offset..offset + 4]
+                                    .copy_from_slice(&tray_foreground_rgba(255));
                             }
                         }
                     }
@@ -1812,6 +2122,44 @@ fn draw_tray_usage_text(buffer: &mut [u8], width: u32, x: u32, y: u32, line: &st
         }
         cursor_x += (TRAY_USAGE_GLYPH_WIDTH + TRAY_USAGE_GLYPH_GAP) * TRAY_USAGE_ICON_SCALE;
     }
+}
+
+#[cfg(desktop)]
+fn tray_foreground_rgba(alpha: u8) -> [u8; 4] {
+    if cfg!(target_os = "macos") {
+        [0, 0, 0, alpha]
+    } else {
+        [255, 255, 255, alpha]
+    }
+}
+
+#[cfg(desktop)]
+fn tray_template_pixel(source: [u8; 4]) -> [u8; 4] {
+    if !cfg!(target_os = "macos") {
+        return source;
+    }
+    let mask = 255_u16.saturating_sub(source[0].min(source[1]).min(source[2]) as u16);
+    let alpha = (source[3] as u16 * mask / 255) as u8;
+    [0, 0, 0, alpha]
+}
+
+#[cfg(desktop)]
+fn copy_tray_icon_pixel(
+    buffer: &mut [u8],
+    target_offset: usize,
+    source: &[u8],
+    source_offset: usize,
+) {
+    if source_offset + 3 >= source.len() || target_offset + 3 >= buffer.len() {
+        return;
+    }
+    let pixel = tray_template_pixel([
+        source[source_offset],
+        source[source_offset + 1],
+        source[source_offset + 2],
+        source[source_offset + 3],
+    ]);
+    buffer[target_offset..target_offset + 4].copy_from_slice(&pixel);
 }
 
 #[cfg(desktop)]
@@ -1896,7 +2244,7 @@ fn draw_tray_running_meter(
         return;
     }
     let y = (height - meter_height) / 2;
-    let border = [255, 255, 255, 120];
+    let border = tray_foreground_rgba(120);
     for dy in 0..meter_height {
         for dx in 0..TRAY_STATUS_METER_WIDTH {
             let edge =
@@ -1915,7 +2263,7 @@ fn draw_tray_running_meter(
     }
 
     let segment_count = running_count.min(4);
-    let fill = [255, 255, 255, 235];
+    let fill = tray_foreground_rgba(235);
     for index in 0..segment_count {
         let segment_y = y + meter_height - 4 - index as u32 * 4;
         for dy in 0..3 {
@@ -1946,31 +2294,35 @@ fn draw_tray_unread_badge(
         return;
     }
 
-    let green = [13, 148, 136, 255];
+    let badge = if cfg!(target_os = "macos") {
+        tray_foreground_rgba(255)
+    } else {
+        [13, 148, 136, 255]
+    };
     let outline_x = 0_i32;
     let outline_y = icon_y as i32;
     let outline_size = icon_size as i32;
     for offset in 0..2 {
         for x in outline_x - offset..outline_x + outline_size + offset {
-            set_tray_pixel(buffer, width, height, x, outline_y - offset, green);
+            set_tray_pixel(buffer, width, height, x, outline_y - offset, badge);
             set_tray_pixel(
                 buffer,
                 width,
                 height,
                 x,
                 outline_y + outline_size - 1 + offset,
-                green,
+                badge,
             );
         }
         for y in outline_y - offset..outline_y + outline_size + offset {
-            set_tray_pixel(buffer, width, height, outline_x - offset, y, green);
+            set_tray_pixel(buffer, width, height, outline_x - offset, y, badge);
             set_tray_pixel(
                 buffer,
                 width,
                 height,
                 outline_x + outline_size - 1 + offset,
                 y,
-                green,
+                badge,
             );
         }
     }
@@ -2012,7 +2364,7 @@ fn draw_tray_unread_badge(
                 height,
                 (badge_x + dx) as i32,
                 (badge_y + dy) as i32,
-                green,
+                badge,
             );
         }
     }
@@ -2027,7 +2379,11 @@ fn draw_tray_unread_badge(
         text_y,
         &text,
         (3, 2),
-        [255, 255, 255, 255],
+        if cfg!(target_os = "macos") {
+            [0, 0, 0, 0]
+        } else {
+            [255, 255, 255, 255]
+        },
     );
 }
 
@@ -2050,32 +2406,11 @@ fn tray_usage_icon(
     }
 
     let text_height = TRAY_USAGE_GLYPH_HEIGHT * TRAY_USAGE_ICON_SCALE * 2 + TRAY_USAGE_LINE_GAP;
-    let text_width = lines
-        .iter()
-        .map(|line| tray_usage_line_width(line))
-        .max()
-        .unwrap_or(1)
-        .max(1);
     let base_icon_size = base_icon
         .map(|icon| icon.width().min(icon.height()).min(TRAY_USAGE_ICON_HEIGHT))
         .unwrap_or(0);
-    let status_meter_width = if base_icon_size > 0 && show_running_status {
-        TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP - TRAY_STATUS_METER_TEXT_GAP_OFFSET
-    } else {
-        0
-    };
-    let hidden_meter_gap = if base_icon_size > 0 && !show_running_status {
-        TRAY_STATUS_METER_TEXT_GAP_OFFSET
-    } else {
-        0
-    };
-    let text_x =
-        base_icon_size
-            + status_meter_width
-            + TRAY_USAGE_ICON_TEXT_GAP
-            + hidden_meter_gap
-            + TRAY_USAGE_TEXT_LEFT_EXTRA_GAP;
-    let width = text_x + text_width + TRAY_USAGE_ICON_LEFT_PADDING;
+    let text_x = tray_usage_text_x(base_icon_size);
+    let width = tray_usage_canvas_width(base_icon_size);
     let height = TRAY_USAGE_ICON_HEIGHT.max(text_height);
     let mut buffer = vec![0; (width * height * 4) as usize];
     let first_y = (height - text_height) / 2;
@@ -2098,10 +2433,7 @@ fn tray_usage_icon(
                     let sample_y = source_y + y * source_size / base_icon_size;
                     let source_offset = ((sample_y * source_width + sample_x) * 4) as usize;
                     let target_offset = (((target_y + y) * width + x) * 4) as usize;
-                    if source_offset + 3 < rgba.len() && target_offset + 3 < buffer.len() {
-                        buffer[target_offset..target_offset + 4]
-                            .copy_from_slice(&rgba[source_offset..source_offset + 4]);
-                    }
+                    copy_tray_icon_pixel(&mut buffer, target_offset, rgba, source_offset);
                 }
             }
         }
@@ -2146,11 +2478,7 @@ fn tray_status_icon(
         .width()
         .min(base_icon.height())
         .min(TRAY_USAGE_ICON_HEIGHT);
-    let meter_width = if show_running_status {
-        TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP
-    } else {
-        0
-    };
+    let meter_width = TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP;
     let width = icon_size + meter_width;
     let height = TRAY_USAGE_ICON_HEIGHT.max(icon_size);
     let mut buffer = vec![0; (width * height * 4) as usize];
@@ -2167,10 +2495,7 @@ fn tray_status_icon(
             let sample_y = source_y + y * source_size / icon_size;
             let source_offset = ((sample_y * source_width + sample_x) * 4) as usize;
             let target_offset = (((icon_y + y) * width + x) * 4) as usize;
-            if source_offset + 3 < rgba.len() && target_offset + 3 < buffer.len() {
-                buffer[target_offset..target_offset + 4]
-                    .copy_from_slice(&rgba[source_offset..source_offset + 4]);
-            }
+            copy_tray_icon_pixel(&mut buffer, target_offset, rgba, source_offset);
         }
     }
     draw_tray_unread_badge(&mut buffer, width, height, icon_size, icon_y, unread_count);
@@ -2228,7 +2553,10 @@ fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
             }
         });
 
-    if let Some(icon) = app.default_window_icon().cloned() {
+    if cfg!(target_os = "macos") {
+        tray = tray.icon_as_template(true);
+    }
+    if let Some(icon) = tray_status_icon(app.default_window_icon(), 0, false, 0) {
         tray = tray.icon(icon);
     }
 
@@ -2237,16 +2565,22 @@ fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
 }
 
 #[cfg(desktop)]
-#[tauri::command]
-fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Result<(), String> {
-    let menu = build_system_tray_menu(&app, &state)
-        .map_err(|error| format!("Failed to build tray menu: {error}"))?;
-    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+fn update_tray_visual<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    tray: &tauri::tray::TrayIcon<R>,
+    state: &TrayMenuStatePayload,
+) -> Result<(), String> {
+    let signature = TrayVisualSignature::from_payload(state);
+    let visual_state = app.state::<TrayVisualState>();
+    let mut cached_signature = visual_state
+        .signature
+        .lock()
+        .map_err(|error| format!("Failed to read tray visual state: {error}"))?;
+    if cached_signature.as_ref() == Some(&signature) {
         return Ok(());
-    };
-    tray.set_menu(Some(menu))
-        .map_err(|error| format!("Failed to update tray menu: {error}"))?;
-    let icon_update = state
+    }
+
+    let icon = state
         .usage_title
         .as_deref()
         .and_then(|title| {
@@ -2265,23 +2599,28 @@ fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Re
                 state.show_running_status,
                 state.unread_count,
             )
-        })
-        .map(|icon| tray.set_icon(Some(icon)));
-    match icon_update {
-        Some(Ok(())) => {
-            if let Err(error) = tray.set_title(None::<&str>) {
-                log::warn!("Failed to clear tray title: {error}");
-            }
-        }
-        Some(Err(error)) => {
-            log::warn!("Failed to update tray usage icon: {error}");
-        }
-        None => {
-            if let Err(error) = tray.set_title(None::<&str>) {
-                log::warn!("Failed to clear tray title: {error}");
-            }
-        }
+        });
+    if let Some(icon) = icon {
+        tray.set_icon_with_as_template(Some(icon), cfg!(target_os = "macos"))
+            .map_err(|error| format!("Failed to update tray icon: {error}"))?;
     }
+    tray.set_title(None::<&str>)
+        .map_err(|error| format!("Failed to clear tray title: {error}"))?;
+    *cached_signature = Some(signature);
+    Ok(())
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+fn set_tray_menu_state(app: tauri::AppHandle, state: TrayMenuStatePayload) -> Result<(), String> {
+    let menu = build_system_tray_menu(&app, &state)
+        .map_err(|error| format!("Failed to build tray menu: {error}"))?;
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return Ok(());
+    };
+    tray.set_menu(Some(menu))
+        .map_err(|error| format!("Failed to update tray menu: {error}"))?;
+    update_tray_visual(&app, &tray, &state)?;
     if let Err(error) = tray.set_tooltip(state.usage_tooltip.as_deref().or(Some("WeWork"))) {
         log::warn!("Failed to update tray tooltip: {error}");
     }
@@ -2297,10 +2636,39 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_process, collect_descendant_pids, executor_home_attachment_root,
-        local_workspace_opener_app_name, parse_process_snapshot_line, RawProcessInfo,
+        can_replace_wework_cli_path, classify_process, collect_descendant_pids,
+        executor_home_attachment_root, install_wework_cli_impl, local_workspace_opener_app_name,
+        parse_local_workspace_open_request, parse_process_snapshot_line, tray_template_pixel,
+        tray_usage_icon, wework_cli_launcher_content, RawProcessInfo,
     };
     use std::collections::HashSet;
+
+    fn test_temp_dir(name: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("wework-cli-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("test temp dir should be created");
+        path
+    }
+
+    #[test]
+    fn converts_macos_tray_pixels_to_a_template_mask() {
+        assert_eq!(tray_template_pixel([255, 255, 255, 255]), [0, 0, 0, 0]);
+        assert_eq!(tray_template_pixel([0, 0, 0, 255]), [0, 0, 0, 255]);
+        assert_eq!(tray_template_pixel([20, 120, 220, 128]), [0, 0, 0, 117]);
+    }
+
+    #[test]
+    fn keeps_tray_usage_canvas_stable_across_usage_and_running_states() {
+        let base_icon = tauri::image::Image::new_owned(vec![255; 32 * 32 * 4], 32, 32);
+        let compact = tray_usage_icon("5h 9%\n7d --", Some(&base_icon), 0, false, 0)
+            .expect("compact usage icon");
+        let full = tray_usage_icon("5h 100%\n7d 100%", Some(&base_icon), 3, true, 7)
+            .expect("full usage icon");
+
+        assert_eq!(compact.width(), full.width());
+        assert_eq!(compact.height(), full.height());
+    }
 
     #[test]
     fn maps_local_workspace_openers_to_macos_app_names() {
@@ -2330,6 +2698,89 @@ mod tests {
             executor_home_attachment_root(std::path::Path::new("/Users/me/.wegent-executor")),
             std::path::PathBuf::from("/Users/me/.wegent-executor/workspace/attachments/draft")
         );
+    }
+
+    #[test]
+    fn parses_local_workspace_open_request_from_argv() {
+        let request = parse_local_workspace_open_request(&[
+            "WeWork".to_string(),
+            "--open-workspace".to_string(),
+            "/Users/me/project".to_string(),
+            "--workspace-label".to_string(),
+            "Project".to_string(),
+        ])
+        .expect("workspace request should parse");
+
+        assert_eq!(request.path, "/Users/me/project");
+        assert_eq!(request.label.as_deref(), Some("Project"));
+    }
+
+    #[test]
+    fn ignores_blank_local_workspace_open_path() {
+        assert!(parse_local_workspace_open_request(&[
+            "WeWork".to_string(),
+            "--open-workspace".to_string(),
+            "   ".to_string(),
+        ])
+        .is_none());
+    }
+
+    #[test]
+    fn renders_wework_cli_launcher_for_app_bundle() {
+        let content = wework_cli_launcher_content(
+            std::path::Path::new("/Applications/WeWork.app/Contents/MacOS/WeWork"),
+            Some(std::path::Path::new("/Applications/WeWork.app")),
+        );
+
+        assert!(content.contains("# Wework CLI launcher"));
+        assert!(content.contains("APP_BUNDLE='/Applications/WeWork.app'"));
+        assert!(content.contains("\"$WEWORK_EXECUTABLE\" --open-workspace \"$ABSOLUTE_PATH\""));
+        assert!(content.contains("exec open \"$APP_BUNDLE\" --args --open-workspace"));
+    }
+
+    #[test]
+    fn installs_wework_cli_launcher_and_replaces_managed_files() {
+        let temp_dir = test_temp_dir("install");
+        let executable_path = temp_dir.join("debug").join("app");
+        std::fs::create_dir_all(executable_path.parent().expect("executable has parent"))
+            .expect("executable dir should be created");
+        std::fs::write(&executable_path, b"app").expect("executable should be written");
+
+        let installed_path = install_wework_cli_impl(&temp_dir, &executable_path)
+            .expect("launcher should be installed");
+        let content = std::fs::read_to_string(&installed_path).expect("launcher should be read");
+        assert!(content.contains("# Wework CLI launcher"));
+        assert!(content.contains("WEWORK_EXECUTABLE="));
+
+        std::fs::write(&installed_path, "# Wework CLI launcher\nold")
+            .expect("managed launcher should be overwritten");
+        install_wework_cli_impl(&temp_dir, &executable_path)
+            .expect("managed launcher should be replaced");
+        let replaced_content =
+            std::fs::read_to_string(&installed_path).expect("launcher should be read again");
+        assert!(replaced_content.contains("Open a local workspace in the Wework desktop app."));
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn refuses_to_replace_unmanaged_wework_cli_file() {
+        let temp_dir = test_temp_dir("unmanaged");
+        let install_dir = temp_dir.join(".local/bin");
+        std::fs::create_dir_all(&install_dir).expect("install dir should be created");
+        let installed_path = install_dir.join("wework");
+        std::fs::write(&installed_path, "#!/bin/sh\necho custom")
+            .expect("custom command should be written");
+
+        assert!(!can_replace_wework_cli_path(&installed_path)
+            .expect("existing file should be inspected"));
+        assert!(
+            install_wework_cli_impl(&temp_dir, std::path::Path::new("/tmp/app"))
+                .expect_err("unmanaged file should not be replaced")
+                .contains("not managed by Wework")
+        );
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]
@@ -2411,14 +2862,21 @@ mod tests {
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init());
 
     #[cfg(all(desktop, not(debug_assertions)))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        if let Err(error) = ensure_main_window(app, None) {
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        let action = if let Some(request) = parse_local_workspace_open_request(&argv) {
+            queue_local_workspace_open_request(app, request);
+            Some(MainWindowOpenAction::LocalWorkspace)
+        } else {
+            None
+        };
+        if let Err(error) = ensure_main_window(app, action) {
             log::warn!("Failed to open main window from single-instance activation: {error}");
         }
     }));
@@ -2426,6 +2884,8 @@ pub fn run() {
     let app = builder
         .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(MainWindowLifecycleState::default())
+        .manage(LocalWorkspaceOpenState::default())
+        .manage(TrayVisualState::default())
         .manage(local_executor::LocalExecutorState::default())
         .manage(local_terminal::LocalTerminalState::default())
         .on_window_event(|window, event| {
@@ -2484,7 +2944,23 @@ pub fn run() {
             #[cfg(desktop)]
             setup_system_tray(app)?;
             #[cfg(desktop)]
-            maybe_show_main_window_on_launch(app.handle());
+            match install_wework_cli_link(app.handle()) {
+                Ok(path) => log::info!("Installed Wework CLI launcher: {}", path.display()),
+                Err(error) => log::warn!("{error}"),
+            }
+            #[cfg(desktop)]
+            if let Some(request) =
+                parse_local_workspace_open_request(&std::env::args().collect::<Vec<_>>())
+            {
+                queue_local_workspace_open_request(app.handle(), request);
+                if let Err(error) =
+                    ensure_main_window(app.handle(), Some(MainWindowOpenAction::LocalWorkspace))
+                {
+                    log::warn!("Failed to open main window for local workspace request: {error}");
+                }
+            } else {
+                maybe_show_main_window_on_launch(app.handle());
+            }
             #[cfg(desktop)]
             install_shutdown_signal_handler(app.handle().clone())
                 .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
@@ -2530,6 +3006,8 @@ pub fn run() {
             open_app_log_directory,
             get_wework_process_snapshot,
             open_main_webview_devtools,
+            install_wework_cli,
+            take_pending_local_workspace_open_requests,
             set_tray_menu_state,
             update_app_preferences,
             download_local_file_to_downloads,

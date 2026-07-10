@@ -67,7 +67,7 @@ class KnowledgeFolderService:
     def _check_kb_write_access(
         db: Session, knowledge_base_id: int, user_id: int
     ) -> Kind:
-        """Verify user has write access to the knowledge base.
+        """Verify user has document-area write access to the knowledge base.
 
         Raises ValueError if access is denied or KB not found.
         """
@@ -188,13 +188,16 @@ class KnowledgeFolderService:
         children_map: Dict[int, List[KnowledgeFolderResponse]] = defaultdict(list)
 
         for f in all_folders:
+            direct_document_count = doc_counts.get(f.id, 0)
             node = KnowledgeFolderResponse(
                 id=f.id,
                 kind_id=f.kind_id,
                 parent_id=f.parent_id,
                 name=f.name,
                 children=[],
-                document_count=doc_counts.get(f.id, 0),
+                document_count=direct_document_count,
+                direct_document_count=direct_document_count,
+                total_document_count=direct_document_count,
                 created_at=f.created_at,
                 updated_at=f.updated_at,
             )
@@ -206,6 +209,9 @@ class KnowledgeFolderService:
             result = []
             for child in children_map.get(pid, []):
                 child.children = attach_children(child.id)
+                child.total_document_count = child.direct_document_count + sum(
+                    grandchild.total_document_count for grandchild in child.children
+                )
                 result.append(child)
             return result
 
@@ -332,6 +338,9 @@ class KnowledgeFolderService:
         doc_count = KnowledgeFolderService._count_folder_docs(
             db, folder.id, folder.kind_id
         )
+        total_doc_count = KnowledgeFolderService._count_folder_subtree_docs(
+            db, folder.id, folder.kind_id
+        )
 
         return KnowledgeFolderResponse(
             id=folder.id,
@@ -340,6 +349,8 @@ class KnowledgeFolderService:
             name=folder.name,
             children=[],
             document_count=doc_count,
+            direct_document_count=doc_count,
+            total_document_count=total_doc_count,
             created_at=folder.created_at,
             updated_at=folder.updated_at,
         )
@@ -804,6 +815,23 @@ class KnowledgeFolderService:
             .filter(
                 KnowledgeDocument.kind_id == kind_id,
                 KnowledgeDocument.folder_id == folder_id,
+            )
+            .scalar()
+        ) or 0
+
+    @staticmethod
+    def _count_folder_subtree_docs(db: Session, folder_id: int, kind_id: int) -> int:
+        """Count documents in a folder and all descendant folders."""
+        folder_ids = KnowledgeFolderService._collect_descendant_ids(
+            db, folder_id, kind_id
+        )
+        folder_ids.add(folder_id)
+
+        return (
+            db.query(func.count(KnowledgeDocument.id))
+            .filter(
+                KnowledgeDocument.kind_id == kind_id,
+                KnowledgeDocument.folder_id.in_(folder_ids),
             )
             .scalar()
         ) or 0

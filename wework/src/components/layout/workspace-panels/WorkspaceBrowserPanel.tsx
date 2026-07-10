@@ -16,6 +16,7 @@ import {
   closeEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
+  EMBEDDED_BROWSER_OCCLUSION_EVENT,
   evalEmbeddedBrowser,
   evalEmbeddedBrowserJson,
   goBackEmbeddedBrowser,
@@ -26,6 +27,7 @@ import {
   reloadEmbeddedBrowser,
   setEmbeddedBrowserBounds,
   type EmbeddedBrowserBounds,
+  type EmbeddedBrowserOcclusionChange,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
 import { openExternalUrl } from '@/lib/external-links'
@@ -359,7 +361,7 @@ function browserAnnotationInjectionScript() {
       publish();
     });
     input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' && !event.isComposing) {
+      if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault();
         event.stopPropagation();
         publish();
@@ -497,7 +499,7 @@ export function WorkspaceBrowserPanel({
   const syncBoundsAnimationFrameRef = useRef<number | null>(null)
   const postOpenSyncTimerRefs = useRef<number[]>([])
   const annotationEmptyPollLogCountRef = useRef(0)
-  const [debugPanelExpanded, setDebugPanelExpanded] = useState(false)
+  const [occludingOverlayIds, setOccludingOverlayIds] = useState<Set<string>>(() => new Set())
   const [address, setAddress] = useState('')
   const [currentUrl, setCurrentUrl] = useState<string | null>(null)
   const [pageUrl, setPageUrl] = useState<string | null>(null)
@@ -507,6 +509,7 @@ export function WorkspaceBrowserPanel({
   const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
   const embeddedBrowserAvailable = canUseEmbeddedBrowser()
   const activePageUrl = pageUrl ?? currentUrl
+  const embeddedBrowserOccluded = occludingOverlayIds.size > 0
 
   const updatePageUrl = useCallback(
     (url: string | null) => {
@@ -541,9 +544,9 @@ export function WorkspaceBrowserPanel({
         }
         return
       }
-      await setEmbeddedBrowserBounds(bounds, visible && !debugPanelExpanded, label)
+      await setEmbeddedBrowserBounds(bounds, visible && !embeddedBrowserOccluded, label)
     },
-    [active, debugPanelExpanded, embeddedBrowserAvailable, label]
+    [active, embeddedBrowserAvailable, embeddedBrowserOccluded, label]
   )
 
   const hideEmbeddedBrowser = useCallback(async () => {
@@ -929,26 +932,51 @@ export function WorkspaceBrowserPanel({
   useEffect(() => {
     const handleDebugPanelVisibility = (event: Event) => {
       const expanded = Boolean((event as CustomEvent<{ expanded?: boolean }>).detail?.expanded)
-      setDebugPanelExpanded(expanded)
+      setOccludingOverlayIds(current => {
+        const next = new Set(current)
+        if (expanded) {
+          next.add('debug-panel')
+        } else {
+          next.delete('debug-panel')
+        }
+        return next
+      })
+    }
+
+    const handleBrowserOcclusion = (event: Event) => {
+      const detail = (event as CustomEvent<EmbeddedBrowserOcclusionChange>).detail
+      if (!detail?.id) return
+
+      setOccludingOverlayIds(current => {
+        const next = new Set(current)
+        if (detail.occluded) {
+          next.add(detail.id)
+        } else {
+          next.delete(detail.id)
+        }
+        return next
+      })
     }
 
     window.addEventListener(
       EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
       handleDebugPanelVisibility
     )
+    window.addEventListener(EMBEDDED_BROWSER_OCCLUSION_EVENT, handleBrowserOcclusion)
     return () => {
       window.removeEventListener(
         EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
         handleDebugPanelVisibility
       )
+      window.removeEventListener(EMBEDDED_BROWSER_OCCLUSION_EVENT, handleBrowserOcclusion)
     }
   }, [])
 
   useEffect(() => {
     void syncEmbeddedBrowserBounds(active).catch(error => {
-      console.error('Failed to sync embedded browser debug panel visibility:', error)
+      console.error('Failed to sync embedded browser occlusion visibility:', error)
     })
-  }, [active, debugPanelExpanded, syncEmbeddedBrowserBounds])
+  }, [active, embeddedBrowserOccluded, syncEmbeddedBrowserBounds])
 
   const runBrowserCommand = useCallback(
     async (command: () => Promise<void>) => {

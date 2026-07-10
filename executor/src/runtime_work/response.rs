@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use super::util::{
-    codex_wrapped_item_payload, infer_workspace_kind, infer_worktree_id, normalize_workspace_path,
-    now_ms, path_is_within, string_field, timestamp_ms_field, workspace_group_path,
-    workspace_label, workspace_task_path,
+    infer_workspace_kind, infer_worktree_id, normalize_workspace_path, now_ms, path_is_within,
+    string_field, timestamp_ms_field, workspace_group_path, workspace_label, workspace_task_path,
 };
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -80,7 +79,7 @@ impl RuntimeTaskLink {
         }
     }
 
-    pub fn from_thread(
+    pub fn from_thread_metadata(
         thread: &Value,
         local_link: Option<RuntimeTaskLink>,
         workspace_path: String,
@@ -104,7 +103,7 @@ impl RuntimeTaskLink {
         };
         let running = !local_archived
             && local_terminal_status.is_none()
-            && (local_running || thread_running(thread));
+            && (local_running || normalized_running_status(&status));
         Self {
             local_task_id: local_link
                 .as_ref()
@@ -131,6 +130,25 @@ impl RuntimeTaskLink {
             ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
             list_order: None,
             group_workspace_path: None,
+        }
+    }
+
+    pub fn list_summary(&self) -> Self {
+        Self {
+            local_task_id: self.local_task_id.clone(),
+            thread_id: self.thread_id.clone(),
+            workspace_path: self.workspace_path.clone(),
+            title: self.title.clone(),
+            runtime: self.runtime.clone(),
+            status: self.status.clone(),
+            running: self.running,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
+            parent: self.parent.clone(),
+            ephemeral: self.ephemeral,
+            list_order: self.list_order,
+            group_workspace_path: self.group_workspace_path.clone(),
         }
     }
 }
@@ -522,11 +540,7 @@ fn runtime_task_address(link: &RuntimeTaskLink, device_id: &str) -> Value {
 }
 
 fn runtime_handle_with_thread_id(link: &RuntimeTaskLink) -> Map<String, Value> {
-    let mut runtime_handle = link
-        .runtime_handle
-        .as_object()
-        .cloned()
-        .unwrap_or_else(Map::new);
+    let mut runtime_handle = runtime_handle_list_summary_map(&link.runtime_handle);
     runtime_handle.insert(
         "threadId".to_owned(),
         link.thread_id
@@ -535,6 +549,31 @@ fn runtime_handle_with_thread_id(link: &RuntimeTaskLink) -> Map<String, Value> {
             .unwrap_or(Value::Null),
     );
     runtime_handle
+}
+
+pub(crate) fn runtime_handle_list_summary_map(runtime_handle: &Value) -> Map<String, Value> {
+    runtime_handle
+        .as_object()
+        .map(|object| {
+            object
+                .iter()
+                .filter(|(key, _)| !runtime_handle_list_payload_key(key))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn runtime_handle_list_payload_key(key: &str) -> bool {
+    matches!(
+        key,
+        "message"
+            | "messages"
+            | "cachedMessage"
+            | "cachedMessages"
+            | "cached_message"
+            | "cached_messages"
+    )
 }
 
 fn thread_status(thread: &Value) -> String {
@@ -551,34 +590,98 @@ fn thread_status(thread: &Value) -> String {
     .to_owned()
 }
 
-fn thread_running(thread: &Value) -> bool {
-    string_field(thread, "status")
-        .map(|status| normalized_running_status(&status))
-        .unwrap_or(false)
-        || thread
-            .get("turns")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .any(turn_or_item_running)
-}
-
-fn turn_or_item_running(value: &Value) -> bool {
-    string_field(value, "status")
-        .map(|status| normalized_running_status(&status))
-        .unwrap_or(false)
-        || codex_wrapped_item_payload(value).is_some_and(turn_or_item_running)
-        || value
-            .get("items")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .any(turn_or_item_running)
-}
-
 fn normalized_running_status(status: &str) -> bool {
     matches!(
         status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
         "running" | "inprogress" | "busy" | "pending"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn workspace_response_omits_runtime_handle_messages_from_task_list() {
+        let task = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/tmp/project".to_owned(),
+            title: "Large output".to_owned(),
+            runtime_handle: json!({
+                "threadId": "stale-thread",
+                "modelSelection": {"model": "gpt-5.5"},
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "blocks": [
+                            {
+                                "type": "tool_use",
+                                "tool_output": "x".repeat(1024),
+                            }
+                        ],
+                    }
+                ],
+            }),
+            ..RuntimeTaskLink::default()
+        };
+
+        let workspaces = workspace_response(vec![task], Vec::new());
+        let handle = &workspaces[0]["tasks"][0]["runtimeHandle"];
+
+        assert_eq!(handle["threadId"], "thread-1");
+        assert_eq!(handle["modelSelection"]["model"], "gpt-5.5");
+        assert!(handle.get("messages").is_none());
+    }
+
+    #[test]
+    fn thread_list_running_status_does_not_drive_task_running() {
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": "running",
+                "cwd": "/workspace/project",
+            }),
+            None,
+            "/workspace/project".to_owned(),
+        );
+
+        assert_eq!(link.status, "active");
+        assert!(!link.running);
+    }
+
+    #[test]
+    fn search_result_address_omits_runtime_handle_messages() {
+        let task = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/tmp/project".to_owned(),
+            title: "Large output".to_owned(),
+            runtime_handle: json!({
+                "messages": [{"content": "large cached transcript"}],
+                "executorSession": {"agent": "Codex"},
+            }),
+            ..RuntimeTaskLink::default()
+        };
+
+        let item = search_result_item(
+            &task,
+            "device-1",
+            SearchResultMatch {
+                snippet: "Large".to_owned(),
+                match_start: 0,
+                match_end: 5,
+                message_id: String::new(),
+                message_role: "title".to_owned(),
+                message_created_at: Value::Null,
+            },
+        );
+        let handle = &item["address"]["runtimeHandle"];
+
+        assert_eq!(handle["threadId"], "thread-1");
+        assert_eq!(handle["executorSession"]["agent"], "Codex");
+        assert!(handle.get("messages").is_none());
+    }
 }

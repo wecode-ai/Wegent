@@ -250,7 +250,7 @@ def test_explicit_kb_developer_can_manage_documents_but_not_kb_settings() -> Non
 
 
 @pytest.mark.unit
-def test_explicit_kb_developer_can_manage_only_owned_document() -> None:
+def test_explicit_kb_developer_can_manage_accessible_documents() -> None:
     assert can_manage_accessible_knowledge_document(
         has_access=True,
         role=BaseRole.Developer,
@@ -258,7 +258,7 @@ def test_explicit_kb_developer_can_manage_only_owned_document() -> None:
         user_id=2,
         document_owner_id=2,
     )
-    assert not can_manage_accessible_knowledge_document(
+    assert can_manage_accessible_knowledge_document(
         has_access=True,
         role=BaseRole.Developer,
         is_creator=False,

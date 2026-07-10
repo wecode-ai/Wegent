@@ -209,4 +209,14 @@ describe('TaskListSection', () => {
 
     expect(mockPush).toHaveBeenCalledWith('/chat?taskId=8')
   })
+
+  it('opens knowledge tasks in the notebook route with task context', () => {
+    const task = createTask(9, { task_type: 'knowledge', knowledge_base_id: 88 })
+
+    render(<TaskListSection tasks={[task]} title="History" />)
+
+    fireEvent.click(screen.getAllByText('Conversation 9')[0].closest('.cursor-pointer')!)
+
+    expect(mockPush).toHaveBeenCalledWith('/knowledge/document/88?taskId=9')
+  })
 })

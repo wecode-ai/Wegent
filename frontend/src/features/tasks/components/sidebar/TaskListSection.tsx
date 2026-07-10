@@ -43,6 +43,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
+import { getTaskTargetHref } from '@/utils/taskRouting'
 
 interface TaskListSectionProps {
   tasks: Task[]
@@ -58,7 +59,6 @@ interface TaskListSectionProps {
 }
 
 import { useRouter } from 'next/navigation'
-import { paths } from '@/config/paths'
 
 // Draggable task item wrapper component
 function DraggableTaskItem({
@@ -166,38 +166,7 @@ export default function TaskListSection({
 
   const navigateToTask = (task: Task) => {
     if (typeof window !== 'undefined') {
-      const params = new URLSearchParams()
-      params.set('taskId', String(task.id))
-
-      // Navigate to the appropriate page based on task task_type
-      // If task_type is not set, infer from git information
-      let targetPath = paths.chat.getHref() // default to chat
-
-      if (task.task_type === 'knowledge' && task.knowledge_base_id) {
-        // Knowledge type tasks navigate to the dedicated KB chat page
-        // This ensures full task functionality (follow-up questions, link sharing, etc.)
-        targetPath = `/knowledge/document/${task.knowledge_base_id}`
-      } else if (task.task_type === 'task') {
-        // Task type tasks navigate to device chat page
-        targetPath = '/devices/chat'
-      } else if (task.task_type === 'code') {
-        targetPath = paths.chat.getHref()
-      } else if (task.task_type === 'video' || task.task_type === 'image') {
-        // Video and image generation tasks navigate to generate page
-        targetPath = paths.generate.getHref()
-      } else if (task.task_type === 'chat') {
-        targetPath = paths.chat.getHref()
-      } else {
-        // For backward compatibility: infer type from git information
-        // If task has git repo info, assume it's a code task
-        if (task.git_repo && task.git_repo.trim() !== '') {
-          targetPath = paths.chat.getHref()
-        } else {
-          targetPath = paths.chat.getHref()
-        }
-      }
-
-      router.push(`${targetPath}?${params.toString()}`)
+      router.push(getTaskTargetHref(task))
 
       // Call the onTaskClick callback if provided (to close mobile sidebar)
       if (onTaskClick) {

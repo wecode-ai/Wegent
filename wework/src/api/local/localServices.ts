@@ -15,6 +15,7 @@ import type {
   RuntimeArchivedConversationBulkResponse,
   RuntimeDeviceWorkspace,
   RuntimeRollbackRequest,
+  RuntimeCompactRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
   RuntimeGuidanceRequest,
@@ -73,12 +74,14 @@ import {
   type CodexOfficialModel,
 } from '@/features/model-settings/codexOfficialModels'
 import {
+  buildLocalModelRequestUrl,
   findLocalModelConfigByModelName,
   listLocalModelConfigs,
   LOCAL_MODEL_NAME_PREFIX,
   localModelName,
   type LocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { getLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createLocalChatStream } from './localChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
@@ -191,6 +194,7 @@ function localModelConfigToUnifiedModel(config: LocalModelConfig): UnifiedModel 
     config: {
       protocol: OPENAI_RESPONSES_PROTOCOL,
       apiFormat: RESPONSES_API_FORMAT,
+      ...(config.contextWindow ? { model_context_window: config.contextWindow } : {}),
       ui: {
         family,
         ...(group ? { familyLabel: group } : {}),
@@ -236,6 +240,12 @@ interface LocalAppServicesDeps {
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
 }
 
+interface RuntimeWorkIpcOptions {
+  resolveDeviceId?: (data?: Record<string, unknown>) => Promise<string>
+  normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
+  adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
+}
+
 function cloudConnectionRequired(name: string): never {
   throw new Error(`${name} requires cloud connection`)
 }
@@ -249,6 +259,7 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     status: online ? ('online' as const) : ('offline' as const),
     is_default: true,
     device_type: 'local' as const,
+    runtime_instance_id: status.runtimeInstanceId ?? null,
     capabilities: ['runtime-work', 'device-commands'],
     slot_used: 0,
     slot_max: 5,
@@ -586,16 +597,19 @@ function localRuntimeModelConfig(
     if (!localModel.enabled) {
       throw new Error('Local model is disabled')
     }
+    const requestUrl = buildLocalModelRequestUrl(localModel.baseUrl, localModel.requestPath)
     return {
       model: 'openai',
       model_id: localModel.modelId,
       api_format: RESPONSES_API_FORMAT,
       protocol: OPENAI_RESPONSES_PROTOCOL,
       base_url: localModel.baseUrl,
+      responses_url: requestUrl,
       api_key: localModel.apiKey || 'dummy',
       model_provider: providerIdFromLocalConfig(localModel),
       provider_name: localModel.displayName,
       display_name: localModel.displayName,
+      ...(localModel.contextWindow ? { model_context_window: localModel.contextWindow } : {}),
       web_search: localModel.webSearchMode ?? 'disabled',
       image_generation: localModel.imageGenerationEnabled === true,
       codex_responses_compat_proxy: true,
@@ -634,10 +648,36 @@ function localRuntimeModelConfig(
   }
 }
 
+function applyLocalProxyConfig(modelConfig: Record<string, unknown>): Record<string, unknown> {
+  const proxyUrl = getLocalProxyUrl().trim()
+  if (!proxyUrl) return modelConfig
+
+  const runtimeConfig = {
+    ...((modelConfig.runtime_config as Record<string, unknown> | undefined) ?? {}),
+  }
+  const codexRuntimeConfig = {
+    ...((runtimeConfig.codex as Record<string, unknown> | undefined) ?? {}),
+    use_proxy: true,
+    proxy_configured: true,
+  }
+
+  return {
+    ...modelConfig,
+    proxy: {
+      url: proxyUrl,
+    },
+    runtime_config: {
+      ...runtimeConfig,
+      codex: codexRuntimeConfig,
+    },
+  }
+}
+
 function applyRuntimeModelOptions(
   modelConfig: Record<string, unknown>,
   modelOptions?: Record<string, string>
 ): Record<string, unknown> {
+  modelConfig = applyLocalProxyConfig(modelConfig)
   const reasoning = runtimeReasoning(modelOptions)
   if (reasoning) modelConfig.reasoning = reasoning
   const serviceTier = runtimeServiceTier(modelOptions)
@@ -1282,6 +1322,22 @@ function adaptRuntimeWorkListResponse(
   const projects: RuntimeWorkListResponse['projects'] = []
   const chats: RuntimeWorkListResponse['chats'] = []
   let totalTasks = 0
+  const localWorkspaceLabels = new Set<string>()
+  for (const rawWorkspace of workspaces) {
+    const workspace = recordValue(rawWorkspace)
+    const workspacePath =
+      stringValue(workspace.workspacePath) ??
+      stringValue(workspace.workspace_path) ??
+      stringValue(workspace.projectWorkspacePath) ??
+      stringValue(workspace.project_workspace_path) ??
+      stringValue(workspace.cwd) ??
+      stringValue(workspace.path)
+    if (!workspacePath) continue
+    const workspaceSource =
+      stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
+    if (workspaceSource && workspaceSource !== 'local') continue
+    localWorkspaceLabels.add(workspaceLabel(workspacePath, workspace.label))
+  }
 
   for (const rawWorkspace of workspaces) {
     const workspace = recordValue(rawWorkspace)
@@ -1311,6 +1367,11 @@ function adaptRuntimeWorkListResponse(
     const workspaceKind = workspaceKindFromWorkspace ?? (hasChatTask ? 'chat' : 'workspace')
     const worktreeId = stringValue(workspace.worktreeId) ?? stringValue(workspace.worktree_id)
     const label = workspaceLabel(workspacePath, workspace.label)
+    const workspaceSource =
+      stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source)
+    if (rawTasks.length === 0 && workspaceSource === 'remote' && localWorkspaceLabels.has(label)) {
+      continue
+    }
     const deviceWorkspace: RuntimeDeviceWorkspace = {
       id: null,
       projectId: null,
@@ -1322,8 +1383,7 @@ function adaptRuntimeWorkListResponse(
       workspaceKind,
       worktreeId,
       label,
-      workspaceSource:
-        stringValue(workspace.workspaceSource) ?? stringValue(workspace.workspace_source),
+      workspaceSource,
       remoteHostId: stringValue(workspace.remoteHostId) ?? stringValue(workspace.remote_host_id),
       mapped: true,
       tasks,
@@ -1348,21 +1408,28 @@ function adaptRuntimeWorkListResponse(
   return { projects, chats, totalTasks }
 }
 
-function createRuntimeWorkApi(
-  request: <T>(method: string, params?: Record<string, unknown>) => Promise<T>,
-  getLocalDeviceId: () => Promise<string>
+export function createRuntimeWorkApiFromIpc(
+  request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>,
+  getDefaultDeviceId: () => Promise<string>,
+  options: RuntimeWorkIpcOptions = {}
 ) {
+  const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
+  const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
+  const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
   const normalizeRequest = async <T extends object>(
     data: T
   ): Promise<T & Record<string, unknown>> =>
-    normalizeLocalDeviceRecord(data as Record<string, unknown>, await getLocalDeviceId()) as T &
-      Record<string, unknown>
+    normalizeDeviceRecord(
+      data as Record<string, unknown>,
+      await resolveDeviceId(data as Record<string, unknown>)
+    ) as T & Record<string, unknown>
 
   const requestWithLocalDevice = async <TResponse, TRequest extends object>(
     method: string,
     data: TRequest
   ): Promise<TResponse> => {
     const normalizedData = await normalizeRequest(data)
+    const deviceId = await resolveDeviceId(normalizedData)
     const startedAt = nowMs()
     const debugTranscript = method === 'runtime.tasks.transcript' && isRuntimeDebugEnabled()
     try {
@@ -1372,7 +1439,7 @@ function createRuntimeWorkApi(
           runtimeHandle: runtimeHandleDebug(normalizedData),
         })
       }
-      const response = await request<TResponse>(method, normalizedData)
+      const response = await request<TResponse>(method, normalizedData, deviceId)
       if (debugTranscript) {
         console.debug('[Wework] Local runtime IPC transcript response', {
           address: runtimeAddressDebug(normalizedData),
@@ -1395,11 +1462,11 @@ function createRuntimeWorkApi(
 
   return {
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
       try {
-        const response = await request('runtime.tasks.list', {})
-        const runtimeWork = adaptRuntimeWorkListResponse(response, localDeviceId)
+        const response = await request('runtime.tasks.list', {}, localDeviceId)
+        const runtimeWork = adaptListResponse(response, localDeviceId)
         return runtimeWork
       } catch (error) {
         console.error('[Wework] Local runtime IPC list failed', {
@@ -1442,7 +1509,7 @@ function createRuntimeWorkApi(
       return requestWithLocalDevice('runtime.tasks.revert_file_changes', data)
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       const payload = createLocalRuntimeSendPayload(data, localDeviceId)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
@@ -1457,10 +1524,10 @@ function createRuntimeWorkApi(
         address: runtimeAddressDebug(payload),
         payloadKeys: Object.keys(payload).sort(),
       })
-      return request('runtime.tasks.send', payload)
+      return request('runtime.tasks.send', payload, localDeviceId)
     },
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       const payload = createLocalRuntimeSendPayload(data, localDeviceId)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
@@ -1475,19 +1542,36 @@ function createRuntimeWorkApi(
         address: runtimeAddressDebug(payload),
         payloadKeys: Object.keys(payload).sort(),
       })
-      return request('runtime.tasks.rollback', payload)
+      return request('runtime.tasks.rollback', payload, localDeviceId)
     },
-    async guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
-      const localDeviceId = await getLocalDeviceId()
+    async compactRuntimeTask(data: RuntimeCompactRequest): Promise<RuntimeSendResponse> {
+      const localDeviceId = await resolveDeviceId({ address: data.address })
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
         .address as RuntimeTaskAddress
-      return request('runtime.tasks.guidance', {
-        taskId: normalizedAddress.taskId,
-        address: normalizedAddress,
-        message: data.message,
-        ...(data.clientGuidanceId ? { clientGuidanceId: data.clientGuidanceId } : {}),
-        ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
-      })
+      return request(
+        'runtime.tasks.compact',
+        {
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
+        },
+        localDeviceId
+      )
+    },
+    async guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
+      const localDeviceId = await resolveDeviceId({ address: data.address })
+      const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
+        .address as RuntimeTaskAddress
+      return request(
+        'runtime.tasks.guidance',
+        {
+          taskId: normalizedAddress.taskId,
+          address: normalizedAddress,
+          message: data.message,
+          ...(data.clientGuidanceId ? { clientGuidanceId: data.clientGuidanceId } : {}),
+          ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
+        },
+        localDeviceId
+      )
     },
     getRuntimeGoal(data: RuntimeGoalGetRequest): Promise<RuntimeGoalGetResponse> {
       return requestWithLocalDevice('runtime.tasks.goal.get', data)
@@ -1552,7 +1636,9 @@ function createRuntimeWorkApi(
       )
     },
     archiveAllConversations(): Promise<RuntimeArchivedConversationBulkResponse> {
-      return request('runtime.archived_conversations.archive_all', {})
+      return getDefaultDeviceId().then(deviceId =>
+        request('runtime.archived_conversations.archive_all', {}, deviceId)
+      )
     },
     unarchiveConversation(data: RuntimeTaskAddress): Promise<RuntimeTaskArchiveResponse> {
       return requestWithLocalDevice('runtime.archived_conversations.unarchive', data)
@@ -1575,7 +1661,7 @@ function createRuntimeWorkApi(
       return requestWithLocalDevice('runtime.tasks.cancel', data)
     },
     async createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
-      const localDeviceId = await getLocalDeviceId()
+      const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
       const payload = await createLocalRuntimeTaskPayload(
         data,
         localDeviceId,
@@ -1584,7 +1670,8 @@ function createRuntimeWorkApi(
       debugLocalRuntimeCreatePayload(data, payload)
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
         'runtime.tasks.create',
-        payload
+        payload,
+        localDeviceId
       )
       const workspacePath = stringValue(payload.workspacePath) ?? requiredRuntimeWorkspacePath(data)
       const executionRequest = recordValue(payload.executionRequest)
@@ -1594,6 +1681,9 @@ function createRuntimeWorkApi(
         stringValue(responseRecord.task_id) ??
         stringValue(executionRequest.task_id) ??
         createRuntimeExecutionIds(data)[0]
+      const runtimeHandle = recordValue(
+        responseRecord.runtimeHandle ?? responseRecord.runtime_handle
+      )
       return {
         ...response,
         accepted: response.accepted ?? true,
@@ -1601,6 +1691,7 @@ function createRuntimeWorkApi(
         taskId,
         workspacePath: response.workspacePath ?? workspacePath,
         runtime: response.runtime ?? data.runtime,
+        ...(Object.keys(runtimeHandle).length > 0 ? { runtimeHandle } : {}),
       }
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
@@ -1767,9 +1858,10 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       return normalizeWorkspaceTextFile(response.stdout, filePath)
     },
   }
-  const runtimeWorkApi = createRuntimeWorkApi(request, getLocalDeviceId) as unknown as NonNullable<
-    WorkbenchServices['runtimeWorkApi']
-  >
+  const runtimeWorkApi = createRuntimeWorkApiFromIpc(
+    (method, params) => request(method, params),
+    getLocalDeviceId
+  ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
 
   return {
     teamApi: {

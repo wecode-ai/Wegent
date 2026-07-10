@@ -177,6 +177,15 @@ export function createRuntimeTaskStreamHandlers(
         subtaskId: identity.subtaskId,
         block,
       })
+      if (isStandaloneCompletedContextCompaction(identity.subtaskId, block)) {
+        handlers.onMessageAction({
+          type: 'assistant_done',
+          subtaskId: identity.subtaskId,
+          content: '',
+        })
+        handlers.onAssistantSettled?.()
+        handlers.onRefreshWorkLists?.()
+      }
     },
     onBlockUpdated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
@@ -194,6 +203,8 @@ export function createRuntimeTaskStreamHandlers(
         hasContent: payload.content !== undefined,
         hasToolInput: payload.toolInput !== undefined,
         hasToolOutput: payload.toolOutput !== undefined,
+        hasToolOutputDelta: payload.toolOutputDelta !== undefined,
+        hasToolOutputTruncated: payload.toolOutputTruncated !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
       })
       handlers.onMessageAction({
@@ -204,6 +215,12 @@ export function createRuntimeTaskStreamHandlers(
           ...(payload.content !== undefined && { content: payload.content }),
           ...(payload.toolInput !== undefined && { toolInput: payload.toolInput }),
           ...(payload.toolOutput !== undefined && { toolOutput: payload.toolOutput }),
+          ...(payload.toolOutputDelta !== undefined && {
+            toolOutputDelta: payload.toolOutputDelta,
+          }),
+          ...(payload.toolOutputTruncated !== undefined && {
+            toolOutputTruncated: payload.toolOutputTruncated,
+          }),
           ...(payload.fileChanges !== undefined && {
             fileChanges: normalizeTurnFileChanges(payload.fileChanges),
           }),
@@ -229,6 +246,26 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onRuntimeGoalCleared?.(payload)
     },
   }
+}
+
+function isStandaloneCompletedContextCompaction(
+  subtaskId: string,
+  block: ProcessingBlock
+): boolean {
+  return isStandaloneContextCompactionSubtask(subtaskId) && isCompletedContextCompactionBlock(block)
+}
+
+function isStandaloneContextCompactionSubtask(subtaskId: string): boolean {
+  return subtaskId.endsWith('-context-compact')
+}
+
+function isCompletedContextCompactionBlock(block: ProcessingBlock): boolean {
+  if (block.type !== 'tool' || block.status !== 'done') return false
+  return normalizeToolName(block.toolName) === 'contextcompaction'
+}
+
+function normalizeToolName(toolName: string): string {
+  return toolName.replace(/[\s_-]+/g, '').toLowerCase()
 }
 
 export function runtimeMessagesToWorkbenchMessages(
@@ -548,6 +585,18 @@ function normalizeProcessingBlock(
           ? block.tool_input
           : undefined,
       toolOutput: block.toolOutput ?? block.tool_output,
+      toolOutputTruncated:
+        typeof block.toolOutputTruncated === 'boolean'
+          ? block.toolOutputTruncated
+          : typeof block.tool_output_truncated === 'boolean'
+            ? block.tool_output_truncated
+            : undefined,
+      toolOutputOriginalBytes:
+        typeof block.toolOutputOriginalBytes === 'number'
+          ? block.toolOutputOriginalBytes
+          : typeof block.tool_output_original_bytes === 'number'
+            ? block.tool_output_original_bytes
+            : undefined,
       renderPayload: normalizeToolRenderPayload(block),
       status,
       createdAt: timestamp,

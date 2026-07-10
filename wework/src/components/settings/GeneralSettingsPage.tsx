@@ -1,13 +1,5 @@
 import { useEffect, useState } from 'react'
-import {
-  Activity,
-  Bell,
-  Check,
-  CircleDot,
-  Gauge,
-  Loader2,
-  type LucideIcon,
-} from 'lucide-react'
+import { Activity, Bell, Check, CircleDot, Gauge, Loader2, type LucideIcon } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { applyLanguagePreference, languagePreferenceOptions } from '@/i18n/languagePreference'
 import {

@@ -53,7 +53,7 @@ This only updates the project repository's `.git/config`; it does not change glo
 
 In the new-conversation input area for a local workspace project, you can choose which workspace directory the task should use. The project can come from “Clone from Git” or “Using existing folder”; as long as the directory is currently a Git repository, it can use a new worktree.
 
-- “Local mode”/“Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user.
+- “Local mode”/“Local workspace”: the task enters the project-bound directory, such as `projects/<repoKey>/<repoName>` or an existing folder selected by the user. When the directory is a Git repository, the composer shows the current branch dropdown; selecting another branch runs `git checkout <branch>` in the project directory. If Git rejects the checkout because of uncommitted changes, untracked-file overwrite risk, or another conflict, the current branch and local changes stay unchanged, and the menu shows the error.
 - “New worktree”: before sending the new task, Wegent runs `git worktree add` on the same execution device and creates a dedicated worktree for that task. After you select “New worktree”, the composer shows a “Source branch” dropdown. It defaults to the current branch, and you can choose another branch from the same repository as the source used to create the worktree.
 
 New worktrees are created under the execution device workspace root:
@@ -70,7 +70,11 @@ The worktree ID is the task ID. The task stores `git_worktree` as the execution 
 
 In desktop Wework, open the right workspace panel to browse files from the current task or project in read-only mode. The file tree reads the workspace directory from the currently bound execution device; existing tasks prefer the task workspace, and new conversations prefer the current project workspace.
 
+For a project bound to the local macOS device, the project row menu includes **Show in Finder**. Use it to open the project directory in Finder without changing the current Wework task.
+
 The file preview does not save or modify files. You can select a code range in the preview and add a local comment. The comment appears above the left composer as contextual input, such as “1 comment”. When you send the next message, Wework includes the file path, line range, selected code, and comment text in the request context so the agent can understand the referenced code location.
+
+When an assistant response, Codex reference, or memory citation includes a file link with line numbers, clicking the link opens the right-side file preview and scrolls to and highlights that line range. File links without line numbers still open the file without selecting code lines.
 
 ## Use the Right-Side Browser
 
@@ -85,6 +89,8 @@ Bottom terminals opened by the user inside a task stay available after switching
 Code comment context is not uploaded as a normal file and does not use `attachment_ids`. If you add only code comments without typed text, Wework sends a short default prompt. If you upload only normal file attachments without typed text, the message body remains empty and Wework uses the default conversation title.
 
 ## Using an Existing Folder
+
+In the macOS desktop app, choosing “Using existing folder” for a local device opens the native Finder directory picker. If the target is a remote or cloud device, Wework keeps the in-app remote directory picker so the selected path belongs to that execution device.
 
 When creating a Wework project with “Using existing folder”, Wegent looks for an existing project by current user, Wework origin, execution device, and normalized local folder path:
 

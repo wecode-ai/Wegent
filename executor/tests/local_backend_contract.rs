@@ -48,6 +48,7 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].event, "device:register");
     assert_eq!(calls[0].payload["device_id"], "device-1");
+    assert_eq!(calls[0].payload["runtime_instance_id"], "runtime-1");
     assert_eq!(calls[0].payload["name"], "Device One");
     assert_eq!(calls[0].payload["device_type"], "local");
     assert_eq!(calls[0].payload["bind_shell"], "claudecode");
@@ -501,6 +502,7 @@ fn local_backend_config_uses_device_config_and_normalizes_token() {
     assert_eq!(config.backend_url, "http://localhost:8000");
     assert_eq!(config.auth_token, "wg-token");
     assert_eq!(config.device_id, "device-1");
+    assert_eq!(config.runtime_instance_id, "runtime-local");
     assert_eq!(config.device_name, "Device One");
     assert_eq!(config.device_type, "local");
     assert_eq!(config.bind_shell, "claudecode");
@@ -644,6 +646,7 @@ fn local_backend_config() -> LocalBackendConfig {
         backend_url: "http://localhost:8000".to_owned(),
         auth_token: "wg-token".to_owned(),
         device_id: "device-1".to_owned(),
+        runtime_instance_id: "runtime-1".to_owned(),
         device_name: "Device One".to_owned(),
         device_type: "local".to_owned(),
         app_device_id: String::new(),

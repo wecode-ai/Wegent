@@ -131,6 +131,16 @@ Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + 
 
 前端发送引导时必须立即把本地用户消息插入到当前 streaming assistant 的位置，而不是等待 `runtime.tasks.guidance` 返回。插入时把当前 assistant 拆成“引导前”和“引导后”两个消息：引导前消息冻结为 done，引导后消息继续保留原 `subtaskId` 接收后续 stream。后续 `chat:chunk`/`chat:done` 仍可能带完整文本，因此前端要按拆分时记录的文本前缀裁剪后续内容，确保流式显示和刷新后的 transcript 顺序一致。
 
+用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
+
+```text
+runtime.tasks.compact
+```
+
+Wework App 只通过本机 executor IPC 调用 `runtime.tasks.compact`，不提供 Backend HTTP 接口。executor 必须先用 LocalTask 的 opaque `runtimeHandle.threadId` 调用 Codex app-server `thread/resume`，再调用 `thread/compact/start`，不能把 `/compact` 当作普通用户消息发送。手动压缩使用独立的运行时 subtask id：`<localTaskId>-context-compact`，这样 UI 可以把 `context_compaction` tool block 渲染成一条独立完成消息，并且不会结束正在回复的普通 assistant turn。
+
+如果当前 pane 仍在回复，Wework 应阻止手动压缩并提示用户等待当前回复结束。Codex 自动触发的上下文压缩仍然属于当前 turn 的 subtask；前端只能显示对应 `context_compaction` block，不能因为这个 block 完成就补发 `assistant_done` 或结算当前回复。
+
 继续 LocalTask 时可以携带已经上传并处于 ready 状态的 attachment id。Backend 会校验这些附件属于当前用户并转换成 executor 需要的附件元数据，executor 再在目标设备上下载、转换并交给 runtime。前端不会把本机附件路径直接发送给 Backend 或 executor。
 
 ## 已归档会话
@@ -152,6 +162,8 @@ POST /api/runtime-work/archived-conversations/cleanup
 ```
 
 executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unarchive` 和 `thread/delete` 执行归档、恢复和删除；重命名使用 `thread/name/set`。归档列表响应来自 state DB `threads.archived` 过滤结果并合并 JSON LocalTask 索引，标准化 `id`、`localTaskId`、`threadId`、标题、Project 名称、工作区路径、设备、来源和时间字段，并按 Project 汇总计数。刚执行归档/恢复时，如果 state DB 尚未同步，设备侧 LocalTask 索引中的本地覆盖态会先参与列表，避免 UI 短暂消失。Project 分组必须使用 Project 主目录或 `groupWorkspacePath`，不能把同一 Project 下的不同 worktree 当成不同 Project。
+
+如果 Codex `thread/list` 返回了 state DB 中仍存在但 rollout 文件已经无法定位的脏线程，`thread/archive` 会返回 `no rollout found for thread id ...`。executor 只在这个明确错误下把该项按清理路径处理：调用 Codex `thread/delete` 删除残留线程记录，并在本地写入有 TTL 和数量上限的删除标记，让后续列表不再展示这条不可操作记录；它不会把这类脏线程伪造成已归档会话。
 
 删除归档会话采用两阶段策略。前台 `delete` 和 `delete-bulk` 先在 executor 本地索引写入 tombstone，列表立即隐藏对应项；真正的 Codex `thread/delete`、LocalTask 索引删除、worktree/附件/日志文件清理由 executor 后台单 worker 逐条执行。后台 worker 必须等待当前 app-server `thread/delete` 真正返回后再处理下一条；如果删除变慢，只记录慢操作日志，不能通过客户端 timeout 继续堆叠新的 `thread/delete`，否则会压住 Codex thread store 并让归档列表刷新长期等待。前端批量删除按小批次提交，并把进度保存在页面外状态中，用户离开再进入设置页仍能看到当前删除进度。
 

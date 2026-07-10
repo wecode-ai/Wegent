@@ -37,6 +37,23 @@ The **Debug Panel** command in the Developer Commands menu helps diagnose the cu
 
 The Debug Panel can be expanded, collapsed, refreshed, copied as a snapshot, and cleared. When collapsed, it leaves only a small status bar in the lower-right corner so it does not block the main UI.
 
+### Runtime Memory Snapshots
+
+Debug Panel snapshots include a lightweight memory summary for the active runtime pane to help investigate WebView or executor memory spikes:
+
+- Message count, role distribution, status distribution, and content-length totals.
+- Processing block count, block type distribution, and tool-output length totals.
+- Queued messages, guidance messages, code-comment context count, and transcript range state.
+- The raw `running` value from the runtime work list and the running state derived by the pane.
+
+Snapshots only include summaries. They do not copy full command output, raw Codex events, or full transcript content into the Debug Panel. When raw payloads are needed, inspect executor logs or Web Inspector samples instead of moving large text through the frontend snapshot path.
+
+## Runtime Transcript and List Payloads
+
+To reduce frontend and executor memory pressure, runtime task lists, runtime handle summaries, and transcript responses keep only fields required by the UI. Large raw payloads such as command output, streaming deltas, cached messages, and raw request/response bodies are not sent to the frontend through runtime work list payloads.
+
+Conversation rendering still uses `WorkbenchMessage` values produced from transcript loads and message actions. Task lists and status polling are for status, titles, running state, and workspace metadata. When investigating slow list refreshes or memory growth while switching tasks, first check whether raw messages or command output have been reintroduced into the runtime list, handle, or transcript metadata path.
+
 ## Local Codex Streaming Logs
 
 The local executor keeps Codex delta details enabled by default so developers can diagnose streaming order, phase classification, and final-content overwrite issues. By default, it records raw Codex delta events and run-state classification summaries.

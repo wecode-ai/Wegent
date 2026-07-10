@@ -37,7 +37,7 @@ use super::{
     codex_notifications::codex_notification,
     codex_rollout::{
         append_rollout_turns_from_offset, rollout_context_usage, rollout_turns,
-        thread_with_rollout_running_status, thread_with_rollout_turns, thread_with_turns,
+        thread_with_rollout_turns, thread_with_turns,
     },
     events::{emit_response_event, CodexNotificationEventMapper},
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
@@ -327,6 +327,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.rollback" => self.rollback_task(payload).await,
             "runtime.tasks.guidance" => self.send_guidance(payload).await,
+            "runtime.tasks.compact" => self.compact_task(payload).await,
             "runtime.tasks.prepare_fork_transfer" => self.prepare_fork_transfer(payload).await,
             "runtime.tasks.import_fork" => self.import_fork(payload).await,
             "runtime.tasks.archive" => self.archive_task(payload).await,
@@ -339,6 +340,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
+            "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
             "runtime.codex.stream_debug.set" => self.set_codex_stream_debug(payload).await,
             "runtime.archived_conversations.list" => {
@@ -391,6 +393,12 @@ impl RuntimeWorkRpcHandler {
 
     async fn get_codex_stream_debug(&self) -> Result<Value, AppIpcError> {
         Ok(json!({ "enabled": codex_stream_debug_enabled() }))
+    }
+
+    async fn restart_codex_app_server(&self) -> Result<Value, AppIpcError> {
+        self.codex_app_server.restart().await;
+        self.thread_list_cache.invalidate();
+        Ok(json!({ "restarted": true }))
     }
 
     async fn set_codex_stream_debug(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -502,15 +510,53 @@ impl RuntimeWorkRpcHandler {
 
     async fn list_tasks(&self) -> Result<Value, AppIpcError> {
         let started_at = Instant::now();
+        log_runtime_work_list_diagnostic("started", started_at, started_at, &[]);
+        let stage_started_at = Instant::now();
         let project_index = CodexGlobalProjectIndex::load();
-        let links =
-            self.visible_links_for_projects(self.collect_links(false).await, &project_index);
+        log_runtime_work_list_diagnostic(
+            "project_index_loaded",
+            started_at,
+            stage_started_at,
+            &[
+                ("projects", project_index.projects().len().to_string()),
+                (
+                    "project_state_loaded",
+                    project_index.has_project_state().to_string(),
+                ),
+            ],
+        );
+        let stage_started_at = Instant::now();
+        let collected_links = self.collect_links(false).await;
+        log_runtime_work_list_diagnostic(
+            "links_collected",
+            started_at,
+            stage_started_at,
+            &[("links", collected_links.len().to_string())],
+        );
+        let stage_started_at = Instant::now();
+        let links = self.visible_links_for_projects(collected_links, &project_index);
+        log_runtime_work_list_diagnostic(
+            "project_filter_applied",
+            started_at,
+            stage_started_at,
+            &[("visible_links", links.len().to_string())],
+        );
+        let stage_started_at = Instant::now();
         let workspaces = workspace_response(links, codex_project_workspaces(&project_index));
         let task_count = workspaces
             .iter()
             .filter_map(|workspace| workspace.get("tasks").and_then(Value::as_array))
             .map(Vec::len)
             .sum::<usize>();
+        log_runtime_work_list_diagnostic(
+            "response_built",
+            started_at,
+            stage_started_at,
+            &[
+                ("workspaces", workspaces.len().to_string()),
+                ("tasks", task_count.to_string()),
+            ],
+        );
         log_executor_event(
             "runtime work list finished",
             &[
@@ -842,21 +888,117 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn archive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        log_executor_event(
+            "runtime task archive requested",
+            &[
+                (
+                    "payload_task_id",
+                    runtime_task_id(&payload).unwrap_or_else(|| "none".to_owned()),
+                ),
+                (
+                    "payload_workspace_path",
+                    workspace_path(&payload).unwrap_or_else(|| "none".to_owned()),
+                ),
+                (
+                    "payload_address_task_id",
+                    payload
+                        .get("address")
+                        .and_then(runtime_task_id)
+                        .unwrap_or_else(|| "none".to_owned()),
+                ),
+            ],
+        );
         let mut link = self.task_link_from_payload(&payload, false).await?;
-        if let Some(thread_id) = link.thread_id.as_deref() {
+        let archive_thread_id = runtime_session_id_from_link(&link);
+        log_runtime_archive_link("runtime task archive resolved link", &link, false);
+        if let Some(thread_id) = archive_thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method("thread/archive", json!({"threadId": thread_id}))
                 .await
             {
+                log_executor_event(
+                    "runtime task archive codex failed",
+                    &[
+                        ("local_task_id", link.local_task_id.clone()),
+                        ("thread_id", thread_id.to_owned()),
+                        ("error", error.clone()),
+                    ],
+                );
+                if codex_error_is_missing_rollout(&error, thread_id) {
+                    return Ok(self
+                        .cleanup_missing_rollout_task(&link, thread_id, error)
+                        .await);
+                }
                 return Ok(task_action_failure(&link, error));
             }
+            log_executor_event(
+                "runtime task archive codex accepted",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.to_owned()),
+                ],
+            );
+        } else {
+            log_executor_event(
+                "runtime task archive skipped codex",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("reason", "missing_thread_id".to_owned()),
+                ],
+            );
         }
 
         link.status = "archived".to_owned();
         link.running = false;
         link.updated_at = now_ms();
         self.upsert_local_task(link.clone());
+        log_runtime_archive_link("runtime task archive stored link", &link, true);
         Ok(task_action_success(&link))
+    }
+
+    async fn cleanup_missing_rollout_task(
+        &self,
+        link: &RuntimeTaskLink,
+        thread_id: &str,
+        archive_error: String,
+    ) -> Value {
+        let started_at = Instant::now();
+        let delete_result = self
+            .call_codex_thread_method_without_list_invalidation(
+                "thread/delete",
+                json!({"threadId": thread_id}),
+            )
+            .await;
+        match &delete_result {
+            Ok(_) => log_executor_event(
+                "runtime task archive missing rollout deleted codex thread",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.to_owned()),
+                    ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                ],
+            ),
+            Err(error) => log_executor_event(
+                "runtime task archive missing rollout codex delete failed",
+                &[
+                    ("local_task_id", link.local_task_id.clone()),
+                    ("thread_id", thread_id.to_owned()),
+                    ("elapsed_ms", started_at.elapsed().as_millis().to_string()),
+                    ("error", error.clone()),
+                ],
+            ),
+        }
+
+        self.mark_archived_link_deleted(link);
+        self.store.delete_task(&link.local_task_id);
+        let mut response = task_action_success(link);
+        response["cleaned"] = json!(true);
+        response["cleanupReason"] = json!("missing_rollout");
+        response["archiveError"] = json!(archive_error);
+        if let Err(error) = delete_result {
+            response["deleteError"] = json!(error);
+        }
+        response
     }
 
     async fn archive_project_conversations(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1215,6 +1357,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(message) = cached_user_message(&local_task_id, &request, &payload) {
             set_runtime_handle_messages(&mut link.runtime_handle, vec![message]);
         }
+        let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
         let mut side_source = side_source_thread(&payload);
@@ -1241,6 +1384,7 @@ impl RuntimeWorkRpcHandler {
             "taskId": local_task_id,
             "workspacePath": workspace_path,
             "runtime": "codex",
+            "runtimeHandle": runtime_handle,
         }))
     }
 
@@ -1478,6 +1622,74 @@ impl RuntimeWorkRpcHandler {
                 "runtime": "codex",
             })),
         }
+    }
+
+    async fn compact_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let local_task_id = runtime_task_id(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let link = self.task_link_from_payload(&payload, false).await?;
+        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+            .or_else(|| runtime_session_id_from_link(&link))
+        else {
+            return Ok(task_action_failure(
+                &link,
+                "runtime task session is not ready".to_owned(),
+            ));
+        };
+
+        let thread_id = match self.resume_codex_thread_for_action(&link, &thread_id).await {
+            Ok(resumed_thread_id) => resumed_thread_id,
+            Err(error) => return Ok(task_action_failure(&link, error)),
+        };
+        self.register_thread_event_route(
+            &thread_id,
+            link.local_task_id.clone(),
+            runtime_event_request_from_link(&link),
+            true,
+        );
+        match self
+            .call_codex_thread_method("thread/compact/start", json!({"threadId": thread_id}))
+            .await
+        {
+            Ok(_) => {
+                self.store.update_task(&local_task_id, |stored| {
+                    stored.updated_at = now_ms();
+                });
+                Ok(task_action_success(&link))
+            }
+            Err(error) => Ok(task_action_failure(&link, error)),
+        }
+    }
+
+    async fn resume_codex_thread_for_action(
+        &self,
+        link: &RuntimeTaskLink,
+        thread_id: &str,
+    ) -> Result<String, String> {
+        let mut params = Map::new();
+        params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+        params.insert(
+            "approvalPolicy".to_owned(),
+            Value::String("never".to_owned()),
+        );
+        params.insert("excludeTurns".to_owned(), Value::Bool(true));
+        if !link.workspace_path.trim().is_empty() {
+            params.insert("cwd".to_owned(), Value::String(link.workspace_path.clone()));
+        }
+        if let Some(thread_path) = runtime_thread_path_from_link(link) {
+            params.insert("path".to_owned(), Value::String(thread_path));
+        }
+
+        let response = self
+            .call_codex_thread_method_without_list_invalidation(
+                "thread/resume",
+                Value::Object(params),
+            )
+            .await?;
+        Ok(response
+            .get("thread")
+            .and_then(|thread| string_field(thread, "id"))
+            .unwrap_or_else(|| thread_id.to_owned()))
     }
 
     async fn send_request_user_input_response(
@@ -2310,17 +2522,41 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn collect_links(&self, archived: bool) -> Vec<RuntimeTaskLink> {
+        let started_at = Instant::now();
         let mut links = Vec::new();
         let mut discovered_thread_ids = HashSet::new();
         let mut discovered_local_task_ids = HashSet::new();
         let mut discovered_codex_task_signatures = HashSet::new();
 
-        for thread in self.codex_threads(archived).await {
+        let threads = self.codex_threads(archived).await;
+        let stage_started_at = Instant::now();
+        for thread in threads {
+            let thread_started_at = Instant::now();
+            let thread_id = string_field(&thread, "id").unwrap_or_else(|| "none".to_owned());
             if let Some(mut link) = self.link_from_thread(&thread) {
-                if archived && self.archived_link_is_deleted(&link) {
+                log_slow_runtime_collect_thread(
+                    archived,
+                    &thread_id,
+                    thread_started_at,
+                    &thread,
+                    &link,
+                );
+                if link.ephemeral {
                     continue;
                 }
-                if link.ephemeral {
+                if self.archived_link_is_deleted(&link) {
+                    log_executor_event(
+                        "runtime work codex link hidden by deleted marker",
+                        &[
+                            ("archived_query", archived.to_string()),
+                            ("local_task_id", link.local_task_id.clone()),
+                            (
+                                "thread_id",
+                                link.thread_id.as_deref().unwrap_or("none").to_owned(),
+                            ),
+                            ("workspace_path", link.workspace_path.clone()),
+                        ],
+                    );
                     continue;
                 }
                 if archived {
@@ -2338,11 +2574,29 @@ impl RuntimeWorkRpcHandler {
                     discovered_codex_task_signatures.insert(signature);
                 }
                 links.push(link);
+            } else {
+                log_slow_runtime_collect_thread_missing(
+                    archived,
+                    &thread_id,
+                    thread_started_at,
+                    &thread,
+                );
             }
         }
+        log_runtime_collect_diagnostic(
+            "threads_linked",
+            archived,
+            started_at,
+            stage_started_at,
+            &[
+                ("links", links.len().to_string()),
+                ("threads", discovered_thread_ids.len().to_string()),
+            ],
+        );
 
+        let stage_started_at = Instant::now();
         for mut link in self.local_task_links(true) {
-            if archived && self.archived_link_is_deleted(&link) {
+            if self.archived_link_is_deleted(&link) {
                 continue;
             }
             if link.ephemeral {
@@ -2376,6 +2630,13 @@ impl RuntimeWorkRpcHandler {
             link.list_order = Some(links.len());
             links.push(link);
         }
+        log_runtime_collect_diagnostic(
+            "local_links_merged",
+            archived,
+            started_at,
+            stage_started_at,
+            &[("links", links.len().to_string())],
+        );
 
         links
     }
@@ -2672,13 +2933,30 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = runtime_task_id(payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         if let Some(link) = self.local_task_link(&local_task_id) {
-            return Ok(link);
+            if (link.status == "archived") == archived {
+                log_runtime_archive_link(
+                    "runtime task payload matched local link",
+                    &link,
+                    archived,
+                );
+                return Ok(link);
+            }
+            log_runtime_archive_link(
+                "runtime task payload skipped local link status mismatch",
+                &link,
+                archived,
+            );
         }
 
         for link in self.collect_links(archived).await {
             if link.local_task_id == local_task_id
                 || link.thread_id.as_deref() == Some(local_task_id.as_str())
             {
+                log_runtime_archive_link(
+                    "runtime task payload matched collected link",
+                    &link,
+                    archived,
+                );
                 return Ok(link);
             }
         }
@@ -2690,6 +2968,7 @@ impl RuntimeWorkRpcHandler {
         link.thread_id = Some(link.local_task_id.clone());
         link.status = if archived { "archived" } else { "active" }.to_owned();
         link.running = false;
+        log_runtime_archive_link("runtime task payload created pending link", &link, archived);
         Ok(link)
     }
 
@@ -2852,9 +3131,8 @@ impl RuntimeWorkRpcHandler {
         let workspace_path = string_field(thread, "cwd")
             .or_else(|| local_link.as_ref().map(|link| link.workspace_path.clone()))
             .unwrap_or_else(|| "~/.codex".to_owned());
-        let codex_thread = thread_with_rollout_running_status(thread);
-        let mut link = RuntimeTaskLink::from_thread(&codex_thread, local_link, workspace_path);
-        if let Some(path) = string_field(&codex_thread, "path") {
+        let mut link = RuntimeTaskLink::from_thread_metadata(thread, local_link, workspace_path);
+        if let Some(path) = string_field(thread, "path") {
             let mut runtime_handle = link
                 .runtime_handle
                 .as_object()
@@ -2871,7 +3149,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn local_task_links(&self, include_archived: bool) -> Vec<RuntimeTaskLink> {
-        self.store.list_tasks(include_archived)
+        self.store.list_task_summaries(include_archived)
     }
 
     fn local_task_link(&self, local_task_id: &str) -> Option<RuntimeTaskLink> {
@@ -2923,7 +3201,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn local_task_by_thread_id(&self, thread_id: &str) -> Option<RuntimeTaskLink> {
-        self.store.find_by_thread_id(thread_id)
+        self.store.find_summary_by_thread_id(thread_id)
     }
 
     fn upsert_local_task(&self, link: RuntimeTaskLink) {
@@ -3182,6 +3460,28 @@ fn log_runtime_project_filter_item(link: &RuntimeTaskLink, details: RuntimeProje
     );
 }
 
+fn log_runtime_archive_link(event: &str, link: &RuntimeTaskLink, archived_query: bool) {
+    log_executor_event(
+        event,
+        &[
+            ("archived_query", archived_query.to_string()),
+            ("local_task_id", link.local_task_id.clone()),
+            (
+                "thread_id",
+                link.thread_id.as_deref().unwrap_or("none").to_owned(),
+            ),
+            ("workspace_path", link.workspace_path.clone()),
+            ("runtime", link.runtime.clone()),
+            ("status", link.status.clone()),
+            ("running", link.running.to_string()),
+            (
+                "session_id",
+                runtime_session_id_from_link(link).unwrap_or_else(|| "none".to_owned()),
+            ),
+        ],
+    );
+}
+
 fn log_runtime_transcript_finished(details: RuntimeTranscriptLog<'_>) {
     log_executor_event(
         "runtime work transcript finished",
@@ -3301,6 +3601,8 @@ fn debug_unrouted_codex_notification(message: &Value, reason: &str) {
 
 fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
     ExecutionRequest {
+        task_id: link.local_task_id.clone(),
+        subtask_id: format!("{}-context-compact", link.local_task_id),
         project_workspace_path: Some(link.workspace_path.clone()),
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
@@ -3929,6 +4231,13 @@ fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
         .or_else(|| runtime_session_id_from_handle(&link.runtime_handle))
 }
 
+fn runtime_thread_path_from_link(link: &RuntimeTaskLink) -> Option<String> {
+    string_field(&link.runtime_handle, "threadPath")
+        .or_else(|| string_field(&link.runtime_handle, "thread_path"))
+        .or_else(|| string_field(&link.runtime_handle, "path"))
+        .filter(|path| !path.trim().is_empty())
+}
+
 fn archived_link_from_payload_item(
     item: &Value,
     local_task_id: String,
@@ -4404,6 +4713,12 @@ fn task_action_failure(link: &RuntimeTaskLink, error: String) -> Value {
     })
 }
 
+fn codex_error_is_missing_rollout(error: &str, thread_id: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("no rollout found for thread id")
+        && error.contains(&thread_id.to_ascii_lowercase())
+}
+
 fn task_goal_missing_session(link: &RuntimeTaskLink) -> Value {
     json!({
         "success": false,
@@ -4431,6 +4746,159 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
                 .unwrap_or_else(|| json!({}));
             self.dispatch(&method, payload).await
         })
+    }
+}
+
+#[cfg(debug_assertions)]
+const SLOW_RUNTIME_COLLECT_THREAD_MS: u128 = 100;
+
+#[cfg(debug_assertions)]
+fn log_runtime_collect_diagnostic(
+    stage: &str,
+    archived: bool,
+    started_at: Instant,
+    stage_started_at: Instant,
+    fields: &[(&str, String)],
+) {
+    let mut diagnostic_fields = vec![
+        ("stage", stage.to_owned()),
+        ("archived", archived.to_string()),
+        ("elapsed_ms", elapsed_ms(started_at)),
+        ("stage_elapsed_ms", elapsed_ms(stage_started_at)),
+    ];
+    if let Some(rss_kb) = current_process_max_rss_kb() {
+        diagnostic_fields.push(("max_rss_kb", rss_kb.to_string()));
+    }
+    diagnostic_fields.extend(fields.iter().map(|(key, value)| (*key, value.clone())));
+    log_executor_event("runtime work collect diagnostic", &diagnostic_fields);
+}
+
+#[cfg(not(debug_assertions))]
+fn log_runtime_collect_diagnostic(
+    _stage: &str,
+    _archived: bool,
+    _started_at: Instant,
+    _stage_started_at: Instant,
+    _fields: &[(&str, String)],
+) {
+}
+
+#[cfg(debug_assertions)]
+fn log_slow_runtime_collect_thread(
+    archived: bool,
+    thread_id: &str,
+    started_at: Instant,
+    thread: &Value,
+    link: &RuntimeTaskLink,
+) {
+    let elapsed = started_at.elapsed().as_millis();
+    if elapsed < SLOW_RUNTIME_COLLECT_THREAD_MS {
+        return;
+    }
+    log_executor_event(
+        "runtime work collect slow thread",
+        &[
+            ("archived", archived.to_string()),
+            ("elapsed_ms", elapsed.to_string()),
+            ("thread_id", thread_id.to_owned()),
+            ("thread_json_bytes", debug_json_len(thread).to_string()),
+            ("local_task_id", link.local_task_id.clone()),
+            ("workspace_path", link.workspace_path.clone()),
+            ("status", link.status.clone()),
+        ],
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_slow_runtime_collect_thread(
+    _archived: bool,
+    _thread_id: &str,
+    _started_at: Instant,
+    _thread: &Value,
+    _link: &RuntimeTaskLink,
+) {
+}
+
+#[cfg(debug_assertions)]
+fn log_slow_runtime_collect_thread_missing(
+    archived: bool,
+    thread_id: &str,
+    started_at: Instant,
+    thread: &Value,
+) {
+    let elapsed = started_at.elapsed().as_millis();
+    if elapsed < SLOW_RUNTIME_COLLECT_THREAD_MS {
+        return;
+    }
+    log_executor_event(
+        "runtime work collect slow skipped thread",
+        &[
+            ("archived", archived.to_string()),
+            ("elapsed_ms", elapsed.to_string()),
+            ("thread_id", thread_id.to_owned()),
+            ("thread_json_bytes", debug_json_len(thread).to_string()),
+        ],
+    );
+}
+
+#[cfg(not(debug_assertions))]
+fn log_slow_runtime_collect_thread_missing(
+    _archived: bool,
+    _thread_id: &str,
+    _started_at: Instant,
+    _thread: &Value,
+) {
+}
+
+#[cfg(debug_assertions)]
+fn debug_json_len(value: &Value) -> usize {
+    serde_json::to_vec(value)
+        .map(|bytes| bytes.len())
+        .unwrap_or_default()
+}
+
+#[cfg(debug_assertions)]
+fn log_runtime_work_list_diagnostic(
+    stage: &str,
+    started_at: Instant,
+    stage_started_at: Instant,
+    fields: &[(&str, String)],
+) {
+    let mut diagnostic_fields = vec![
+        ("stage", stage.to_owned()),
+        ("elapsed_ms", elapsed_ms(started_at)),
+        ("stage_elapsed_ms", elapsed_ms(stage_started_at)),
+    ];
+    if let Some(rss_kb) = current_process_max_rss_kb() {
+        diagnostic_fields.push(("max_rss_kb", rss_kb.to_string()));
+    }
+    diagnostic_fields.extend(fields.iter().map(|(key, value)| (*key, value.clone())));
+    log_executor_event("runtime work list diagnostic", &diagnostic_fields);
+}
+
+#[cfg(not(debug_assertions))]
+fn log_runtime_work_list_diagnostic(
+    _stage: &str,
+    _started_at: Instant,
+    _stage_started_at: Instant,
+    _fields: &[(&str, String)],
+) {
+}
+
+#[cfg(debug_assertions)]
+fn current_process_max_rss_kb() -> Option<u64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
+    if unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let max_rss = unsafe { usage.assume_init().ru_maxrss };
+    #[cfg(target_os = "macos")]
+    {
+        Some((max_rss as u64).saturating_div(1024))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Some(max_rss as u64)
     }
 }
 
@@ -4689,6 +5157,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn codex_app_server_restart_rpc_returns_success() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.app_server.restart",
+                "payload": {}
+            }))
+            .await
+            .expect("restart should return success");
+
+        assert_eq!(result["restarted"], true);
+    }
+
+    #[tokio::test]
     async fn transcript_without_runtime_link_returns_empty_local_transcript() {
         let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
 
@@ -4792,7 +5275,7 @@ mod tests {
         let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
         handler.store = RuntimeWorkStore::new(index_path.clone());
 
-        handler
+        let response = handler
             .handle_runtime_rpc(json!({
                 "method": "runtime.tasks.create",
                 "payload": {
@@ -4809,6 +5292,16 @@ mod tests {
             }))
             .await
             .expect("runtime task should be created");
+        assert_eq!(
+            response["runtimeHandle"]["modelSelection"],
+            json!({
+                "modelName": "local-model:mimo",
+                "modelType": "runtime",
+                "options": {
+                    "collaborationMode": "plan"
+                }
+            })
+        );
 
         let link = handler
             .local_task_link("local-task-1")

@@ -4,7 +4,7 @@
 
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read, Seek, SeekFrom},
+    io::{BufRead, BufReader, Seek, SeekFrom},
     path::Path,
 };
 
@@ -14,8 +14,6 @@ use super::util::{
     codex_wrapped_item_payload, extract_text, integer_field, item_type, now_ms, string_field,
     timestamp_ms_field,
 };
-
-const ROLLOUT_STATUS_TAIL_BYTES: u64 = 64 * 1024;
 
 pub(crate) fn thread_with_rollout_turns(thread: &Value) -> Option<Value> {
     let Some(path) = string_field(thread, "path") else {
@@ -182,71 +180,6 @@ pub(crate) fn append_rollout_turns_from_offset(
         turns,
         changed_start,
     })
-}
-
-pub(crate) fn thread_with_rollout_running_status(thread: &Value) -> Value {
-    if !rollout_tail_is_running(thread) {
-        return thread.clone();
-    }
-
-    let mut next_thread = thread.clone();
-    if let Some(object) = next_thread.as_object_mut() {
-        object.insert("status".to_owned(), Value::String("running".to_owned()));
-    }
-    next_thread
-}
-
-fn rollout_tail_is_running(thread: &Value) -> bool {
-    let Some(path) = string_field(thread, "path") else {
-        return false;
-    };
-    let Ok(mut file) = File::open(path) else {
-        return false;
-    };
-    let Ok(metadata) = file.metadata() else {
-        return false;
-    };
-    let file_len = metadata.len();
-    let start = file_len.saturating_sub(ROLLOUT_STATUS_TAIL_BYTES);
-    if file.seek(SeekFrom::Start(start)).is_err() {
-        return false;
-    }
-
-    let mut tail_bytes = Vec::new();
-    if file.read_to_end(&mut tail_bytes).is_err() {
-        return false;
-    }
-    let tail = String::from_utf8_lossy(&tail_bytes);
-    let tail = if start > 0 {
-        tail.split_once('\n')
-            .map(|(_, rest)| rest)
-            .unwrap_or(tail.as_ref())
-    } else {
-        tail.as_ref()
-    };
-
-    let mut running = false;
-    for line in tail.lines() {
-        let Ok(item) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        if is_turn_start_item(&item) {
-            running = true;
-            continue;
-        }
-        if is_turn_completion_item(&item) {
-            running = false;
-            continue;
-        }
-        if is_final_assistant_message_item(&item) {
-            running = false;
-            continue;
-        }
-        if rollout_transcript_item(&item).is_some() || is_rollout_activity_item(&item) {
-            running = true;
-        }
-    }
-    running
 }
 
 fn rollout_path_turns(path: &Path, thread: &Value) -> Vec<Value> {
@@ -963,86 +896,6 @@ mod tests {
     }
 
     #[test]
-    fn running_status_uses_rollout_tail_without_hydrating_turns() {
-        let path = temp_rollout_path("running-status");
-        fs::write(
-            &path,
-            [
-                json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
-                json!({"type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"exec_command"}})
-                    .to_string(),
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-
-        let thread = thread_with_path(&path);
-        let state = thread_with_rollout_running_status(&thread);
-
-        assert_eq!(state["status"], "running");
-        assert_eq!(
-            state["turns"]
-                .as_array()
-                .expect("existing turns array should be preserved")
-                .len(),
-            0
-        );
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn running_status_detects_completed_tail() {
-        let path = temp_rollout_path("running-status-complete");
-        fs::write(
-            &path,
-            [
-                json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
-                json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}})
-                    .to_string(),
-                json!({"type":"event_msg","payload":{"type":"task_complete"}}).to_string(),
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-
-        let thread = thread_with_path(&path);
-        let state = thread_with_rollout_running_status(&thread);
-
-        assert_ne!(state["status"], "running");
-        assert_eq!(
-            state["turns"]
-                .as_array()
-                .expect("existing turns array should be preserved")
-                .len(),
-            0
-        );
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn running_status_detects_final_assistant_message_tail() {
-        let path = temp_rollout_path("running-status-final-message");
-        fs::write(
-            &path,
-            [
-                json!({"type":"event_msg","payload":{"type":"task_started"}}).to_string(),
-                json!({"type":"event_msg","payload":{"type":"agent_message","message":"done"}})
-                    .to_string(),
-                json!({"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}})
-                    .to_string(),
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-
-        let thread = thread_with_path(&path);
-        let state = thread_with_rollout_running_status(&thread);
-
-        assert_ne!(state["status"], "running");
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
     fn ignores_subagent_turn_completion_for_root_rollout_status() {
         let path = temp_rollout_path("subagent-complete");
         fs::write(
@@ -1091,30 +944,6 @@ mod tests {
 
         assert_eq!(items.len(), 2);
         assert_eq!(items[1]["payload"]["content"][0]["text"], "root");
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn running_status_ignores_subagent_turn_completion_tail() {
-        let path = temp_rollout_path("running-status-subagent-complete");
-        fs::write(
-            &path,
-            [
-                json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"root-turn"}})
-                    .to_string(),
-                json!({"type":"response_item","payload":{"type":"function_call","call_id":"call-1","name":"spawn_agent"}})
-                    .to_string(),
-                json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":"child-turn","agent_path":"/root/worker"}})
-                    .to_string(),
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-
-        let thread = thread_with_path(&path);
-        let state = thread_with_rollout_running_status(&thread);
-
-        assert_eq!(state["status"], "running");
         let _ = fs::remove_file(path);
     }
 

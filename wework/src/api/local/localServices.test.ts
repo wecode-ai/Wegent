@@ -5,6 +5,7 @@ import {
   clearLocalModelConfigs,
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
+import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 
 describe('createLocalAppServices', () => {
   beforeEach(() => {
@@ -540,6 +541,12 @@ describe('createLocalAppServices', () => {
             accepted: true,
             taskId: 'task-1',
             runtime: 'codex',
+            runtimeHandle: {
+              modelSelection: {
+                modelName: 'local-model:mimo',
+                modelType: 'runtime',
+              },
+            },
           }
         }
         return {}
@@ -573,6 +580,12 @@ describe('createLocalAppServices', () => {
       /^\/Users\/me\/\.wegent-executor\/workspace\/worktrees\/runtime-\d+\/project$/
     )
     expect(response?.workspacePath).toBe(worktreePath)
+    expect(response?.runtimeHandle).toEqual({
+      modelSelection: {
+        modelName: 'local-model:mimo',
+        modelType: 'runtime',
+      },
+    })
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'device-uuid',
       command_key: 'git_is_worktree',
@@ -881,6 +894,7 @@ describe('createLocalAppServices', () => {
       displayName: 'Ollama GPT',
       modelId: 'gpt-oss:20b',
       baseUrl: 'http://localhost:11434/v1',
+      contextWindow: 128000,
     })
     saveLocalModelConfig({
       id: 'lmstudio',
@@ -890,6 +904,13 @@ describe('createLocalAppServices', () => {
       apiKey: 'real-key',
       webSearchMode: 'cached',
       imageGenerationEnabled: true,
+    })
+    saveLocalModelConfig({
+      id: 'custom',
+      displayName: 'Custom Gateway',
+      modelId: 'custom-model',
+      baseUrl: 'http://localhost:9876/api',
+      requestPath: '/respond',
     })
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -926,6 +947,15 @@ describe('createLocalAppServices', () => {
       message: 'secure continue',
       modelId: 'local-model:lmstudio',
     })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'local-device',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'custom continue',
+      modelId: 'local-model:custom',
+    })
 
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
@@ -936,6 +966,7 @@ describe('createLocalAppServices', () => {
     const createModelConfig = createPayload.executionRequest.model_config
     const continueModelConfig = sendPayloads[0].executionRequest.model_config
     const keyedModelConfig = sendPayloads[1].executionRequest.model_config
+    const customModelConfig = sendPayloads[2].executionRequest.model_config
 
     expect(continueModelConfig).toEqual(createModelConfig)
     expect(createModelConfig).toEqual(
@@ -945,7 +976,9 @@ describe('createLocalAppServices', () => {
         api_format: 'responses',
         protocol: 'openai-responses',
         base_url: 'http://localhost:11434/v1',
+        responses_url: 'http://localhost:11434/v1/responses',
         api_key: 'dummy',
+        model_context_window: 128000,
         web_search: 'disabled',
         image_generation: false,
         codex_responses_compat_proxy: true,
@@ -964,6 +997,14 @@ describe('createLocalAppServices', () => {
         api_key: 'real-key',
         web_search: 'cached',
         image_generation: true,
+        codex_responses_compat_proxy: true,
+      })
+    )
+    expect(customModelConfig).toEqual(
+      expect.objectContaining({
+        model_id: 'custom-model',
+        base_url: 'http://localhost:9876/api',
+        responses_url: 'http://localhost:9876/api/respond',
         codex_responses_compat_proxy: true,
       })
     )
@@ -1028,6 +1069,42 @@ describe('createLocalAppServices', () => {
     expect(createPayload.executionRequest.model_config).not.toHaveProperty('api_key')
     expect(sendPayload.executionRequest.model_config).toEqual(
       createPayload.executionRequest.model_config
+    )
+  })
+
+  test('adds configured local proxy to local runtime execution requests', async () => {
+    saveLocalProxyUrl('http://127.0.0.1:7890')
+    const request = vi.fn().mockResolvedValue({ accepted: true })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.runtimeWorkApi?.createRuntimeTask({
+      teamId: 0,
+      deviceId: 'local-device',
+      workspacePath: '/Users/me/project',
+      taskId: 'task-1',
+      runtime: 'codex',
+      message: 'hello',
+      title: 'Hello',
+      modelId: 'gpt-5.5',
+    })
+
+    const createPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.create'
+    )?.[1]
+    const modelConfig = createPayload.executionRequest.model_config
+
+    expect(modelConfig.proxy).toEqual({ url: 'http://127.0.0.1:7890' })
+    expect(modelConfig.runtime_config.codex).toEqual(
+      expect.objectContaining({
+        use_user_config: true,
+        configured: true,
+        use_proxy: true,
+        proxy_configured: true,
+      })
     )
   })
 
@@ -1366,6 +1443,50 @@ describe('createLocalAppServices', () => {
             worktreeId: '99',
           }),
         ],
+      })
+    )
+  })
+
+  test('drops empty remote workspace shells when a local workspace has the same label', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      workspaces: [
+        {
+          workspacePath: '/Users/me',
+          label: 'me',
+          workspaceSource: 'local',
+          tasks: [
+            {
+              taskId: 'task-1',
+              workspacePath: '/Users/me',
+              title: 'Local task',
+              runtime: 'codex',
+            },
+          ],
+        },
+        {
+          workspacePath: '/home/me',
+          label: 'me',
+          workspaceSource: 'remote',
+          remoteHostId: 'remote-ssh-codex-managed:host',
+          tasks: [],
+        },
+      ],
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+      request,
+      subscribe: vi.fn(),
+    })
+
+    const response = await services.runtimeWorkApi?.listRuntimeWork()
+
+    expect(response?.projects.map(project => project.project.key)).toEqual(['local:/Users/me'])
+    expect(response?.projects[0].deviceWorkspaces).toHaveLength(1)
+    expect(response?.projects[0].deviceWorkspaces[0]).toEqual(
+      expect.objectContaining({
+        workspacePath: '/Users/me',
+        workspaceSource: 'local',
       })
     )
   })

@@ -43,6 +43,7 @@ from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
     document_read_service,
 )
+from app.services.knowledge.external_creator import resolve_external_knowledge_creators
 from app.services.knowledge.external_document_access import (
     DOCUMENT_DOWNLOAD_TOKEN_EXPIRES_SECONDS,
     DOWNLOAD_TOKEN_HEADER,
@@ -58,7 +59,10 @@ from app.services.knowledge.external_nodes import (
     list_direct_nodes,
     list_recursive_nodes,
 )
-from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.knowledge.knowledge_service import (
+    ExternalKnowledgeBaseListFilters,
+    KnowledgeService,
+)
 from app.services.knowledge.namespace_utils import (
     NamespaceLevel,
     classify_namespace_level,
@@ -82,6 +86,7 @@ MAX_SEARCH_QUERY_LENGTH = 2000
 MAX_SEARCH_KNOWLEDGE_BASE_IDS = 100
 DEFAULT_KNOWLEDGE_BASE_LIST_LIMIT = 50
 MAX_KNOWLEDGE_BASE_LIST_LIMIT = 100
+MAX_KNOWLEDGE_BASE_OWNER_USER_IDS = 100
 DEFAULT_DIRECT_NODE_LIMIT = 100
 MAX_DIRECT_NODE_LIMIT = 500
 INTERNAL_ERROR_MESSAGE = "Internal error"
@@ -101,6 +106,13 @@ class SearchPreparation:
     ignored_knowledge_base_ids: list[int]
     warnings: list[str]
     kb_name_map: dict[int, str]
+
+
+@dataclass(frozen=True)
+class KnowledgeBaseListPreparation:
+    """Validated and normalized knowledge base list parameters."""
+
+    filters: ExternalKnowledgeBaseListFilters
 
 
 def _normalize_url_path(path: str) -> str:
@@ -166,6 +178,74 @@ def _validate_document_read_paging(offset, limit) -> Optional[str]:
     return None
 
 
+def _validate_owner_user_ids(owner_user_ids) -> Optional[str]:
+    if owner_user_ids is None:
+        return None
+    if not isinstance(owner_user_ids, list):
+        return "owner_user_ids must be a list of integers"
+    if len(owner_user_ids) > MAX_KNOWLEDGE_BASE_OWNER_USER_IDS:
+        return (
+            f"owner_user_ids must contain at most "
+            f"{MAX_KNOWLEDGE_BASE_OWNER_USER_IDS} items"
+        )
+    if any(not _is_int(owner_user_id) for owner_user_id in owner_user_ids):
+        return "owner_user_ids must be a list of integers"
+    return None
+
+
+def validate_knowledge_base_list_params(
+    *,
+    scope: str,
+    group_name: Optional[str],
+    query: Optional[str],
+    owner_user_ids: Optional[list[int]],
+    limit: int,
+    offset: int,
+) -> tuple[Optional[KnowledgeBaseListPreparation], Optional[str]]:
+    """Validate and normalize list-knowledge-bases tool parameters."""
+    if not isinstance(scope, str):
+        return None, "scope must be a string"
+    if group_name is not None and not isinstance(group_name, str):
+        return None, "group_name must be a string"
+    if query is not None and not isinstance(query, str):
+        return None, "query must be a string"
+    owner_user_ids_error = _validate_owner_user_ids(owner_user_ids)
+    if owner_user_ids_error:
+        return None, owner_user_ids_error
+    if not _is_int(limit):
+        return None, "limit must be an integer"
+    if not _is_int(offset):
+        return None, "offset must be an integer"
+    if limit < 1 or limit > MAX_KNOWLEDGE_BASE_LIST_LIMIT:
+        return None, f"limit must be between 1 and {MAX_KNOWLEDGE_BASE_LIST_LIMIT}"
+    if offset < 0:
+        return None, "offset must be greater than or equal to 0"
+
+    try:
+        scope_enum = ResourceScope(scope.strip())
+    except ValueError:
+        return None, "Invalid scope"
+    normalized_group_name = (group_name or "").strip() or None
+    if scope_enum == ResourceScope.GROUP and not normalized_group_name:
+        return None, "group_name is required when scope is group"
+    normalized_keyword = (query or "").strip() or None
+    normalized_owner_user_ids = tuple(dict.fromkeys(owner_user_ids or []))
+
+    return (
+        KnowledgeBaseListPreparation(
+            filters=ExternalKnowledgeBaseListFilters(
+                scope=scope_enum,
+                group_name=normalized_group_name,
+                keyword=normalized_keyword,
+                owner_user_ids=normalized_owner_user_ids,
+                limit=limit,
+                offset=offset,
+            ),
+        ),
+        None,
+    )
+
+
 def _search_rate_limit_status(user_id: int) -> ExternalMcpRateLimitStatus:
     if not settings.EXTERNAL_KNOWLEDGE_MCP_SEARCH_RATE_LIMIT_ENABLED:
         return ExternalMcpRateLimitStatus.ALLOWED
@@ -197,34 +277,20 @@ def _resolve_external_namespace_fields(
 def _list_knowledge_bases_sync(
     *,
     user_id: int,
-    scope: ResourceScope,
-    group_name: Optional[str],
-    query: Optional[str],
-    limit: int,
-    offset: int,
+    filters: ExternalKnowledgeBaseListFilters,
 ) -> str:
     db = SessionLocal()
     try:
-        kbs = KnowledgeService.list_knowledge_bases(
-            db, user_id, scope=scope, group_name=group_name
+        page_kbs, total = KnowledgeService.list_external_knowledge_bases(
+            db,
+            user_id=user_id,
+            filters=filters,
         )
-        keyword = (query or "").strip().lower()
-        if keyword:
-            kbs = [
-                kb
-                for kb in kbs
-                if keyword
-                in ((kb.json.get("spec", {}) or {}).get("name", "") or "").lower()
-                or keyword
-                in (
-                    (kb.json.get("spec", {}) or {}).get("description", "") or ""
-                ).lower()
-            ]
-        kbs = sorted(kbs, key=lambda kb: (kb.created_at, kb.id), reverse=True)
-
-        total = len(kbs)
-        page_kbs = kbs[offset : offset + limit]
         counts = get_document_counts(db, [kb.id for kb in page_kbs])
+        creator_map = resolve_external_knowledge_creators(
+            db,
+            [kb.user_id for kb in page_kbs],
+        )
         namespace_map = load_active_namespace_map(
             db,
             [kb.namespace for kb in page_kbs],
@@ -247,6 +313,7 @@ def _list_knowledge_bases_sync(
                     namespace_level=namespace_level,
                     namespace_display_name=namespace_display_name,
                     owner_user_id=kb.user_id,
+                    creator=creator_map.get(kb.user_id),
                     document_count=counts.get(kb.id, 0),
                     created_at=kb.created_at,
                     updated_at=kb.updated_at,
@@ -256,9 +323,9 @@ def _list_knowledge_bases_sync(
         return ExternalKnowledgeSpaceListResponse(
             total=total,
             total_returned=len(items),
-            has_more=offset + len(items) < total,
-            limit=limit,
-            offset=offset,
+            has_more=filters.offset + len(items) < total,
+            limit=filters.limit,
+            offset=filters.offset,
             items=items,
         ).model_dump_json()
     except Exception as exc:
@@ -569,6 +636,7 @@ async def wegent_kb_list_knowledge_bases(
     scope: str = "all",
     group_name: Optional[str] = None,
     query: Optional[str] = None,
+    owner_user_ids: Optional[list[int]] = None,
     limit: int = DEFAULT_KNOWLEDGE_BASE_LIST_LIMIT,
     offset: int = 0,
 ) -> str:
@@ -577,40 +645,23 @@ async def wegent_kb_list_knowledge_bases(
     if not user:
         return _json_error("Authentication required", "unauthorized")
 
-    if not isinstance(scope, str):
-        return _json_error("scope must be a string")
-    if group_name is not None and not isinstance(group_name, str):
-        return _json_error("group_name must be a string")
-    if query is not None and not isinstance(query, str):
-        return _json_error("query must be a string")
-    if not _is_int(limit):
-        return _json_error("limit must be an integer")
-    if not _is_int(offset):
-        return _json_error("offset must be an integer")
-    if limit < 1 or limit > MAX_KNOWLEDGE_BASE_LIST_LIMIT:
-        return _json_error(
-            f"limit must be between 1 and {MAX_KNOWLEDGE_BASE_LIST_LIMIT}"
-        )
-    if offset < 0:
-        return _json_error("offset must be greater than or equal to 0")
-
-    try:
-        scope_enum = ResourceScope(scope.strip())
-    except ValueError:
-        return _json_error("Invalid scope")
-    normalized_group_name = (group_name or "").strip() or None
-    if scope_enum == ResourceScope.GROUP and not normalized_group_name:
-        return _json_error("group_name is required when scope is group")
+    params, error = validate_knowledge_base_list_params(
+        scope=scope,
+        group_name=group_name,
+        query=query,
+        owner_user_ids=owner_user_ids,
+        limit=limit,
+        offset=offset,
+    )
+    if error:
+        return _json_error(error)
+    assert params is not None
 
     return await run_in_threadpool(
         partial(
             _list_knowledge_bases_sync,
             user_id=user.id,
-            scope=scope_enum,
-            group_name=normalized_group_name,
-            query=query,
-            limit=limit,
-            offset=offset,
+            filters=params.filters,
         )
     )
 

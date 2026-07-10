@@ -13,6 +13,7 @@ import type {
   RuntimeGoalSetResponse,
   RuntimeFileChangesRevertRequest,
   RuntimeFileChangesRevertResponse,
+  RuntimeCompactRequest,
   RuntimeGuidanceRequest,
   RuntimeGuidanceResponse,
   RuntimeSendRequest,
@@ -90,6 +91,7 @@ export interface ExecutorRuntimeClient {
   ) => Promise<RuntimeFileChangesRevertResponse>
   sendRuntimeMessage: (data: RuntimeSendRequest) => Promise<RuntimeSendResponse>
   rollbackRuntimeTask: (data: RuntimeRollbackRequest) => Promise<RuntimeSendResponse>
+  compactRuntimeTask: (data: RuntimeCompactRequest) => Promise<RuntimeSendResponse>
   guideRuntimeTask: (data: RuntimeGuidanceRequest) => Promise<RuntimeGuidanceResponse>
   getRuntimeGoal: (data: RuntimeGoalGetRequest) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (data: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
@@ -170,7 +172,7 @@ export function createInMemoryExecutorRegistry(
       throw new Error(`executor-not-found:${deviceId}`)
     }
     if (entry.status === 'offline') {
-      throw new Error(`executor-unavailable:${deviceId}`)
+      throw new Error(`executor-offline:${deviceId}`)
     }
     return entry
   }

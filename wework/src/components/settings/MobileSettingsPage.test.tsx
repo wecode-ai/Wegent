@@ -29,9 +29,7 @@ describe('MobileSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('mobile-settings-personal-button'))
     expect(screen.getByTestId('mobile-personal-settings-page')).toBeInTheDocument()
-    expect(screen.getByTestId('mobile-settings-model-settings-button')).toHaveTextContent(
-      '模型设置'
-    )
+    expect(screen.getByTestId('mobile-settings-model-settings-button')).toHaveTextContent('模型')
 
     await userEvent.click(screen.getByTestId('mobile-personal-back-button'))
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()

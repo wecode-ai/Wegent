@@ -30,18 +30,17 @@ import {
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
-import { createModelApi } from '@/api/models'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import { buildVncPageUrl } from '@/lib/vnc'
@@ -69,6 +68,11 @@ import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettin
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
+import {
+  createSettingsDeviceApi,
+  createSettingsModelApi,
+  type CloudSettingsConnection,
+} from './settings-cloud-api'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -96,7 +100,7 @@ const settingsNavItems: SettingsNavItem[] = [
     key: 'connections',
     icon: Globe2,
     label: 'settings_nav_connections',
-    fallback: '云端设置',
+    fallback: '云端连接',
   },
   {
     key: 'appearance',
@@ -114,7 +118,7 @@ const settingsNavItems: SettingsNavItem[] = [
     key: 'model-settings',
     icon: UserRound,
     label: 'settings_nav_model_settings',
-    fallback: '模型设置',
+    fallback: '模型',
     category: 'personal',
   },
   {
@@ -128,7 +132,7 @@ const settingsNavItems: SettingsNavItem[] = [
     key: 'keyboard-shortcuts',
     icon: Keyboard,
     label: 'settings_nav_keyboard_shortcuts',
-    fallback: '键盘快捷键',
+    fallback: '快捷键',
     category: 'personal',
   },
   {
@@ -258,38 +262,6 @@ function DeviceIconActionButton({
     >
       <Icon className="h-3.5 w-3.5" />
     </button>
-  )
-}
-
-interface CloudSettingsConnection {
-  isConnected: boolean
-  apiBaseUrl?: string
-  token: string | null
-}
-
-function createSettingsDeviceApi(connection: CloudSettingsConnection) {
-  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
-    throw new Error('Cloud connection is required')
-  }
-  return createDeviceApi(
-    createHttpClient({
-      baseUrl: connection.apiBaseUrl,
-      getToken: () => connection.token,
-      redirectOnUnauthorized: false,
-    })
-  )
-}
-
-function createSettingsModelApi(connection: CloudSettingsConnection) {
-  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
-    throw new Error('Cloud connection is required')
-  }
-  return createModelApi(
-    createHttpClient({
-      baseUrl: connection.apiBaseUrl,
-      getToken: () => connection.token,
-      redirectOnUnauthorized: false,
-    })
   )
 }
 
@@ -801,6 +773,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   value={editName}
                   onChange={e => setEditName(e.target.value)}
                   onKeyDown={e => {
+                    if (isImeEnterEvent(e)) return
                     if (e.key === 'Enter') handleSaveEdit()
                     if (e.key === 'Escape') handleCancelEdit()
                   }}
@@ -1210,7 +1183,7 @@ function ConnectionsDeviceSettingsPage({
       <>
         <div className="mx-auto w-full max-w-[760px]">
           <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.connections_title', '云端设置')}
+            {t('workbench.connections_title', '云端连接')}
           </h1>
 
           <section className="mt-6 rounded-lg border border-border bg-background p-5">
@@ -1273,7 +1246,7 @@ function ConnectionsDeviceSettingsPage({
     <>
       <div className="mx-auto w-full max-w-[760px]">
         <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-          {t('workbench.connections_title', '云端设置')}
+          {t('workbench.connections_title', '云端连接')}
         </h1>
 
         <section
@@ -1433,7 +1406,7 @@ export function ConnectionsSettingsPage({
   return (
     <div
       data-testid="wework-settings-page"
-      className="flex h-screen min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
+      className="relative flex h-screen min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
     >
       <aside
         className="relative flex shrink-0 flex-col border-r border-border/70 bg-[rgb(var(--color-sidebar))] px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))] backdrop-blur-xl backdrop-saturate-150"
@@ -1503,6 +1476,16 @@ export function ConnectionsSettingsPage({
           aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
         />
       </aside>
+
+      {usesOverlayTitlebar && (
+        <div
+          data-testid="settings-main-titlebar-drag-region"
+          className="absolute right-0 top-0 z-titlebar h-[52px]"
+          style={{ left: sidebarWidth }}
+        >
+          <MacOSTitleBarDragRegion className="h-full w-full" />
+        </div>
+      )}
 
       <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
         {activeNav === 'general' ? (

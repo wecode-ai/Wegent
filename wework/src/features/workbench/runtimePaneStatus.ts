@@ -59,6 +59,8 @@ export function deriveRuntimePaneStatus({
   const isAssistantStreaming = Boolean(activeAssistantMessage)
   const isResponseActive = isAwaitingAssistant || isAssistantStreaming
   const isBusy = isSubmitting || isResponseActive || taskExecution.running
+  const isWaitingForAssistantMessage =
+    !isAssistantStreaming && isLastMessageWaitingForAssistant(messages)
 
   return {
     sendPhase,
@@ -69,7 +71,9 @@ export function deriveRuntimePaneStatus({
     isAssistantStreaming,
     isResponseActive,
     isBusy,
-    isWaitingForAssistantIndicator: isSubmitting || isAwaitingAssistant,
+    isWaitingForAssistantIndicator:
+      (isSubmitting || isAwaitingAssistant || taskExecution.running) &&
+      isWaitingForAssistantMessage,
     canSendQueuedMessage: Boolean(currentRuntimeTask) && !isBusy,
   }
 }
@@ -90,4 +94,9 @@ export function hasSettledAssistantMessage(messages: WorkbenchMessage[]): boolea
 
 function normalizeTaskStatus(task: RuntimeTaskSummary): string | null {
   return task.status?.trim().toLowerCase() || null
+}
+
+function isLastMessageWaitingForAssistant(messages: WorkbenchMessage[]): boolean {
+  const lastMessage = [...messages].reverse().find(message => message.role !== 'system')
+  return !lastMessage || lastMessage.role === 'user'
 }

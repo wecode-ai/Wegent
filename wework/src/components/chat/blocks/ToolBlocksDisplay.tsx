@@ -23,6 +23,7 @@ import {
   RequestUserInputSummary,
   type RequestUserInputPayload,
 } from '../RequestUserInputCard'
+import type { AssistantPlanOpenRequest } from '../AssistantPlanCard'
 import {
   buildProcessingDisplayRows,
   getToolActivityFilePaths,
@@ -65,7 +66,7 @@ interface ToolBlocksDisplayProps {
   onOpenWorkspaceFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (content: string) => void
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }

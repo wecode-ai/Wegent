@@ -287,7 +287,7 @@ Plugin 上报必须包含其内部 Skill 列表。Executor 会扫描每个 Plugi
 
 项目任务使用本地 executor 执行时，任务级 `CLAUDE_CONFIG_DIR` 会同时暴露全局 `skills` 和 `plugins` 目录，并从本机 `~/.claude/settings.json` 继承 `enabledPlugins`、`extraKnownMarketplaces` 等非敏感插件配置，使 Claude Code 能加载全局 Skill 以及 Plugin 内部提供的 Skill。模型、Token 等敏感配置仍通过运行时环境变量注入，不会从全局 settings 写入任务目录。
 
-Claude Code、Codex 和 Agno 运行时内部会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`；需要区分轮次时，应继续使用 Responses 事件、artifact metadata 或已有 task/subtask 协议字段，而不是依赖环境变量。
+Claude Code 和 Agno 运行时内部会收到一组任务身份环境变量。`WEGENT_TASK_ID` 标识当前 Task，`AUTH_TOKEN` 提供本轮任务访问 Backend API 的 bearer token，`WEGENT_SKILL_IDENTITY_TOKEN` 和 `WEGENT_SKILL_USER_NAME` 用于任务内 Skill 操作的身份校验与展示。Codex 使用共享 app-server 进程，不注入任务身份环境变量；需要区分任务或轮次时，应继续使用 Responses 事件、artifact metadata 或已有 task/subtask 协议字段，而不是依赖环境变量。executor 不向这些子运行时注入 `WEGENT_SUBTASK_ID`。
 
 项目模式下访问 Claude 或 Codex 模型 API 时，executor 会在直接启动的运行时上下文中加入 `wecode-project: <project_id>` 请求头，并补齐 `wecode-action: wegent`、`wecode-source: wegent-local`、`wecode-executor: <runtime>` 来源标识，其中 Claude Code 使用 `claudecode`，Codex 使用 `codex`。Claude Code 本地模式会先合并 executor 启动进程环境和运行时环境里已有的 `ANTHROPIC_CUSTOM_HEADERS`，再追加 project 标识，并同时写入 `ANTHROPIC_CUSTOM_HEADERS` 与 `DEFAULT_HEADERS`/`default_headers` 环境变量，保证直接 Claude Code 子进程和下游模型网关读取到一致的 header 集合；Codex 在 Wegent 管理 provider 配置时写入 provider 的 `http_headers`，使用个人 Codex 配置且显式指定 provider 时也会对该 provider 注入同一 project 请求头。
 
@@ -306,7 +306,7 @@ Claude Code 子进程启动前，executor 会完成以下准备：
 - 下载本轮附件到任务目录；Project 工作区下的附件放入 `.wegent/attachments/<taskId>/<subtaskId>/`，非 Project 任务放入 executor 任务目录下的附件子目录。
 - 恢复 `~/.claude/plugins/cache` 中仍被 `enabledPlugins` 启用但安装目录缺失的插件包，并修复插件 hook 权限。
 - 根据 Bot/Task 选择的 Skills，把需要的 task skills 部署到 `SKILLS_DIR`。普通 Project 任务使用全局 `~/.claude/skills`；独立 `project_id = 0` 且带 task skills 的本地工作使用任务级 `.claude/skills`，避免污染全局目录。
-- 如果配置了 `WEGENT_FILE_EDIT_HOOK_COMMAND`，在 Claude `settings.json` 中写入 `Write|Edit|MultiEdit|NotebookEdit` 的 `PreToolUse` 和 `PostToolUse` hook，使文件变更记录能进入本轮 artifact。
+- 如果配置了 `WEGENT_FILE_EDIT_HOOK_COMMAND`，在 Claude `settings.json` 中写入 `Write|Edit|MultiEdit|NotebookEdit` 的 `PreToolUse` 和 `PostToolUse` hook，使文件变更记录能进入本轮 artifact。Wework macapp 启动本地 sidecar 时会默认生成该命令；可以用 `WEGENT_FILE_EDIT_HOOK_COMMAND` 覆盖完整命令，或用 `WEWORK_FILE_EDIT_LOG_ENDPOINT` 调整默认上报地址。
 
 本地 executor 对 Claude stdout 的 NDJSON 输出会即时转换为 Responses API 事件：可见文本产生 `response.output_text.delta`，reasoning 摘要产生 `response.reasoning_summary_text.delta`，进程结束后仍发送最终 `response.completed` 或错误事件。Backend 和前端不能假设 `response.created` 之后紧跟终态事件。
 

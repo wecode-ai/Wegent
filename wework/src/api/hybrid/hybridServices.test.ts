@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => {
   const localSearchRuntimeWork = vi.fn()
   const cloudSearchRuntimeWork = vi.fn()
   const cloudCreateDockerRemoteDeviceCommand = vi.fn()
+  const cloudRuntimeIpcRequest = vi.fn()
+  const cloudRuntimeIpcSubscribe = vi.fn(async () => vi.fn())
 
   const localServices = {
     teamApi: {
@@ -47,6 +49,7 @@ const mocks = vi.hoisted(() => {
       listRuntimeWork: localListRuntimeWork,
       createRuntimeTask: localCreateRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
+      compactRuntimeTask: vi.fn(),
       searchRuntimeWork: localSearchRuntimeWork,
       listArchivedConversations: vi.fn(async () => ({
         items: [],
@@ -90,6 +93,7 @@ const mocks = vi.hoisted(() => {
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
+      compactRuntimeTask: vi.fn(),
       searchRuntimeWork: cloudSearchRuntimeWork,
       listArchivedConversations: vi.fn(async () => ({
         items: [],
@@ -127,6 +131,8 @@ const mocks = vi.hoisted(() => {
     localSearchRuntimeWork,
     cloudSearchRuntimeWork,
     cloudCreateDockerRemoteDeviceCommand,
+    cloudRuntimeIpcRequest,
+    cloudRuntimeIpcSubscribe,
     localServices,
     cloudServices,
   }
@@ -134,10 +140,60 @@ const mocks = vi.hoisted(() => {
 
 vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: () => mocks.localServices,
+  createRuntimeWorkApiFromIpc: (
+    request: (
+      method: string,
+      params?: Record<string, unknown>,
+      deviceId?: string
+    ) => Promise<unknown>,
+    getDefaultDeviceId: () => Promise<string>
+  ) => ({
+    async listRuntimeWork() {
+      const deviceId = await getDefaultDeviceId()
+      return request('runtime.tasks.list', {}, deviceId)
+    },
+    createRuntimeTask(data: Record<string, unknown>) {
+      return request('runtime.tasks.create', data, String(data.deviceId))
+    },
+    rollbackRuntimeTask(data: Record<string, unknown>) {
+      return request('runtime.tasks.rollback', data, String(data.deviceId))
+    },
+    compactRuntimeTask(data: Record<string, unknown>) {
+      return request('runtime.tasks.compact', data, String(data.deviceId))
+    },
+    async searchRuntimeWork(data: Record<string, unknown>) {
+      return request(
+        'runtime.tasks.search',
+        data,
+        String(data.deviceId ?? (await getDefaultDeviceId()))
+      )
+    },
+    listArchivedConversations: vi.fn(async () => ({
+      items: [],
+      projectGroups: [],
+      total: 0,
+    })),
+    archiveAllConversations: vi.fn(async () => ({
+      accepted: true,
+      requestedCount: 0,
+      acceptedCount: 0,
+      deletedCount: 0,
+      results: [],
+    })),
+    getImNotificationSettings: vi.fn(),
+  }),
 }))
 
 vi.mock('@/api/backend/backendServices', () => ({
   createBackendWorkbenchServices: () => mocks.cloudServices,
+}))
+
+vi.mock('@/api/backend/runtimeIpc', () => ({
+  createCloudRuntimeIpcClient: () => ({
+    request: mocks.cloudRuntimeIpcRequest,
+    subscribe: mocks.cloudRuntimeIpcSubscribe,
+    dispose: vi.fn(),
+  }),
 }))
 
 const codexModel = {
@@ -214,6 +270,20 @@ describe('createHybridWorkbenchServices', () => {
     mocks.cloudListModels.mockResolvedValue({ data: [codexModel] })
     mocks.localSearchRuntimeWork.mockResolvedValue({ items: [] })
     mocks.cloudSearchRuntimeWork.mockResolvedValue({ items: [] })
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async method => {
+      if (method === 'runtime.tasks.list') {
+        return { projects: [], chats: [], totalTasks: 0 }
+      }
+      if (method === 'runtime.tasks.search') {
+        return { items: [] }
+      }
+      return {
+        accepted: true,
+        deviceId: 'cloud-device',
+        taskId: 'cloud-task',
+        workspacePath: '/tmp/cloud',
+      }
+    })
     mocks.cloudCreateDockerRemoteDeviceCommand.mockResolvedValue({
       device_id: 'remote-device',
       name: 'Remote Device',
@@ -261,6 +331,45 @@ describe('createHybridWorkbenchServices', () => {
 
     expect(devices.map(device => device.device_id)).toEqual(['local-device'])
     expect(mocks.cloudListDevices).not.toHaveBeenCalled()
+  })
+
+  it('returns remembered cloud devices on the primary device list after background sync', async () => {
+    const services = createServices()
+
+    await services.cloudBackgroundApi?.listDevices?.()
+    const devices = await services.deviceApi.listDevices()
+
+    expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+  })
+
+  it('merges remembered cloud devices into the local device when app_device_id matches', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        app_device_id: 'local-device',
+        name: 'Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+
+    await services.cloudBackgroundApi?.listDevices?.()
+    const devices = await services.deviceApi.listDevices()
+
+    expect(devices.map(device => device.device_id)).toEqual(['local-device'])
+    expect(devices[0].device_type).toBe('local')
+    expect(devices[0].runtime_routes?.map(route => route.kind)).toEqual([
+      'local-ipc',
+      'cloud-relay',
+    ])
+    expect(devices[0].runtime_routes?.map(route => route.device_id)).toEqual([
+      'local-device',
+      'cloud-device',
+    ])
   })
 
   it('does not wait for cloud device or runtime-work reads on the primary path', async () => {
@@ -320,30 +429,62 @@ describe('createHybridWorkbenchServices', () => {
     expect(devices?.map(device => device.device_id)).toEqual(['cloud-device'])
   })
 
+  it('does not request runtime work from offline cloud devices', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        name: 'Cloud Executor',
+        status: 'offline',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+
+    const services = createServices()
+    const runtimeWork = await services.cloudBackgroundApi?.listRuntimeWork?.()
+
+    expect(runtimeWork).toEqual({ projects: [], chats: [], totalTasks: 0 })
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
+  it('does not request background runtime work from another route on the same runtime instance', async () => {
+    mocks.localListDevices.mockResolvedValue([
+      {
+        id: 0,
+        device_id: 'local-device',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'app',
+        bind_shell: 'claudecode',
+        runtime_instance_id: 'runtime-shared',
+      },
+    ])
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'remote-device',
+        name: 'Remote Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'remote',
+        bind_shell: 'claudecode',
+        runtime_instance_id: 'runtime-shared',
+      },
+    ])
+
+    const services = createServices()
+    const runtimeWork = await services.cloudBackgroundApi?.listRuntimeWork?.()
+
+    expect(runtimeWork).toEqual({ projects: [], chats: [], totalTasks: 0 })
+    expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
+  })
+
   it('removes current app registration work from background runtime work', async () => {
-    mocks.cloudListRuntimeWork.mockResolvedValue({
+    mocks.cloudRuntimeIpcRequest.mockResolvedValue({
       projects: [
-        {
-          project: { key: 'app', name: 'Current App' },
-          totalTasks: 1,
-          deviceWorkspaces: [
-            {
-              deviceId: 'local-device',
-              deviceName: 'Current App Registration',
-              deviceStatus: 'online',
-              available: true,
-              workspacePath: '/app',
-              tasks: [
-                {
-                  taskId: 'app-task',
-                  workspacePath: '/app',
-                  title: 'App task',
-                  runtime: 'codex',
-                },
-              ],
-            },
-          ],
-        },
         {
           project: { key: 'cloud', name: 'Cloud' },
           totalTasks: 1,
@@ -405,7 +546,7 @@ describe('createHybridWorkbenchServices', () => {
       taskId: 'local-task',
       workspacePath: '/tmp/local',
     })
-    mocks.cloudCreateRuntimeTask.mockResolvedValue({
+    mocks.cloudRuntimeIpcRequest.mockResolvedValueOnce({
       accepted: true,
       deviceId: 'cloud-device',
       taskId: 'cloud-task',
@@ -428,7 +569,43 @@ describe('createHybridWorkbenchServices', () => {
     })
 
     expect(mocks.localCreateRuntimeTask).toHaveBeenCalledTimes(1)
-    expect(mocks.cloudCreateRuntimeTask).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudCreateRuntimeTask).not.toHaveBeenCalled()
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({ deviceId: 'cloud-device', message: 'cloud' }),
+      'cloud-device'
+    )
+  })
+
+  it('routes cloud runtime IPC through socket_device_id when provided', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        socket_device_id: 'socket-device',
+        name: 'Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+
+    await services.cloudBackgroundApi?.listDevices?.()
+    await services.runtimeWorkApi?.createRuntimeTask({
+      deviceId: 'cloud-device',
+      workspacePath: '/tmp/cloud',
+      teamId: 1,
+      runtime: 'codex',
+      message: 'cloud',
+    })
+
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.tasks.create',
+      expect.objectContaining({ deviceId: 'cloud-device' }),
+      'socket-device'
+    )
   })
 
   it('sorts merged search results by updated time before applying the limit', async () => {
@@ -448,20 +625,23 @@ describe('createHybridWorkbenchServices', () => {
         },
       ],
     })
-    mocks.cloudSearchRuntimeWork.mockResolvedValue({
-      items: [
-        {
-          address: { deviceId: 'cloud-device', taskId: 'cloud-task' },
-          runtime: 'codex',
-          title: 'Newer cloud result',
-          snippet: 'cloud',
-          matchStart: 0,
-          matchEnd: 5,
-          updatedAt: '2026-01-02T00:00:00Z',
-          deviceName: 'Cloud Executor',
-          workspacePath: '/tmp/cloud',
-        },
-      ],
+    mocks.cloudRuntimeIpcRequest.mockImplementation(async method => {
+      if (method !== 'runtime.tasks.search') return { projects: [], chats: [], totalTasks: 0 }
+      return {
+        items: [
+          {
+            address: { deviceId: 'cloud-device', taskId: 'cloud-task' },
+            runtime: 'codex',
+            title: 'Newer cloud result',
+            snippet: 'cloud',
+            matchStart: 0,
+            matchEnd: 5,
+            updatedAt: '2026-01-02T00:00:00Z',
+            deviceName: 'Cloud Executor',
+            workspacePath: '/tmp/cloud',
+          },
+        ],
+      }
     })
 
     const response = await services.runtimeWorkApi?.searchRuntimeWork({
@@ -470,6 +650,7 @@ describe('createHybridWorkbenchServices', () => {
     })
 
     expect(response?.items.map(item => item.title)).toEqual(['Newer cloud result'])
+    expect(mocks.cloudSearchRuntimeWork).not.toHaveBeenCalled()
   })
 
   it('routes remote device startup command generation to the cloud service', async () => {

@@ -26,6 +26,7 @@ import type {
   RuntimeArchivedConversationBulkRequest,
   RuntimeArchivedConversationBulkResponse,
   RuntimeArchivedConversationCleanupResponse,
+  RuntimeCompactRequest,
   RuntimeSendRequest,
   RuntimeSendResponse,
   RuntimeTaskAddress,
@@ -98,6 +99,10 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       return client.post('/runtime-work/rollback', data)
+    },
+    compactRuntimeTask(data: RuntimeCompactRequest): Promise<RuntimeSendResponse> {
+      void data
+      return Promise.reject(new Error('上下文压缩只支持本机 Wework App'))
     },
     guideRuntimeTask(data: RuntimeGuidanceRequest): Promise<RuntimeGuidanceResponse> {
       return client.post('/runtime-work/guidance', data)
