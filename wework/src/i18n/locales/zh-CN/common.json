@@ -303,6 +303,8 @@
     "app_update_available": "发现新版本 {{version}}",
     "app_update_install": "更新到 {{version}}",
     "app_update_installing": "正在安装更新...",
+    "app_update_downloading": "正在下载更新",
+    "app_update_downloading_progress": "正在下载更新 {{progress}}%",
     "app_update_installing_short": "更新中",
     "app_update_titlebar_button": "更新",
     "app_update_up_to_date": "已是最新版本",

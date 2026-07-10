@@ -11,6 +11,7 @@ const runtimeModeMock = vi.hoisted(() => ({
 let mockUpdateState = {
   availableUpdate: null as null | { currentVersion: string; version: string },
   status: 'idle',
+  downloadProgress: null as null | { downloadedBytes: number; totalBytes: number | null },
   error: null as string | null,
   checkNow: mockCheckNow,
   installUpdate: mockInstallUpdate,
@@ -57,6 +58,7 @@ describe('DesktopSettingsMenu', () => {
     mockUpdateState = {
       availableUpdate: null,
       status: 'idle',
+      downloadProgress: null,
       error: null,
       checkNow: mockCheckNow,
       installUpdate: mockInstallUpdate,
@@ -109,6 +111,29 @@ describe('DesktopSettingsMenu', () => {
 
     await userEvent.click(updateButton)
     expect(mockInstallUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows download progress in the update icon and menu item', () => {
+    mockUpdateState = {
+      ...mockUpdateState,
+      availableUpdate: {
+        currentVersion: '0.1.0',
+        version: '0.1.1',
+      },
+      status: 'installing',
+      downloadProgress: {
+        downloadedBytes: 50,
+        totalBytes: 100,
+      },
+    }
+
+    renderMenu()
+
+    expect(screen.getByTestId('app-update-download-icon-progress')).toHaveAttribute(
+      'aria-label',
+      '50%'
+    )
+    expect(screen.getByTestId('app-update-download-progress')).toHaveTextContent('正在下载更新 50%')
   })
 
   test('shows usage reset times in the expanded usage panel', async () => {
