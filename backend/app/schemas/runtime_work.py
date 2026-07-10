@@ -695,6 +695,27 @@ class RuntimeTaskCreateResponse(BaseModel):
     error: Optional[str] = None
 
 
+class RuntimeWorkResolveModelConfigRequest(BaseModel):
+    """Request to resolve a Wegent Model CRD to a Codex-compatible model config."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    model_id: str = Field(..., alias="modelId", min_length=1)
+    model_type: Optional[str] = Field(default=None, alias="modelType")
+    model_options: dict[str, Any] = Field(
+        default_factory=dict,
+        alias="modelOptions",
+    )
+
+
+class RuntimeWorkResolveModelConfigResponse(BaseModel):
+    """Resolved Codex-compatible model config for a Wegent Model CRD."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    resolved_model_config: dict[str, Any] = Field(..., alias="modelConfig")
+
+
 class RuntimeTaskForkTarget(BaseModel):
     """Target device workspace for a runtime-native task fork."""
 

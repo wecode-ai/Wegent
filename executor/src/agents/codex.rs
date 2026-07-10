@@ -29,7 +29,7 @@ use crate::{
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
-    logging::{log_executor_event, task_fields},
+    logging::{log_executor_event, task_fields, wework_debug_log},
     process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
@@ -1836,6 +1836,18 @@ impl JsonRpcConnection {
         let mut line = serde_json::to_vec(&message)
             .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
         line.push(b'\n');
+        let preview = serde_json::to_string(&message).unwrap_or_default();
+        let preview = if preview.len() > 2048 {
+            format!("{}...", &preview[..2048])
+        } else {
+            preview
+        };
+        wework_debug_log(&format!(
+            "codex rpc send id={:?} method={:?} body={}",
+            message.get("id"),
+            message.get("method"),
+            preview
+        ));
         self.stdin
             .write_all(&line)
             .await
@@ -1856,8 +1868,20 @@ impl JsonRpcConnection {
         if bytes_read == 0 {
             return Err("codex app-server exited before completing the turn".to_owned());
         }
-        serde_json::from_str(&line)
-            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))
+        let message: Value = serde_json::from_str(&line)
+            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))?;
+        let preview = if line.len() > 2048 {
+            format!("{}...", &line[..2048])
+        } else {
+            line.clone()
+        };
+        wework_debug_log(&format!(
+            "codex rpc recv id={:?} method={:?} body={}",
+            message.get("id"),
+            message.get("method"),
+            preview.trim()
+        ));
+        Ok(message)
     }
 }
 
@@ -2510,6 +2534,27 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
+
+    let base_url = non_empty_config(&request.model_config, "base_url");
+    let api_key_present = api_key(&request.model_config).is_some();
+    let use_user_config = use_user_runtime_config(&request.model_config);
+    let provider_id = explicit_model_provider(&request.model_config)
+        .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned());
+    wework_debug_log(&format!(
+        "build_codex_launch_config model_id={:?} base_url={:?} api_key_present={} \
+         use_user_config={} model_provider={} config_overrides={} model_config_keys={:?}",
+        model_id(request),
+        base_url,
+        api_key_present,
+        use_user_config,
+        provider_id,
+        launch_config.config_overrides.len(),
+        request
+            .model_config
+            .as_object()
+            .map(|object| object.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+    ));
     launch_config
 }
 
@@ -2769,7 +2814,21 @@ fn header_overrides(
     project_id: Option<&str>,
 ) -> Vec<String> {
     let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Vec::new();
+        let headers = parse_header_map(default_headers);
+        return if headers.is_empty() {
+            Vec::new()
+        } else {
+            headers
+                .into_iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{}={}",
+                        toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
+                        toml_value(&value)
+                    )
+                })
+                .collect()
+        };
     };
 
     let mut headers = parse_header_map(default_headers);

@@ -3368,7 +3368,6 @@ def _build_runtime_execution_request(
     target: RuntimeTaskTarget,
 ):
     """Build an executor request from CRD config without persisting Task rows."""
-
     from app.services.execution import TaskRequestBuilder
 
     user = _get_user(db, user_id)
@@ -3390,7 +3389,9 @@ def _build_runtime_execution_request(
     )
     payload = _runtime_execution_payload(request)
     runtime_model_config, override_model_name, force_override = _runtime_model_override(
-        request
+        db,
+        user_id,
+        request,
     )
     execution_request = TaskRequestBuilder(db).build(
         subtask=subtask,
@@ -3528,15 +3529,55 @@ def _request_execution_workspace(
 
 
 def _runtime_model_override(
+    db: Session,
+    user_id: int,
     request: RuntimeTaskCreateRequest,
 ) -> tuple[Optional[dict[str, Any]], Optional[str], bool]:
     if not request.model_id:
         return None, None, False
     if request.runtime == "codex" and request.model_type == RUNTIME_MODEL_TYPE:
-        from app.services.chat.trigger.unified import _build_codex_runtime_model_config
+        from app.services.chat.trigger.unified import (
+            _build_codex_runtime_model_config,
+        )
 
-        return _build_codex_runtime_model_config(request.model_id), None, False
+        config = _build_codex_runtime_model_config(
+            request.model_id,
+            dict(request.model_options),
+            db=db,
+            user_id=user_id,
+        )
+        return config, None, False
     return None, request.model_id, True
+
+
+def resolve_codex_runtime_model_config(
+    db: Session,
+    user_id: int,
+    model_id: str,
+    model_options: Optional[dict[str, Any]] = None,
+    proxy_backend_base_url: Optional[str] = None,
+) -> dict[str, Any]:
+    """Resolve a Wegent Model CRD name to a Codex-compatible model config.
+
+    This is used by the WeWork desktop client when it builds execution requests
+    locally: the desktop only knows the CRD metadata.name, so it asks the backend
+    to resolve the real provider model_id and endpoint settings.
+
+    When ``proxy_backend_base_url`` is provided and the resolved CRD carries
+    explicit provider credentials, the returned config uses an encrypted backend
+    proxy token instead of the raw ``api_key``. The local executor then calls the
+    backend gateway, which forwards requests to the real provider while keeping
+    the provider API key inside the backend.
+    """
+    from app.services.chat.trigger.unified import _build_codex_runtime_model_config
+
+    return _build_codex_runtime_model_config(
+        model_id,
+        model_options or {},
+        db=db,
+        user_id=user_id,
+        proxy_backend_base_url=proxy_backend_base_url,
+    )
 
 
 def _apply_runtime_task_target(
