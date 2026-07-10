@@ -61,12 +61,15 @@ test_sccache_is_configured_when_available() {
   chmod +x "$root/bin/sccache"
 
   local actual
+  local canonical_project
+  canonical_project="$(cd "$root/project" && pwd -P)"
   actual="$(PATH="$root/bin:$PATH" HOME="$root/home" bash -c '
     source "$1"
     configure_wegent_cargo_target_dir "$2" executor
-    printf "%s|%s|%s" "$RUSTC_WRAPPER" "$CARGO_INCREMENTAL" "$WEGENT_SCCACHE_AUTO"
+    printf "%s|%s|%s|%s" "$RUSTC_WRAPPER" "$CARGO_INCREMENTAL" "$WEGENT_SCCACHE_AUTO" "$SCCACHE_BASEDIRS"
   ' _ "$PROJECT_DIR/scripts/lib/cargo-cache.sh" "$root/project")"
-  [ "$actual" = "$root/bin/sccache|0|1" ] || fail "sccache was not configured"
+  [ "$actual" = "$root/bin/sccache|0|1|$canonical_project:$root/home/.cache/wegent/cargo-target/executor/worktrees/project-$(printf '%s' "$canonical_project" | cksum | awk '{print $1}')" ] \
+    || fail "sccache was not configured with normalized paths: $actual"
 }
 
 test_sccache_is_installed_with_homebrew() {
@@ -83,6 +86,24 @@ EOF
   [ "$(cat "$root/brew-call.log")" = "install sccache" ] || fail "Homebrew was not invoked"
 }
 
+test_automatic_sccache_paths_follow_target_changes() {
+  local root="$1"
+  mkdir -p "$root/reconfigure-bin" "$root/reconfigure-project"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$root/reconfigure-bin/sccache"
+  chmod +x "$root/reconfigure-bin/sccache"
+
+  local actual
+  actual="$(PATH="$root/reconfigure-bin:$PATH" HOME="$root/home" bash -c '
+    source "$1"
+    CARGO_TARGET_DIR="$3/first"
+    configure_wegent_cargo_target_dir "$2" first
+    CARGO_TARGET_DIR="$3/second"
+    configure_wegent_cargo_target_dir "$2" second
+    printf "%s" "$SCCACHE_BASEDIRS"
+  ' _ "$PROJECT_DIR/scripts/lib/cargo-cache.sh" "$root/reconfigure-project" "$root")"
+  [[ "$actual" == *":$root/second" ]] || fail "automatic sccache paths were stale: $actual"
+}
+
 cleanup() {
   rm -rf "$TEST_ROOT"
 }
@@ -94,6 +115,7 @@ main() {
   test_explicit_target_is_preserved "$TEST_ROOT"
   test_sccache_is_configured_when_available "$TEST_ROOT"
   test_sccache_is_installed_with_homebrew "$TEST_ROOT"
+  test_automatic_sccache_paths_follow_target_changes "$TEST_ROOT"
   echo "cargo-cache tests passed"
 }
 

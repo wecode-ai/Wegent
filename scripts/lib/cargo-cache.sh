@@ -29,15 +29,28 @@ wegent_worktree_cache_key() {
 }
 
 configure_wegent_sccache() {
-  if [ "${WEGENT_DISABLE_SCCACHE:-0}" = "1" ] || [ -n "${RUSTC_WRAPPER:-}" ]; then
+  local project_dir="$1"
+  local target_dir="$2"
+  local canonical_project_dir=""
+
+  if [ "${WEGENT_DISABLE_SCCACHE:-0}" = "1" ]; then
+    return 0
+  fi
+
+  if [ -n "${RUSTC_WRAPPER:-}" ] && [ "${WEGENT_SCCACHE_AUTO:-0}" != "1" ]; then
     return 0
   fi
 
   if command -v sccache >/dev/null 2>&1; then
+    canonical_project_dir="$(cd "$project_dir" 2>/dev/null && pwd -P)" || return 1
     RUSTC_WRAPPER="$(command -v sccache)"
     export RUSTC_WRAPPER
     export CARGO_INCREMENTAL=0
     export WEGENT_SCCACHE_AUTO=1
+    if [ -z "${SCCACHE_BASEDIRS:-}" ] || [ "${WEGENT_SCCACHE_BASEDIRS_AUTO:-0}" = "1" ]; then
+      export SCCACHE_BASEDIRS="$canonical_project_dir:$target_dir"
+      export WEGENT_SCCACHE_BASEDIRS_AUTO=1
+    fi
   fi
 }
 
@@ -60,13 +73,13 @@ configure_wegent_cargo_target_dir() {
   local project_dir="$1"
   local cache_name="$2"
 
-  configure_wegent_sccache
-
   if [ "${WEGENT_DISABLE_SHARED_CARGO_TARGET:-0}" = "1" ]; then
+    configure_wegent_sccache "$project_dir" "$project_dir/target"
     return 0
   fi
 
   if [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    configure_wegent_sccache "$project_dir" "$CARGO_TARGET_DIR"
     return 0
   fi
 
@@ -79,6 +92,7 @@ configure_wegent_cargo_target_dir() {
   export CARGO_TARGET_DIR="$cache_root/$cache_name/worktrees/$worktree_key"
   export WEGENT_CARGO_TARGET_DIR_AUTO=1
   mkdir -p "$CARGO_TARGET_DIR"
+  configure_wegent_sccache "$project_dir" "$CARGO_TARGET_DIR"
 }
 
 cargo_target_dir_for() {
