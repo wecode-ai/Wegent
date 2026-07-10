@@ -14,7 +14,9 @@ import type { CloudDeviceMetricsResponse, MetricsHistoryResponse } from '@wecode
 
 const REFRESH_INTERVAL_MS = 30_000
 const HIGH_USAGE_THRESHOLD = 80
-const SCALING_WIKI_URL = 'https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/wegent-device'
+const SCALING_WIKI_URL =
+  process.env.NEXT_PUBLIC_CLOUD_DEVICE_SCALING_WIKI_URL ||
+  'https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/wegent-device'
 
 interface DeviceMetricsProps {
   deviceId: string
@@ -365,8 +367,8 @@ export function DeviceMetrics({ deviceId }: DeviceMetricsProps) {
     try {
       const data = await cloudDeviceApis.getMetrics(deviceId)
       setMetrics(data)
-    } catch {
-      // silently ignore
+    } catch (error) {
+      console.warn(`[DeviceMetrics] Failed to fetch metrics for ${deviceId}:`, error)
     }
   }, [deviceId])
 
@@ -375,8 +377,8 @@ export function DeviceMetrics({ deviceId }: DeviceMetricsProps) {
     try {
       const data = await cloudDeviceApis.getMetricsHistory(deviceId)
       setHistory(data)
-    } catch {
-      // silently ignore
+    } catch (error) {
+      console.warn(`[DeviceMetrics] Failed to fetch metrics history for ${deviceId}:`, error)
     } finally {
       setHistoryLoading(false)
     }
@@ -393,7 +395,9 @@ export function DeviceMetrics({ deviceId }: DeviceMetricsProps) {
   const handleToggle = () => {
     const next = !expanded
     setExpanded(next)
-    if (next && !history) {
+    // Re-fetch on every expand so the trend chart does not go stale while the
+    // panel is open (real-time metrics refresh on their own 30s interval).
+    if (next) {
       fetchHistory()
     }
   }
@@ -467,7 +471,7 @@ export function DeviceMetrics({ deviceId }: DeviceMetricsProps) {
 
       {expanded && (
         <div className="mt-2 pb-0.5">
-          {historyLoading ? (
+          {historyLoading && !history ? (
             <div className="flex h-[136px] items-center justify-center rounded-md border border-[#eeeeee] bg-[#fbfbfb] text-xs text-[#999]">
               {labels.loading}
             </div>

@@ -40,6 +40,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 FILES_SERVICE_TIMEOUT = 3.0
 
+# Nevis metric queries shared by the real-time and history endpoints.
+# Disk is filtered to the root filesystem; otherwise Nevis returns one series
+# per mountpoint (/boot/efi, tmpfs, ...) and data[0] may be the tiny EFI
+# partition instead of the real root disk.
+METRIC_QUERIES: dict[str, str] = {
+    "cpu": "max_over_time(syscpuidle:busy{cpu='cpu'})",
+    "memory": "max_over_time(sysmeminfo:memused_percentage)",
+    "disk": 'max_over_time(sysdiskinfo:used_size_percentage{mountpoint="/"})',
+}
+
 
 def _get_backend_url(request: Request) -> str:
     """Get backend URL from request or settings.
@@ -553,14 +563,6 @@ async def get_cloud_device_metrics(
 
     now = int(time.time())
     start = now - 300  # last 5 minutes
-    # Filter disk to the root filesystem; otherwise Nevis returns one series
-    # per mountpoint (/boot/efi, tmpfs, ...) and data[0] may be the tiny EFI
-    # partition instead of the real root disk.
-    queries = {
-        "cpu": "max_over_time(syscpuidle:busy{cpu='cpu'})",
-        "memory": "max_over_time(sysmeminfo:memused_percentage)",
-        "disk": 'max_over_time(sysdiskinfo:used_size_percentage{mountpoint="/"})',
-    }
 
     results: dict[str, float | None] = {"cpu": None, "memory": None, "disk": None}
 
@@ -582,9 +584,9 @@ async def get_cloud_device_metrics(
             logger.warning(f"Failed to fetch {key} metric for {sandbox_id}: {e}")
 
     await asyncio.gather(
-        _fetch_metric("cpu", queries["cpu"]),
-        _fetch_metric("memory", queries["memory"]),
-        _fetch_metric("disk", queries["disk"]),
+        _fetch_metric("cpu", METRIC_QUERIES["cpu"]),
+        _fetch_metric("memory", METRIC_QUERIES["memory"]),
+        _fetch_metric("disk", METRIC_QUERIES["disk"]),
     )
 
     return CloudDeviceMetricsResponse(
@@ -622,12 +624,6 @@ async def get_cloud_device_metrics_history(
 
     now = int(time.time())
     start = now - 3600  # last 1 hour
-    # Filter disk to the root filesystem (see metrics endpoint for rationale).
-    queries = {
-        "cpu": "max_over_time(syscpuidle:busy{cpu='cpu'})",
-        "memory": "max_over_time(sysmeminfo:memused_percentage)",
-        "disk": 'max_over_time(sysdiskinfo:used_size_percentage{mountpoint="/"})',
-    }
 
     results: dict[str, list] = {"cpu": [], "memory": [], "disk": []}
 
@@ -648,9 +644,9 @@ async def get_cloud_device_metrics_history(
             logger.warning(f"Failed to fetch {key} history for {sandbox_id}: {e}")
 
     await asyncio.gather(
-        _fetch_series("cpu", queries["cpu"]),
-        _fetch_series("memory", queries["memory"]),
-        _fetch_series("disk", queries["disk"]),
+        _fetch_series("cpu", METRIC_QUERIES["cpu"]),
+        _fetch_series("memory", METRIC_QUERIES["memory"]),
+        _fetch_series("disk", METRIC_QUERIES["disk"]),
     )
 
     return results
