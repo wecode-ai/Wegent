@@ -13,7 +13,6 @@ import { shouldUseMobileWorkbenchLayout } from '@/lib/workbench-layout-mode'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
 import { buildTrayMenuTaskGroups } from '@/tauri/trayMenuState'
 import { syncTrayMenuState } from '@/tauri/trayNavigation'
-
 export function WorkbenchPage() {
   const isMobileViewport = useIsMobile()
   const isTauri = isTauriRuntime()

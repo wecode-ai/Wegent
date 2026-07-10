@@ -551,6 +551,7 @@ function ProjectSendProbe() {
           workbench.state.currentProject?.config?.device_id ??
           'none'}
       </span>
+      <span data-testid="standalone-chat-key">{workbench.state.standaloneChatKey}</span>
       <span data-testid="composer-input">{paneSession.input}</span>
       <span data-testid="message-contents">
         {paneSession.messages.map(message => message.content).join('|')}
@@ -628,6 +629,9 @@ function ProjectSendProbe() {
       </button>
       <button type="button" onClick={() => workbench.startNewChat()}>
         start new chat
+      </button>
+      <button type="button" onClick={() => workbench.startStandaloneChat()}>
+        start standalone chat
       </button>
       <button
         type="button"
@@ -1385,6 +1389,9 @@ function RuntimeTaskSkillsProbe() {
       </button>
       <button type="button" onClick={() => void workbench.projectChat.listLocalSkills()}>
         list local skills
+      </button>
+      <button type="button" onClick={() => void workbench.projectChat.listLocalApps()}>
+        list local apps
       </button>
     </div>
   )
@@ -4849,6 +4856,36 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('project-attachment-count')).toHaveTextContent('1')
   })
 
+  test('starts standalone chat with a fresh blank draft scope', async () => {
+    renderWorkbench(<ProjectSendProbe />)
+
+    await waitFor(() => expect(screen.getByText('start standalone chat')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('set input'))
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('修复 CI')
+    expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('0')
+
+    await userEvent.click(screen.getByText('start standalone chat'))
+
+    await waitFor(() => expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('1'))
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('')
+  })
+
+  test('hydrates queued plugin trial input into a fresh standalone chat', async () => {
+    sessionStorage.setItem(
+      'wework:pending-plugin-trial',
+      JSON.stringify({
+        input: '[$Documents](plugin://documents@OpenAI Bundled) ',
+        pluginName: 'Documents',
+      })
+    )
+
+    renderWorkbench(<ProjectSendProbe />)
+
+    await waitFor(() => expect(screen.getByTestId('standalone-chat-key')).toHaveTextContent('1'))
+    expect(screen.getByTestId('composer-input')).toHaveTextContent('Documents')
+    expect(sessionStorage.getItem('wework:pending-plugin-trial')).toBeNull()
+  })
+
   test('sends a follow-up message after setting a goal in an existing runtime task', async () => {
     const sendRuntimeMessage = vi.fn().mockResolvedValue({
       accepted: true,
@@ -6809,7 +6846,59 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
-  test('loads local skills from the current runtime task device', async () => {
+  test('loads local skills and apps from Codex app-server', async () => {
+    setTauriRuntime()
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (
+          method === 'codex.app_server_request' &&
+          params &&
+          typeof params === 'object' &&
+          (params as { method?: unknown }).method === 'skills/list'
+        ) {
+          return {
+            data: [
+              {
+                cwd: '/workspace/runtime-device',
+                skills: [
+                  {
+                    name: 'env-context',
+                    description: 'Environment facts',
+                    path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
+                    scope: 'user',
+                    enabled: true,
+                  },
+                ],
+                errors: [],
+              },
+            ],
+          }
+        }
+        if (
+          method === 'codex.app_server_request' &&
+          params &&
+          typeof params === 'object' &&
+          (params as { method?: unknown }).method === 'app/list'
+        ) {
+          return {
+            data: [
+              {
+                id: 'google-calendar',
+                name: 'Google Calendar',
+                description: 'Manage calendar events',
+                isAccessible: true,
+                isEnabled: true,
+              },
+            ],
+            nextCursor: null,
+          }
+        }
+        return {}
+      }
+    )
     const services = createWorkbenchServices({
       deviceApi: {
         listDevices: vi
@@ -6818,14 +6907,6 @@ describe('WorkbenchProvider runtime tasks', () => {
             createDevice({ device_id: 'device-1', name: 'Default Device' }),
             createDevice({ id: 2, device_id: 'runtime-device', name: 'Runtime Device' }),
           ]),
-        listSkills: vi.fn().mockResolvedValue([
-          {
-            name: 'env-context',
-            description: 'Environment facts',
-            path: '/Users/crystal/.codex/skills/env-context/SKILL.md',
-            source: 'codex',
-          },
-        ]),
       } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
       runtimeWorkApi: createRuntimeWorkApiMock({
         getRuntimeTranscript: vi.fn(async (address: RuntimeTaskAddress) => ({
@@ -6852,7 +6933,32 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('list local skills'))
 
     await waitFor(() => {
-      expect(services.deviceApi.listSkills).toHaveBeenCalledWith('runtime-device')
+      expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+        'codex.app_server_request',
+        {
+          method: 'skills/list',
+          params: {
+            cwds: ['/workspace/runtime-device'],
+            forceReload: false,
+          },
+        }
+      )
+    })
+
+    await userEvent.click(screen.getByText('list local apps'))
+
+    await waitFor(() => {
+      expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+        'codex.app_server_request',
+        {
+          method: 'app/list',
+          params: {
+            cursor: null,
+            limit: 100,
+            forceRefetch: false,
+          },
+        }
+      )
     })
   })
 

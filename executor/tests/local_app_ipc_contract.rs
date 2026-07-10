@@ -94,6 +94,37 @@ async fn app_ipc_routes_runtime_rpc_request() {
 }
 
 #[tokio::test]
+async fn app_ipc_routes_codex_app_server_request() {
+    let server = AppIpcServer::new().with_runtime_work_handler(CodexRuntimeHandler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-codex",
+                "method": "codex.app_server_request",
+                "params": {
+                    "method": "plugin/installed",
+                    "params": {"cwds": null}
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response,
+        json!({
+            "type": "response",
+            "id": "req-codex",
+            "ok": true,
+            "result": {"marketplaces": []}
+        })
+    );
+}
+
+#[tokio::test]
 async fn app_ipc_emits_runtime_events_with_device_id() {
     let server = AppIpcServer::new().with_device_id("device-1");
 
@@ -837,6 +868,33 @@ impl RuntimeWorkHandler for RuntimeHandler {
                 })
             );
             Ok(json!({"success": true, "workspaces": []}))
+        })
+    }
+}
+
+struct CodexRuntimeHandler;
+
+impl RuntimeWorkHandler for CodexRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async { Err(AppIpcError::new("unexpected_runtime_rpc", "unexpected")) })
+    }
+
+    fn handle_codex_app_server_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            assert_eq!(
+                data,
+                json!({
+                    "method": "plugin/installed",
+                    "params": {"cwds": null}
+                })
+            );
+            Ok(json!({"marketplaces": []}))
         })
     }
 }

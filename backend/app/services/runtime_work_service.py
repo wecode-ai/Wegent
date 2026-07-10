@@ -361,13 +361,14 @@ async def get_runtime_transcript(
     payload = _runtime_transcript_payload(address, normalized_address)
     started_at = time.perf_counter()
     logger.info(
-        "[RuntimeWork] Requesting runtime transcript: user_id=%s device_id=%s local_task_id=%s workspace_path=%s limit=%s before_cursor=%s",
+        "[RuntimeWork] Requesting runtime transcript: user_id=%s device_id=%s local_task_id=%s workspace_path=%s limit=%s before_cursor=%s include_full_content=%s",
         user_id,
         normalized_address.device_id,
         normalized_address.local_task_id,
         normalized_address.workspace_path,
         payload.get("limit"),
         payload.get("beforeCursor"),
+        payload.get("includeFullContent"),
     )
     try:
         result = await runtime_rpc_service.call(
@@ -568,6 +569,8 @@ async def send_runtime_message(
         payload["source"] = request.source.model_dump()
     if request.request_user_input_response is not None:
         payload["requestUserInputResponse"] = request.request_user_input_response
+    if request.additional_context:
+        payload["additionalContext"] = request.additional_context
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -601,6 +604,8 @@ async def send_runtime_guidance(
     }
     if request.client_guidance_id:
         payload["clientGuidanceId"] = request.client_guidance_id
+    if request.additional_context:
+        payload["additionalContext"] = request.additional_context
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -3165,10 +3170,16 @@ def _runtime_transcript_payload(
     payload = _runtime_task_address_payload(normalized_address)
     limit = getattr(request, "limit", None)
     before_cursor = getattr(request, "before_cursor", None)
+    after_cursor = getattr(request, "after_cursor", None)
+    include_full_content = getattr(request, "include_full_content", False)
     if limit is not None:
         payload["limit"] = limit
     if before_cursor:
         payload["beforeCursor"] = before_cursor
+    if after_cursor:
+        payload["afterCursor"] = after_cursor
+    if include_full_content:
+        payload["includeFullContent"] = True
     return payload
 
 

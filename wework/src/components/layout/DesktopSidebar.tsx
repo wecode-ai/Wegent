@@ -2441,6 +2441,15 @@ export function DesktopSidebar({
                 onClick={onOpenSearch}
               />
             )}
+            {SHOW_PLUGINS_NAVIGATION && (
+              <SidebarButton
+                icon={Sparkles}
+                label={t('workbench.plugins', '插件')}
+                testId="plugins-button"
+                selected={activeItem === 'plugins'}
+                onClick={onOpenPlugins}
+              />
+            )}
             {showCloudConnectionEntry && (
               <CloudConnectionSidebarButton
                 devices={devices}
@@ -2455,15 +2464,6 @@ export function DesktopSidebar({
                     setStandaloneWorkspaceDialogMode('remote')
                   }
                 }}
-              />
-            )}
-            {SHOW_PLUGINS_NAVIGATION && (
-              <SidebarButton
-                icon={Sparkles}
-                label={t('workbench.plugins', '插件')}
-                testId="plugins-button"
-                selected={activeItem === 'plugins'}
-                onClick={onOpenPlugins}
               />
             )}
           </nav>

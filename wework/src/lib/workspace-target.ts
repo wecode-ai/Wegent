@@ -114,6 +114,7 @@ function workspaceTargetFromRuntimeTask(
     deviceId: workspace.deviceId,
     path: workspacePath,
     source: 'runtime',
+    taskId: task.taskId,
     ...(workspace.workspaceSource !== undefined
       ? { workspaceSource: workspace.workspaceSource }
       : {}),
@@ -179,12 +180,13 @@ export function resolveRuntimeWorkspaceContext({
       deviceId: currentRuntimeTask.deviceId,
       path: workspacePath,
       source: 'runtime',
+      taskId: currentRuntimeTask.taskId,
     },
   }
 }
 
 export function workspaceTargetKey(target: WorkspaceTarget | null): string {
   return target
-    ? `${target.deviceId}:${target.path}:${target.source}:${target.workspaceSource ?? ''}`
+    ? `${target.deviceId}:${target.path}:${target.source}:${target.taskId ?? ''}:${target.workspaceSource ?? ''}`
     : ''
 }

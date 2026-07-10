@@ -3952,4 +3952,32 @@ describe('MessageList', () => {
     )
     expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
   })
+
+  test('renders plugin markdown links in user messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content:
+              '[$Documents](plugin://documents@openai-primary-runtime) Draft a project memo as a document',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const pluginLink = screen.getByTestId('sent-plugin-token-Documents')
+
+    expect(pluginLink).toHaveAttribute('href', 'plugin://documents@openai-primary-runtime')
+    expect(screen.getByTestId('sent-plugin-icon-Documents')).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent(
+      'Documents Draft a project memo as a document'
+    )
+    expect(
+      screen.queryByText(/plugin:\/\/documents@openai-primary-runtime/)
+    ).not.toBeInTheDocument()
+  })
 })

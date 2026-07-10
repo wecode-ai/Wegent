@@ -17,6 +17,9 @@ from app.schemas.installed_plugin import (
     InstalledPlugin,
     InstalledPluginListResponse,
     InstalledPluginUpdateRequest,
+    PluginMarketplaceInstallResponse,
+    PluginMarketplaceListResponse,
+    PluginMarketplacePublishResponse,
 )
 from app.services.claude_plugin_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.device.capability_sync_service import device_capability_sync_service
@@ -67,6 +70,68 @@ async def upload_plugin(
     )
     await _sync_global_capabilities(db, current_user.id)
     return installed
+
+
+@router.get("/marketplace", response_model=PluginMarketplaceListResponse)
+def list_marketplace_plugins(
+    q: str | None = None,
+    source: str | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginMarketplaceListResponse:
+    """List Codex-compatible plugins published to the Wegent marketplace."""
+    return installed_plugin_service.list_marketplace_plugins(
+        db=db,
+        user_id=current_user.id,
+        query=q,
+        source=source,
+    )
+
+
+@router.post(
+    "/marketplace/publish",
+    response_model=PluginMarketplacePublishResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def publish_marketplace_plugin(
+    file: UploadFile = File(...),
+    visibility: str = Form("workspace"),
+    featured: bool = Form(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginMarketplacePublishResponse:
+    """Publish a Codex-compatible plugin ZIP package to the Wegent marketplace."""
+    if visibility not in {"personal", "workspace", "public"}:
+        raise HTTPException(status_code=400, detail="Invalid plugin visibility")
+    content = await _read_plugin_upload(file)
+    item = installed_plugin_service.publish_marketplace_plugin(
+        db=db,
+        user_id=current_user.id,
+        package_bytes=content,
+        filename=file.filename or "plugin.zip",
+        visibility=visibility,
+        featured=featured,
+    )
+    return PluginMarketplacePublishResponse(item=item)
+
+
+@router.post(
+    "/marketplace/{marketplace_id}/install",
+    response_model=PluginMarketplaceInstallResponse,
+)
+async def install_marketplace_plugin(
+    marketplace_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+) -> PluginMarketplaceInstallResponse:
+    """Install a marketplace plugin for the current user."""
+    plugin = installed_plugin_service.install_marketplace_plugin(
+        db=db,
+        user_id=current_user.id,
+        marketplace_id=marketplace_id,
+    )
+    await _sync_global_capabilities(db, current_user.id)
+    return PluginMarketplaceInstallResponse(plugin=plugin)
 
 
 async def _read_plugin_upload(file: UploadFile) -> bytes:

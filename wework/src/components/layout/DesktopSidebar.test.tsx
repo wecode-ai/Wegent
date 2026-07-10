@@ -285,13 +285,24 @@ describe('DesktopSidebar', () => {
     expect(onOpenSearch).toHaveBeenCalledTimes(1)
   })
 
-  test('places the cloud connection entry next to the primary sidebar actions', () => {
+  test('places plugins as the third primary sidebar action', () => {
     renderSidebar()
 
+    const newChatButton = screen.getByTestId('new-chat-button')
     const searchButton = screen.getByTestId('runtime-search-button')
+    const pluginsButton = screen.getByTestId('plugins-button')
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
     const projectsHeader = screen.getByTestId('projects-section-toggle')
 
+    expect(newChatButton.compareDocumentPosition(searchButton)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(searchButton.compareDocumentPosition(pluginsButton)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
+    expect(pluginsButton.compareDocumentPosition(cloudButton)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    )
     expect(searchButton.compareDocumentPosition(cloudButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     expect(cloudButton.compareDocumentPosition(projectsHeader)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
@@ -513,12 +524,13 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('remote-device-startup-command')).toHaveTextContent('wegent-executor')
   })
 
-  test('hides plugins navigation while the feature is not released', () => {
+  test('opens plugins navigation from the desktop sidebar', async () => {
     const onOpenPlugins = vi.fn()
     renderSidebar({ onOpenPlugins })
 
-    expect(screen.queryByTestId('plugins-button')).not.toBeInTheDocument()
-    expect(onOpenPlugins).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('plugins-button'))
+
+    expect(onOpenPlugins).toHaveBeenCalledTimes(1)
   })
 
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {

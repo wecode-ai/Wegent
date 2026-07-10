@@ -9,7 +9,7 @@
 
 use std::{
     collections::HashMap,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     time::{Instant, UNIX_EPOCH},
 };
@@ -96,8 +96,8 @@ pub async fn list_local_skills() -> CommandResult {
 }
 
 fn collect_skills() -> Vec<SkillEntry> {
-    let home = home_dir();
-    let codex_skills_root = home.join(".codex").join("skills");
+    let codex_home = codex_home_dir();
+    let codex_skills_root = codex_home.join("skills");
 
     let mut skills = Vec::new();
     skills.extend(scan_skill_dir(
@@ -112,10 +112,7 @@ fn collect_skills() -> Vec<SkillEntry> {
         "system",
         CODEX_SYSTEM_PRIORITY,
     ));
-    skills.extend(scan_plugin_dir(
-        &home.join(".codex").join("plugins"),
-        "codex-plugin",
-    ));
+    skills.extend(scan_plugin_dir(&codex_home.join("plugins"), "codex-plugin"));
 
     deduplicate_and_sort(skills)
 }
@@ -512,6 +509,13 @@ fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn codex_home_dir() -> PathBuf {
+    env::var_os("CODEX_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".codex"))
 }
 
 fn elapsed_seconds(started_at: Instant) -> f64 {

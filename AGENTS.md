@@ -59,6 +59,8 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/wework-e2e-automation.md`](docs/en/developer-guide/wework-e2e-automation.md)
 - Wework chat state sources: [`docs/zh/developer-guide/wework-chat-state-sources.md`](docs/zh/developer-guide/wework-chat-state-sources.md)
 - English version: [`docs/en/developer-guide/wework-chat-state-sources.md`](docs/en/developer-guide/wework-chat-state-sources.md)
+- Wework Codex plugin runtime: [`docs/zh/developer-guide/wework-codex-plugins.md`](docs/zh/developer-guide/wework-codex-plugins.md)
+- English version: [`docs/en/developer-guide/wework-codex-plugins.md`](docs/en/developer-guide/wework-codex-plugins.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:

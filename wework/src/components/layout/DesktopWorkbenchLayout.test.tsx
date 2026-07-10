@@ -5657,6 +5657,7 @@ describe('DesktopWorkbenchLayout', () => {
         deviceId: 'runtime-device',
         path: '/workspace/worktrees/8/project-alpha',
         source: 'runtime',
+        taskId: 'runtime-1',
       })
     )
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()

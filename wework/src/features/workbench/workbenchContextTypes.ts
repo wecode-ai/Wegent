@@ -9,9 +9,11 @@ import type {
   DeviceWorkspacePrepareResponse,
   GitBranch,
   GitRepoInfo,
+  LocalDeviceApp,
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
+  PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
   ProjectWithTasks,
@@ -106,6 +108,7 @@ export interface WorkbenchContextValue {
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string
+    trialTemplates: PluginPathComponent[]
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -126,6 +129,7 @@ export interface WorkbenchContextValue {
     removeAttachment: (attachmentId: number) => Promise<void>
     resetAttachments: () => void
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
+    listLocalApps: () => Promise<LocalDeviceApp[]>
   }
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode

@@ -255,6 +255,15 @@ export interface RuntimeTaskAddress {
   runtimeHandle?: Record<string, unknown> | null
 }
 
+export type RuntimeAdditionalContextKind = 'application' | 'untrusted'
+
+export interface RuntimeAdditionalContextEntry {
+  value: string
+  kind: RuntimeAdditionalContextKind
+}
+
+export type RuntimeAdditionalContext = Record<string, RuntimeAdditionalContextEntry>
+
 export interface RuntimeMessageSource {
   source: 'im' | 'manual' | string
   external_id?: string | null
@@ -270,6 +279,10 @@ export interface NormalizedRuntimeMessage {
   id: string
   role: 'user' | 'assistant' | 'system' | string
   content: string
+  contentTruncated?: boolean | null
+  content_truncated?: boolean | null
+  contentOriginalChars?: number | null
+  content_original_chars?: number | null
   messageIndex?: number | null
   message_index?: number | null
   subtaskId?: string | null
@@ -471,6 +484,7 @@ export interface RuntimeTranscriptResponse {
   title?: string | null
   messages: NormalizedRuntimeMessage[]
   contextUsage?: RuntimeContextUsage | null
+  fullContent?: boolean
   turnNavigation?: RuntimeTurnNavigationItem[]
   rangeStart?: number | null
   rangeEnd?: number | null
@@ -486,6 +500,7 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   beforeCursor?: string | null
   afterCursor?: string | null
   refresh?: boolean
+  includeFullContent?: boolean
 }
 
 export interface RuntimeSendRequest {
@@ -501,6 +516,8 @@ export interface RuntimeSendRequest {
   source?: RuntimeMessageSource | null
   requestUserInputResponse?: RequestUserInputResponse
   request_user_input_response?: RequestUserInputResponse
+  additionalContext?: RuntimeAdditionalContext
+  additional_context?: RuntimeAdditionalContext
 }
 
 export interface RuntimeRollbackRequest extends RuntimeSendRequest {
@@ -534,6 +551,8 @@ export interface RuntimeGuidanceRequest {
   message: string
   clientGuidanceId?: string
   client_guidance_id?: string
+  additionalContext?: RuntimeAdditionalContext
+  additional_context?: RuntimeAdditionalContext
 }
 
 export interface RuntimeGuidanceResponse {
@@ -961,6 +980,18 @@ export interface LocalDeviceSkill {
   plugin_provider?: string | null
   plugin_version?: string | null
   mtime?: number
+}
+
+export interface LocalDeviceApp {
+  id: string
+  name: string
+  description?: string | null
+  logoUrl?: string | null
+  installUrl?: string | null
+  isAccessible?: boolean
+  isEnabled?: boolean
+  pluginDisplayNames?: string[]
+  source?: 'codex-app' | string
 }
 
 export interface SkillDirectoryMove {
@@ -1535,6 +1566,13 @@ export interface PluginSkillComponent {
 export interface PluginPathComponent {
   name: string
   path: string
+  description?: string | null
+  category?: string | null
+  canonicalConnectorId?: string | null
+  logoUrl?: string | null
+  logoUrlDark?: string | null
+  materializedAppIds?: string[]
+  unavailableReason?: string | null
 }
 
 export interface PluginMCPComponent {
@@ -1545,6 +1583,8 @@ export interface PluginMCPComponent {
 export interface InstalledPluginComponents {
   skills: PluginSkillComponent[]
   commands: PluginPathComponent[]
+  templates?: PluginPathComponent[]
+  apps?: PluginPathComponent[]
   agents: PluginPathComponent[]
   hooks: PluginPathComponent[]
   mcps: PluginMCPComponent[]
@@ -1568,6 +1608,24 @@ export interface InstalledPluginPackageRef {
   sizeBytes: number
 }
 
+export interface PluginInterface {
+  displayName?: string | null
+  shortDescription?: string | null
+  longDescription?: string | null
+  developerName?: string | null
+  category?: string | null
+  capabilities?: string[]
+  websiteUrl?: string | null
+  privacyPolicyUrl?: string | null
+  termsOfServiceUrl?: string | null
+  defaultPrompt?: string[] | null
+  brandColor?: string | null
+  composerIcon?: string | null
+  logo?: string | null
+  logoDark?: string | null
+  screenshots?: string[]
+}
+
 export interface InstalledPlugin {
   apiVersion: string
   kind: 'InstalledPlugin'
@@ -1583,6 +1641,7 @@ export interface InstalledPlugin {
     componentStates?: Record<string, boolean>
     manifest: Record<string, unknown>
     components: InstalledPluginComponents
+    interface?: PluginInterface | null
     packageRef?: InstalledPluginPackageRef | null
     sourcePayload?: Record<string, unknown> | null
   }
@@ -1593,6 +1652,38 @@ export interface InstalledPlugin {
 
 export interface InstalledPluginListResponse {
   items: InstalledPlugin[]
+}
+
+export interface PluginMarketplaceItem {
+  id: string | number
+  remotePluginId: string
+  name: string
+  displayName: string
+  description: string
+  version?: string | null
+  author?: string | null
+  visibility: 'personal' | 'workspace' | 'public'
+  featured: boolean
+  installed: boolean
+  installedPluginId?: string | number | null
+  enabled: boolean
+  sourceType: 'marketplace'
+  interface?: PluginInterface | null
+  components: InstalledPluginComponents
+  manifest: Record<string, unknown>
+  ownerUserId: number
+}
+
+export interface PluginMarketplaceListResponse {
+  items: PluginMarketplaceItem[]
+}
+
+export interface PluginMarketplacePublishResponse {
+  item: PluginMarketplaceItem
+}
+
+export interface PluginMarketplaceInstallResponse {
+  plugin: InstalledPlugin
 }
 
 export interface InstalledPluginUpdateRequest {
@@ -1615,6 +1706,8 @@ export interface ChatBlock {
   id: string
   type: ChatBlockType
   content?: string
+  contentTruncated?: boolean
+  contentOriginalChars?: number
   tool_use_id?: string
   tool_name?: string
   tool_input?: Record<string, unknown>

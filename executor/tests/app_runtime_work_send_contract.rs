@@ -175,7 +175,13 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     })
                 ),
                 "source": source,
-                "attachments": [attachment]
+                "attachments": [attachment],
+                "additionalContext": {
+                    "wework.terminal.current": {
+                        "kind": "application",
+                        "value": "terminal output"
+                    }
+                }
             }
         }))
         .await
@@ -214,6 +220,10 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
     assert_eq!(
         last_turn_start["params"]["collaborationMode"]["mode"],
         "default"
+    );
+    assert_eq!(
+        last_turn_start["params"]["additionalContext"]["wework.terminal.current"]["value"],
+        "terminal output"
     );
     let input = last_turn_start["params"]["input"].as_array().unwrap();
     assert!(input.iter().any(|item| {
@@ -1442,7 +1452,13 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
                 "workspacePath": "/tmp/project",
                 "taskId": "local-task-guide",
                 "message": "use this steering input",
-                "clientGuidanceId": "guide-1"
+                "clientGuidanceId": "guide-1",
+                "additionalContext": {
+                    "wework.terminal.current": {
+                        "kind": "application",
+                        "value": "terminal output"
+                    }
+                }
             }
         }))
         .await
@@ -1461,8 +1477,17 @@ async fn runtime_tasks_guidance_steers_running_codex_turn() {
         })
     );
     wait_for_method_count(&log_path, "turn/steer", 1).await;
+    let calls = read_json_lines(&log_path);
+    let steer = calls
+        .iter()
+        .find(|call| call["method"] == "turn/steer")
+        .expect("guidance should steer the active turn");
     assert_eq!(
-        read_json_lines(&log_path)
+        steer["params"]["additionalContext"]["wework.terminal.current"]["value"],
+        "terminal output"
+    );
+    assert_eq!(
+        calls
             .iter()
             .filter(|call| call["method"] == "turn/interrupt")
             .count(),
@@ -1688,6 +1713,57 @@ async fn runtime_tasks_send_uses_nested_address_runtime_handle_without_local_ind
         .iter()
         .find(|call| call["method"] == "thread/resume")
         .expect("send should resume the nested runtime handle");
+    assert_eq!(resume["params"]["threadId"], "thread-1");
+}
+
+#[tokio::test]
+async fn runtime_tasks_send_recovers_thread_from_unique_workspace_when_visible_task_id_is_stale() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-send-stale-visible-id-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-send-stale-visible-id-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-send-stale-visible-id-log", "jsonl");
+    let fake_codex = write_fake_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let sent = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "runtime-visible-stale-id",
+                "message": "continue stale visible task",
+                "executionRequest": codex_execution_request(
+                    "continue stale visible task",
+                    "/tmp/project",
+                    "gpt-4.1"
+                )
+            }
+        }))
+        .await
+        .expect("send should be accepted");
+    assert_eq!(sent["accepted"], true);
+
+    wait_for_method_count(&log_path, "thread/resume", 1).await;
+    let calls = read_json_lines(&log_path);
+    let list = calls
+        .iter()
+        .find(|call| call["method"] == "thread/list")
+        .expect("send should recover from thread list");
+    assert_eq!(list["params"]["sortKey"], "updated_at");
+    let resume = calls
+        .iter()
+        .find(|call| call["method"] == "thread/resume")
+        .expect("send should resume the recovered provider thread");
     assert_eq!(resume["params"]["threadId"], "thread-1");
 }
 

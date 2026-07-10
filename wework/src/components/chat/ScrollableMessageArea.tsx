@@ -86,6 +86,8 @@ interface ScrollableMessageAreaProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   autoScrollSuspended?: boolean
   onLoadMoreBefore?: () => Promise<void> | void
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
 }
@@ -149,6 +151,8 @@ function areScrollableMessageAreaPropsEqual(
       : null,
     previous.autoScrollSuspended !== next.autoScrollSuspended ? 'autoScrollSuspended' : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
+    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
+    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem
       ? 'onLoadTurnNavigationItem'
       : null,
@@ -190,6 +194,8 @@ function ScrollableMessagePaneContent({
   hiddenRequestUserInputIds,
   autoScrollSuspended = false,
   onLoadMoreBefore,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
 }: ScrollableMessageAreaProps) {
@@ -704,7 +710,7 @@ function ScrollableMessagePaneContent({
                 <p className="mt-2 max-w-sm text-xs leading-5 text-text-muted">
                   {t(
                     'workbench.empty_conversation_description',
-                    '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。'
+                    '在下方输入问题、粘贴上下文或添加附件，WeWork 会在这里展示回复。'
                   )}
                 </p>
               </div>
@@ -745,6 +751,8 @@ function ScrollableMessagePaneContent({
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onEditLastUserMessage={onEditLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
+                onLoadFullTranscript={onLoadFullTranscript}
+                loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}

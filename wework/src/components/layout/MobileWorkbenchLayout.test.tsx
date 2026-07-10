@@ -1699,7 +1699,7 @@ describe('MobileWorkbenchLayout', () => {
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
     expect(screen.queryByTestId('wework-settings-page')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
-    expect(onOpenPlugins).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('mobile-settings-plugins-button'))
+    expect(window.location.pathname).toBe('/plugins')
   })
 })

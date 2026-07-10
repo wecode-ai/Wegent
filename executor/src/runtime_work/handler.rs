@@ -51,7 +51,7 @@ use super::{
         CodexNotificationCacheMapper,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::transcript_messages,
+    transcript::{full_transcript_messages, transcript_messages},
     transcript_cache::{CachedTranscript, TranscriptCache, TranscriptSourceSignature},
     transcript_page::transcript_page,
     util::{
@@ -339,6 +339,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.instructions.read" => self.read_codex_instructions().await,
+            "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
@@ -498,6 +500,65 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({
             "data": models,
             "providers": provider_results,
+        }))
+    }
+
+    async fn read_codex_instructions(&self) -> Result<Value, AppIpcError> {
+        let response = self
+            .codex_app_server
+            .request(
+                "config/read",
+                json!({
+                    "includeLayers": false,
+                    "cwd": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_instructions_read_failed", error))?;
+        let instructions = response
+            .get("config")
+            .and_then(|config| config.get("instructions"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        Ok(json!({ "instructions": instructions }))
+    }
+
+    async fn write_codex_instructions(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let Some(instructions) = payload.get("instructions") else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "instructions must be a string",
+            ));
+        };
+        let Some(instructions) = instructions.as_str() else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "instructions must be a string",
+            ));
+        };
+        let trimmed = instructions.trim();
+        let value = if trimmed.is_empty() {
+            Value::Null
+        } else {
+            Value::String(instructions.to_owned())
+        };
+        let response = self
+            .codex_app_server
+            .request(
+                "config/value/write",
+                json!({
+                    "keyPath": "instructions",
+                    "value": value,
+                    "mergeStrategy": "replace",
+                    "filePath": Value::Null,
+                    "expectedVersion": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_instructions_write_failed", error))?;
+        Ok(json!({
+            "instructions": if trimmed.is_empty() { "" } else { instructions },
+            "configPath": response.get("filePath").cloned().unwrap_or(Value::Null),
         }))
     }
 
@@ -668,6 +729,9 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "before_cursor"));
         let after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        let include_full_content = bool_field(&payload, "includeFullContent")
+            .or_else(|| bool_field(&payload, "include_full_content"))
+            .unwrap_or(false);
         let refresh = bool_field(&payload, "refresh")
             .or_else(|| bool_field(&payload, "forceRefresh"))
             .unwrap_or(false);
@@ -729,47 +793,51 @@ impl RuntimeWorkRpcHandler {
                 limit,
                 before_cursor,
                 after_cursor,
+                full_content: include_full_content,
             }));
         };
 
-        if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
-            let messages = local_link
-                .as_ref()
-                .map(|link| {
-                    merge_cached_messages(
-                        cached.messages.clone(),
-                        cached_runtime_transcript_messages_for_provider(link, &cached.messages),
-                    )
-                })
-                .unwrap_or_else(|| cached.messages.clone());
-            let running = transcript_running(
-                local_link.as_ref(),
-                running_hint || cached.running,
-                &messages,
-            );
-            log_runtime_transcript_finished(RuntimeTranscriptLog {
-                started_at,
-                local_task_id: &local_task_id,
-                thread_id: &thread_id,
-                source: "transcript_cache",
-                refresh,
-                running_hint,
-                limit,
-                before_cursor: before_cursor.as_deref(),
-                after_cursor: after_cursor.as_deref(),
-                message_count: messages.len(),
-                running,
-            });
-            return Ok(transcript_response(TranscriptResponseInput {
-                local_task_id,
-                workspace_path: cached.workspace_path,
-                runtime: cached.runtime,
-                messages,
-                context_usage: cached.context_usage,
-                limit,
-                before_cursor,
-                after_cursor,
-            }));
+        if !include_full_content {
+            if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
+                let messages = local_link
+                    .as_ref()
+                    .map(|link| {
+                        merge_cached_messages(
+                            cached.messages.clone(),
+                            cached_runtime_transcript_messages_for_provider(link, &cached.messages),
+                        )
+                    })
+                    .unwrap_or_else(|| cached.messages.clone());
+                let running = transcript_running(
+                    local_link.as_ref(),
+                    running_hint || cached.running,
+                    &messages,
+                );
+                log_runtime_transcript_finished(RuntimeTranscriptLog {
+                    started_at,
+                    local_task_id: &local_task_id,
+                    thread_id: &thread_id,
+                    source: "transcript_cache",
+                    refresh,
+                    running_hint,
+                    limit,
+                    before_cursor: before_cursor.as_deref(),
+                    after_cursor: after_cursor.as_deref(),
+                    message_count: messages.len(),
+                    running,
+                });
+                return Ok(transcript_response(TranscriptResponseInput {
+                    local_task_id,
+                    workspace_path: cached.workspace_path,
+                    runtime: cached.runtime,
+                    messages,
+                    context_usage: cached.context_usage,
+                    limit,
+                    before_cursor,
+                    after_cursor,
+                    full_content: false,
+                }));
+            }
         }
 
         let mut source = "thread_read";
@@ -795,7 +863,7 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "workspace_path"))
             .unwrap_or_default();
 
-        if refresh {
+        if refresh && !include_full_content {
             if let Some(cached) = self.transcript_cache.peek(&thread_id) {
                 if let Some(updated) = self.incremental_cached_transcript(
                     cached,
@@ -830,6 +898,7 @@ impl RuntimeWorkRpcHandler {
                         limit,
                         before_cursor,
                         after_cursor,
+                        full_content: false,
                     }));
                 }
             }
@@ -837,7 +906,11 @@ impl RuntimeWorkRpcHandler {
 
         let transcript_thread = codex_thread_state(&thread);
         let context_usage = transcript_context_usage(&transcript_thread);
-        let transcript_messages = transcript_messages(&transcript_thread, &self.device_id);
+        let transcript_messages = if include_full_content {
+            full_transcript_messages(&transcript_thread, &self.device_id)
+        } else {
+            transcript_messages(&transcript_thread, &self.device_id)
+        };
         let messages = local_link
             .as_ref()
             .map(|link| {
@@ -849,18 +922,20 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or(transcript_messages);
         let running = transcript_running(local_link.as_ref(), running_hint, &messages);
         let message_count = messages.len();
-        self.transcript_cache.insert(
-            thread_id.clone(),
-            CachedTranscript::new(
-                workspace_path.clone(),
-                "codex".to_owned(),
-                messages.clone(),
-                running,
-                transcript_source_signature(&thread),
-            )
-            .with_context_usage(context_usage.clone())
-            .with_rollout_turns(rollout_turns(&transcript_thread)),
-        );
+        if !include_full_content {
+            self.transcript_cache.insert(
+                thread_id.clone(),
+                CachedTranscript::new(
+                    workspace_path.clone(),
+                    "codex".to_owned(),
+                    messages.clone(),
+                    running,
+                    transcript_source_signature(&thread),
+                )
+                .with_context_usage(context_usage.clone())
+                .with_rollout_turns(rollout_turns(&transcript_thread)),
+            );
+        }
         log_runtime_transcript_finished(RuntimeTranscriptLog {
             started_at,
             local_task_id: &local_task_id,
@@ -881,9 +956,18 @@ impl RuntimeWorkRpcHandler {
             runtime: "codex".to_owned(),
             messages,
             context_usage,
-            limit,
-            before_cursor,
-            after_cursor,
+            limit: if include_full_content { None } else { limit },
+            before_cursor: if include_full_content {
+                None
+            } else {
+                before_cursor
+            },
+            after_cursor: if include_full_content {
+                None
+            } else {
+                after_cursor
+            },
+            full_content: include_full_content,
         }))
     }
 
@@ -1423,11 +1507,21 @@ impl RuntimeWorkRpcHandler {
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
-        let Some(thread_id) = runtime_session_id_from_payload(&payload).or_else(|| {
-            existing_link
-                .as_ref()
-                .and_then(runtime_session_id_from_link)
-        }) else {
+        let recovered_link = self
+            .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
+            .await;
+        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+            .or_else(|| {
+                existing_link
+                    .as_ref()
+                    .and_then(runtime_session_id_from_link)
+            })
+            .or_else(|| {
+                recovered_link
+                    .as_ref()
+                    .and_then(runtime_session_id_from_link)
+            })
+        else {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -1461,8 +1555,8 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
-        let ephemeral =
-            request.ephemeral || existing_link.as_ref().is_some_and(|link| link.ephemeral);
+        let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
+        let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         let direct_thread_id = ephemeral.then(|| thread_id.clone());
         let resume_thread_id = (!ephemeral).then_some(thread_id);
 
@@ -1599,9 +1693,19 @@ impl RuntimeWorkRpcHandler {
                 "text": message,
             }
         ]);
+        let additional_context = payload
+            .get("additionalContext")
+            .or_else(|| payload.get("additional_context"))
+            .filter(|value| value.is_object())
+            .cloned();
         match self
             .codex_app_server
-            .steer_turn(&active_turn.thread_id, &active_turn.turn_id, steer_input)
+            .steer_turn(
+                &active_turn.thread_id,
+                &active_turn.turn_id,
+                steer_input,
+                additional_context,
+            )
             .await
         {
             Ok(turn_id) => Ok(json!({
@@ -2972,6 +3076,43 @@ impl RuntimeWorkRpcHandler {
         Ok(link)
     }
 
+    async fn recover_send_task_link(
+        &self,
+        payload: &Value,
+        local_task_id: &str,
+        existing_link: Option<&RuntimeTaskLink>,
+    ) -> Option<RuntimeTaskLink> {
+        if existing_link
+            .and_then(runtime_session_id_from_link)
+            .is_some()
+        {
+            return existing_link.cloned();
+        }
+
+        let workspace_path = workspace_path(payload).unwrap_or_default();
+        let mut workspace_matches = Vec::new();
+        for link in self.collect_links(false).await {
+            if link.local_task_id == local_task_id
+                || link.thread_id.as_deref() == Some(local_task_id)
+            {
+                return Some(link);
+            }
+
+            if !workspace_path.is_empty()
+                && link.workspace_path == workspace_path
+                && runtime_session_id_from_link(&link).is_some()
+            {
+                workspace_matches.push(link);
+            }
+        }
+
+        if workspace_matches.len() == 1 {
+            workspace_matches.pop()
+        } else {
+            None
+        }
+    }
+
     async fn thread_messages(&self, thread_id: &str) -> Vec<Value> {
         if let Some(cached) = self.transcript_cache.get(thread_id, false, false) {
             return cached.messages;
@@ -3699,7 +3840,7 @@ impl CodexThreadListCache {
 fn codex_thread_list_params(archived: bool, cursor: Option<&str>) -> Value {
     let mut params = json!({
         "limit": CODEX_THREAD_LIST_PAGE_SIZE,
-        "sortKey": "recency_at",
+        "sortKey": "updated_at",
         "sortDirection": "desc",
         "sourceKinds": CODEX_THREAD_SOURCE_KINDS,
         "archived": archived,
@@ -3862,6 +4003,7 @@ fn cached_transcript_response(
         limit,
         before_cursor: before_cursor.map(ToOwned::to_owned),
         after_cursor: after_cursor.map(ToOwned::to_owned),
+        full_content: false,
     })
 }
 
@@ -3874,6 +4016,7 @@ struct TranscriptResponseInput {
     limit: Option<usize>,
     before_cursor: Option<String>,
     after_cursor: Option<String>,
+    full_content: bool,
 }
 
 fn transcript_response(input: TranscriptResponseInput) -> Value {
@@ -3886,6 +4029,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         limit,
         before_cursor,
         after_cursor,
+        full_content,
     } = input;
     let turn_navigation = transcript_turn_navigation(&messages);
     let page = transcript_page(
@@ -3900,6 +4044,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         "workspacePath": workspace_path,
         "runtime": runtime,
         "messages": page.messages,
+        "fullContent": full_content,
         "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
         "rangeStart": page.range_start,
@@ -4747,6 +4892,49 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
             self.dispatch(&method, payload).await
         })
     }
+
+    fn handle_codex_app_server_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            let method = string_field(&data, "method")
+                .ok_or_else(|| AppIpcError::new("bad_request", "method is required"))?;
+            if !is_allowed_plugin_app_server_method(&method) {
+                return Err(AppIpcError::new(
+                    "unsupported_codex_app_server_method",
+                    format!("Unsupported Codex app-server method: {method}"),
+                ));
+            }
+            let params = data
+                .get("params")
+                .cloned()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            self.codex_app_server
+                .request(&method, params)
+                .await
+                .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))
+        })
+    }
+}
+
+fn is_allowed_plugin_app_server_method(method: &str) -> bool {
+    matches!(
+        method,
+        "marketplace/add"
+            | "marketplace/remove"
+            | "marketplace/upgrade"
+            | "plugin/list"
+            | "plugin/installed"
+            | "plugin/read"
+            | "plugin/skill/read"
+            | "plugin/install"
+            | "plugin/uninstall"
+            | "skills/list"
+            | "skills/config/write"
+            | "app/list"
+    )
 }
 
 #[cfg(debug_assertions)]
@@ -4936,6 +5124,32 @@ mod tests {
         assert_eq!(provider.display_name, "CodeX");
         assert_eq!(provider.kind, "official");
         assert!(provider.current);
+    }
+
+    #[test]
+    fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
+        for method in [
+            "marketplace/add",
+            "marketplace/remove",
+            "marketplace/upgrade",
+            "plugin/list",
+            "plugin/installed",
+            "plugin/read",
+            "plugin/skill/read",
+            "plugin/install",
+            "plugin/uninstall",
+            "skills/list",
+            "skills/config/write",
+            "app/list",
+        ] {
+            assert!(
+                is_allowed_plugin_app_server_method(method),
+                "{method} should be allowed"
+            );
+        }
+
+        assert!(!is_allowed_plugin_app_server_method("thread/new"));
+        assert!(!is_allowed_plugin_app_server_method("plugin/share/save"));
     }
 
     #[test]
@@ -5169,6 +5383,21 @@ mod tests {
             .expect("restart should return success");
 
         assert_eq!(result["restarted"], true);
+    }
+
+    #[tokio::test]
+    async fn codex_instructions_write_rejects_non_string_payload() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.instructions.write",
+                "payload": {"instructions": 1}
+            }))
+            .await;
+
+        let error = result.expect_err("non-string instructions should be rejected");
+        assert_eq!(error.code, "invalid_request");
     }
 
     #[tokio::test]

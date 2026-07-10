@@ -16,6 +16,7 @@ const mergedDefaultPreferences = {
   showMainWindowOnLaunch: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
+  terminalContextInjectionEnabled: true,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -64,6 +65,7 @@ describe('appPreferences', () => {
     invokeMock.mockResolvedValue({
       ...mergedDefaultPreferences,
       closeToTrayEnabled: false,
+      terminalContextInjectionEnabled: false,
       trayRunningEnabled: false,
     })
 
@@ -72,6 +74,7 @@ describe('appPreferences', () => {
     await expect(updateAppPreferences({ closeToTrayEnabled: false })).resolves.toEqual({
       ...mergedDefaultPreferences,
       closeToTrayEnabled: false,
+      terminalContextInjectionEnabled: false,
       trayRunningEnabled: false,
     })
     expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {

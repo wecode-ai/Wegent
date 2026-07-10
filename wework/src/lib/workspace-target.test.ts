@@ -173,6 +173,7 @@ describe('resolveWorkspaceTarget', () => {
         deviceId: 'device-b',
         path: '/workspace/worktrees/8/project-alpha',
         source: 'runtime',
+        taskId: 'runtime-1',
       },
     })
   })
