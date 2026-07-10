@@ -3,6 +3,7 @@ import { APP_PREFERENCES_CHANGED_EVENT, defaultAppPreferences } from '@/tauri/ap
 import type { RuntimeTaskAddress } from '@/types/api'
 import {
   appendRuntimeTerminalContext,
+  markRuntimeTerminalAdditionalContextDelivered,
   readRuntimeTerminalAdditionalContext,
   resetRuntimeTerminalContextForTests,
 } from './runtime-terminal-context'
@@ -137,6 +138,60 @@ describe('runtime terminal context', () => {
     })
 
     expect(context).toBeUndefined()
+  })
+
+  test('only returns terminal output added after a successful delivery', () => {
+    const workspacePath = `/tmp/runtime-terminal-context-incremental-${Date.now()}`
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      workspacePath,
+      taskId: 'task-1',
+    }
+
+    appendRuntimeTerminalContext({
+      sessionId: 'session-incremental',
+      workspacePath,
+      kind: 'local',
+      data: 'first terminal error\n',
+    })
+
+    const firstContext = readRuntimeTerminalAdditionalContext(address)
+    expect(firstContext?.['wework.terminal.current'].value).toContain('first terminal error')
+    markRuntimeTerminalAdditionalContextDelivered(firstContext)
+    expect(readRuntimeTerminalAdditionalContext(address)).toBeUndefined()
+
+    appendRuntimeTerminalContext({
+      sessionId: 'session-incremental',
+      workspacePath,
+      kind: 'local',
+      data: 'second terminal error\n',
+    })
+
+    const nextContext = readRuntimeTerminalAdditionalContext(address)
+    const value = nextContext?.['wework.terminal.current'].value ?? ''
+    expect(value).toContain('second terminal error')
+    expect(value).not.toContain('first terminal error')
+  })
+
+  test('keeps terminal output pending until it is successfully delivered', () => {
+    const workspacePath = `/tmp/runtime-terminal-context-retry-${Date.now()}`
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      workspacePath,
+      taskId: 'task-1',
+    }
+
+    appendRuntimeTerminalContext({
+      sessionId: 'session-retry',
+      workspacePath,
+      kind: 'local',
+      data: 'retry this terminal error',
+    })
+
+    const firstAttempt = readRuntimeTerminalAdditionalContext(address)
+    const secondAttempt = readRuntimeTerminalAdditionalContext(address)
+
+    expect(secondAttempt).toEqual(firstAttempt)
   })
 
   test('returns no context when terminal context injection is disabled', () => {

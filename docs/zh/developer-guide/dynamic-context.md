@@ -108,6 +108,7 @@ Wework 桌面端可以把当前任务关联的 Terminal 最近输出作为请求
 
 - 只注入与当前 `taskId` 或 `workspacePath` 匹配的 Terminal 输出，不使用全局最近 Terminal 兜底，避免串上下文。
 - 默认只保留约 `2KB`、最近 `80` 行，单次输出 chunk 最多取 `512B`，避免额外 token 过大。
+- 首次成功发送会附带当前保留的 Terminal 输出；之后只附带自上次成功发送以来的新输出。发送失败不会消费该增量，下一次请求会重试携带，避免丢失诊断信息。
 - 用户可在 Wework 设置页的“上下文”中关闭 Terminal 信息注入。
 - Wework 通过 `additionalContext["wework.terminal.current"]` 传递该上下文；Backend 和 local runtime 只负责透传，Executor 在 Codex app-server `turn/start` 或 `turn/steer` 时继续转发。
 
