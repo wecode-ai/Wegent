@@ -18,6 +18,7 @@ describe('MobileSettingsPage', () => {
 
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-settings-appearance-button')).toHaveTextContent('外观')
+    expect(screen.getByTestId('mobile-settings-context-button')).toHaveTextContent('上下文')
     expect(screen.queryByTestId('mobile-settings-plugins-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-settings-personal-button')).toHaveTextContent('个人')
     expect(screen.getByTestId('mobile-settings-about-button')).toHaveTextContent('关于')
@@ -52,6 +53,22 @@ describe('MobileSettingsPage', () => {
     expect(screen.getByTestId('appearance-settings-page')).toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('mobile-appearance-back-button'))
+    expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
+  })
+
+  test('opens context settings on mobile', async () => {
+    render(
+      <AppearanceProvider>
+        <MobileSettingsPage onBack={vi.fn()} />
+      </AppearanceProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('mobile-settings-context-button'))
+
+    expect(screen.getByTestId('mobile-context-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('context-settings-page')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('mobile-context-back-button'))
     expect(screen.getByTestId('mobile-settings-page')).toBeInTheDocument()
   })
 

@@ -255,6 +255,15 @@ export interface RuntimeTaskAddress {
   runtimeHandle?: Record<string, unknown> | null
 }
 
+export type RuntimeAdditionalContextKind = 'application' | 'untrusted'
+
+export interface RuntimeAdditionalContextEntry {
+  value: string
+  kind: RuntimeAdditionalContextKind
+}
+
+export type RuntimeAdditionalContext = Record<string, RuntimeAdditionalContextEntry>
+
 export interface RuntimeMessageSource {
   source: 'im' | 'manual' | string
   external_id?: string | null
@@ -507,6 +516,8 @@ export interface RuntimeSendRequest {
   source?: RuntimeMessageSource | null
   requestUserInputResponse?: RequestUserInputResponse
   request_user_input_response?: RequestUserInputResponse
+  additionalContext?: RuntimeAdditionalContext
+  additional_context?: RuntimeAdditionalContext
 }
 
 export interface RuntimeRollbackRequest extends RuntimeSendRequest {
@@ -540,6 +551,8 @@ export interface RuntimeGuidanceRequest {
   message: string
   clientGuidanceId?: string
   client_guidance_id?: string
+  additionalContext?: RuntimeAdditionalContext
+  additional_context?: RuntimeAdditionalContext
 }
 
 export interface RuntimeGuidanceResponse {

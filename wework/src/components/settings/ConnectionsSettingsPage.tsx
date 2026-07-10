@@ -67,6 +67,7 @@ import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
+import { ContextSettingsPage } from './ContextSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
 import {
   createSettingsDeviceApi,
@@ -107,6 +108,12 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Palette,
     label: 'settings_nav_appearance',
     fallback: '外观',
+  },
+  {
+    key: 'context',
+    icon: Terminal,
+    label: 'settings_nav_context',
+    fallback: '上下文',
   },
   {
     key: 'about',
@@ -1492,6 +1499,8 @@ export function ConnectionsSettingsPage({
           <GeneralSettingsPage />
         ) : activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
+        ) : activeNav === 'context' ? (
+          <ContextSettingsPage />
         ) : activeNav === 'about' ? (
           <AboutSettingsPage />
         ) : activeNav === 'model-settings' ? (

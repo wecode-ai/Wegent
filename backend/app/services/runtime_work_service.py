@@ -569,6 +569,8 @@ async def send_runtime_message(
         payload["source"] = request.source.model_dump()
     if request.request_user_input_response is not None:
         payload["requestUserInputResponse"] = request.request_user_input_response
+    if request.additional_context:
+        payload["additionalContext"] = request.additional_context
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,
@@ -602,6 +604,8 @@ async def send_runtime_guidance(
     }
     if request.client_guidance_id:
         payload["clientGuidanceId"] = request.client_guidance_id
+    if request.additional_context:
+        payload["additionalContext"] = request.additional_context
     try:
         result = await runtime_rpc_service.call(
             user_id=user_id,

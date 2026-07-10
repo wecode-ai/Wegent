@@ -268,16 +268,21 @@ impl CodexAppServerClient {
         thread_id: &str,
         expected_turn_id: &str,
         input: Value,
+        additional_context: Option<Value>,
     ) -> Result<String, String> {
+        let mut params = serde_json::Map::new();
+        params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+        params.insert(
+            "expectedTurnId".to_owned(),
+            Value::String(expected_turn_id.to_owned()),
+        );
+        params.insert("input".to_owned(), input);
+        if let Some(additional_context) = additional_context.filter(Value::is_object) {
+            params.insert("additionalContext".to_owned(), additional_context);
+        }
+
         let response = self
-            .request_existing(
-                "turn/steer",
-                json!({
-                    "threadId": thread_id,
-                    "expectedTurnId": expected_turn_id,
-                    "input": input,
-                }),
-            )
+            .request_existing("turn/steer", Value::Object(params))
             .await?;
         string_value(&response, "turnId")
             .or_else(|| string_value(&response, "turn_id"))
@@ -1409,7 +1414,7 @@ fn spawn_codex_app_server(
     for config_override in &launch_config.config_overrides {
         command.arg("-c").arg(config_override);
     }
-    command.arg("app-server").arg("--stdio");
+    command.arg("app-server");
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
@@ -3572,7 +3577,19 @@ fn turn_start_params(
     if let Some(collaboration_mode) = codex_collaboration_mode_payload(request, launch_config) {
         params.insert("collaborationMode".to_owned(), collaboration_mode);
     }
+    if let Some(additional_context) = codex_additional_context(request) {
+        params.insert("additionalContext".to_owned(), additional_context);
+    }
     Value::Object(params)
+}
+
+fn codex_additional_context(request: &ExecutionRequest) -> Option<Value> {
+    request
+        .extra
+        .get("additionalContext")
+        .or_else(|| request.extra.get("additional_context"))
+        .filter(|value| value.is_object())
+        .cloned()
 }
 
 fn codex_collaboration_mode_payload(
