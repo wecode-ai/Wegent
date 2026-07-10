@@ -2507,7 +2507,20 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: '我们该做什么？' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '我们该做什么？', hidden: true })).not.toBeVisible()
+  })
+
+  test('preserves the composer while visiting settings', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+    const composerHeading = screen.getByRole('heading', { name: '我们该做什么？' })
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(composerHeading).not.toBeVisible()
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(screen.getByRole('heading', { name: '我们该做什么？' })).toBe(composerHeading)
+    expect(composerHeading).toBeVisible()
   })
 
   test('closes the settings menu when clicking outside it', async () => {
