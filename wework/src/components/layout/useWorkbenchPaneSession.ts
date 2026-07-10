@@ -12,7 +12,6 @@ import {
   deriveRuntimePaneStatus,
   getRuntimePaneTaskExecution,
   hasSettledAssistantMessage,
-  pauseGoalForInactiveTask,
   type RuntimePaneSendPhase,
 } from '@/features/workbench/runtimePaneStatus'
 import {
@@ -309,8 +308,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       }
     }
 
-    return pauseGoalForInactiveTask(resolvedGoal, taskExecution)
-  }, [currentRuntimeTaskLoadTarget, pendingGoalState, taskExecution, threadGoal])
+    return resolvedGoal
+  }, [currentRuntimeTaskLoadTarget, pendingGoalState, threadGoal])
 
   /* eslint-disable react-hooks/set-state-in-effect -- Runtime task changes reset pane transcript state before the async transcript load completes. */
   useEffect(() => {
