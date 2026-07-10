@@ -118,4 +118,37 @@ describe('browser annotation injection', () => {
       expect.objectContaining({ comment: 'Second comment', number: 2, text: 'Second target' }),
     ])
   })
+
+  test('close removes all published selection boxes when leaving annotation mode', () => {
+    const firstInput = openEditor(document.querySelector('#first-target')!)
+    firstInput!.value = 'First comment'
+    click(publishButton()!)
+
+    const secondInput = openEditor(document.querySelector('#second-target')!)
+    secondInput!.value = 'Second comment'
+    click(publishButton()!)
+
+    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(2)
+    expect(document.getElementById('__wework_browser_annotation_layer__')).not.toBeNull()
+
+    annotationWindow.__weworkBrowserAnnotationClose?.()
+
+    expect(document.querySelectorAll('[data-wework-annotation]')).toHaveLength(0)
+    expect(document.getElementById('__wework_browser_annotation_layer__')).toBeNull()
+    expect(annotationWindow.__weworkBrowserAnnotationClose).toBeUndefined()
+    expect(annotationWindow.__weworkBrowserAnnotationConsume).toBeUndefined()
+  })
+
+  test('clear removes published boxes while keeping annotation mode handlers', () => {
+    const firstInput = openEditor(document.querySelector('#first-target')!)
+    firstInput!.value = 'First comment'
+    click(publishButton()!)
+
+    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(1)
+    annotationWindow.__weworkBrowserAnnotationClear?.()
+
+    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(0)
+    expect(document.getElementById('__wework_browser_annotation_layer__')).not.toBeNull()
+    expect(annotationWindow.__weworkBrowserAnnotationConsume?.()).toEqual([])
+  })
 })
