@@ -264,6 +264,23 @@ def test_owned_task_ids_deduplicate_migrated_legacy_rows(test_db):
     assert [task.name for task in active_tasks] == ["migrated-shard"]
 
 
+def test_personal_task_ids_candidate_scan_deduplicates_migrated_legacy_rows(test_db):
+    add_migrated_legacy_resource(test_db, task_id_value=95, user_id=1095)
+    store = ShardedTaskStore()
+
+    task_ids, total = store.list_personal_task_ids(
+        test_db,
+        user_id=1095,
+        skip=0,
+        limit=10,
+        extra_limit=0,
+        client_origin="frontend",
+    )
+
+    assert task_ids == [95]
+    assert total == 1
+
+
 def test_migrated_legacy_index_row_is_not_source_of_truth(test_db):
     add_legacy_resource(
         test_db,
