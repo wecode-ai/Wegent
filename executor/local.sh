@@ -41,9 +41,10 @@ Environment:
   WEGENT_FILE_EDIT_HOOK_COMMAND  Default: local file edit hook collector
   WEGENT_EXECUTOR_BINARY         Default: dist/wegent-executor
   CARGO_TARGET_DIR               Explicit Cargo target directory. Overrides auto cache.
-  WEGENT_CARGO_TARGET_ROOT       Shared Cargo target root for Wegent local builds.
+  WEGENT_CARGO_TARGET_ROOT       Root containing worktree-isolated Cargo targets.
   WEGENT_DISABLE_SHARED_CARGO_TARGET
                                   Set to 1 to keep Cargo's default per-worktree target.
+  WEGENT_DISABLE_SCCACHE         Set to 1 to disable automatic sccache detection.
 
 Examples:
   ./local.sh all
