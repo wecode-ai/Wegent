@@ -69,9 +69,6 @@ export function EnvironmentInfoPopover({
   const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
   const [commitProgressLabel, setCommitProgressLabel] = useState('')
   const [commitError, setCommitError] = useState<string | null>(null)
-  const rootRef = useRef<HTMLDivElement>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
-  const commitPanelRef = useRef<HTMLFormElement>(null)
   const userToggledOpenRef = useRef(false)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
@@ -192,8 +189,13 @@ export function EnvironmentInfoPopover({
 
   useEffect(() => {
     function synchronizeAutoOpenState() {
+      if (!shouldAutoOpenEnvironmentInfo()) {
+        setOpen(false)
+        return
+      }
+
       if (!userToggledOpenRef.current) {
-        setOpen(shouldAutoOpenEnvironmentInfo())
+        setOpen(true)
       }
     }
 
@@ -203,33 +205,10 @@ export function EnvironmentInfoPopover({
     }
   }, [])
 
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target as Node
-      if (
-        !rootRef.current?.contains(target) &&
-        !popoverRef.current?.contains(target) &&
-        !commitPanelRef.current?.contains(target)
-      ) {
-        userToggledOpenRef.current = true
-        setOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-    }
-  }, [open])
   const branchLabel = info.branchName?.trim() || t('workbench.environment_branch_empty', '暂无分支')
 
   return (
-    <div ref={rootRef}>
+    <div>
       <button
         type="button"
         data-testid="environment-info-button"
@@ -246,9 +225,8 @@ export function EnvironmentInfoPopover({
         popoverContainer &&
         createPortal(
           <div
-            ref={popoverRef}
             data-testid="environment-info-popover"
-            className="mt-3 w-[240px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
+            className="mt-3 w-[330px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
           >
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[13px] font-medium text-text-primary">
@@ -460,7 +438,6 @@ export function EnvironmentInfoPopover({
         typeof document !== 'undefined' &&
         createPortal(
           <form
-            ref={commitPanelRef}
             data-testid="environment-commit-form"
             className="fixed left-1/2 top-[36vh] z-system-popover w-[430px] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-[0_18px_48px_rgba(0,0,0,0.20)]"
             onSubmit={handleSubmitCommit}

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createProjectApi } from '@/api/projects'
@@ -163,7 +163,7 @@ describe('WorkspacePanelActions', () => {
 
       const popover = screen.getByTestId('environment-info-popover')
       expect(workspaceContainer).toContainElement(popover)
-      expect(popover).toHaveClass('w-[240px]')
+      expect(popover).toHaveClass('w-[330px]')
       expect(popover).not.toHaveClass('absolute', 'fixed')
     } finally {
       workspaceContainer.remove()
@@ -176,6 +176,18 @@ describe('WorkspacePanelActions', () => {
     render(<WorkspacePanelActions {...baseProps} mode="environment" />)
 
     expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+  })
+
+  test('closes environment info when the workspace becomes narrow', () => {
+    setWindowWidth(1280)
+    render(<WorkspacePanelActions {...baseProps} mode="environment" />)
+
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+
+    setWindowWidth(1279)
+    act(() => window.dispatchEvent(new Event('resize')))
+
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
 

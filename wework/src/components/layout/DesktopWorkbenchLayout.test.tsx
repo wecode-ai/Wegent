@@ -5160,7 +5160,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
   })
 
-  test('opens the environment info popover and closes it from outside click', async () => {
+  test('keeps the environment info panel open until its icon is clicked', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -5202,7 +5202,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('environment-info-panel-container')
     )
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
-      'w-[240px]',
+      'w-[330px]',
       'bg-background',
       'text-text-primary',
       'border-border',
@@ -5254,6 +5254,10 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(document.body)
+
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
@@ -5666,7 +5670,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
 
-    await userEvent.click(document.body)
+    await userEvent.click(screen.getByTestId('environment-info-button'))
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('environment-info-button'))

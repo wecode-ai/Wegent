@@ -1545,7 +1545,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <aside
             ref={setEnvironmentInfoPanelRef}
             data-testid="environment-info-panel-container"
-            className="relative z-popover h-full w-0 shrink-0 overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[>[data-testid=environment-info-popover]]:w-[252px]"
+            className="relative z-popover h-full w-0 shrink-0 overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[>[data-testid=environment-info-popover]]:w-[342px]"
           />
         </div>
         {rightPanelOpen && (
