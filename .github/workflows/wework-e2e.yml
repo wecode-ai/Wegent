@@ -7,24 +7,24 @@ on:
       - master
       - develop
     paths:
-      - '.github/workflows/wework-e2e.yml'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'packages/chat-core/**'
-      - 'wework/**'
+      - ".github/workflows/wework-e2e.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/chat-core/**"
+      - "wework/**"
   pull_request:
     branches:
       - main
       - master
       - develop
     paths:
-      - '.github/workflows/wework-e2e.yml'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'packages/chat-core/**'
-      - 'wework/**'
+      - ".github/workflows/wework-e2e.yml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "packages/chat-core/**"
+      - "wework/**"
   workflow_dispatch:
 
 concurrency:
@@ -50,7 +50,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: "24"
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
@@ -96,5 +96,74 @@ jobs:
         with:
           name: wework-playwright-traces
           path: wework/test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  wework-desktop-e2e:
+    name: Wework Desktop E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libayatana-appindicator3-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            xvfb
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            executor/target
+            wework/src-tauri/target
+          key: ${{ runner.os }}-wework-desktop-e2e-${{ hashFiles('executor/Cargo.lock', 'wework/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-desktop-e2e-
+
+      - name: Prepare real Codex binary
+        working-directory: ./wework
+        run: pnpm run prepare:codex
+
+      - name: Run Wework desktop task-flow E2E
+        env:
+          CI: true
+          CODEX_BIN: ${{ github.workspace }}/wework/src-tauri/binaries/codex/x86_64-unknown-linux-gnu/vendor/x86_64-unknown-linux-musl/bin/codex
+        run: |
+          test -x "$CODEX_BIN"
+          xvfb-run -a --server-args="-screen 0 1280x720x24" pnpm --filter wework e2e:desktop
+
+      - name: Upload Wework desktop E2E diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-e2e-diagnostics
+          path: wework/test-results/desktop-e2e/
           if-no-files-found: ignore
           retention-days: 7

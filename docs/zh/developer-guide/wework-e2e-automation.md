@@ -4,7 +4,7 @@ sidebar_position: 34
 
 # E2E 自动化
 
-Wework 提供独立的 Playwright E2E 入口和测试专用前端自动化接口，用于在 CI 中稳定操作 Wework 的 Vite/React 前端。默认入口运行在浏览器模式，适合覆盖大多数前端交互；需要验证原生窗口能力时，再单独接入 Tauri/WebDriver 测试。
+Wework 提供独立的 Playwright E2E 入口和测试专用前端自动化接口，用于在 CI 中稳定操作 Wework 的 Vite/React 前端。默认入口运行在浏览器模式，适合覆盖大多数前端交互；原生窗口与任务执行链路由下文的桌面端全链路 E2E 覆盖。
 
 ## 运行方式
 
@@ -18,6 +18,12 @@ pnpm --filter wework exec playwright install chromium
 
 ```bash
 pnpm --filter wework e2e
+```
+
+运行真实桌面端任务全链路 E2E：
+
+```bash
+pnpm --filter wework e2e:desktop
 ```
 
 该命令会通过 `wework/playwright.config.ts` 启动测试专用 Vite 服务：
@@ -40,6 +46,25 @@ node e2e/utils/mock-response-api-server.mjs
 - `WEWORK_RESPONSE_API_MOCK_URL`: `http://127.0.0.1:9998`
 
 测试不 mock 后端 API。没有启动 Backend 时，登录页 smoke 测试只验证前端能渲染登录入口；需要登录后的业务流程时，CI 必须先启动真实 Backend 和依赖服务。
+
+## 桌面端任务全链路 E2E
+
+`wework/e2e/desktop/task-flow.e2e.mjs` 覆盖本机工作区中的真实任务执行链路：
+
+1. 构建并启动真实 Tauri Wework 应用，使用 `--open-workspace` 打开隔离工作区。
+2. 启动真实 `wegent-executor` sidecar，并由它启动真实 `codex app-server`。
+3. 在原生 WebView 中填入任务、点击发送，并等待真实会话渲染完成。
+4. 校验 Codex 向模型服务发出的请求、Codex 实际工具调用写入的工作区文件，以及页面中的最终回复。
+
+测试不模拟 Wework、Executor 或 Codex。为了让回归结果确定且不需要真实账号，测试只在 loopback 地址启动一个 OpenAI Responses 兼容服务，作为 Codex 的自定义模型 provider。该服务会返回确定性的工具调用和最终文本；工具调用仍由真实 Codex 在隔离工作区内执行。
+
+运行环境需要 Rust、Tauri 构建依赖和真实 Codex 二进制。默认从 `PATH` 查找 `codex`；也可以显式指定已安装或由 `prepare:codex` 准备的真实二进制：
+
+```bash
+CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
+```
+
+可选的 `WEWORK_E2E_EXECUTOR_BIN` 和 `WEWORK_E2E_APP_BIN` 分别允许复用已经构建的真实 Executor 和真实 Tauri 应用。传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。测试过程和失败诊断会保存在 `wework/test-results/desktop-e2e/`。
 
 ## Responses API Mock
 
@@ -73,17 +98,19 @@ http://127.0.0.1:9998/v1
 - `clearAuthToken()`：清除认证 token。
 - `clearStorage()`：清空本地认证和浏览器存储。
 
+桌面端 E2E 构建会额外注入 `VITE_WEWORK_DESKTOP_E2E_CONTROL_URL`。只有在 E2E 模式且该 URL 存在时，前端才会轮询本机 loopback 控制器来执行 `click`、`fill` 和等待断言；常规开发和生产构建不会包含控制端点。控制器只驱动真实 WebView DOM 事件，不替换任务、模型选择、Executor 或 Codex 的实现。
+
 ## 测试封装
 
 `wework/e2e/fixtures/wework-app.ts` 提供 `WeworkApp` Playwright helper，用于把 `window.__WEWORK_E2E__` 封装成类型安全的测试操作：
 
 ```ts
-const app = new WeworkApp(page)
+const app = new WeworkApp(page);
 
-await app.goto("/")
-await app.waitForTestId("login-form")
-await app.navigate("/apps")
-const route = await app.route()
+await app.goto("/");
+await app.waitForTestId("login-form");
+await app.navigate("/apps");
+const route = await app.route();
 ```
 
 新增 E2E 用例应优先使用该 helper 和 `data-testid` 定位，不要依赖易变的 CSS 选择器或可见文案。
@@ -96,6 +123,13 @@ CI 可以把 Wework E2E 作为独立 job：
 pnpm install --frozen-lockfile
 pnpm --filter wework exec playwright install chromium
 pnpm --filter wework e2e
+```
+
+桌面端全链路 E2E 需要在有图形会话的 Linux runner 上运行，例如：
+
+```bash
+pnpm --filter wework prepare:codex
+xvfb-run -a pnpm --filter wework e2e:desktop
 ```
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
