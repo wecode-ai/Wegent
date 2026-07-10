@@ -42,11 +42,7 @@ if [ -z "$branch" ]; then
   echo "Cannot push detached HEAD" >&2
   exit 64
 fi
-if git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then
-  git push
-else
-  git push -u origin "$branch"
-fi"#;
+exec git push -u origin "$branch""#;
 const WORKSPACE_TREE_SCRIPT: &str = r#"
 import json
 import os

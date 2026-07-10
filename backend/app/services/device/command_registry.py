@@ -53,9 +53,7 @@ GIT_WORKSPACE_DIFF_COMMAND = (
 GIT_PUSH_COMMAND = (
     "sh -c 'branch=$(git branch --show-current); "
     '[ -n "$branch" ] || { echo "Cannot push detached HEAD" >&2; exit 64; }; '
-    "if git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then "
-    "git push; "
-    'else git push -u origin "$branch"; fi\''
+    'exec git push -u origin "$branch"\''
 )
 
 WORKSPACE_ROOT_GUARD_SCRIPT = """
