@@ -208,7 +208,7 @@ class Settings(BaseSettings):
     TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
 
     # Workspace archive configuration
-    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 500
+    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 2048
     WORKSPACE_ARCHIVE_RETENTION_DAYS: int = 30
     WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
     WORKSPACE_ARCHIVE_ENABLED: bool = True
