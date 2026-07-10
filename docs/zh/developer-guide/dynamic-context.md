@@ -100,6 +100,17 @@ messages.append(current_user_message_with_datetime_suffix)
 - 注入内容必须保持简短、幂等，并用 `<wegent_runtime_guidance>` 标记避免重复追加。
 - 如果新增的是事实型请求上下文，仍应优先走 `dynamic_context`，而不是继续扩展 system prompt。
 
+### Wework：Terminal 运行时上下文
+
+Wework 桌面端可以把当前任务关联的 Terminal 最近输出作为请求级上下文传给本地 runtime。该能力用于帮助 Codex 理解用户刚刚在 Terminal 中看到的命令报错或构建输出。
+
+约束：
+
+- 只注入与当前 `taskId` 或 `workspacePath` 匹配的 Terminal 输出，不使用全局最近 Terminal 兜底，避免串上下文。
+- 默认只保留约 `2KB`、最近 `80` 行，单次输出 chunk 最多取 `512B`，避免额外 token 过大。
+- 用户可在 Wework 设置页的“上下文”中关闭 Terminal 信息注入。
+- Wework 通过 `additionalContext["wework.terminal.current"]` 传递该上下文；Backend 和 local runtime 只负责透传，Executor 在 Codex app-server `turn/start` 或 `turn/steer` 时继续转发。
+
 ## 模块职责划分
 
 - [`shared/prompts/knowledge_base.py`](shared/prompts/knowledge_base.py):

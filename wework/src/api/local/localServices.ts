@@ -1569,6 +1569,8 @@ export function createRuntimeWorkApiFromIpc(
           message: data.message,
           ...(data.clientGuidanceId ? { clientGuidanceId: data.clientGuidanceId } : {}),
           ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
+          ...(data.additionalContext ? { additionalContext: data.additionalContext } : {}),
+          ...(data.additional_context ? { additional_context: data.additional_context } : {}),
         },
         localDeviceId
       )
