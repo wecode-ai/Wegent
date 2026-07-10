@@ -39,6 +39,7 @@ export interface StartLocalTerminalOptions {
   cwd?: string
   rows?: number
   cols?: number
+  env?: Record<string, string | null | undefined>
 }
 
 export interface LocalTerminalOutputPayload {
@@ -54,17 +55,42 @@ export async function startLocalTerminal({
   cwd,
   rows,
   cols,
+  env,
 }: StartLocalTerminalOptions = {}): Promise<string> {
   if (!isLocalTerminalAvailable()) {
     throw new Error('Local terminal is unavailable outside the macOS Tauri app')
   }
 
   const trimmedCwd = cwd?.trim()
-  return invoke<string>('start_local_terminal', {
+  const normalizedEnv = normalizeLocalTerminalEnv(env)
+  const payload: {
+    cwd: string | null
+    rows?: number
+    cols?: number
+    env?: Record<string, string>
+  } = {
     cwd: trimmedCwd || null,
     rows,
     cols,
+  }
+  if (normalizedEnv) {
+    payload.env = normalizedEnv
+  }
+
+  return invoke<string>('start_local_terminal', payload)
+}
+
+function normalizeLocalTerminalEnv(env?: Record<string, string | null | undefined>) {
+  if (!env) return null
+
+  const entries = Object.entries(env).flatMap(([key, value]) => {
+    const normalizedKey = key.trim()
+    if (!normalizedKey || normalizedKey.includes('=') || value == null) return []
+
+    return [[normalizedKey, value]]
   })
+
+  return entries.length > 0 ? Object.fromEntries(entries) : null
 }
 
 export interface OpenLocalWorkspaceOptions {

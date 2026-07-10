@@ -23,6 +23,7 @@ interface BottomWorkspacePanelProps {
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
   preferLocalTerminal?: boolean
+  terminalContextTitle?: string | null
   onRequestClose: () => void
   onTerminalTabsEmpty?: () => void
 }
@@ -40,6 +41,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   devices,
   workspaceTarget,
   preferLocalTerminal = false,
+  terminalContextTitle,
   onRequestClose,
   onTerminalTabsEmpty,
 }: BottomWorkspacePanelProps) {
@@ -180,6 +182,7 @@ export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
                   onRequestClose={() => closeTab(tab.id)}
                   hideTerminalChrome
                   preferLocalTerminal={preferLocalTerminal}
+                  terminalContextTitle={terminalContextTitle}
                   panelActive={panelActive}
                   testIdsEnabled={contentTestIdsEnabled}
                   onTerminalTitleChange={title => updateTabTitle(tab.id, title)}

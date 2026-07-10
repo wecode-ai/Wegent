@@ -158,11 +158,53 @@ find_available_wework_port() {
   return 1
 }
 
+git_branch_name() {
+  git -C "$PROJECT_DIR" branch --show-current 2>/dev/null || true
+}
+
+basename_or_path() {
+  local path="$1"
+
+  basename "$path" 2>/dev/null || echo "$path"
+}
+
+build_wework_dev_title() {
+  local parent_title="${WEWORK_PARENT_TITLE:-}"
+  local branch
+  local worktree_name
+
+  if [ -n "$parent_title" ]; then
+    echo "$parent_title"
+    return 0
+  fi
+
+  branch="$(git_branch_name)"
+  worktree_name="$(basename_or_path "$PROJECT_DIR")"
+  if [ -n "$branch" ]; then
+    echo "$branch"
+    return 0
+  fi
+
+  echo "$worktree_name"
+}
+
 AVAILABLE_WEWORK_PORT="$(find_available_wework_port "$WEWORK_PORT")"
 if [ "$AVAILABLE_WEWORK_PORT" != "$WEWORK_PORT" ]; then
   echo "WEWORK_PORT $WEWORK_PORT is already in use; using $AVAILABLE_WEWORK_PORT instead."
 fi
 WEWORK_PORT="$AVAILABLE_WEWORK_PORT"
+
+export WEWORK_DEV_WORKTREE="$PROJECT_DIR"
+export WEWORK_DEV_BRANCH="$(git_branch_name)"
+export WEWORK_DEV_PORT="$WEWORK_PORT"
+export WEWORK_DEV_TITLE="$(build_wework_dev_title)"
+export VITE_WEWORK_DEV_TITLE="$WEWORK_DEV_TITLE"
+export VITE_WEWORK_DEV_PORT="$WEWORK_DEV_PORT"
+export VITE_WEWORK_DEV_WORKTREE="$WEWORK_DEV_WORKTREE"
+export VITE_WEWORK_DEV_BRANCH="$WEWORK_DEV_BRANCH"
+export VITE_WEWORK_PARENT_TITLE="${WEWORK_PARENT_TITLE:-}"
+export VITE_WEWORK_PARENT_PROJECT="${WEWORK_PARENT_PROJECT:-}"
+export VITE_WEWORK_PARENT_WORKSPACE="${WEWORK_PARENT_WORKSPACE:-}"
 
 export SKIP_FONT_DOWNLOAD="${SKIP_FONT_DOWNLOAD:-1}"
 export VITE_API_PROXY_TARGET="$(wework_normalize_api_proxy_target "${VITE_API_PROXY_TARGET:-$BACKEND_BASE_URL}")"
@@ -220,6 +262,9 @@ PY
 echo "Starting WeWork mac app"
 echo "  RELEASE_UI=$WEWORK_RELEASE_UI"
 echo "  WEWORK_PORT=$WEWORK_PORT"
+echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
+echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
+echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
 echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"

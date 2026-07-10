@@ -6305,6 +6305,11 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(startLocalTerminalMock).toHaveBeenCalledWith({
         cwd: '/Users/me/Wegent/.worktrees/a',
+        env: {
+          WEWORK_PARENT_TITLE: 'Task A',
+          WEWORK_PARENT_PROJECT: 'Wegent',
+          WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/a',
+        },
       })
     )
     await waitFor(() => {
@@ -6323,6 +6328,11 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(startLocalTerminalMock).toHaveBeenCalledWith({
         cwd: '/Users/me/Wegent/.worktrees/b',
+        env: {
+          WEWORK_PARENT_TITLE: 'Task B',
+          WEWORK_PARENT_PROJECT: 'Wegent',
+          WEWORK_PARENT_WORKSPACE: '/Users/me/Wegent/.worktrees/b',
+        },
       })
     )
     await waitFor(() => {
