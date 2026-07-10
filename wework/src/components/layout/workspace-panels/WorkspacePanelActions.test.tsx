@@ -72,6 +72,7 @@ const baseProps = {
     executionTarget: 'local' as const,
   },
   environmentInfoPopoverContainer: document.body,
+  environmentInfoVisible: true,
   onRefreshEnvironmentInfo: vi.fn(),
   onCommitEnvironmentChanges: vi.fn(),
   onCommitAndPushEnvironmentChanges: vi.fn(),
@@ -151,6 +152,14 @@ describe('WorkspacePanelActions', () => {
     )
 
     expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
+  })
+
+  test('hides environment info when no task context is available', () => {
+    render(<WorkspacePanelActions {...baseProps} environmentInfoVisible={false} />)
+
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-bottom-workspace-panel-button')).toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeInTheDocument()
   })
 
   test('opens environment info by default when the workspace is wide', () => {

@@ -1054,6 +1054,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workspaceTarget={workspaceTarget}
       environmentInfo={environmentInfo}
       environmentInfoPopoverContainer={workbenchMainElement}
+      environmentInfoVisible={Boolean(currentRuntimeTask || currentProject)}
       onRefreshEnvironmentInfo={refreshEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
       onCommitAndPushEnvironmentChanges={commitAndPushEnvironmentChanges}
