@@ -920,7 +920,7 @@ describe('PluginsWorkspace', () => {
 
     await userEvent.click(await screen.findByTestId('plugins-add-marketplace-button'))
     expect(screen.getByTestId('plugins-add-marketplace-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('plugins-add-openai-marketplace-button')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-add-openai-marketplace-button')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-add-custom-marketplace-button'))
 
     expect(screen.getByTestId('plugins-marketplace-config-dialog')).toBeInTheDocument()
@@ -931,20 +931,28 @@ describe('PluginsWorkspace', () => {
     )
   })
 
-  test('quickly selects the OpenAI official marketplace', async () => {
+  test('loads the OpenAI official marketplace by default', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       configurable: true,
       value: {},
     })
-    mockCodexAppServerInvoke()
+    mockCodexAppServerInvoke({
+      marketplaces: [
+        {
+          name: 'openai-curated-remote',
+          displayName: 'OpenAI 官方市场',
+          path: 'openai-curated-remote',
+        },
+      ],
+    })
 
     render(<PluginsWorkspace />)
 
-    await userEvent.click(await screen.findByTestId('plugins-add-marketplace-button'))
-    await userEvent.click(screen.getByTestId('plugins-add-openai-marketplace-button'))
-
+    expect(
+      await screen.findByTestId('plugins-marketplace-tab-openai-curated-remote')
+    ).toHaveTextContent('OpenAI 官方市场')
     expectCodexAppServerRequest('plugin/list', {
-      marketplaceKinds: ['local'],
+      cwds: null,
     })
   })
 
@@ -994,7 +1002,9 @@ describe('PluginsWorkspace', () => {
     expect(screen.queryByTestId('plugins-installed-strip')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-publish-empty-button')).not.toBeInTheDocument()
 
-    expect(screen.getByTestId('plugins-add-openai-marketplace-empty-button')).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('plugins-add-openai-marketplace-empty-button')
+    ).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('plugins-add-custom-marketplace-empty-button'))
 
     expect(screen.getByTestId('plugins-marketplace-config-dialog')).toBeInTheDocument()
@@ -1030,23 +1040,6 @@ describe('PluginsWorkspace', () => {
     expect(await screen.findByTestId('plugins-marketplace-loading')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-no-marketplace-welcome')).not.toBeInTheDocument()
     expect(screen.queryByTestId('plugins-publish-empty-button')).not.toBeInTheDocument()
-  })
-
-  test('quickly selects the OpenAI official marketplace from the empty state', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    mockCodexAppServerInvoke()
-
-    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
-
-    expect(await screen.findByTestId('plugins-no-marketplace-welcome')).toBeInTheDocument()
-    await userEvent.click(screen.getByTestId('plugins-add-openai-marketplace-empty-button'))
-
-    expectCodexAppServerRequest('plugin/list', {
-      marketplaceKinds: ['local'],
-    })
   })
 
   test('sends remote plugin id for remote marketplace install', async () => {

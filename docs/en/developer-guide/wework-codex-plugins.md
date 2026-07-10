@@ -15,13 +15,13 @@ In the desktop sidebar, the plugin entry is fixed as the third primary action: N
 - The create entry opens a Codex plugin creator-style page.
 - The management entry opens the installed plugin, skill, and app enablement and uninstall view.
 
-Plugin marketplaces are not split into local and cloud modes. Wework lets users add multiple named marketplaces from GitHub repositories, remote addresses, or local `marketplace.json` files/directories. When no marketplace exists, Wework shows a welcome page that guides the user to add a marketplace or open management.
+Plugin marketplaces are not split into local and cloud modes. Wework shows the OpenAI official marketplace returned by Codex app-server by default and lets users add multiple named marketplaces. Custom marketplaces can come from GitHub repositories, remote addresses, or local `marketplace.json` files/directories. When no marketplace is available, Wework shows a welcome page that guides the user to add a custom marketplace or open management.
 
 ## Marketplace and Install
 
-Marketplace data is read through the Codex app-server exposed by the local executor. Remote GitHub marketplaces are cloned into a local cache directory, and later reads use the cached marketplace data and plugin folders. Install, uninstall, refresh, and marketplace removal all go through Codex app-server methods; Wework does not maintain a separate installed-plugin state.
+Marketplace data is read through the Codex app-server exposed by the local executor. List requests do not restrict `marketplaceKinds`, allowing Codex to return both local marketplaces and the `openai-curated-remote` official marketplace according to the active feature flags and authentication state. Custom remote GitHub marketplaces are cloned into a local cache directory, and later reads use the cached marketplace data and plugin folders. Install, uninstall, refresh, and custom marketplace removal all go through Codex app-server methods; Wework does not maintain a separate installed-plugin state.
 
-The frontend only stores the user-configured marketplace list and current marketplace selection. Installed status, skill/app availability, and plugin detail contents come from Codex app-server responses.
+The frontend only stores the current marketplace selection. The marketplace list, installed status, skill/app availability, and plugin detail contents come from Codex app-server responses. The OpenAI official marketplace is managed by Codex and does not appear in the custom marketplace edit, reorder, or delete list.
 
 ## Separate Codex Home
 

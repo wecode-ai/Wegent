@@ -69,7 +69,6 @@ export interface LocalCodexPluginApi {
     refresh?: boolean
   }): Promise<PluginMarketplaceListResponse>
   selectMarketplace(id: string): Promise<LocalCodexPluginsState>
-  selectOpenAIOfficialMarketplace(): Promise<LocalCodexPluginsState>
   readInstalledPluginForTrial(id: string | number): Promise<InstalledPlugin>
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
@@ -180,7 +179,6 @@ interface CodexSkillsListEntry {
 }
 
 const SELECTED_MARKETPLACE_STORAGE_KEY = 'wework.plugins.selectedCodexMarketplace'
-const OPENAI_CURATED_MARKETPLACE_ID = 'openai-curated'
 
 let cachedState: LocalCodexPluginsState | null = null
 
@@ -471,30 +469,27 @@ async function readState(
   } = {}
 ): Promise<LocalCodexPluginsState> {
   if (!isTauriRuntime()) return emptyState
+  const requestedMarketplaceId = params.marketplaceId?.trim() || selectedMarketplaceId()
   const [availableResponse, installedResponse] = await Promise.all([
     codexAppServerRequest<{
       marketplaces: CodexPluginMarketplaceEntry[]
       featuredPluginIds?: string[]
     }>('plugin/list', {
       cwds: null,
-      marketplaceKinds: ['local'],
     }),
     codexAppServerRequest<{ marketplaces: CodexPluginMarketplaceEntry[] }>('plugin/installed', {
       cwds: null,
       installSuggestionPluginNames: null,
     }),
   ])
-  const requestedSelectedId =
-    params.marketplaceId?.trim() ||
-    selectedMarketplaceId() ||
-    availableResponse.marketplaces[0]?.name ||
-    ''
-  const selectedId = availableResponse.marketplaces.some(
+  const availableMarketplaces = availableResponse.marketplaces
+  const requestedSelectedId = requestedMarketplaceId || availableMarketplaces[0]?.name || ''
+  const selectedId = availableMarketplaces.some(
     marketplace => marketplace.name === requestedSelectedId
   )
     ? requestedSelectedId
-    : (availableResponse.marketplaces[0]?.name ?? '')
-  const selectedMarketplaces = filteredMarketplaces(availableResponse.marketplaces, selectedId)
+    : (availableMarketplaces[0]?.name ?? '')
+  const selectedMarketplaces = filteredMarketplaces(availableMarketplaces, selectedId)
   const marketplaceItems = filterPluginItems(
     selectedMarketplaces.flatMap(marketplace =>
       marketplace.plugins.map(plugin => toMarketplaceItem(marketplace, plugin))
@@ -504,14 +499,14 @@ async function readState(
   const installedPlugins = installedResponse.marketplaces.flatMap(marketplace =>
     marketplace.plugins.map(plugin => toInstalledPlugin(marketplace, plugin))
   )
-  const marketplaces = availableResponse.marketplaces.map(marketplaceInfo)
+  const marketplaces = availableMarketplaces.map(marketplaceInfo)
   const state: LocalCodexPluginsState = {
     marketplaceItems,
     installedPlugins,
     marketplaces,
     selectedMarketplaceId: selectedId,
     marketplacePath:
-      availableResponse.marketplaces.find(marketplace => marketplace.name === selectedId)?.path ??
+      availableMarketplaces.find(marketplace => marketplace.name === selectedId)?.path ??
       selectedId,
     installRegistryPath: '',
   }
@@ -627,10 +622,6 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     selectMarketplace(id) {
       rememberSelectedMarketplaceId(id)
       return readState({ marketplaceId: id })
-    },
-    selectOpenAIOfficialMarketplace() {
-      rememberSelectedMarketplaceId(OPENAI_CURATED_MARKETPLACE_ID)
-      return readState({ marketplaceId: OPENAI_CURATED_MARKETPLACE_ID, refresh: true })
     },
     async readInstalledPluginForTrial(id) {
       const currentState = cachedState ?? (await readState())
