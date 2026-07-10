@@ -68,6 +68,10 @@ interface MarketplaceFormState {
   path: string
 }
 
+function isUserManagedMarketplace(marketplace: MarketplaceOption): boolean {
+  return marketplace.kind === 'local' && marketplace.id !== 'openai-curated-remote'
+}
+
 interface PendingMarketplaceDelete {
   id: string
   name: string
@@ -111,10 +115,6 @@ interface PluginMarketplaceState {
 
 const SYSTEM_SKILL_PAGE_SIZE = 20
 const MARKETPLACE_SECTION_COLLAPSED_COUNT = 6
-const OPENAI_OFFICIAL_MARKETPLACE = {
-  name: 'OpenAI 官方市场',
-  path: 'openai-curated',
-}
 const emptyCustomMcpForm: CustomMcpFormState = {
   name: '',
   displayName: '',
@@ -562,18 +562,14 @@ function PluginMarketplaceWelcome({
   title,
   description,
   manageLabel,
-  openAIAddLabel,
   customAddLabel,
-  onAddOpenAI,
   onAddCustomMarketplace,
   onManage,
 }: {
   title: string
   description: string
   manageLabel: string
-  openAIAddLabel: string
   customAddLabel: string
-  onAddOpenAI: () => void
   onAddCustomMarketplace: () => void
   onManage: () => void
 }) {
@@ -600,17 +596,8 @@ function PluginMarketplaceWelcome({
       <div className="flex flex-wrap items-center justify-center gap-2">
         <button
           type="button"
-          data-testid="plugins-add-openai-marketplace-empty-button"
-          className="flex h-9 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-semibold text-background transition-colors hover:bg-text-primary/90"
-          onClick={onAddOpenAI}
-        >
-          <Plus className="h-4 w-4" />
-          {openAIAddLabel}
-        </button>
-        <button
-          type="button"
           data-testid="plugins-add-custom-marketplace-empty-button"
-          className="flex h-9 items-center gap-2 rounded-lg border border-border bg-background px-4 text-sm font-semibold text-text-primary transition-colors hover:bg-surface"
+          className="flex h-8 items-center gap-2 rounded-lg bg-text-primary px-4 text-sm font-semibold text-background transition-colors hover:bg-text-primary/90"
           onClick={onAddCustomMarketplace}
         >
           <Plus className="h-4 w-4" />
@@ -1200,21 +1187,6 @@ export function PluginsWorkspace({
     persistMarketplace(marketplaceForm)
   }
 
-  const addOpenAIOfficialMarketplace = () => {
-    setShowAddMarketplaceMenu(false)
-    setMarketplaceConfigError(null)
-    setIsSavingMarketplace(true)
-    localPluginApi
-      .selectOpenAIOfficialMarketplace()
-      .then(applyLocalMarketplaceState)
-      .catch((error: Error) => {
-        setMarketplaceConfigError(error.message)
-      })
-      .finally(() => {
-        setIsSavingMarketplace(false)
-      })
-  }
-
   const deleteMarketplace = () => {
     if (!pendingMarketplaceDelete) return
 
@@ -1239,7 +1211,7 @@ export function PluginsWorkspace({
   }
 
   const reorderLocalMarketplace = (id: string, direction: -1 | 1) => {
-    const localMarketplaces = marketplaces.filter(marketplace => marketplace.kind === 'local')
+    const localMarketplaces = marketplaces.filter(isUserManagedMarketplace)
     const currentIndex = localMarketplaces.findIndex(marketplace => marketplace.id === id)
     const nextIndex = currentIndex + direction
     if (currentIndex < 0 || nextIndex < 0 || nextIndex >= localMarketplaces.length) return
@@ -1856,19 +1828,6 @@ export function PluginsWorkspace({
                     >
                       <button
                         type="button"
-                        data-testid="plugins-add-openai-marketplace-button"
-                        className="flex w-full flex-col rounded-lg px-3 py-2 text-left transition-colors hover:bg-surface"
-                        onClick={addOpenAIOfficialMarketplace}
-                      >
-                        <span className="text-sm font-medium text-text-primary">
-                          {t('workbench.plugins_add_openai_marketplace', '添加 OpenAI 官方市场')}
-                        </span>
-                        <span className="mt-0.5 truncate text-xs leading-5 text-text-muted">
-                          {OPENAI_OFFICIAL_MARKETPLACE.path}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
                         data-testid="plugins-add-custom-marketplace-button"
                         className="flex w-full flex-col rounded-lg px-3 py-2 text-left transition-colors hover:bg-surface"
                         onClick={() => {
@@ -1926,12 +1885,7 @@ export function PluginsWorkspace({
                     '插件市场可以来自 GitHub 仓库或本地 marketplace.json。添加后即可搜索、安装和管理 Codex 兼容插件。'
                   )}
                   manageLabel={t('workbench.plugins_manage', '管理')}
-                  openAIAddLabel={t(
-                    'workbench.plugins_add_openai_marketplace',
-                    '添加 OpenAI 官方市场'
-                  )}
                   customAddLabel={t('workbench.plugins_add_custom_marketplace', '添加自定义市场')}
-                  onAddOpenAI={addOpenAIOfficialMarketplace}
                   onAddCustomMarketplace={() => {
                     setMarketplaceConfigError(null)
                     setMarketplaceForm({ name: '', path: '' })
@@ -2158,13 +2112,13 @@ export function PluginsWorkspace({
               </button>
             </div>
             <div className="mt-5 space-y-2">
-              {marketplaces.filter(marketplace => marketplace.kind === 'local').length === 0 ? (
+              {marketplaces.filter(isUserManagedMarketplace).length === 0 ? (
                 <div className="rounded-lg border border-border px-4 py-5 text-sm text-text-secondary">
                   {t('workbench.plugins_marketplace_no_local_markets', '还没有可管理的市场。')}
                 </div>
               ) : (
                 marketplaces
-                  .filter(marketplace => marketplace.kind === 'local')
+                  .filter(isUserManagedMarketplace)
                   .map((marketplace, index, localMarketplaces) => (
                     <div
                       key={marketplace.id}
