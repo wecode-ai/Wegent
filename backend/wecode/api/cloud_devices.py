@@ -553,10 +553,13 @@ async def get_cloud_device_metrics(
 
     now = int(time.time())
     start = now - 300  # last 5 minutes
+    # Filter disk to the root filesystem; otherwise Nevis returns one series
+    # per mountpoint (/boot/efi, tmpfs, ...) and data[0] may be the tiny EFI
+    # partition instead of the real root disk.
     queries = {
         "cpu": "max_over_time(syscpuidle:busy{cpu='cpu'})",
         "memory": "max_over_time(sysmeminfo:memused_percentage)",
-        "disk": "max_over_time(sysdiskinfo:used_size_percentage)",
+        "disk": 'max_over_time(sysdiskinfo:used_size_percentage{mountpoint="/"})',
     }
 
     results: dict[str, float | None] = {"cpu": None, "memory": None, "disk": None}
@@ -619,10 +622,11 @@ async def get_cloud_device_metrics_history(
 
     now = int(time.time())
     start = now - 3600  # last 1 hour
+    # Filter disk to the root filesystem (see metrics endpoint for rationale).
     queries = {
         "cpu": "max_over_time(syscpuidle:busy{cpu='cpu'})",
         "memory": "max_over_time(sysmeminfo:memused_percentage)",
-        "disk": "max_over_time(sysdiskinfo:used_size_percentage)",
+        "disk": 'max_over_time(sysdiskinfo:used_size_percentage{mountpoint="/"})',
     }
 
     results: dict[str, list] = {"cpu": [], "memory": [], "disk": []}
