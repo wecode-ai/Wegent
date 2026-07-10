@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => {
   const cloudListTeams = vi.fn()
   const cloudGetDefaultWorkbenchTeam = vi.fn()
   const localSearchRuntimeWork = vi.fn()
+  const localPreviewArchivedConversationCleanup = vi.fn()
+  const localCleanupArchivedConversations = vi.fn()
   const cloudSearchRuntimeWork = vi.fn()
   const cloudCreateDockerRemoteDeviceCommand = vi.fn()
   const cloudRuntimeIpcRequest = vi.fn()
@@ -63,6 +65,8 @@ const mocks = vi.hoisted(() => {
         deletedCount: 0,
         results: [],
       })),
+      previewArchivedConversationCleanup: localPreviewArchivedConversationCleanup,
+      cleanupArchivedConversations: localCleanupArchivedConversations,
     },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
   }
@@ -129,6 +133,8 @@ const mocks = vi.hoisted(() => {
     cloudListTeams,
     cloudGetDefaultWorkbenchTeam,
     localSearchRuntimeWork,
+    localPreviewArchivedConversationCleanup,
+    localCleanupArchivedConversations,
     cloudSearchRuntimeWork,
     cloudCreateDockerRemoteDeviceCommand,
     cloudRuntimeIpcRequest,
@@ -269,6 +275,28 @@ describe('createHybridWorkbenchServices', () => {
     mocks.localListModels.mockResolvedValue({ data: [codexModel] })
     mocks.cloudListModels.mockResolvedValue({ data: [codexModel] })
     mocks.localSearchRuntimeWork.mockResolvedValue({ items: [] })
+    mocks.localPreviewArchivedConversationCleanup.mockResolvedValue({
+      success: true,
+      deleted: false,
+      taskCount: 0,
+      targetCount: 0,
+      cleanableCount: 0,
+      skippedCount: 0,
+      errorCount: 0,
+      bytes: 0,
+      results: [],
+    })
+    mocks.localCleanupArchivedConversations.mockResolvedValue({
+      success: true,
+      deleted: true,
+      taskCount: 0,
+      targetCount: 0,
+      cleanableCount: 0,
+      skippedCount: 0,
+      errorCount: 0,
+      bytes: 0,
+      results: [],
+    })
     mocks.cloudSearchRuntimeWork.mockResolvedValue({ items: [] })
     mocks.cloudRuntimeIpcRequest.mockImplementation(async method => {
       if (method === 'runtime.tasks.list') {
@@ -331,6 +359,16 @@ describe('createHybridWorkbenchServices', () => {
 
     expect(devices.map(device => device.device_id)).toEqual(['local-device'])
     expect(mocks.cloudListDevices).not.toHaveBeenCalled()
+  })
+
+  it('runs local orphaned-worktree cleanup when no archived conversations remain', async () => {
+    const services = createServices()
+
+    await services.runtimeWorkApi?.previewArchivedConversationCleanup({ items: [] })
+    await services.runtimeWorkApi?.cleanupArchivedConversations({ items: [] })
+
+    expect(mocks.localPreviewArchivedConversationCleanup).toHaveBeenCalledWith({ items: [] })
+    expect(mocks.localCleanupArchivedConversations).toHaveBeenCalledWith({ items: [] })
   })
 
   it('returns remembered cloud devices on the primary device list after background sync', async () => {

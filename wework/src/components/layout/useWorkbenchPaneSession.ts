@@ -1487,6 +1487,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         sendRuntimeMessage,
         setInput,
         setRuntimeGoal,
+        scopedSetInput,
       ]
     )
 

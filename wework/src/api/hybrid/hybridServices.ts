@@ -619,7 +619,7 @@ export function createHybridWorkbenchServices(
     async previewArchivedConversationCleanup(data) {
       const localItems = data.items.filter(item => isLocalDeviceId(item.deviceId))
       const responses = await Promise.all([
-        localItems.length > 0
+        data.items.length === 0 || localItems.length > 0
           ? localServices.runtimeWorkApi!.previewArchivedConversationCleanup({ items: localItems })
           : Promise.resolve(emptyCleanupResponse()),
       ])
@@ -628,7 +628,7 @@ export function createHybridWorkbenchServices(
     async cleanupArchivedConversations(data) {
       const localItems = data.items.filter(item => isLocalDeviceId(item.deviceId))
       const responses = await Promise.all([
-        localItems.length > 0
+        data.items.length === 0 || localItems.length > 0
           ? localServices.runtimeWorkApi!.cleanupArchivedConversations({ items: localItems })
           : Promise.resolve(emptyCleanupResponse()),
       ])

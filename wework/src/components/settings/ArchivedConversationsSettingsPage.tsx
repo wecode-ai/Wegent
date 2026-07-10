@@ -551,32 +551,32 @@ export function ArchivedConversationsSettingsPage() {
             </p>
           )}
         </div>
-        {hasArchivedItems && (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              data-testid="archived-cleanup-preview-button"
-              onClick={() => void handlePreviewCleanup()}
-              disabled={loading || busyKey === 'cleanup-preview' || busyKey === 'cleanup'}
-              className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {busyKey === 'cleanup-preview' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              {t('workbench.archived_cleanup_scan', '扫描残留文件')}
-            </button>
-            <button
-              type="button"
-              data-testid="archived-refresh-button"
-              onClick={() => void loadArchivedConversations()}
-              disabled={loading}
-              className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <RotateCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-              {t('workbench.refresh_worklists', '刷新')}
-            </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            data-testid="archived-cleanup-preview-button"
+            onClick={() => void handlePreviewCleanup()}
+            disabled={loading || busyKey === 'cleanup-preview' || busyKey === 'cleanup'}
+            className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busyKey === 'cleanup-preview' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4" />
+            )}
+            {t('workbench.archived_cleanup_scan', '扫描残留文件')}
+          </button>
+          <button
+            type="button"
+            data-testid="archived-refresh-button"
+            onClick={() => void loadArchivedConversations()}
+            disabled={loading}
+            className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RotateCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+            {t('workbench.refresh_worklists', '刷新')}
+          </button>
+          {hasArchivedItems && (
             <button
               type="button"
               data-testid="archived-bulk-delete-button"
@@ -591,8 +591,8 @@ export function ArchivedConversationsSettingsPage() {
               )}
               {t('workbench.archived_bulk_delete', '删除全部')}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {bulkDeleteProgress && (

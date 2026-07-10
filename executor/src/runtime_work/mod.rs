@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+mod archived_cleanup;
 mod codex_global_state;
 mod codex_notifications;
 mod codex_rollout;
