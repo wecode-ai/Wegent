@@ -74,6 +74,7 @@ export type WorkbenchMessage = Omit<
   runtimeGoalRequest?: boolean | null
   runtimeGuidance?: boolean | null
   runtimeGuidanceSplitBefore?: boolean | null
+  runtimeGuidanceContinuation?: boolean | null
   codeComments?: CodeCommentContext[] | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null

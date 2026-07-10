@@ -153,7 +153,8 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onBlockUpdated ||
     handlers.onSubagentActivity ||
     handlers.onRuntimeGoalUpdated ||
-    handlers.onRuntimeGoalCleared
+    handlers.onRuntimeGoalCleared ||
+    handlers.onGuidanceApplied
   )
 }
 

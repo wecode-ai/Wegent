@@ -1567,6 +1567,8 @@ export function createRuntimeWorkApiFromIpc(
           taskId: normalizedAddress.taskId,
           address: normalizedAddress,
           message: data.message,
+          ...(data.attachmentIds ? { attachmentIds: data.attachmentIds } : {}),
+          ...(data.attachments ? { attachments: data.attachments } : {}),
           ...(data.clientGuidanceId ? { clientGuidanceId: data.clientGuidanceId } : {}),
           ...(data.client_guidance_id ? { client_guidance_id: data.client_guidance_id } : {}),
           ...(data.additionalContext ? { additionalContext: data.additionalContext } : {}),

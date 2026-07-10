@@ -1398,14 +1398,23 @@ function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
   return RAW_FAILED_MESSAGE_PATTERNS.some(pattern => pattern.test(content))
 }
 
-function getDisplayProcessingBlocks(blocks: ProcessingBlock[] | undefined): ProcessingBlock[] {
+function getDisplayProcessingBlocks(
+  blocks: ProcessingBlock[] | undefined,
+  settleForCancelledTurn = false
+): ProcessingBlock[] {
   if (!blocks?.length) return []
 
-  return blocks.filter(block => {
-    if (block.type !== 'text') return true
+  return blocks
+    .filter(block => {
+      if (block.type !== 'text') return true
 
-    return Boolean(block.content.trim())
-  })
+      return Boolean(block.content.trim())
+    })
+    .map(block =>
+      settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
+        ? { ...block, status: 'done' as const }
+        : block
+    )
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
@@ -1475,10 +1484,10 @@ function AssistantMessage({
   const visibleContent = shouldHideContent ? '' : message.content
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
-  const displayBlocks = getDisplayProcessingBlocks(message.blocks)
+  const displayBlocks = getDisplayProcessingBlocks(message.blocks, isCancelled)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
-  const isStreaming = message.status === 'streaming'
+  const isStreaming = !isCancelled && message.status === 'streaming'
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantRunning = isStreaming || hasRunningBlocks
   const canShowFinalArtifacts = !isAssistantRunning
@@ -1530,7 +1539,11 @@ function AssistantMessage({
               blocks={displayBlocks}
               isStreaming={isStreaming}
               startedAt={getProcessingSummaryStartMs(message, displayBlocks, isStreaming)}
-              forceExpanded={isCancelled || message.runtimeGuidanceSplitBefore === true}
+              forceExpanded={
+                isCancelled ||
+                message.runtimeGuidanceSplitBefore === true ||
+                message.runtimeGuidanceContinuation === true
+              }
               hasFinalContent={hasVisibleContent}
               showSummary={!isCancelled}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}

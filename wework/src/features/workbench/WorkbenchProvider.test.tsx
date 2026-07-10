@@ -1011,6 +1011,13 @@ function RuntimeOpenProbe() {
       <span data-testid="runtime-message-statuses">
         {paneSession.messages.map(message => `${message.role}:${message.status}`).join('|')}
       </span>
+      <span data-testid="runtime-content-truncation">
+        {paneSession.messages
+          .map(
+            message => `${message.id}:${message.contentTruncated === true ? 'truncated' : 'full'}`
+          )
+          .join('|')}
+      </span>
       <span data-testid="runtime-transcript-loading">
         {paneSession.transcriptLoading ? 'loading' : 'idle'}
       </span>
@@ -6082,7 +6089,6 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('set follow-up'))
     await userEvent.click(screen.getByText('send follow-up'))
     const queuedMessageId = screen.getByTestId('queued-message-ids').textContent
-    const queuedMessageCreatedAt = screen.getByTestId('queued-message-created-at').textContent
     await userEvent.click(screen.getByText('guide first queued'))
 
     await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
@@ -6099,31 +6105,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
     expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
-      'first message|working|before |继续修|'
+      'first message|working|before '
     )
-    expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
+    expect(screen.getByTestId('runtime-open-blocks')).not.toHaveTextContent(
       'tool:conversation_guidance:done'
     )
-    expect(screen.getByTestId('runtime-open-message-ids')).toHaveTextContent(queuedMessageId ?? '')
-    expect(screen.getByTestId('runtime-open-message-created-at')).toHaveTextContent(
-      queuedMessageCreatedAt ?? ''
-    )
     expect(screen.getByTestId('guidance-messages')).toHaveTextContent('')
-
-    await act(async () => {
-      streamHandlers.onChatChunk?.({
-        taskId: 'runtime-a',
-        subtaskId: '101',
-        content: 'after',
-        offset: 7,
-        deviceId: 'device-1',
-      })
-    })
-    await waitFor(() =>
-      expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
-        'first message|working|before |继续修|after'
-      )
-    )
 
     await act(async () => {
       guidanceResult.resolve({
@@ -6131,15 +6118,42 @@ describe('WorkbenchProvider runtime tasks', () => {
         success: true,
         taskId: 'runtime-a',
         guidanceId: 'queued-runtime-guidance',
+        turnId: '019f4c02-df59-71c3-ac19-f1e7cec46069',
       })
-      streamHandlers.onChatDone?.({
+    })
+    expect(screen.getByTestId('queued-messages')).toHaveTextContent('sending:继续修')
+    expect(screen.getByTestId('runtime-open-blocks')).not.toHaveTextContent(
+      'tool:conversation_guidance:done'
+    )
+
+    await act(async () => {
+      streamHandlers.onGuidanceApplied?.({
         taskId: 'runtime-a',
         subtaskId: '101',
         deviceId: 'device-1',
-        result: { value: 'before after' },
+        guidanceId: 'raw-guidance-item',
+        message: '继续修',
+        appliedAtMs: Date.now(),
       })
     })
+    await waitFor(() => expect(screen.getByTestId('queued-messages')).toHaveTextContent(''))
+    expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
+      'first message|working|before |继续修|'
+    )
+    expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
+      'tool:conversation_guidance:done'
+    )
+    expect(screen.getByTestId('runtime-open-message-ids')).toHaveTextContent(queuedMessageId ?? '')
 
+    await act(async () => {
+      streamHandlers.onChatChunk?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        content: 'after',
+        offset: 0,
+        deviceId: 'device-1',
+      })
+    })
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
         'first message|working|before |继续修|after'
@@ -6148,9 +6162,40 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
       'tool:conversation_guidance:done'
     )
+    await act(async () => {
+      streamHandlers.onChatChunk?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        content: ' more',
+        offset: 5,
+        deviceId: 'device-1',
+      })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('after more')
+    )
+    expect(screen.getByTestId('runtime-content-truncation')).not.toHaveTextContent('truncated')
+
+    await act(async () => {
+      streamHandlers.onChatDone?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        result: { value: 'before after more' },
+      })
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-messages').textContent).toBe(
+        'first message|working|before |继续修|after more'
+      )
+    )
+    expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
+      'tool:conversation_guidance:done'
+    )
   })
 
-  test('sends busy follow-up directly as guidance when requested by submit options', async () => {
+  test('sends a busy goal message as guidance when requested by submit options', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
@@ -6165,6 +6210,10 @@ describe('WorkbenchProvider runtime tasks', () => {
       success: true,
       taskId: 'runtime-a',
       guidanceId: 'shortcut-runtime-guidance',
+    })
+    const setRuntimeGoal = vi.fn().mockResolvedValue({
+      accepted: true,
+      goal: createRuntimeGoal({ objective: '继续修', status: 'active' }),
     })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -6214,6 +6263,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       }),
       sendRuntimeMessage,
       guideRuntimeTask,
+      setRuntimeGoal,
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
@@ -6242,13 +6292,46 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceId: 'device-1',
       })
     })
+    await userEvent.click(screen.getByText('set follow-up goal'))
     await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('add local image attachment'))
     await userEvent.click(screen.getByText('send follow-up as guidance'))
 
     await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(setRuntimeGoal).toHaveBeenCalledWith({
+      address: {
+        deviceId: 'device-1',
+        workspacePath: '/workspace/project-alpha',
+        taskId: 'runtime-a',
+      },
+      objective: '继续修',
+      status: 'active',
+    })
+    await act(async () => {
+      streamHandlers.onGuidanceApplied?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        guidanceId: 'raw-guidance-item',
+        message: '继续修',
+        appliedAtMs: Date.now(),
+      })
+    })
+    expect(guideRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: '继续修',
+        attachments: [
+          expect.objectContaining({
+            local_path: LOCAL_IMAGE_ATTACHMENT_PATH,
+            mime_type: 'image/png',
+          }),
+        ],
+      })
+    )
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('')
     expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('继续修')
+    expect(screen.getByTestId('runtime-open-goal-flags')).toHaveTextContent('goal:继续修')
     expect(screen.getByTestId('runtime-open-message-ids')).toHaveTextContent('queued-runtime-pane-')
   })
 
@@ -6512,7 +6595,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                   taskId: 'runtime-a',
                   workspacePath: '/workspace/project-alpha',
                   title: 'Runtime A',
-                  runtime: 'claude_code',
+                  runtime: 'codex',
                   running: true,
                 },
               ],
@@ -6541,7 +6624,7 @@ describe('WorkbenchProvider runtime tasks', () => {
                   taskId: 'runtime-a',
                   workspacePath: '/workspace/project-alpha',
                   title: 'Runtime A',
-                  runtime: 'claude_code',
+                  runtime: 'codex',
                   running: false,
                   status: 'cancelled',
                 },
@@ -6565,6 +6648,10 @@ describe('WorkbenchProvider runtime tasks', () => {
         taskId: 'runtime-a',
       })
     })
+    const setRuntimeGoal = vi.fn().mockResolvedValue({
+      accepted: true,
+      goal: createRuntimeGoal({ status: 'paused' }),
+    })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork,
       getRuntimeTranscript: vi.fn().mockResolvedValue({
@@ -6582,6 +6669,11 @@ describe('WorkbenchProvider runtime tasks', () => {
         ],
       }),
       cancelRuntimeTask,
+      getRuntimeGoal: vi.fn().mockResolvedValue({
+        accepted: true,
+        goal: createRuntimeGoal({ status: 'active' }),
+      }),
+      setRuntimeGoal,
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
@@ -6610,6 +6702,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceId: 'device-1',
       })
     })
+    await waitFor(() => expect(runtimeWorkApi.getRuntimeGoal).toHaveBeenCalledTimes(1))
     const listCallsBeforeCancel = listRuntimeWork.mock.calls.length
     await userEvent.click(screen.getByText('stop current response'))
 
@@ -6619,6 +6712,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       workspacePath: '/workspace/project-alpha',
       taskId: 'runtime-a',
     })
+    await waitFor(() =>
+      expect(setRuntimeGoal).toHaveBeenCalledWith({
+        address: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        status: 'paused',
+      })
+    )
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(listCallsBeforeCancel + 1))
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
@@ -6732,6 +6835,16 @@ describe('WorkbenchProvider runtime tasks', () => {
       },
       message: '执行ls',
       clientGuidanceId: expect.stringMatching(/^queued-runtime-pane-/),
+    })
+    await act(async () => {
+      streamHandlers.onGuidanceApplied?.({
+        taskId: 'runtime-a',
+        subtaskId: '101',
+        deviceId: 'device-1',
+        guidanceId: 'raw-guidance-item',
+        message: '执行ls',
+        appliedAtMs: Date.now(),
+      })
     })
     expect(cancelRuntimeTask).not.toHaveBeenCalled()
     expect(sendRuntimeMessage).not.toHaveBeenCalled()

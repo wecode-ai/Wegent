@@ -7,7 +7,7 @@
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 RuntimeName = Literal["codex", "claude_code"]
 LocalTaskStatus = Literal["active", "archived"]
@@ -453,7 +453,8 @@ class RuntimeGuidanceRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     address: RuntimeTaskAddress
-    message: str = Field(..., min_length=1)
+    message: str = ""
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
     client_guidance_id: Optional[str] = Field(
         default=None,
         alias="clientGuidanceId",
@@ -464,6 +465,12 @@ class RuntimeGuidanceRequest(BaseModel):
         alias="additionalContext",
         validation_alias=AliasChoices("additionalContext", "additional_context"),
     )
+
+    @model_validator(mode="after")
+    def require_message_or_attachment(self) -> "RuntimeGuidanceRequest":
+        if self.message.strip() or self.attachment_ids:
+            return self
+        raise ValueError("message or attachment is required")
 
 
 class RuntimeGuidanceResponse(BaseModel):

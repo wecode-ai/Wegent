@@ -23,7 +23,10 @@ use super::{
         file_changes_update_from_patch_updated, tool_update_from_notification,
         workbench_block_from_notification,
     },
-    util::{extract_text, is_completed_plan_item, item_id, now_ms, raw_string_field, string_field},
+    util::{
+        extract_text, is_completed_plan_item, item_id, item_type, now_ms, raw_string_field,
+        string_field,
+    },
 };
 
 const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
@@ -94,6 +97,7 @@ pub(crate) struct CodexNotificationEventMapper {
     final_text_offset: usize,
     plan_blocks: BTreeMap<String, String>,
     tool_output_deltas: BTreeMap<String, String>,
+    completed_user_message_count: usize,
 }
 
 struct ProcessTextStream {
@@ -204,6 +208,9 @@ impl CodexNotificationEventMapper {
                 if self.is_subagent_delta(notification.params) {
                     self.forget_subagent_item(notification.params);
                     self.agent_message_phases.forget_item(notification.params);
+                    return;
+                }
+                if self.emit_applied_guidance(&emit_context, notification.params) {
                     return;
                 }
                 let phase = self
@@ -329,6 +336,39 @@ impl CodexNotificationEventMapper {
                 );
             }
         }
+    }
+
+    fn emit_applied_guidance(&mut self, context: &EventEmitContext<'_>, params: &Value) -> bool {
+        let item = params.get("item").unwrap_or(params);
+        if item_type(item).as_str() != "usermessage" {
+            return false;
+        }
+
+        self.completed_user_message_count += 1;
+        if self.completed_user_message_count == 1 {
+            return true;
+        }
+
+        self.final_text_offset = 0;
+        self.reset_process_text();
+
+        emit_response_event(
+            context.event_tx,
+            context.device_id,
+            "response.guidance.applied",
+            context.local_task_id,
+            context.request,
+            json!({
+                "guidanceId": item_id(item, "guidance"),
+                "message": extract_text(item).unwrap_or_default(),
+                "appliedAtMs": params
+                    .get("completedAtMs")
+                    .or_else(|| params.get("completed_at_ms"))
+                    .and_then(Value::as_i64)
+                    .unwrap_or_else(now_ms),
+            }),
+        );
+        true
     }
 
     fn emit_tool_output_delta(
@@ -1438,6 +1478,56 @@ mod tests {
     use crate::protocol::ExecutionRequest;
 
     use super::*;
+
+    #[test]
+    fn emits_guidance_applied_for_second_completed_user_message() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+        let user_message = |id: &str, text: &str, completed_at_ms: i64| {
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "completedAtMs": completed_at_ms,
+                    "item": {
+                        "id": id,
+                        "type": "userMessage",
+                        "content": [{"type": "text", "text": text}]
+                    }
+                }
+            })
+        };
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            user_message("user-initial", "first", 100),
+        );
+        assert!(event_rx.try_recv().is_err());
+
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            user_message("user-guidance", "also inspect memory", 200),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("guidance event should be emitted");
+        assert_eq!(event["event"], "response.guidance.applied");
+        assert_eq!(event["payload"]["subtaskId"], "8");
+        assert_eq!(event["payload"]["data"]["guidanceId"], "user-guidance");
+        assert_eq!(event["payload"]["data"]["message"], "also inspect memory");
+        assert_eq!(event["payload"]["data"]["appliedAtMs"], 200);
+    }
 
     #[test]
     fn maps_codex_commentary_agent_messages_to_process_text_blocks() {

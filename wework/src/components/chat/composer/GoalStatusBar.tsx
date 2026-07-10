@@ -58,7 +58,7 @@ export function GoalStatusBar({
   return (
     <div
       data-testid="goal-status-bar"
-      className="mb-1 flex h-11 w-[calc(100%-2rem)] max-w-[54rem] items-center gap-2 rounded-t-[26px] border border-border/45 border-b-0 bg-background px-4 text-[13px] leading-[18px] text-text-secondary shadow-[0_8px_28px_rgba(0,0,0,0.06)]"
+      className="mb-2 flex h-11 w-full items-center gap-2 rounded-2xl border border-border/45 bg-background px-4 text-[13px] leading-[18px] text-text-secondary shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
     >
       <Target className="h-4 w-4 shrink-0 text-text-muted" />
       <div className="min-w-0 flex-1 truncate">

@@ -602,6 +602,9 @@ async def send_runtime_guidance(
         **_runtime_task_address_payload(address),
         "message": request.message,
     }
+    attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
+    if attachments:
+        payload["attachments"] = attachments
     if request.client_guidance_id:
         payload["clientGuidanceId"] = request.client_guidance_id
     if request.additional_context:

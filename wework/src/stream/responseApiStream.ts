@@ -43,6 +43,7 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.block.created',
   'response.block.updated',
   'response.subagent.activity',
+  'response.guidance.applied',
   'runtime.goal.updated',
   'runtime.goal.cleared',
   'thread/tokenUsage/updated',
@@ -653,6 +654,19 @@ export function emitResponseApiEvent(
 
   if (eventName === 'response.subagent.activity') {
     emitSubagentActivity(handlers, base, data)
+    return
+  }
+
+  if (eventName === 'response.guidance.applied') {
+    handlers.onGuidanceApplied?.({
+      ...base,
+      guidanceId: stringField(data, 'guidanceId') ?? stringField(data, 'guidance_id') ?? 'guidance',
+      message: stringField(data, 'message') ?? '',
+      appliedAtMs:
+        optionalNumberField(data, 'appliedAtMs') ??
+        optionalNumberField(data, 'applied_at_ms') ??
+        Date.now(),
+    })
     return
   }
 

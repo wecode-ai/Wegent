@@ -166,6 +166,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const messagesRef = useRef<WorkbenchMessage[]>([])
   const loadedTranscriptRangesRef = useRef<LoadedTranscriptRange[]>([])
   const guidanceSplitBoundariesRef = useRef(new Map<string, GuidanceSplitBoundary>())
+  const pendingAppliedGuidancesRef = useRef(new Map<string, RuntimePaneQueuedMessage>())
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const messageActionFrameRef = useRef<number | null>(null)
   const currentRuntimeTaskLoadTarget = useMemo(
@@ -238,6 +239,30 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       })
     },
     [applyMessageActions, flushPendingMessageActions]
+  )
+  const appendGuidanceLocalUserMessage = useCallback(
+    (content: string, attachments?: Attachment[], options?: CreateLocalUserMessageOptions) => {
+      const guidanceMessage = createLocalUserMessage(content, attachments, options)
+      setMessages(currentMessages => {
+        const nextMessages = splitActiveAssistantForGuidance(
+          currentMessages,
+          guidanceMessage,
+          guidanceSplitBoundariesRef.current
+        )
+        const activeRuntimeTask = currentRuntimeTaskRef.current
+        if (activeRuntimeTask) {
+          snapshotRuntimePaneMessages(activeRuntimeTask, nextMessages)
+          debugRuntimePaneMessageFlow('guidance-message-inserted', {
+            address: runtimeAddressDebug(activeRuntimeTask),
+            previousCount: currentMessages.length,
+            nextCount: nextMessages.length,
+            nextMessages: summarizeWorkbenchMessages(nextMessages),
+          })
+        }
+        return nextMessages
+      })
+    },
+    []
   )
   const runtimeTaskStatusAddress = runtimeTaskLoadTarget?.address ?? currentRuntimeTask
   const taskExecution = useMemo(
@@ -525,9 +550,24 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           current && isPendingGoalVisibleForRuntimeTarget(current, latestAddress) ? null : current
         )
       },
+      onGuidanceApplied: payload => {
+        const pendingEntry = [...pendingAppliedGuidancesRef.current.entries()].find(
+          ([, message]) => !payload.message || message.content === payload.message
+        )
+        if (!pendingEntry) return
+        const [guidanceId, guidanceMessage] = pendingEntry
+        pendingAppliedGuidancesRef.current.delete(guidanceId)
+        appendGuidanceLocalUserMessage(guidanceMessage.content, guidanceMessage.attachments, {
+          id: guidanceMessage.id,
+          createdAt: new Date(payload.appliedAtMs).toISOString(),
+          runtimeGoalRequest: guidanceMessage.runtimeGoalRequest,
+          runtimeGuidance: true,
+        })
+        setQueuedMessages(messages => messages.filter(message => message.id !== guidanceId))
+      },
     })
     return unsubscribe
-  }, [dispatchMessages, runtimeTaskStreamTargetKey])
+  }, [appendGuidanceLocalUserMessage, dispatchMessages, runtimeTaskStreamTargetKey])
 
   const loadMoreTranscriptBefore = useCallback(async () => {
     if (
@@ -709,30 +749,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       })
     },
     [dispatchMessages]
-  )
-
-  const appendGuidanceLocalUserMessage = useCallback(
-    (content: string, attachments?: Attachment[], options?: CreateLocalUserMessageOptions) => {
-      const guidanceMessage = createLocalUserMessage(content, attachments, options)
-      setMessages(currentMessages => {
-        const nextMessages = splitActiveAssistantForGuidance(
-          currentMessages,
-          guidanceMessage,
-          guidanceSplitBoundariesRef.current
-        )
-        if (currentRuntimeTask) {
-          snapshotRuntimePaneMessages(currentRuntimeTask, nextMessages)
-          debugRuntimePaneMessageFlow('guidance-message-inserted', {
-            address: runtimeAddressDebug(currentRuntimeTask),
-            previousCount: currentMessages.length,
-            nextCount: nextMessages.length,
-            nextMessages: summarizeWorkbenchMessages(nextMessages),
-          })
-        }
-        return nextMessages
-      })
-    },
-    [currentRuntimeTask]
   )
 
   const applyLocalRequestUserInputResponse = useCallback(
@@ -1029,6 +1045,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
       if (queuedMessage.status === 'sending') return
 
+      setError(null)
       if (!paneStatus.isBusy) {
         setQueuedMessages(messages =>
           messages.map(message =>
@@ -1077,23 +1094,24 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
       )
 
-      appendGuidanceLocalUserMessage(queuedMessage.content, queuedMessage.attachments, {
-        id: queuedMessage.id,
-        createdAt: queuedMessage.createdAt,
-        runtimeGoalRequest: queuedMessage.runtimeGoalRequest,
-        runtimeGuidance: true,
-      })
+      pendingAppliedGuidancesRef.current.set(id, queuedMessage)
 
       try {
         const additionalContext = readRuntimeTerminalAdditionalContext(currentRuntimeTask)
+        const messageAttachments = queuedMessage.attachments ?? []
+        const attachmentIds = remoteAttachmentIds(messageAttachments)
+        const attachments = localRuntimeAttachments(messageAttachments)
         const result = await sendRuntimePaneGuidance({
           address: currentRuntimeTask,
           message: queuedMessage.content,
           clientGuidanceId: id,
+          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
           ...(additionalContext ? { additionalContext } : {}),
         })
         if (!result.sent && result.code === 'no_active_turn') {
-          const sent = await sendRuntimeMessage(queuedMessage, { appendLocalMessage: false })
+          pendingAppliedGuidancesRef.current.delete(id)
+          const sent = await sendRuntimeMessage(queuedMessage)
           setQueuedMessages(messages =>
             sent
               ? messages.filter(message => message.id !== id)
@@ -1105,16 +1123,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           )
           return
         }
-        setQueuedMessages(messages =>
-          result.sent
-            ? messages.filter(message => message.id !== id)
-            : messages.map(message =>
-                message.id === id
-                  ? { ...message, status: 'failed', notice: undefined, error: '引导发送失败' }
-                  : message
-              )
-        )
+        if (!result.sent) {
+          pendingAppliedGuidancesRef.current.delete(id)
+          setQueuedMessages(messages =>
+            messages.map(message =>
+              message.id === id
+                ? { ...message, status: 'failed', notice: undefined, error: '引导发送失败' }
+                : message
+            )
+          )
+        }
       } catch (error) {
+        pendingAppliedGuidancesRef.current.delete(id)
         console.error('[Wework] Queued guidance send failed', {
           id,
           error,
@@ -1128,13 +1148,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         )
       }
     },
-    [
-      appendGuidanceLocalUserMessage,
-      currentRuntimeTask,
-      paneStatus.isBusy,
-      sendRuntimeMessage,
-      sendRuntimePaneGuidance,
-    ]
+    [currentRuntimeTask, paneStatus.isBusy, sendRuntimeMessage, sendRuntimePaneGuidance]
   )
 
   const send: (inputOverride?: string, options?: RuntimePaneSendOptions) => Promise<void> =
@@ -1167,6 +1181,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             return
           }
 
+          // Errors belong to the previous action; a new goal submission starts fresh.
+          setError(null)
           setInput('')
           setSendPhase('submitting')
           try {
@@ -1195,6 +1211,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               projectChat.resetAttachments()
               if (paneStatus.isBusy) {
                 setQueuedMessages(messages => [...messages, queuedMessage])
+                if (options.guideWhenBusy) {
+                  await sendQueuedMessageAsGuidance(queuedMessage)
+                }
                 return
               }
 
@@ -1309,6 +1328,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           return
         }
 
+        // Do not keep an earlier action error visible once the user sends a new message.
+        setError(null)
         setInput('')
         setSendPhase('submitting')
         try {
@@ -1504,19 +1525,6 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [queuedMessages, sendQueuedMessageAsGuidance]
   )
 
-  const pauseCurrentResponse = useCallback(async () => {
-    if (!currentRuntimeTask) return
-
-    const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
-    if (!cancelled) return
-
-    if (!activeAssistantMessage) return
-
-    dispatchMessages({
-      type: 'assistant_cancelled',
-    })
-  }, [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages])
-
   const compactContext = useCallback(async () => {
     if (!currentRuntimeTask) {
       setError('当前对话还没有可压缩的 Codex 线程')
@@ -1599,6 +1607,30 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     () => updateCurrentGoalStatus('active'),
     [updateCurrentGoalStatus]
   )
+
+  const pauseCurrentResponse = useCallback(async () => {
+    if (!currentRuntimeTask) return
+
+    const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
+    if (!cancelled) return
+
+    if (goal?.status === 'active') {
+      await updateCurrentGoalStatus('paused')
+    }
+
+    if (!activeAssistantMessage) return
+
+    dispatchMessages({
+      type: 'assistant_cancelled',
+    })
+  }, [
+    activeAssistantMessage,
+    cancelRuntimePaneTask,
+    currentRuntimeTask,
+    dispatchMessages,
+    goal?.status,
+    updateCurrentGoalStatus,
+  ])
 
   const clearCurrentGoal = useCallback(async () => {
     if (!goal) return false
@@ -1894,8 +1926,6 @@ function createGuidanceContinuationAssistantMessage(
   assistantMessage: WorkbenchMessage & { subtaskId: string },
   guidanceMessage: WorkbenchMessage
 ): WorkbenchMessage {
-  const subtaskId = assistantMessage.subtaskId
-  const guidanceCreatedAt = getMessageCreatedAtMs(guidanceMessage.createdAt)
   return {
     ...assistantMessage,
     id: `${assistantMessage.id}-after-guidance-${guidanceMessage.id}`,
@@ -1906,14 +1936,17 @@ function createGuidanceContinuationAssistantMessage(
     blocks: [
       {
         id: `${guidanceMessage.id}-guidance`,
-        subtaskId,
+        subtaskId: assistantMessage.subtaskId,
         type: 'tool',
         toolName: 'conversation_guidance',
         toolInput: { message: guidanceMessage.content },
         status: 'done',
-        createdAt: guidanceCreatedAt,
+        createdAt: getMessageCreatedAtMs(guidanceMessage.createdAt),
       },
     ],
+    runtimeGuidanceContinuation: true,
+    contentTruncated: undefined,
+    contentOriginalChars: undefined,
     completedAt: undefined,
     stoppedNotice: false,
   }
@@ -1930,10 +1963,7 @@ function transformRuntimePaneActionForGuidanceSplits(
 
   switch (action.type) {
     case 'assistant_chunk':
-      return {
-        ...action,
-        content: trimGuidanceSplitPrefix(boundary.prefix, action.content, action.offset),
-      }
+      return action
     case 'assistant_done': {
       splitBoundaries.delete(action.subtaskId)
       return {
