@@ -107,6 +107,8 @@ Runtime task cancellation must converge two state surfaces:
 The cancellation flow must follow these rules:
 
 - After receiving `runtime.tasks.cancel`, the executor must interrupt the active turn and wait for the app-server or child process to actually exit. If it does not exit before the timeout, return `cancel_timeout`; the frontend must not treat that as stopped.
+- A cancellation request can arrive before the Codex app-server creates its turn. The executor must consume that signal before sending `turn/start` so an already-cancelled task cannot start.
+- If `turn/interrupt` reports that there is no active turn, the turn completed between cancellation and interruption. The executor must converge this idempotent result to `cancelled`, not report message generation failure to the user.
 - Runners that can spawn child processes, such as the Codex app-server, must be managed and terminated as a process group so background workers cannot keep running after the parent process exits.
 - After the frontend receives an accepted cancellation result, it must refresh the runtime work list so sidebars and close guards observe `running: false`.
 - The pane session must locally finalize any still-streaming assistant messages as cancelled because cancellation may not emit a normal `chat:done` or response completed event.
