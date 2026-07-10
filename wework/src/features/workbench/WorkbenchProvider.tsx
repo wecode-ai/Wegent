@@ -5,7 +5,7 @@ import { updateWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
-import { getActiveWorkbenchDeviceId } from '@/lib/workbench-device'
+import { getActiveWorkbenchDeviceId, resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import type {
   LocalDeviceSkill,
@@ -494,13 +494,35 @@ export function WorkbenchProvider({
 
   const openStandaloneWorkspace = useCallback(
     async (deviceId: string, workspacePath: string, label?: string) => {
-      const normalizedDeviceId = deviceId.trim()
+      const requestDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
-      if (!normalizedDeviceId || !normalizedWorkspacePath) return
+      if (!requestDeviceId || !normalizedWorkspacePath) return
       const normalizedLabel = label?.trim()
 
+      // CLI open uses the local-device alias. Resolve the real executor device id so
+      // online checks, composer enablement, and new-chat buttons match listDevices.
+      let devicesForResolution = state.devices
+      const needsDeviceLookup =
+        !devicesForResolution.some(device => device.device_id === requestDeviceId) &&
+        resolveLocalWorkbenchDeviceId(devicesForResolution, requestDeviceId) === requestDeviceId
+      if (needsDeviceLookup) {
+        try {
+          const listedDevices = await executorClient.commands.listDevices()
+          if (listedDevices.length > 0) {
+            devicesForResolution = listedDevices
+            dispatch({
+              type: 'devices_refreshed',
+              devices: listedDevices,
+              standaloneDeviceId: getPreferredStandaloneDeviceId(listedDevices, requestDeviceId),
+            })
+          }
+        } catch (error) {
+          console.warn('[Wework] Failed to load devices before opening workspace', error)
+        }
+      }
+
       const response = await executorClient.runtime.openRuntimeWorkspace({
-        deviceId: normalizedDeviceId,
+        deviceId: requestDeviceId,
         workspacePath: normalizedWorkspacePath,
         runtime: 'codex',
         ...(normalizedLabel ? { label: normalizedLabel } : {}),
@@ -509,23 +531,30 @@ export function WorkbenchProvider({
         throw new Error(response.error || 'Failed to register runtime workspace')
       }
       const openedWorkspacePath = response.workspacePath || normalizedWorkspacePath
+      const openedDeviceId =
+        resolveLocalWorkbenchDeviceId(
+          devicesForResolution,
+          response.deviceId?.trim() || requestDeviceId
+        ) ||
+        response.deviceId?.trim() ||
+        requestDeviceId
 
-      rememberExecutionDevice(normalizedDeviceId)
+      rememberExecutionDevice(openedDeviceId)
       dispatch({
         type: 'project_cleared',
-        standaloneDeviceId: normalizedDeviceId,
+        standaloneDeviceId: openedDeviceId,
         standaloneWorkspacePath: openedWorkspacePath,
         startFreshChat: true,
       })
       dispatch({
         type: 'runtime_workspace_opened',
-        deviceId: response.deviceId || normalizedDeviceId,
+        deviceId: openedDeviceId,
         workspacePath: openedWorkspacePath,
         label: normalizedLabel,
       })
       navigateTo('/')
     },
-    [executorClient, rememberExecutionDevice]
+    [executorClient, rememberExecutionDevice, state.devices]
   )
 
   const startNewChat = useCallback(() => {

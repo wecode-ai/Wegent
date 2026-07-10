@@ -545,6 +545,12 @@ function ProjectSendProbe() {
       <span data-testid="standalone-workspace-path">
         {workbench.state.standaloneWorkspacePath ?? 'none'}
       </span>
+      <span data-testid="standalone-device-id">{workbench.state.standaloneDeviceId ?? 'none'}</span>
+      <span data-testid="current-project-device-id">
+        {workbench.state.currentProject?.config?.execution?.deviceId ??
+          workbench.state.currentProject?.config?.device_id ??
+          'none'}
+      </span>
       <span data-testid="composer-input">{paneSession.input}</span>
       <span data-testid="message-contents">
         {paneSession.messages.map(message => message.content).join('|')}
@@ -642,6 +648,18 @@ function ProjectSendProbe() {
         }
       >
         open labeled standalone workspace
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openStandaloneWorkspace(
+            'local-device',
+            '/workspace/cli-codex',
+            'CLI Project'
+          )
+        }
+      >
+        open cli local-device workspace
       </button>
       <button type="button" onClick={() => paneSession.setInput('修复 CI')}>
         set input
@@ -3317,6 +3335,72 @@ describe('WorkbenchProvider runtime tasks', () => {
       '/workspace/direct-codex'
     )
     expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('resolves the local-device CLI alias to the real local executor device', async () => {
+    const localDevice = createDevice({
+      device_id: 'device-real-local',
+      name: 'This Mac',
+      device_type: 'local',
+      status: 'online',
+      is_default: true,
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork({ projects: [] })),
+      openRuntimeWorkspace: vi.fn().mockResolvedValue({
+        accepted: true,
+        workspacePath: '/workspace/cli-codex',
+        runtime: 'codex',
+      }),
+      createRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        deviceId: 'device-real-local',
+        taskId: 'cli-created',
+        workspacePath: '/workspace/cli-codex',
+        runtime: 'codex',
+      }),
+    })
+    const services = createWorkbenchServices({
+      deviceApi: {
+        listDevices: vi.fn().mockResolvedValue([localDevice]),
+      } as Partial<WorkbenchServices['deviceApi']> as WorkbenchServices['deviceApi'],
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await waitFor(() =>
+      expect(screen.getByText('open cli local-device workspace')).toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByText('open cli local-device workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.openRuntimeWorkspace).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.openRuntimeWorkspace).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      workspacePath: '/workspace/cli-codex',
+      runtime: 'codex',
+      label: 'CLI Project',
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('current-project-name')).toHaveTextContent('CLI Project')
+    )
+    expect(screen.getByTestId('standalone-device-id')).toHaveTextContent('device-real-local')
+    expect(screen.getByTestId('current-project-device-id')).toHaveTextContent('device-real-local')
+    expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent(
+      '/workspace/cli-codex'
+    )
+
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deviceId: 'device-real-local',
+        workspacePath: '/workspace/cli-codex',
+        message: '修复 CI',
+      })
+    )
   })
 
   test('opens a standalone runtime project first without refreshing the runtime list', async () => {

@@ -1258,6 +1258,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             const sent = await sendCurrentInput(visibleSubmittedInput, {
               codeCommentContexts,
               initialGoal: pendingInitialGoal,
+              onError: setError,
               onRuntimeTaskOptimisticOpen: (address, context) => {
                 if (pendingInitialGoal) {
                   setPendingGoalState(current =>
@@ -1317,6 +1318,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               projectChat.resetAttachments()
               setCodeCommentContexts([])
             } else {
+              // Restore the draft when send is blocked so the user can retry.
+              // Use scoped setter so we do not clear the pane error reported via onError.
+              scopedSetInput(visibleSubmittedInput)
               setSendPhase('idle')
             }
             return

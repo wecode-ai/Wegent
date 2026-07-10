@@ -153,14 +153,15 @@ export function useWorkbenchDataRefresh({
       const devices = resolveDeviceListWithCache(rawDevices)
       const standaloneDeviceId = getRememberedStandaloneDeviceId(user, devices)
 
+      // Do not force-clear currentProject / runtimeWork here. CLI `wework <path>` may
+      // open a workspace while bootstrap is still in flight; wiping those fields would
+      // leave the UI selected against a stale local-device alias with no online device.
       dispatch({
         type: 'bootstrapped',
         user,
         defaultTeam: defaultTeamResult.status === 'fulfilled' ? defaultTeamResult.value : null,
         projects: [],
         devices,
-        runtimeWork: EMPTY_RUNTIME_WORK,
-        currentProject: null,
         standaloneDeviceId,
       })
 

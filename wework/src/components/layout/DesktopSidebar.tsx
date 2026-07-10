@@ -266,11 +266,13 @@ function standaloneRuntimeProjectWork(
     return null
   }
 
-  const device = devices.find(item => item.device_id === normalizedDeviceId)
-  const deviceStatus = device?.status ?? 'unavailable'
+  const deviceState = getSidebarDeviceState(normalizedDeviceId, devices)
+  const device = deviceState?.device
+  const resolvedDeviceId = deviceState?.deviceId ?? normalizedDeviceId
+  const deviceStatus = deviceState?.status ?? 'unavailable'
   return {
     project: {
-      key: `${normalizedDeviceId}:${normalizedWorkspacePath}`,
+      key: `${resolvedDeviceId}:${normalizedWorkspacePath}`,
       name: getSidebarPathBasename(normalizedWorkspacePath),
       description: normalizedWorkspacePath,
       color: null,
@@ -279,8 +281,8 @@ function standaloneRuntimeProjectWork(
       {
         id: null,
         projectId: null,
-        deviceId: normalizedDeviceId,
-        deviceName: device ? getStandaloneDeviceLabel(device) : normalizedDeviceId,
+        deviceId: resolvedDeviceId,
+        deviceName: device ? getStandaloneDeviceLabel(device) : resolvedDeviceId,
         deviceStatus,
         available: deviceStatus === 'online' || deviceStatus === 'busy',
         workspacePath: normalizedWorkspacePath,
@@ -577,10 +579,16 @@ function getSidebarDeviceState(
 ): SidebarDeviceState | null {
   if (!deviceId) return null
 
-  const device = devices.find(item => item.device_id === deviceId)
+  const device =
+    devices.find(item => item.device_id === deviceId) ??
+    (deviceId === 'local-device'
+      ? (devices.find(item => item.device_type === 'local' && item.status === 'online') ??
+        devices.find(item => item.device_type === 'local') ??
+        null)
+      : null)
   return {
-    deviceId,
-    device,
+    deviceId: device?.device_id ?? deviceId,
+    device: device ?? undefined,
     status: device?.status ?? 'unavailable',
   }
 }
@@ -645,12 +653,12 @@ function getRuntimeProjectDeviceState(
 ): SidebarDeviceState | null {
   const workspace = runtimeProjectWork?.deviceWorkspaces[0]
   if (!workspace) return null
-  const device = devices.find(item => item.device_id === workspace.deviceId)
-  return {
-    deviceId: workspace.deviceId,
-    device,
-    status: (device?.status ?? workspace.deviceStatus ?? 'unavailable') as SidebarDeviceStatus,
-  }
+  return (
+    getSidebarDeviceState(workspace.deviceId, devices) ?? {
+      deviceId: workspace.deviceId,
+      status: (workspace.deviceStatus ?? 'unavailable') as SidebarDeviceStatus,
+    }
+  )
 }
 
 function isRuntimeRemoteProject(runtimeProjectWork: RuntimeProjectWork | undefined): boolean {
