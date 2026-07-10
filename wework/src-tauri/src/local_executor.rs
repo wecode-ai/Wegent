@@ -11,7 +11,7 @@ use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -48,14 +48,32 @@ const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = 10;
 const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
+const LOCAL_EXECUTOR_KEEPALIVE_INTERVAL_SECS: u64 = 10;
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
 
 pub struct LocalExecutorState {
     inner: SharedExecutorInner,
-    next_id: AtomicU64,
-    start_lock: AsyncMutex<()>,
+    next_id: Arc<AtomicU64>,
+    start_lock: Arc<AsyncMutex<()>>,
+    keepalive: Arc<LocalExecutorKeepaliveState>,
+}
+
+struct LocalExecutorKeepaliveState {
+    enabled: AtomicBool,
+    worker_running: AtomicBool,
+}
+
+impl Clone for LocalExecutorState {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            next_id: self.next_id.clone(),
+            start_lock: self.start_lock.clone(),
+            keepalive: self.keepalive.clone(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -268,13 +286,18 @@ impl Default for LocalExecutorState {
     fn default() -> Self {
         Self {
             inner: Arc::new(Mutex::new(LocalExecutorInner::default())),
-            next_id: AtomicU64::new(1),
-            start_lock: AsyncMutex::new(()),
+            next_id: Arc::new(AtomicU64::new(1)),
+            start_lock: Arc::new(AsyncMutex::new(())),
+            keepalive: Arc::new(LocalExecutorKeepaliveState {
+                enabled: AtomicBool::new(false),
+                worker_running: AtomicBool::new(false),
+            }),
         }
     }
 }
 
 pub fn shutdown_local_executor(state: &LocalExecutorState) {
+    state.keepalive.enabled.store(false, Ordering::SeqCst);
     let child = state.inner.lock().ok().and_then(|mut inner| {
         inner.running = false;
         inner.ready = false;
@@ -1833,7 +1856,74 @@ async fn start_executor_if_needed(
     state: &LocalExecutorState,
 ) -> Result<(), String> {
     let _guard = state.start_lock.lock().await;
-    start_executor_if_needed_unlocked(app, state).await
+    start_executor_if_needed_unlocked(app.clone(), state).await?;
+    ensure_local_executor_keepalive(app, state);
+    Ok(())
+}
+
+fn local_executor_is_healthy(state: &LocalExecutorState) -> bool {
+    state
+        .inner
+        .lock()
+        .map(|inner| inner.running && inner.ready && has_connected_stream(&inner))
+        .unwrap_or(false)
+}
+
+fn development_sidecar_is_restarting(state: &LocalExecutorState) -> bool {
+    if !cfg!(debug_assertions)
+        || configured_sidecar_path().is_none()
+        || matches!(std::env::var("WEGENT_EXECUTOR_DEV_RELOAD"), Ok(value) if value == "0")
+    {
+        return false;
+    }
+
+    state
+        .inner
+        .lock()
+        .ok()
+        .and_then(|mut inner| inner.child.as_mut().map(LocalExecutorChild::is_running))
+        .unwrap_or(false)
+}
+
+fn ensure_local_executor_keepalive(app: tauri::AppHandle, state: &LocalExecutorState) {
+    state.keepalive.enabled.store(true, Ordering::SeqCst);
+    if state.keepalive.worker_running.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let state = state.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let _ = tauri::async_runtime::spawn_blocking(|| {
+                thread::sleep(Duration::from_secs(LOCAL_EXECUTOR_KEEPALIVE_INTERVAL_SECS));
+            })
+            .await;
+
+            if !state.keepalive.enabled.load(Ordering::SeqCst) {
+                state
+                    .keepalive
+                    .worker_running
+                    .store(false, Ordering::SeqCst);
+                return;
+            }
+
+            if local_executor_is_healthy(&state) {
+                continue;
+            }
+
+            if development_sidecar_is_restarting(&state) {
+                log::info!(
+                    "Local executor IPC is unavailable while the development sidecar is restarting"
+                );
+                continue;
+            }
+
+            log::warn!("Local executor keepalive detected an unhealthy executor; restarting");
+            if let Err(error) = restart_executor(app.clone(), &state).await {
+                log::warn!("Local executor keepalive restart failed: {error}");
+            }
+        }
+    });
 }
 
 async fn restart_executor_unlocked(
@@ -1858,7 +1948,9 @@ async fn restart_executor_unlocked(
 
 async fn restart_executor(app: tauri::AppHandle, state: &LocalExecutorState) -> Result<(), String> {
     let _guard = state.start_lock.lock().await;
-    restart_executor_unlocked(app, state).await
+    restart_executor_unlocked(app.clone(), state).await?;
+    ensure_local_executor_keepalive(app, state);
+    Ok(())
 }
 
 async fn send_executor_request(
@@ -2133,7 +2225,8 @@ pub async fn local_executor_connect_backend(
             auth_token,
         });
     }
-    restart_executor_unlocked(app, &state).await?;
+    restart_executor_unlocked(app.clone(), &state).await?;
+    ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
 }
 
@@ -2150,7 +2243,8 @@ pub async fn local_executor_disconnect_backend(
             .map_err(|_| "Failed to lock local executor state".to_string())?;
         inner.backend_connection = None;
     }
-    restart_executor_unlocked(app, &state).await?;
+    restart_executor_unlocked(app.clone(), &state).await?;
+    ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
 }
 
