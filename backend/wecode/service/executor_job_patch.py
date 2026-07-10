@@ -231,6 +231,26 @@ async def cleanup_orphan_pods(
                 inactive_hours=stale_hours,
                 db=db,
             )
+        except HTTPException as exc:
+            logger.error(
+                "+++ [executor_job] HTTPException cleaning orphan pod "
+                "task_id=%s pod_name=%s status_code=%s detail=%s",
+                task_id,
+                pod_name,
+                exc.status_code,
+                exc.detail,
+            )
+            result["failed"].append(
+                {
+                    "task_id": task_id,
+                    "pod_name": pod_name,
+                    "reason": "http_error",
+                    "error": str(exc),
+                    "status_code": exc.status_code,
+                    "detail": exc.detail,
+                }
+            )
+            continue
         except Exception as exc:
             logger.error(
                 "+++ [executor_job] Error cleaning orphan pod task_id=%s pod_name=%s error=%s",
@@ -242,7 +262,7 @@ async def cleanup_orphan_pods(
                 {
                     "task_id": task_id,
                     "pod_name": pod_name,
-                    "reason": "error",
+                    "reason": "unexpected_error",
                     "error": str(exc),
                 }
             )
