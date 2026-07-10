@@ -14,6 +14,12 @@ const UI_TIMEOUT_MS = 120_000
 const PROCESS_STOP_TIMEOUT_MS = 10_000
 const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification file.'
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
+const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
+const FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP_COMPLETE'
+const CANCELLATION_PROMPT = 'WEWORK_DESKTOP_E2E_CANCEL: wait until the response is cancelled.'
+const CANCELLATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CANCEL_COMPLETE'
+const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
+const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const MODEL_API_KEY = 'wework-e2e-test-key'
@@ -120,10 +126,10 @@ async function appendProcessOutput(stream, destination) {
   })
 }
 
-async function fillComposerUntilSendEnabled(control, selector) {
+async function fillComposerUntilSendEnabled(control, selector, value) {
   let lastError
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    await control.command('fill', selector, { value: TASK_PROMPT })
+    await control.command('fill', selector, { value })
     try {
       await control.command('waitFor', '[data-testid="send-message-button"]', {
         enabled: true,
@@ -136,6 +142,11 @@ async function fillComposerUntilSendEnabled(control, selector) {
     }
   }
   throw lastError
+}
+
+async function sendPrompt(control, selector, prompt) {
+  await fillComposerUntilSendEnabled(control, selector, prompt)
+  await control.command('click', '[data-testid="send-message-button"]')
 }
 
 function createSse(events) {
@@ -254,8 +265,13 @@ class DesktopE2EServer {
     this.commandWaiters = []
     this.commandResults = new Map()
     this.modelRequests = []
+    this.scenario = 'initial'
     this.modelStage = 'initial'
     this.toolOutput = null
+    this.scenarioRequests = new Map()
+    this.scenarioWaiters = new Map()
+    this.cancellationResponseClosed = null
+    this.cancellationResponseClosedResolver = null
   }
 
   async start() {
@@ -283,6 +299,47 @@ class DesktopE2EServer {
     return new Promise(resolvePromise => {
       this.readyResolver = resolvePromise
     })
+  }
+
+  setScenario(scenario) {
+    assert.ok(
+      ['initial', 'follow_up', 'cancellation', 'retry'].includes(scenario),
+      `Unknown desktop E2E scenario: ${scenario}`
+    )
+    this.scenario = scenario
+  }
+
+  recordScenarioRequest(scenario, request) {
+    const requests = this.scenarioRequests.get(scenario) ?? []
+    requests.push(request)
+    this.scenarioRequests.set(scenario, requests)
+    const waiter = this.scenarioWaiters.get(scenario)
+    if (waiter) {
+      this.scenarioWaiters.delete(scenario)
+      waiter(request)
+    }
+  }
+
+  awaitScenarioRequest(scenario) {
+    const request = this.scenarioRequests.get(scenario)?.at(-1)
+    if (request) return Promise.resolve(request)
+    return new Promise(resolvePromise => {
+      this.scenarioWaiters.set(scenario, resolvePromise)
+    })
+  }
+
+  awaitCancellationResponseClosed() {
+    if (this.cancellationResponseClosed) return Promise.resolve()
+    return new Promise(resolvePromise => {
+      this.cancellationResponseClosedResolver = resolvePromise
+    })
+  }
+
+  markCancellationResponseClosed() {
+    if (this.cancellationResponseClosed) return
+    this.cancellationResponseClosed = true
+    this.cancellationResponseClosedResolver?.()
+    this.cancellationResponseClosedResolver = null
   }
 
   async command(action, selector, options = {}) {
@@ -377,27 +434,37 @@ class DesktopE2EServer {
   async handleModelResponse(request, response) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
-    this.modelRequests.push({ authorization, body })
+    const modelRequest = { authorization, body, scenario: this.scenario }
+    this.modelRequests.push(modelRequest)
     if (authorization !== `Bearer ${MODEL_API_KEY}`) {
       json(response, 401, { error: 'The Desktop E2E model API key was not forwarded by Codex' })
       return
     }
 
     const responseId = `wework-e2e-response-${this.modelRequests.length}`
-    let events
-    if (this.modelStage === 'initial') {
+    if (this.scenario === 'initial' && this.modelStage === 'initial') {
+      this.recordScenarioRequest('initial', modelRequest)
       assert.ok(
         JSON.stringify(body).includes(TASK_PROMPT),
         'The real Codex request did not contain the UI task prompt'
       )
       const tool = selectShellTool(body, this.workspacePath)
       this.modelStage = 'awaiting_tool_output'
-      events = [
+      this.writeSse(response, [
         responseCreated(responseId),
         functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
         responseCompleted(responseId),
-      ]
-    } else {
+      ])
+      return
+    }
+
+    if (this.scenario === 'initial') {
+      assert.equal(
+        this.modelStage,
+        'awaiting_tool_output',
+        `Unexpected desktop E2E model stage: ${this.modelStage}`
+      )
+      this.recordScenarioRequest('initial', modelRequest)
       assert.equal(
         requestContainsToolOutput(body),
         true,
@@ -405,13 +472,68 @@ class DesktopE2EServer {
       )
       this.toolOutput = JSON.stringify(body.input)
       this.modelStage = 'complete'
-      events = [
+      this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(COMPLETION_TEXT),
         responseCompleted(responseId),
-      ]
+      ])
+      return
     }
 
+    if (this.scenario === 'follow_up') {
+      this.recordScenarioRequest('follow_up', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(FOLLOW_UP_PROMPT),
+        'The real Codex request did not contain the follow-up prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'cancellation') {
+      this.recordScenarioRequest('cancellation', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(CANCELLATION_PROMPT),
+        'The real Codex request did not contain the cancellation prompt'
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse([responseCreated(responseId)]))
+      response.once('close', () => this.markCancellationResponseClosed())
+      return
+    }
+
+    if (this.scenario === 'retry') {
+      this.recordScenarioRequest('retry', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(RETRY_PROMPT),
+        'The real Codex request did not contain the retry prompt'
+      )
+      const retryRequests = this.scenarioRequests.get('retry') ?? []
+      if (retryRequests.length === 1) {
+        json(response, 500, { error: 'WEWORK_DESKTOP_E2E_RETRY_FAILURE' })
+        return
+      }
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(RETRY_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    throw new Error(`Unexpected desktop E2E scenario: ${this.scenario}`)
+  }
+
+  writeSse(response, events) {
     response.writeHead(200, {
       'Access-Control-Allow-Origin': '*',
       'Cache-Control': 'no-cache',
@@ -508,6 +630,7 @@ async function main() {
 
   const control = new DesktopE2EServer(workspacePath)
   let app
+  let phase = 'startup'
   try {
     await control.start()
     const codexBinary = await resolveExecutable(
@@ -567,8 +690,8 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await fillComposerUntilSendEnabled(control, composerSelector)
-    await control.command('click', '[data-testid="send-message-button"]')
+    phase = 'initial-task'
+    await sendPrompt(control, composerSelector, TASK_PROMPT)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
@@ -595,6 +718,71 @@ async function main() {
       'Codex did not report its real tool execution to the model service'
     )
 
+    phase = 'follow-up'
+    control.setScenario('follow_up')
+    await sendPrompt(control, composerSelector, FOLLOW_UP_PROMPT)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: FOLLOW_UP_COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const followUpRequest = await withTimeout(
+      control.awaitScenarioRequest('follow_up'),
+      UI_TIMEOUT_MS,
+      'The model service did not receive the follow-up request'
+    )
+    assert.ok(
+      JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
+      'The follow-up request did not preserve the user prompt'
+    )
+
+    phase = 'cancellation'
+    control.setScenario('cancellation')
+    await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
+    await withTimeout(
+      control.awaitScenarioRequest('cancellation'),
+      UI_TIMEOUT_MS,
+      'The model service did not receive the cancellation request'
+    )
+    await control.command('waitFor', '[data-testid="pause-response-button"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="pause-response-button"]')
+    await withTimeout(
+      control.awaitCancellationResponseClosed(),
+      UI_TIMEOUT_MS,
+      'Cancelling the task did not close the real model response stream'
+    )
+    await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid="send-message-button"]', {
+      enabled: true,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const cancellationText = await control.command('getText', 'body')
+    assert.equal(
+      cancellationText.includes(CANCELLATION_COMPLETION_TEXT),
+      false,
+      'The cancelled task unexpectedly rendered a completion response'
+    )
+
+    phase = 'retry'
+    control.setScenario('retry')
+    await sendPrompt(control, composerSelector, RETRY_PROMPT)
+    await control.command('waitFor', '[data-testid="assistant-error-card"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="assistant-error-retry"]')
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: RETRY_COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    assert.equal(
+      control.scenarioRequests.get('retry')?.length,
+      2,
+      'Retry did not issue exactly one additional request for the failed user message'
+    )
+
     await writeFile(
       join(resultDir, 'model-requests.json'),
       `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -602,6 +790,25 @@ async function main() {
     )
     console.log(`Wework desktop task-flow E2E passed. Diagnostics: ${resultDir}`)
   } catch (error) {
+    await writeFile(
+      join(resultDir, 'scenario-state.json'),
+      `${JSON.stringify(
+        {
+          phase,
+          scenario: control.scenario,
+          modelStage: control.modelStage,
+          scenarioRequestCounts: Object.fromEntries(
+            [...control.scenarioRequests.entries()].map(([name, requests]) => [
+              name,
+              requests.length,
+            ])
+          ),
+        },
+        null,
+        2
+      )}\n`,
+      'utf8'
+    )
     try {
       const snapshot = await control.command('snapshot', 'body', { timeoutMs: 5000 })
       await writeFile(join(resultDir, 'ui-snapshot.json'), `${snapshot}\n`, 'utf8')
