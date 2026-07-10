@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { HTMLAttributes, ReactNode } from 'react'
+import type { Element as HastElement } from 'hast'
 import { FileText, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
 import 'streamdown/styles.css'
@@ -145,11 +146,8 @@ function MarkdownCode({
   node,
   ...props
 }: {
-  className?: string
-  children?: ReactNode
-  node?: { properties?: Record<string, unknown> }
-  [key: string]: unknown
-}) {
+  node?: HastElement
+} & HTMLAttributes<HTMLElement>) {
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
   const isBlock =
