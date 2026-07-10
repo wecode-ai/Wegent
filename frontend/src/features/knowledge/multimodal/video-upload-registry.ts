@@ -25,10 +25,22 @@ export type VideoUploadResult = {
   attachment_id: number
 }
 
-export type VideoUploader = (
+export type VideoUploadFn = (
   file: File,
   onProgress?: (progress: number) => void
 ) => Promise<VideoUploadResult>
+
+/**
+ * A registered KB video uploader carries the provider's size limit so the
+ * frontend can validate at queue time (before any bytes leave the browser).
+ * `maxSizeBytes` is the absolute ceiling the backing object store / provider
+ * accepts; files larger than this are rejected up-front rather than failing
+ * mid-upload.
+ */
+export interface VideoUploader {
+  upload: VideoUploadFn
+  maxSizeBytes: number
+}
 
 let uploader: VideoUploader | null = null
 

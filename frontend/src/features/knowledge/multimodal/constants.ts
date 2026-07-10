@@ -32,7 +32,7 @@ export const MULTIMODAL_EXTENSIONS = [...VIDEO_EXTENSIONS, ...IMAGE_EXTENSIONS]
 /**
  * Maximum multimodal image file size (100 MB, aligned with backend
  * MULTIMODAL_IMAGE_MAX_BYTES — the absolute cap before GCS upload_simple's
- * own 100 MB limit). Videos keep the 1 GB MAX_VIDEO_FILE_SIZE.
+ * own 100 MB limit). Video size is provider-governed (see VideoUploader).
  */
 export const MAX_MULTIMODAL_IMAGE_FILE_SIZE = 100 * 1024 * 1024
 

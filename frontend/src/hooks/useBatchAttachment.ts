@@ -119,17 +119,23 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
         // the two-phase VideoUploadProvider contract at upload time. Queueing a
         // video requires a registered provider; without one, reject up-front
         // (open-source default has no provider).
-        if (isVideoFileName(file.name) && !getVideoUploader()) {
-          validationErrors.push(
-            `${file.name}: ${t('common:attachment.errors.video_upload_unavailable')}`
-          )
-          continue
-        }
-
-        // Validate file size against the generic 100 MB cap. KB video files
-        // also pass this gate while queueing; their real (larger) limit is
-        // enforced by the provider during the two-phase upload.
-        if (!isValidFileSize(file.size)) {
+        if (isVideoFileName(file.name)) {
+          const videoUploader = getVideoUploader()
+          if (!videoUploader) {
+            validationErrors.push(
+              `${file.name}: ${t('common:attachment.errors.video_upload_unavailable')}`
+            )
+            continue
+          }
+          // Provider-governed ceiling: the registered uploader declares the
+          // absolute size its backing object store accepts. Reject up-front so
+          // we never start a two-phase upload the provider cannot complete.
+          if (file.size > videoUploader.maxSizeBytes) {
+            validationErrors.push(`${file.name}: ${t('common:attachment.errors.file_too_large')}`)
+            continue
+          }
+        } else if (!isValidFileSize(file.size)) {
+          // Non-video files keep the generic 100 MB cap.
           validationErrors.push(`${file.name}: ${t('common:attachment.errors.file_too_large')}`)
           continue
         }
@@ -207,7 +213,7 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
 
         const attachment = videoUploader
           ? await (async () => {
-              const result = await videoUploader(fileItem.file, onProgress)
+              const result = await videoUploader.upload(fileItem.file, onProgress)
               // Video metadata-only context: no binary parse, status is ready.
               return {
                 id: result.attachment_id,
