@@ -25,6 +25,7 @@ import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { Task } from '@/types/api'
 import { taskApis } from '@/apis/tasks'
 import { paths } from '@/config/paths'
+import { getTaskTargetHref } from '@/utils/taskRouting'
 
 interface SearchDialogProps {
   open: boolean
@@ -121,14 +122,7 @@ export default function SearchDialog({
   // Handle task click in dialog
   const handleDialogTaskClick = (task: Task) => {
     handleCloseSearchDialog()
-    // Navigate to task with taskId parameter
-    let targetPath = paths.chat.getHref() // default to chat
-    if (task.task_type === 'code') {
-      targetPath = paths.chat.getHref()
-    } else if (task.task_type === 'video' || task.task_type === 'image') {
-      targetPath = paths.generate.getHref()
-    }
-    router.push(`${targetPath}?taskId=${task.id}`)
+    router.push(getTaskTargetHref(task))
   }
 
   // Handle new conversation click

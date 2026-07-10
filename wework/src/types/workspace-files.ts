@@ -32,7 +32,12 @@ export interface WorkspaceTarget {
   workspaceSource?: 'local' | 'remote' | string | null
 }
 
-export interface WorkspaceFileOpenRequest {
+export interface WorkspaceFileOpenOptions {
+  lineStart?: number
+  lineEnd?: number
+}
+
+export interface WorkspaceFileOpenRequest extends WorkspaceFileOpenOptions {
   id: number
   path: string
 }

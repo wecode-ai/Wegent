@@ -30,14 +30,12 @@ import {
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createDeviceApi } from '@/api/devices'
-import { createHttpClient } from '@/api/http'
-import { createModelApi } from '@/api/models'
 import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
@@ -70,6 +68,11 @@ import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettin
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
+import {
+  createSettingsDeviceApi,
+  createSettingsModelApi,
+  type CloudSettingsConnection,
+} from './settings-cloud-api'
 
 interface ConnectionsSettingsPageProps {
   onBack: () => void
@@ -259,38 +262,6 @@ function DeviceIconActionButton({
     >
       <Icon className="h-3.5 w-3.5" />
     </button>
-  )
-}
-
-interface CloudSettingsConnection {
-  isConnected: boolean
-  apiBaseUrl?: string
-  token: string | null
-}
-
-function createSettingsDeviceApi(connection: CloudSettingsConnection) {
-  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
-    throw new Error('Cloud connection is required')
-  }
-  return createDeviceApi(
-    createHttpClient({
-      baseUrl: connection.apiBaseUrl,
-      getToken: () => connection.token,
-      redirectOnUnauthorized: false,
-    })
-  )
-}
-
-function createSettingsModelApi(connection: CloudSettingsConnection) {
-  if (!connection.isConnected || !connection.apiBaseUrl || !connection.token) {
-    throw new Error('Cloud connection is required')
-  }
-  return createModelApi(
-    createHttpClient({
-      baseUrl: connection.apiBaseUrl,
-      getToken: () => connection.token,
-      redirectOnUnauthorized: false,
-    })
   )
 }
 
@@ -802,6 +773,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
                   value={editName}
                   onChange={e => setEditName(e.target.value)}
                   onKeyDown={e => {
+                    if (isImeEnterEvent(e)) return
                     if (e.key === 'Enter') handleSaveEdit()
                     if (e.key === 'Escape') handleCancelEdit()
                   }}

@@ -2246,6 +2246,7 @@ mod tests {
     #[test]
     fn request_api_base_url_prefers_env_over_payload_backend_url() {
         let _lock = crate::test_env::lock();
+        let _backend = EnvGuard::remove("WEGENT_BACKEND_URL");
         let _mode = EnvGuard::remove("EXECUTOR_MODE");
         let _api = EnvGuard::set("TASK_API_DOMAIN", "http://env-backend.local:8000");
         let request = ExecutionRequest {

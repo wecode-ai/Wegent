@@ -131,6 +131,16 @@ Backend only validates the user, device, and LocalTask ownership, then forwards 
 
 The frontend must insert the local guidance user message at the current streaming assistant position immediately when guidance sending starts, not after `runtime.tasks.guidance` returns. That insertion splits the active assistant into a frozen "before guidance" message and a continuing "after guidance" message. The continuing assistant keeps the original `subtaskId` so later stream events land after the guidance message. Later `chat:chunk` or `chat:done` events may still carry full text, so the frontend trims the text prefix recorded at split time. This keeps live streaming order consistent with the refreshed transcript order.
 
+Users can also manually compact a local Codex LocalTask from the composer's context-usage control:
+
+```text
+runtime.tasks.compact
+```
+
+The Wework App calls `runtime.tasks.compact` only through local executor IPC; there is no Backend HTTP endpoint for this action. The executor must use the LocalTask's opaque `runtimeHandle.threadId` to call Codex app-server `thread/resume`, then call `thread/compact/start`; it must not send `/compact` as a normal user message. Manual compaction uses an independent runtime subtask id, `<localTaskId>-context-compact`, so the UI can render the `context_compaction` tool block as its own completed message without settling an active assistant turn.
+
+If the current pane is still replying, Wework should block manual compaction and ask the user to wait for the current reply to finish. Automatic Codex context compaction remains part of the current turn's subtask; the frontend may display the `context_compaction` block, but it must not emit `assistant_done` or settle the current reply just because that block completed.
+
 Continuing a LocalTask may include already uploaded attachment ids that are in the ready state. Backend verifies those attachments belong to the current user and converts them into executor attachment metadata. The executor downloads and converts the files on the target device before passing them to the runtime. The frontend never sends local attachment paths directly to Backend or executor.
 
 ## Archived Conversations

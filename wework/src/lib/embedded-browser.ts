@@ -10,6 +10,12 @@ let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
+export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
+
+export interface EmbeddedBrowserOcclusionChange {
+  id: string
+  occluded: boolean
+}
 
 export interface EmbeddedBrowserBounds {
   x: number
@@ -36,6 +42,14 @@ interface EmbeddedBrowserEvalResult {
 
 export function canUseEmbeddedBrowser(): boolean {
   return isTauriRuntime()
+}
+
+export function setEmbeddedBrowserOcclusion(id: string, occluded: boolean): void {
+  window.dispatchEvent(
+    new CustomEvent<EmbeddedBrowserOcclusionChange>(EMBEDDED_BROWSER_OCCLUSION_EVENT, {
+      detail: { id, occluded },
+    })
+  )
 }
 
 function browserArgs(label = DEFAULT_BROWSER_LABEL) {

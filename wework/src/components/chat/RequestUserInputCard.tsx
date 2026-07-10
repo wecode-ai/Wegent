@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent } from 'react'
 import { ChevronDown, CornerDownLeft, MessageCircleQuestion, Pencil } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 import type { RequestUserInputResponse } from '@/types/api'
 import { hasImplementationPlanText } from './requestUserInputMessages'
@@ -118,6 +119,8 @@ export function RequestUserInputCard({
       onIgnore?.()
       return
     }
+
+    if (isImeEnterEvent(event)) return
 
     if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
       return

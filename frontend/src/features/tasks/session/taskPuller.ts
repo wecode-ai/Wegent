@@ -424,7 +424,7 @@ export function useTaskPuller(): TaskPuller {
         const isFailed = currentStatus === 'FAILED'
 
         if (wasRunning && (isCompleted || isFailed)) {
-          notifyTaskCompletion(task.id, task.title, isCompleted, task.task_type)
+          notifyTaskCompletion(task, task.title, isCompleted)
         }
       }
 

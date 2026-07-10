@@ -86,35 +86,14 @@ export function canManageKnowledgeDocument({
   knowledgeBase,
   knowledgeRole,
   namespaceRole,
-  documentOwnerId,
+  documentOwnerId: _documentOwnerId,
 }: KnowledgeAccessOptions & { documentOwnerId: number | null | undefined }): boolean {
-  if (!currentUserId) {
-    return false
-  }
-
-  if (
-    canManageKnowledgeBase({
-      currentUserId,
-      knowledgeBase,
-      knowledgeRole,
-      namespaceRole,
-    })
-  ) {
-    return true
-  }
-
-  if (documentOwnerId == null) {
-    return false
-  }
-
-  return (
-    canManageKnowledgeBaseDocuments({
-      currentUserId,
-      knowledgeBase,
-      knowledgeRole,
-      namespaceRole,
-    }) && documentOwnerId === currentUserId
-  )
+  return canManageKnowledgeBaseDocuments({
+    currentUserId,
+    knowledgeBase,
+    knowledgeRole,
+    namespaceRole,
+  })
 }
 
 export function canManageKnowledgeBasePermissions({

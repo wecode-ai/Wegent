@@ -15,6 +15,7 @@ import { useMemo, useRef, useState } from 'react'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { usePullToRefresh } from '@/hooks/usePullToRefresh'
+import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
@@ -466,6 +467,7 @@ export function MobileDrawer({
                           onChange={event => setRenameValue(event.target.value)}
                           onBlur={() => void submitProjectRename(project.id)}
                           onKeyDown={event => {
+                            if (isImeEnterEvent(event)) return
                             if (event.key === 'Enter') {
                               event.preventDefault()
                               void submitProjectRename(project.id)

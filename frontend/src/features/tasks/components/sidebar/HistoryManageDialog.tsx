@@ -27,8 +27,8 @@ import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useTaskSession } from '@/features/tasks/session/TaskSession'
 import { Task } from '@/types/api'
-import { paths } from '@/config/paths'
 import { taskApis } from '@/apis/tasks'
+import { getTaskTargetHref } from '@/utils/taskRouting'
 
 // History filter type: online (chat), offline (code), flow
 export type HistoryFilterType = 'online' | 'offline' | 'flow'
@@ -247,13 +247,7 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
   // Handle task click (navigate to task)
   const handleTaskClick = (task: Task) => {
     onOpenChange(false)
-    let targetPath = paths.chat.getHref() // default to chat
-    if (task.task_type === 'code') {
-      targetPath = paths.chat.getHref()
-    } else if (task.task_type === 'video' || task.task_type === 'image') {
-      targetPath = paths.generate.getHref()
-    }
-    router.push(`${targetPath}?taskId=${task.id}`)
+    router.push(getTaskTargetHref(task))
   }
 
   // Format time ago

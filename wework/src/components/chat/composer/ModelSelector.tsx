@@ -1,6 +1,8 @@
 import { Check, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
 import {
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -22,7 +24,6 @@ import {
 } from '@/lib/model-ui'
 import { cn } from '@/lib/utils'
 import type { ModelCompatibilityDisabledReason, ModelOptions, UnifiedModel } from '@/types/api'
-import { useOutsideClick } from './useOutsideClick'
 
 const MAIN_MENU_WIDTH = 256
 const SUBMENU_WIDTH = 288
@@ -34,6 +35,8 @@ const MAIN_MENU_MAX_HEIGHT = 608
 const SUBMENU_RIGHT_OFFSET = MAIN_MENU_WIDTH + SUBMENU_GAP
 const SUBMENU_MAX_HEIGHT = 448
 const SUBMENU_VIEWPORT_VERTICAL_GAP = 128
+const REASONING_TRACK_EDGE_PADDING = 12
+const POINTER_DRAG_THRESHOLD = 3
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
@@ -77,16 +80,23 @@ export function ModelSelector({
   const isMobile = useIsMobile()
   const containerRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const desktopMenuWrapperRef = useRef<HTMLDivElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
   const submenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
   const handledOpenSignalRef = useRef<number | undefined>(undefined)
+  const reasoningDragActiveRef = useRef(false)
+  const reasoningDragMovedRef = useRef(false)
+  const reasoningDragStartXRef = useRef(0)
+  const reasoningDragSuppressClickRef = useRef(false)
+  const reasoningDragValueRef = useRef<string | null>(null)
   const familyButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const controlButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const [open, setOpen] = useState(false)
   const [mobileQuery, setMobileQuery] = useState('')
   const [desktopMenuTop, setDesktopMenuTop] = useState(0)
+  const [desktopMenuLeft, setDesktopMenuLeft] = useState(0)
   const [desktopMenuMaxHeight, setDesktopMenuMaxHeight] = useState(MAIN_MENU_MAX_HEIGHT)
   const [submenuOffset, setSubmenuOffset] = useState(0)
   const [submenuLeft, setSubmenuLeft] = useState(SUBMENU_RIGHT_OFFSET)
@@ -115,7 +125,7 @@ export function ModelSelector({
     setOpen(false)
     setMobileQuery('')
     setActiveDesktopSubmenu(null)
-  }, [])
+  }, [setActiveDesktopSubmenu, setMobileQuery, setOpen])
   const handleSelectModelOption = useCallback(
     (optionId: string, value: string) => {
       onSelectModelOption(optionId, value)
@@ -135,10 +145,9 @@ export function ModelSelector({
     [closeMenu, isMobile, onSelectModel]
   )
   const updateDesktopMenuLayout = useCallback(() => {
-    const container = containerRef.current
     const button = buttonRef.current
     const menuPanel = menuPanelRef.current
-    if (!container || !button || !menuPanel) return
+    if (!button || !menuPanel) return
 
     const viewportTop = DESKTOP_MENU_VIEWPORT_TOP
     const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
@@ -154,9 +163,13 @@ export function ModelSelector({
         : buttonRect.top - MAIN_MENU_TRIGGER_GAP - menuHeight
     const maxTop = viewportBottom - menuHeight
     const clampedTop = Math.round(Math.max(viewportTop, Math.min(preferredTop, maxTop)))
-    const containerTop = container.getBoundingClientRect().top
+    const menuWidth = menuPanel.getBoundingClientRect().width || MAIN_MENU_WIDTH
+    const maxLeft = window.innerWidth - VIEWPORT_MARGIN - menuWidth
+    const preferredLeft = buttonRect.right - menuWidth
+    const clampedLeft = Math.round(Math.max(VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft)))
 
-    setDesktopMenuTop(clampedTop - containerTop)
+    setDesktopMenuTop(clampedTop)
+    setDesktopMenuLeft(clampedLeft)
     setDesktopMenuMaxHeight(menuHeight)
   }, [menuPlacement])
   const updateSubmenuLayout = useCallback((target: HTMLElement | null) => {
@@ -244,23 +257,44 @@ export function ModelSelector({
       setActiveDesktopSubmenu({ type: 'family', id: familyId })
       updateSubmenuLayout(target ?? familyButtonRefs.current.get(familyId) ?? null)
     },
-    [updateSubmenuLayout]
+    [setActiveDesktopSubmenu, setActiveFamilyId, updateSubmenuLayout]
   )
   const activateControl = useCallback(
     (controlId: string, target?: HTMLElement | null) => {
       setActiveDesktopSubmenu({ type: 'control', id: controlId })
       updateSubmenuLayout(target ?? controlButtonRefs.current.get(controlId) ?? null)
     },
-    [updateSubmenuLayout]
+    [setActiveDesktopSubmenu, updateSubmenuLayout]
   )
   const clearDesktopSubmenu = useCallback(() => {
     setActiveDesktopSubmenu({ type: 'none' })
-  }, [])
-  const activateMobileFamily = useCallback((familyId: string) => {
-    setActiveFamilyId(current => (current === familyId ? current : familyId))
-  }, [])
+  }, [setActiveDesktopSubmenu])
+  const activateMobileFamily = useCallback(
+    (familyId: string) => {
+      setActiveFamilyId(current => (current === familyId ? current : familyId))
+    },
+    [setActiveFamilyId]
+  )
 
-  useOutsideClick(containerRef, open && !isMobile, closeMenu)
+  useEffect(() => {
+    if (!open || isMobile) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+      if (
+        containerRef.current?.contains(target) ||
+        desktopMenuWrapperRef.current?.contains(target)
+      ) {
+        return
+      }
+
+      closeMenu()
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [closeMenu, isMobile, open])
 
   useLayoutEffect(() => {
     if (!open) return
@@ -428,6 +462,71 @@ export function ModelSelector({
       0,
       options.findIndex(option => option.value === selectedValue)
     )
+    const selectReasoningOptionFromClientX = (track: HTMLElement, clientX: number) => {
+      if (options.length === 0) return
+
+      const rect = track.getBoundingClientRect()
+      const trackStart = rect.left + REASONING_TRACK_EDGE_PADDING
+      const trackEnd = rect.right - REASONING_TRACK_EDGE_PADDING
+      const trackWidth = Math.max(1, trackEnd - trackStart)
+      const ratio = Math.max(0, Math.min(1, (clientX - trackStart) / trackWidth))
+      const optionIndex = options.length === 1 ? 0 : Math.round(ratio * (options.length - 1))
+      const optionValue = options[optionIndex]?.value
+      if (!optionValue || reasoningDragValueRef.current === optionValue) return
+
+      reasoningDragValueRef.current = optionValue
+      onSelectModelOption(control.id, optionValue)
+    }
+    const startReasoningDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return
+
+      reasoningDragActiveRef.current = true
+      reasoningDragMovedRef.current = false
+      reasoningDragStartXRef.current = event.clientX
+      reasoningDragSuppressClickRef.current = false
+      reasoningDragValueRef.current = null
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+      selectReasoningOptionFromClientX(event.currentTarget, event.clientX)
+    }
+    const updateReasoningDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!reasoningDragActiveRef.current) return
+
+      if (Math.abs(event.clientX - reasoningDragStartXRef.current) >= POINTER_DRAG_THRESHOLD) {
+        reasoningDragMovedRef.current = true
+        reasoningDragSuppressClickRef.current = true
+      }
+      selectReasoningOptionFromClientX(event.currentTarget, event.clientX)
+    }
+    const finishReasoningDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!reasoningDragActiveRef.current) return
+
+      selectReasoningOptionFromClientX(event.currentTarget, event.clientX)
+      reasoningDragActiveRef.current = false
+      reasoningDragValueRef.current = null
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+      reasoningDragSuppressClickRef.current = reasoningDragMovedRef.current
+      reasoningDragMovedRef.current = false
+    }
+    const cancelReasoningDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!reasoningDragActiveRef.current) return
+
+      reasoningDragActiveRef.current = false
+      reasoningDragMovedRef.current = false
+      reasoningDragSuppressClickRef.current = false
+      reasoningDragValueRef.current = null
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    }
+    const suppressClickAfterDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (!reasoningDragSuppressClickRef.current) return
+
+      reasoningDragSuppressClickRef.current = false
+      event.preventDefault()
+      event.stopPropagation()
+    }
 
     return (
       <div
@@ -441,7 +540,15 @@ export function ModelSelector({
           <span>{t('workbench.reasoning_faster', 'Faster')}</span>
           <span>{t('workbench.reasoning_smarter', 'Smarter')}</span>
         </div>
-        <div className="relative h-8">
+        <div
+          data-testid="model-control-reasoning-track"
+          className="relative h-8 cursor-pointer touch-none"
+          onPointerDown={startReasoningDrag}
+          onPointerMove={updateReasoningDrag}
+          onPointerUp={finishReasoningDrag}
+          onPointerCancel={cancelReasoningDrag}
+          onClickCapture={suppressClickAfterDrag}
+        >
           <div className="absolute inset-x-0 top-1/2 h-5 -translate-y-1/2 rounded-full bg-[#b77dff] shadow-[0_0_18px_rgba(183,125,255,0.45)]" />
           {options.map((option, index) => {
             const label = option.labelKey ? t(option.labelKey, option.label) : option.label
@@ -457,7 +564,7 @@ export function ModelSelector({
                 title={label}
                 onFocus={clearSubmenuOnHover ? clearDesktopSubmenu : undefined}
                 onClick={() => handleSelectModelOption(control.id, option.value)}
-                className="group absolute top-1/2 z-10 h-8 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#d2adff]"
+                className="group absolute top-1/2 z-10 h-8 w-8 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-full outline-none focus-visible:ring-2 focus-visible:ring-[#d2adff]"
                 style={{ left }}
               >
                 <span
@@ -822,156 +929,160 @@ export function ModelSelector({
   return (
     <div ref={containerRef} className="relative">
       {open && isMobile && renderMobileSheet()}
-      {open && !isMobile && (
-        <div
-          style={{ top: desktopMenuTop }}
-          className={cn('absolute right-0 z-popover w-64', menuClassName)}
-          onMouseLeave={clearDesktopSubmenu}
-        >
+      {open &&
+        !isMobile &&
+        createPortal(
           <div
-            ref={menuPanelRef}
-            data-testid="model-selector-menu"
-            style={{ maxHeight: desktopMenuMaxHeight }}
-            className="w-64 shrink-0 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+            ref={desktopMenuWrapperRef}
+            style={{ left: desktopMenuLeft, top: desktopMenuTop }}
+            className={cn('fixed z-system-popover w-64', menuClassName)}
+            onMouseLeave={clearDesktopSubmenu}
           >
-            {(desktopControlsAboveFamilies.length > 0 || activeGroup) && (
-              <>
-                <div className="mb-1.5 space-y-1.5">
-                  {desktopControlsAboveFamilies.map(control => renderControlSection(control))}
-                  {!supportsReasoningControl && renderAutomaticReasoningSection()}
-                </div>
-                <div className="mx-3 mb-1.5 border-t border-border" />
-              </>
-            )}
-            <div className="space-y-0.5">
-              {familyGroups.map(group => {
-                const active =
-                  activeDesktopSubmenu?.type === 'family' &&
-                  group.config.id === activeGroup?.config.id
-                return (
-                  <button
-                    ref={node => {
-                      if (node) {
-                        familyButtonRefs.current.set(group.config.id, node)
-                      } else {
-                        familyButtonRefs.current.delete(group.config.id)
-                      }
-                    }}
-                    key={group.config.id}
-                    type="button"
-                    data-testid={`model-family-${group.config.id}`}
-                    onMouseEnter={event => activateFamily(group.config.id, event.currentTarget)}
-                    onPointerEnter={event => activateFamily(group.config.id, event.currentTarget)}
-                    onFocus={event => activateFamily(group.config.id, event.currentTarget)}
-                    onClick={event => activateFamily(group.config.id, event.currentTarget)}
-                    className={[
-                      'flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
-                      active
-                        ? 'bg-muted text-text-primary'
-                        : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-                    ].join(' ')}
-                  >
-                    <span className="min-w-0 flex-1 truncate">{getFamilyMenuLabel(group)}</span>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                  </button>
-                )
-              })}
-            </div>
-
-            {desktopControlsBelowModels.length > 0 && (
-              <>
-                <div className="mx-3 my-1.5 border-t border-border" />
-                <div className="space-y-0.5">
-                  {desktopControlsBelowModels.map(renderControlMenuItem)}
-                </div>
-              </>
-            )}
-          </div>
-
-          {activeControl ? (
             <div
-              ref={submenuPanelRef}
-              data-testid="model-selector-submenu"
-              style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
-              className="absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+              ref={menuPanelRef}
+              data-testid="model-selector-menu"
+              style={{ maxHeight: desktopMenuMaxHeight }}
+              className="w-64 shrink-0 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
             >
-              {renderControlSection(activeControl, { clearSubmenuOnHover: false })}
-            </div>
-          ) : activeFamilySubmenuGroup ? (
-            <div
-              ref={submenuPanelRef}
-              data-testid="model-selector-submenu"
-              style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
-              className="absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-            >
-              <div className="px-3 pb-1.5 pt-0.5 text-[13px] font-semibold leading-[18px] text-text-muted">
-                {t('workbench.model_version')}
-              </div>
+              {(desktopControlsAboveFamilies.length > 0 || activeGroup) && (
+                <>
+                  <div className="mb-1.5 space-y-1.5">
+                    {desktopControlsAboveFamilies.map(control => renderControlSection(control))}
+                    {!supportsReasoningControl && renderAutomaticReasoningSection()}
+                  </div>
+                  <div className="mx-3 mb-1.5 border-t border-border" />
+                </>
+              )}
               <div className="space-y-0.5">
-                {activeFamilySubmenuGroup.models.map(model => {
-                  const selected =
-                    model.name === selectedModel?.name && model.type === selectedModel?.type
-                  const modelDisabled = Boolean(model.compatibilityDisabled)
-                  const disabledMessage = modelDisabled
-                    ? getCompatibilityDisabledMessage(model.compatibilityDisabledReason)
-                    : undefined
+                {familyGroups.map(group => {
+                  const active =
+                    activeDesktopSubmenu?.type === 'family' &&
+                    group.config.id === activeGroup?.config.id
                   return (
                     <button
-                      key={`${model.type}:${model.name}`}
-                      type="button"
-                      data-testid={`model-option-${model.name}`}
-                      aria-disabled={modelDisabled}
-                      title={disabledMessage}
-                      onClick={() => {
-                        if (modelDisabled) {
-                          onBlockedModelSelect?.(model, disabledMessage)
-                          return
+                      ref={node => {
+                        if (node) {
+                          familyButtonRefs.current.set(group.config.id, node)
+                        } else {
+                          familyButtonRefs.current.delete(group.config.id)
                         }
-                        handleSelectModel(model)
                       }}
+                      key={group.config.id}
+                      type="button"
+                      data-testid={`model-family-${group.config.id}`}
+                      onMouseEnter={event => activateFamily(group.config.id, event.currentTarget)}
+                      onPointerEnter={event => activateFamily(group.config.id, event.currentTarget)}
+                      onFocus={event => activateFamily(group.config.id, event.currentTarget)}
+                      onClick={event => activateFamily(group.config.id, event.currentTarget)}
                       className={[
-                        'flex min-h-9 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] leading-[18px]',
-                        modelDisabled
-                          ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
-                          : 'text-text-primary hover:bg-muted',
+                        'flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-[13px] font-medium leading-[18px]',
+                        active
+                          ? 'bg-muted text-text-primary'
+                          : 'text-text-secondary hover:bg-muted hover:text-text-primary',
                       ].join(' ')}
                     >
-                      <span className="min-w-0 flex-1 truncate font-medium">
-                        {disabledMessage ? (
-                          <>
-                            <span className="block truncate">
-                              {getModelDisplayLabel(
-                                model,
-                                selectedModelOptions,
-                                resolveControlLabel
-                              )}
-                            </span>
-                            <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
-                              {disabledMessage}
-                            </span>
-                          </>
-                        ) : (
-                          getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)
-                        )}
-                      </span>
-                      {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
+                      <span className="min-w-0 flex-1 truncate">{getFamilyMenuLabel(group)}</span>
+                      <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
                     </button>
                   )
                 })}
               </div>
+
+              {desktopControlsBelowModels.length > 0 && (
+                <>
+                  <div className="mx-3 my-1.5 border-t border-border" />
+                  <div className="space-y-0.5">
+                    {desktopControlsBelowModels.map(renderControlMenuItem)}
+                  </div>
+                </>
+              )}
             </div>
-          ) : activeDesktopSubmenu?.type === 'family' ? (
-            <div
-              ref={submenuPanelRef}
-              data-testid="model-selector-submenu"
-              style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
-              className="absolute w-72 rounded-2xl border border-border bg-background p-4 text-[13px] leading-[18px] text-text-muted shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-            >
-              {t('workbench.no_models')}
-            </div>
-          ) : null}
-        </div>
-      )}
+
+            {activeControl ? (
+              <div
+                ref={submenuPanelRef}
+                data-testid="model-selector-submenu"
+                style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
+                className="absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+              >
+                {renderControlSection(activeControl, { clearSubmenuOnHover: false })}
+              </div>
+            ) : activeFamilySubmenuGroup ? (
+              <div
+                ref={submenuPanelRef}
+                data-testid="model-selector-submenu"
+                style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
+                className="absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-2xl border border-border bg-background p-2 shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+              >
+                <div className="px-3 pb-1.5 pt-0.5 text-[13px] font-semibold leading-[18px] text-text-muted">
+                  {t('workbench.model_version')}
+                </div>
+                <div className="space-y-0.5">
+                  {activeFamilySubmenuGroup.models.map(model => {
+                    const selected =
+                      model.name === selectedModel?.name && model.type === selectedModel?.type
+                    const modelDisabled = Boolean(model.compatibilityDisabled)
+                    const disabledMessage = modelDisabled
+                      ? getCompatibilityDisabledMessage(model.compatibilityDisabledReason)
+                      : undefined
+                    return (
+                      <button
+                        key={`${model.type}:${model.name}`}
+                        type="button"
+                        data-testid={`model-option-${model.name}`}
+                        aria-disabled={modelDisabled}
+                        title={disabledMessage}
+                        onClick={() => {
+                          if (modelDisabled) {
+                            onBlockedModelSelect?.(model, disabledMessage)
+                            return
+                          }
+                          handleSelectModel(model)
+                        }}
+                        className={[
+                          'flex min-h-9 w-full items-center gap-3 rounded-lg px-3 py-1.5 text-left text-[13px] leading-[18px]',
+                          modelDisabled
+                            ? 'cursor-not-allowed text-text-muted hover:bg-transparent'
+                            : 'text-text-primary hover:bg-muted',
+                        ].join(' ')}
+                      >
+                        <span className="min-w-0 flex-1 truncate font-medium">
+                          {disabledMessage ? (
+                            <>
+                              <span className="block truncate">
+                                {getModelDisplayLabel(
+                                  model,
+                                  selectedModelOptions,
+                                  resolveControlLabel
+                                )}
+                              </span>
+                              <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
+                                {disabledMessage}
+                              </span>
+                            </>
+                          ) : (
+                            getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)
+                          )}
+                        </span>
+                        {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : activeDesktopSubmenu?.type === 'family' ? (
+              <div
+                ref={submenuPanelRef}
+                data-testid="model-selector-submenu"
+                style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
+                className="absolute w-72 rounded-2xl border border-border bg-background p-4 text-[13px] leading-[18px] text-text-muted shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+              >
+                {t('workbench.no_models')}
+              </div>
+            ) : null}
+          </div>,
+          document.body
+        )}
       <button
         ref={buttonRef}
         type="button"

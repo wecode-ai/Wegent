@@ -33,6 +33,30 @@ const isLocalTerminalAvailableMock = vi.mocked(isLocalTerminalAvailable)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startCodeServerSessionMock = vi.fn()
 
+function createRect({
+  left,
+  top,
+  width,
+  height,
+}: {
+  left: number
+  top: number
+  width: number
+  height: number
+}): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+    toJSON: () => ({}),
+  } as DOMRect
+}
+
 const baseProps = {
   environmentInfo: {
     additions: '+0',
@@ -111,6 +135,29 @@ describe('WorkspacePanelActions', () => {
     )
 
     expect(screen.getByTestId('environment-info-button')).toBeInTheDocument()
+  })
+
+  test('positions environment info popover from the trigger instead of the viewport edge', async () => {
+    const rectSpy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function () {
+        if (this.querySelector('[data-testid="environment-info-button"]')) {
+          return createRect({ left: 88, top: 8, width: 32, height: 32 })
+        }
+        return createRect({ left: 0, top: 0, width: 0, height: 0 })
+      })
+
+    try {
+      render(<WorkspacePanelActions {...baseProps} mode="environment" />)
+
+      await userEvent.click(screen.getByTestId('environment-info-button'))
+
+      const popover = await screen.findByTestId('environment-info-popover')
+      expect(popover).toHaveStyle({ left: '16px', top: '48px' })
+      expect(popover).not.toHaveClass('right-6', 'top-[76px]')
+    } finally {
+      rectSpy.mockRestore()
+    }
   })
 
   test('opens local workspaces with the default VS Code titlebar action', async () => {

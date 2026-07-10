@@ -27,9 +27,12 @@ const LOCAL_EXECUTOR_SOCKET_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_SOCKET";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
+const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
+const FILE_EDIT_LOG_ENDPOINT_ENV: &str = "WEWORK_FILE_EDIT_LOG_ENDPOINT";
 const CODEX_BINARY_PATH_ENV: &str = "CODEX_BINARY_PATH";
 const CODEX_BIN_ENV: &str = "CODEX_BIN";
 const CODEX_MANAGED_PACKAGE_ROOT_ENV: &str = "CODEX_MANAGED_PACKAGE_ROOT";
+const DEFAULT_FILE_EDIT_LOG_ENDPOINT: &str = "http://127.0.0.1:3456/api/file-edit-log";
 const LOCAL_EXECUTOR_DEVICE_ID: &str = "local-device";
 const LOCAL_EXECUTOR_SOCKET_NAME: &str = "app-ipc.sock";
 const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
@@ -826,6 +829,23 @@ fn normalize_command_arg(value: String, name: &str) -> Result<String, String> {
     }
 }
 
+fn non_empty_env(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn default_file_edit_hook_command() -> String {
+    let endpoint = non_empty_env(FILE_EDIT_LOG_ENDPOINT_ENV)
+        .unwrap_or_else(|| DEFAULT_FILE_EDIT_LOG_ENDPOINT.to_string());
+    format!("curl -s -X POST {endpoint} -H \"Content-Type: application/json\" -d @-")
+}
+
+fn configured_file_edit_hook_command() -> String {
+    non_empty_env(FILE_EDIT_HOOK_COMMAND_ENV).unwrap_or_else(default_file_edit_hook_command)
+}
+
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
     let executor_home = path_or_error(local_executor_home_path());
     let socket_path = path_or_error(app_ipc_socket_path());
@@ -838,12 +858,12 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
             "PATH".to_string(),
             process_environment::normalized_current_path(),
         ),
+        (
+            FILE_EDIT_HOOK_COMMAND_ENV.to_string(),
+            configured_file_edit_hook_command(),
+        ),
     ];
-    if let Some(log_file) = std::env::var(LOCAL_EXECUTOR_LOG_FILE_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(log_file) = non_empty_env(LOCAL_EXECUTOR_LOG_FILE_ENV) {
         envs.push((LOCAL_EXECUTOR_LOG_FILE_ENV.to_string(), log_file));
     }
     let Some(connection) = &inner.backend_connection else {
@@ -2226,6 +2246,75 @@ mod tests {
         assert_eq!(path.matches("/opt/homebrew/bin").count(), 1);
         assert!(path.contains("/opt/homebrew/sbin"));
         assert!(path.contains("/usr/local/bin"));
+    }
+
+    #[test]
+    fn backend_env_includes_file_edit_hook_command() {
+        let _guard = env_lock();
+        let previous_hook = std::env::var_os("WEGENT_FILE_EDIT_HOOK_COMMAND");
+        std::env::remove_var("WEGENT_FILE_EDIT_HOOK_COMMAND");
+
+        let envs = local_executor_backend_env(&LocalExecutorInner::default())
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        restore_env("WEGENT_FILE_EDIT_HOOK_COMMAND", previous_hook);
+
+        assert_eq!(
+            envs.get("WEGENT_FILE_EDIT_HOOK_COMMAND").map(String::as_str),
+            Some(
+                "curl -s -X POST http://127.0.0.1:3456/api/file-edit-log -H \"Content-Type: application/json\" -d @-"
+            )
+        );
+    }
+
+    #[test]
+    fn backend_env_preserves_custom_file_edit_hook_command() {
+        let _guard = env_lock();
+        let previous_hook = std::env::var_os("WEGENT_FILE_EDIT_HOOK_COMMAND");
+        std::env::set_var(
+            "WEGENT_FILE_EDIT_HOOK_COMMAND",
+            "custom-file-edit-hook --stdin",
+        );
+
+        let envs = local_executor_backend_env(&LocalExecutorInner::default())
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        restore_env("WEGENT_FILE_EDIT_HOOK_COMMAND", previous_hook);
+
+        assert_eq!(
+            envs.get("WEGENT_FILE_EDIT_HOOK_COMMAND")
+                .map(String::as_str),
+            Some("custom-file-edit-hook --stdin")
+        );
+    }
+
+    #[test]
+    fn backend_env_builds_file_edit_hook_command_from_configured_endpoint() {
+        let _guard = env_lock();
+        let previous_hook = std::env::var_os("WEGENT_FILE_EDIT_HOOK_COMMAND");
+        let previous_endpoint = std::env::var_os("WEWORK_FILE_EDIT_LOG_ENDPOINT");
+        std::env::remove_var("WEGENT_FILE_EDIT_HOOK_COMMAND");
+        std::env::set_var(
+            "WEWORK_FILE_EDIT_LOG_ENDPOINT",
+            "http://127.0.0.1:4567/custom-file-edit-log",
+        );
+
+        let envs = local_executor_backend_env(&LocalExecutorInner::default())
+            .into_iter()
+            .collect::<HashMap<_, _>>();
+
+        restore_env("WEGENT_FILE_EDIT_HOOK_COMMAND", previous_hook);
+        restore_env("WEWORK_FILE_EDIT_LOG_ENDPOINT", previous_endpoint);
+
+        assert_eq!(
+            envs.get("WEGENT_FILE_EDIT_HOOK_COMMAND")
+                .map(String::as_str),
+            Some(
+                "curl -s -X POST http://127.0.0.1:4567/custom-file-edit-log -H \"Content-Type: application/json\" -d @-"
+            )
+        );
     }
 
     #[test]

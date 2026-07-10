@@ -131,6 +131,16 @@ Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + 
 
 前端发送引导时必须立即把本地用户消息插入到当前 streaming assistant 的位置，而不是等待 `runtime.tasks.guidance` 返回。插入时把当前 assistant 拆成“引导前”和“引导后”两个消息：引导前消息冻结为 done，引导后消息继续保留原 `subtaskId` 接收后续 stream。后续 `chat:chunk`/`chat:done` 仍可能带完整文本，因此前端要按拆分时记录的文本前缀裁剪后续内容，确保流式显示和刷新后的 transcript 顺序一致。
 
+用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
+
+```text
+runtime.tasks.compact
+```
+
+Wework App 只通过本机 executor IPC 调用 `runtime.tasks.compact`，不提供 Backend HTTP 接口。executor 必须先用 LocalTask 的 opaque `runtimeHandle.threadId` 调用 Codex app-server `thread/resume`，再调用 `thread/compact/start`，不能把 `/compact` 当作普通用户消息发送。手动压缩使用独立的运行时 subtask id：`<localTaskId>-context-compact`，这样 UI 可以把 `context_compaction` tool block 渲染成一条独立完成消息，并且不会结束正在回复的普通 assistant turn。
+
+如果当前 pane 仍在回复，Wework 应阻止手动压缩并提示用户等待当前回复结束。Codex 自动触发的上下文压缩仍然属于当前 turn 的 subtask；前端只能显示对应 `context_compaction` block，不能因为这个 block 完成就补发 `assistant_done` 或结算当前回复。
+
 继续 LocalTask 时可以携带已经上传并处于 ready 状态的 attachment id。Backend 会校验这些附件属于当前用户并转换成 executor 需要的附件元数据，executor 再在目标设备上下载、转换并交给 runtime。前端不会把本机附件路径直接发送给 Backend 或 executor。
 
 ## 已归档会话

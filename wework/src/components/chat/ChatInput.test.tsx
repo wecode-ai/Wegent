@@ -1222,12 +1222,16 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('attachment-file-input')).not.toHaveAttribute('accept')
   })
 
-  test('renders desktop context usage indicator when usage is available', () => {
+  test('renders desktop context usage indicator with compact action when usage is available', async () => {
+    const onSubmit = vi.fn()
+    const onCompactContext = vi.fn()
+
     render(
       <ChatInput
         value=""
         onChange={vi.fn()}
-        onSubmit={vi.fn()}
+        onSubmit={onSubmit}
+        onCompactContext={onCompactContext}
         disabled={false}
         variant="desktop"
         projectChat={projectChatControls({
@@ -1257,6 +1261,16 @@ describe('ChatInput', () => {
       'aria-label',
       'workbench.context_usage_aria'
     )
+
+    await userEvent.click(screen.getByTestId('context-usage-button'))
+
+    expect(screen.getByTestId('confirm-compact-context-button')).toHaveTextContent('压缩')
+
+    await userEvent.click(screen.getByTestId('confirm-compact-context-button'))
+
+    expect(onCompactContext).toHaveBeenCalledTimes(1)
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('confirm-compact-context-button')).not.toBeInTheDocument()
   })
 
   test('uploads pasted images from the desktop message textbox', () => {
@@ -1563,7 +1577,14 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass('right-0', 'w-64')
+    expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
+      'fixed',
+      'z-system-popover',
+      'w-64'
+    )
+    expect(screen.getByTestId('model-selector-menu').parentElement?.parentElement).toBe(
+      document.body
+    )
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
     expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
     expect(screen.getByTestId('model-family-gpt')).toHaveTextContent('海外:gpt-5.5')
@@ -1636,6 +1657,66 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('model-control-speed-fast'))
 
     expect(setSelectedModelOption).toHaveBeenCalledWith('speed', 'fast')
+  })
+
+  test('drags the desktop reasoning slider to select the nearest option', async () => {
+    const model: UnifiedModel = {
+      name: 'overseas-gpt-5.5',
+      type: 'user',
+      displayName: '海外:gpt-5.5',
+      config: {
+        ui: {
+          family: 'gpt',
+          region: 'overseas',
+          modelLabel: 'gpt-5.5',
+          sortOrder: 10,
+        },
+      },
+    }
+    const setSelectedModelOption = vi.fn()
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      function getMockRect(this: HTMLElement) {
+        if (this.getAttribute('data-testid') === 'model-control-reasoning-track') {
+          return { left: 100, right: 400, top: 0, bottom: 32, width: 300, height: 32 } as DOMRect
+        }
+
+        return originalGetBoundingClientRect.call(this)
+      }
+    )
+
+    try {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({
+            models: [model],
+            selectedModel: model,
+            selectedModelOptions: { reasoning: 'high' },
+            setSelectedModelOption,
+          })}
+        />
+      )
+
+      await userEvent.click(screen.getByTestId('model-selector-button'))
+
+      const track = screen.getByTestId('model-control-reasoning-track')
+      fireEvent.pointerDown(track, { button: 0, clientX: 388, pointerId: 1 })
+      fireEvent.pointerMove(track, { buttons: 1, clientX: 112, pointerId: 1 })
+
+      expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+      fireEvent.pointerUp(track, { button: 0, clientX: 112, pointerId: 1 })
+
+      expect(setSelectedModelOption).toHaveBeenLastCalledWith('reasoning', 'low')
+      expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    } finally {
+      vi.restoreAllMocks()
+    }
   })
 
   test('hides the desktop model submenu after the pointer leaves the menu', async () => {

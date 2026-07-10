@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Box, ChevronDown, ChevronUp, FileText } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodexMemoryCitation, CodexMemoryCitationEntry, CodexReference } from '@/types/api'
+import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import { basename, fileExtension, getDisplayCodexReferences } from './codexReferences'
 
 const DEFAULT_VISIBLE_REFERENCE_COUNT = 3
@@ -11,7 +12,7 @@ export function CodexMemoryCitations({
   onOpenFile,
 }: {
   citations: CodexMemoryCitation[]
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
@@ -55,7 +56,7 @@ export function CodexReferenceList({
   onOpenFile,
 }: {
   references: CodexReference[]
-  onOpenFile: (path: string) => void
+  onOpenFile: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
   const [expanded, setExpanded] = useState(false)
@@ -78,7 +79,14 @@ export function CodexReferenceList({
             type="button"
             key={reference.path}
             data-testid="codex-reference-card"
-            onClick={() => onOpenFile(reference.path)}
+            onClick={() =>
+              openFileWithOptionalLocation(
+                onOpenFile,
+                reference.path,
+                reference.lineStart,
+                reference.lineEnd
+              )
+            }
             className="group/reference-card flex w-full min-w-0 items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-muted"
             aria-label={t('codex_references.open_label', { path: reference.path })}
           >
@@ -158,7 +166,7 @@ function MemoryCitationEntryRow({
   onOpenFile,
 }: {
   entry: CodexMemoryCitationEntry
-  onOpenFile?: (path: string) => void
+  onOpenFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
 }) {
   const { t } = useTranslation('chat')
   const lineStart = entry.lineStart ?? entry.line_start
@@ -176,7 +184,7 @@ function MemoryCitationEntryRow({
       type="button"
       className="group/memory-entry relative block w-full min-w-0 rounded-lg px-2 py-1 text-left text-[13px] leading-6 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-default disabled:hover:bg-transparent"
       data-testid="codex-memory-citation-entry"
-      onClick={() => onOpenFile?.(entry.path)}
+      onClick={() => openFileWithOptionalLocation(onOpenFile, entry.path, lineStart, lineEnd)}
       disabled={!onOpenFile}
       aria-label={t('memory_citations.open_label', { path: entry.path })}
     >
@@ -197,4 +205,20 @@ function MemoryCitationEntryRow({
       </span>
     </button>
   )
+}
+
+function openFileWithOptionalLocation(
+  onOpenFile: ((path: string, options?: WorkspaceFileOpenOptions) => void) | undefined,
+  path: string,
+  lineStart?: number | null,
+  lineEnd?: number | null
+) {
+  if (typeof lineStart === 'number') {
+    onOpenFile?.(path, {
+      lineStart,
+      lineEnd: typeof lineEnd === 'number' ? lineEnd : undefined,
+    })
+    return
+  }
+  onOpenFile?.(path)
 }

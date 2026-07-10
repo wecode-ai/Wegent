@@ -8,10 +8,12 @@ import {
   type ComponentType,
   type MouseEvent,
 } from 'react'
+import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
 
 const MENU_GAP = 8
 const VIEWPORT_PADDING = 8
 const MENU_WIDTH = 240
+const EMBEDDED_BROWSER_OCCLUSION_ID = 'workspace-add-menu'
 
 export interface WorkspaceAddMenuItem {
   id: string
@@ -92,6 +94,7 @@ export function WorkspaceAddMenu({
   useEffect(() => {
     if (!open) return
 
+    setEmbeddedBrowserOcclusion(EMBEDDED_BROWSER_OCCLUSION_ID, true)
     const handlePointerDown = (event: globalThis.PointerEvent) => {
       const target = event.target as Node
       if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) {
@@ -110,6 +113,7 @@ export function WorkspaceAddMenu({
     document.addEventListener('pointerdown', handlePointerDown, true)
     document.addEventListener('keydown', handleKeyDown)
     return () => {
+      setEmbeddedBrowserOcclusion(EMBEDDED_BROWSER_OCCLUSION_ID, false)
       document.removeEventListener('pointerdown', handlePointerDown, true)
       document.removeEventListener('keydown', handleKeyDown)
     }

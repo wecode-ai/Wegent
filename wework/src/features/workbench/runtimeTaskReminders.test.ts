@@ -7,6 +7,7 @@ import type {
 import {
   buildRuntimeTaskReminderSnapshot,
   getRuntimeTaskReminderItemKey,
+  reconcileRuntimeTaskUnreadKeys,
 } from './runtimeTaskReminders'
 
 function task(overrides: Partial<RuntimeTaskSummary>): RuntimeTaskSummary {
@@ -121,5 +122,24 @@ describe('runtimeTaskReminders', () => {
     })
 
     expect(snapshot.completedUnreadItems).toEqual([])
+  })
+
+  test('drops unread keys that are no longer present in runtime work', () => {
+    const completedTask = task({ running: false, status: 'done' })
+    const taskWorkspace = workspace([completedTask])
+    const visibleKey = getRuntimeTaskReminderItemKey(taskWorkspace, completedTask)
+
+    const snapshot = buildRuntimeTaskReminderSnapshot({
+      runtimeWork: runtimeWork([completedTask]),
+      previousRunningTaskKeys: new Set(),
+      currentRuntimeTask: null,
+    })
+    const nextUnreadTaskKeys = reconcileRuntimeTaskUnreadKeys({
+      previousUnreadTaskKeys: new Set(['stale-task-key', visibleKey]),
+      visibleTaskKeys: snapshot.taskKeys,
+      completedUnreadItems: snapshot.completedUnreadItems,
+    })
+
+    expect([...nextUnreadTaskKeys]).toEqual([visibleKey])
   })
 })

@@ -922,6 +922,168 @@ print(json.dumps(payload, ensure_ascii=False))
 
 CODEX_THREADS_LIST_COMMAND = f"python3 -c {shlex.quote(CODEX_THREADS_LIST_SCRIPT)}"
 
+GIT_GENERATE_COMMIT_MESSAGE_SCRIPT = r'''
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+MAX_DIFF_BYTES = 200000
+MAX_MESSAGE_CHARS = 180
+
+
+def emit(payload, code=0):
+    print(json.dumps(payload, ensure_ascii=False))
+    raise SystemExit(code)
+
+
+def decode_output(data):
+    return data.decode("utf-8", errors="replace").strip()
+
+
+def run_git(*args, max_bytes=MAX_DIFF_BYTES):
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=15,
+            check=False,
+        )
+    except Exception as exc:
+        emit({"success": False, "error": str(exc)}, 1)
+
+    if result.returncode != 0:
+        emit(
+            {
+                "success": False,
+                "error": decode_output(result.stderr) or "Git command failed",
+            },
+            1,
+        )
+
+    output = result.stdout
+    truncated = len(output) > max_bytes
+    return output[:max_bytes].decode("utf-8", errors="replace"), truncated
+
+
+def resolve_codex_binary():
+    value = os.environ.get("CODEX_BINARY_PATH") or os.environ.get("CODEX_BIN") or "codex"
+    if "/" in value or "\\" in value:
+        return value
+    if value == "codex" and sys.platform == "darwin":
+        app_binary = Path("/Applications/Codex.app/Contents/Resources/codex")
+        if app_binary.exists():
+            return str(app_binary)
+    return shutil.which(value) or value
+
+
+def clean_candidate(line):
+    value = line.strip().lstrip("-* ").strip()
+    lowered = value.lower()
+    for prefix in ("commit message:", "message:", "subject:"):
+        if lowered.startswith(prefix):
+            value = value[len(prefix):].strip()
+            break
+    return value.strip("\"'`").strip()
+
+
+def sanitize_message(raw):
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("```"):
+            continue
+        candidate = clean_candidate(stripped)
+        if candidate:
+            return candidate[:MAX_MESSAGE_CHARS]
+    return ""
+
+
+status, status_truncated = run_git("status", "--short", max_bytes=20000)
+diff_stat, stat_truncated = run_git("diff", "--cached", "--stat", max_bytes=20000)
+diff, diff_truncated = run_git("diff", "--cached", "--", max_bytes=MAX_DIFF_BYTES)
+
+if not diff_stat.strip() and not diff.strip():
+    emit({"success": False, "error": "No staged changes to summarize"}, 1)
+
+prompt = f"""Generate a Git commit subject line from the staged changes.
+Return exactly one line.
+Use Conventional Commits when a clear type is available, such as feat:, fix:, refactor:, docs:, test:, chore:, or style:.
+Do not include Markdown, quotes, bullets, explanations, or a body.
+Keep the line under 72 characters when possible.
+
+Git status:
+{status}
+
+Staged diff stat:
+{diff_stat}
+
+Staged diff:
+{diff}
+"""
+
+output_path = None
+try:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as output_file:
+        output_path = output_file.name
+
+    result = subprocess.run(
+        [
+            resolve_codex_binary(),
+            "exec",
+            "--ephemeral",
+            "--ignore-rules",
+            "--sandbox",
+            "read-only",
+            "--output-last-message",
+            output_path,
+            "-",
+        ],
+        input=prompt,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    if result.returncode != 0:
+        emit(
+            {
+                "success": False,
+                "error": result.stderr.strip()
+                or result.stdout.strip()
+                or "Codex failed to generate a commit message",
+            },
+            1,
+        )
+
+    raw_message = Path(output_path).read_text(encoding="utf-8", errors="replace")
+finally:
+    if output_path:
+        try:
+            Path(output_path).unlink()
+        except OSError:
+            pass
+
+message = sanitize_message(raw_message)
+if not message:
+    emit({"success": False, "error": "Codex returned an empty commit message"}, 1)
+
+emit(
+    {
+        "success": True,
+        "message": message,
+        "diff_truncated": bool(status_truncated or stat_truncated or diff_truncated),
+    }
+)
+'''
+GIT_GENERATE_COMMIT_MESSAGE_COMMAND = (
+    f"python3 -c {shlex.quote(GIT_GENERATE_COMMIT_MESSAGE_SCRIPT)}"
+)
+
 TURN_FILE_CHANGES_SCRIPT = """
 import gzip
 import hashlib
@@ -1294,6 +1456,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     ),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
+    "git_generate_commit_message": LocalDeviceCommandDefinition(
+        command=GIT_GENERATE_COMMIT_MESSAGE_COMMAND,
+        post_processor="json",
+    ),
     "ls_skills": LocalDeviceCommandDefinition(
         command=LS_SKILLS_COMMAND,
         post_processor="json",
