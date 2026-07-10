@@ -540,8 +540,8 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
     assert!(!request.argv[2].contains("@{u}"));
     assert!(
         request.argv[2].contains("exec git push -u origin \"$branch\""),
-            "push must publish the current branch under the same remote branch name"
-        );
+        "push must publish the current branch under the same remote branch name"
+    );
 }
 
 #[tokio::test]

@@ -409,6 +409,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_commit_definition = resolve_local_device_command(
         "git_commit", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_push_definition = resolve_local_device_command(
+        "git_push", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_generate_commit_message_definition = resolve_local_device_command(
         "git_generate_commit_message", settings.LOCAL_DEVICE_COMMANDS
     )

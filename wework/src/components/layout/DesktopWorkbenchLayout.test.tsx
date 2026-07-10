@@ -710,6 +710,8 @@ describe('DesktopWorkbenchLayout', () => {
     onLoadEnvironmentInfo?: (...args: unknown[]) => Promise<unknown>
     onLoadEnvironmentDiff?: (...args: unknown[]) => Promise<string>
     onCommitEnvironmentChanges?: (...args: unknown[]) => Promise<void>
+    onCommitAndPushEnvironmentChanges?: (...args: unknown[]) => Promise<void>
+    onPushEnvironmentChanges?: (...args: unknown[]) => Promise<void>
     onListEnvironmentBranches?: (...args: unknown[]) => Promise<string[]>
     onCheckoutEnvironmentBranch?: (...args: unknown[]) => Promise<void>
     onCreateEnvironmentBranch?: (...args: unknown[]) => Promise<void>
@@ -921,6 +923,10 @@ describe('DesktopWorkbenchLayout', () => {
       loadEnvironmentDiff: props.onLoadEnvironmentDiff ?? baseProps.onLoadEnvironmentDiff,
       commitEnvironmentChanges:
         props.onCommitEnvironmentChanges ?? baseProps.onCommitEnvironmentChanges,
+      commitAndPushEnvironmentChanges:
+        props.onCommitAndPushEnvironmentChanges ?? vi.fn().mockResolvedValue(undefined),
+      pushEnvironmentChanges:
+        props.onPushEnvironmentChanges ?? vi.fn().mockResolvedValue(undefined),
       listEnvironmentBranches:
         props.onListEnvironmentBranches ?? baseProps.onListEnvironmentBranches,
       checkoutEnvironmentBranch:

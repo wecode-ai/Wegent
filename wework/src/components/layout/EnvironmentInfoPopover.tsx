@@ -86,6 +86,7 @@ export function EnvironmentInfoPopover({
   const [popoverPosition, setPopoverPosition] = useState<PopoverPosition | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const commitPanelRef = useRef<HTMLFormElement>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
   const device = info.deviceId
@@ -217,7 +218,11 @@ export function EnvironmentInfoPopover({
 
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as Node
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
+      if (
+        !rootRef.current?.contains(target) &&
+        !popoverRef.current?.contains(target) &&
+        !commitPanelRef.current?.contains(target)
+      ) {
         setOpen(false)
       }
     }
@@ -239,6 +244,7 @@ export function EnvironmentInfoPopover({
         top: `${popoverPosition.top}px`,
       }
     : undefined
+  const branchLabel = info.branchName?.trim() || t('workbench.environment_branch_empty', '暂无分支')
 
   return (
     <div ref={rootRef}>

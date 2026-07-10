@@ -36,6 +36,7 @@ const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
   commit: 'git_diff_last_commit',
 }
 const GENERATED_COMMIT_MESSAGE_COMMAND = 'git_generate_commit_message'
+const NO_CHANGES_TO_COMMIT_MESSAGE = 'No changes to commit'
 
 type EnvironmentInfoCacheEntry = {
   expiresAt: number
@@ -523,6 +524,13 @@ export async function commitProjectChanges(
   })
 
   if (!commitMessage) {
+    const stagedDiff = await runGitCommand(api, deviceId, 'git_diff_staged', path, {
+      timeoutSeconds: 30,
+      maxOutputBytes: 4096,
+    })
+    if (!stagedDiff.trim()) {
+      throw new Error(NO_CHANGES_TO_COMMIT_MESSAGE)
+    }
     commitMessage = await generateCommitMessage(api, deviceId, path)
   }
 
@@ -531,6 +539,28 @@ export async function commitProjectChanges(
     timeoutSeconds: 30,
     maxOutputBytes: 8192,
   })
+}
+
+export async function pushProjectChanges(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
+): Promise<void> {
+  const { deviceId, path } = await commandContext(api, project, target)
+  await runGitCommand(api, deviceId, 'git_push', path, {
+    timeoutSeconds: 120,
+    maxOutputBytes: 8192,
+  })
+}
+
+export async function commitAndPushProjectChanges(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  message: string,
+  target?: EnvironmentWorkspaceTarget | null
+): Promise<void> {
+  await commitProjectChanges(api, project, message, target)
+  await pushProjectChanges(api, project, target)
 }
 
 export async function listProjectBranches(
