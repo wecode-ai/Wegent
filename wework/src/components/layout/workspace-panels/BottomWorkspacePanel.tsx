@@ -1,5 +1,5 @@
 import { SquareTerminal, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -31,7 +31,7 @@ function createTerminalTab(index: number): BottomWorkspacePanelTab {
   return { id: `terminal-${index}`, title: `Terminal ${index}` }
 }
 
-export function BottomWorkspacePanel({
+export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   open,
   active = true,
   preserveContent = false,
@@ -191,7 +191,7 @@ export function BottomWorkspacePanel({
       )}
     </section>
   )
-}
+})
 
 function BottomWorkspaceTitleTab({
   testIdsEnabled,

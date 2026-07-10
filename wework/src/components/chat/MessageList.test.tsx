@@ -566,8 +566,11 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
-    expect(screen.getByText('Inspect the desktop chat width.')).toBeInTheDocument()
-    expect(screen.getByText('Match the reference task.')).toBeInTheDocument()
+    const planItems = screen.getAllByRole('listitem')
+    expect(planItems.map(item => item.textContent)).toEqual([
+      'Inspect the desktop chat width.',
+      'Match the reference task.',
+    ])
     expect(screen.queryByText(/proposed_plan/)).not.toBeInTheDocument()
   })
 
@@ -815,7 +818,9 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
-    expect(screen.getByText('Wegent 代码质量与前端一致性巡检计划')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Wegent 代码质量与前端一致性巡检计划' })
+    ).toBeInTheDocument()
   })
 
   test('shows thinking after partial streaming assistant content', () => {
@@ -833,9 +838,10 @@ describe('MessageList', () => {
       />
     )
 
-    const content = screen.getByText('我已经完成前面的检查，继续等最后结果。')
+    const content = screen.getByTestId('message-assistant').querySelector('p')
     const thinking = screen.getByTestId('thinking-indicator')
 
+    expect(content).toHaveTextContent('我已经完成前面的检查，继续等最后结果。')
     expect(thinking).toHaveTextContent('正在思考')
     expect(content.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
@@ -1402,7 +1408,8 @@ describe('MessageList', () => {
       />
     )
 
-    const finalAnswer = screen.getByText('这是正在流式输出的最终答案。')
+    const finalAnswer = screen.getByTestId('message-assistant').querySelector('p')
+    expect(finalAnswer).toHaveTextContent('这是正在流式输出的最终答案。')
     const processStatus = screen.getByRole('button', { name: /已处理/ })
     const collapseContent = screen.getByTestId('processing-collapse-content')
 
@@ -1958,7 +1965,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByText(/See/)).toBeInTheDocument()
+    expect(screen.getByTestId('message-assistant').querySelector('p')).toHaveTextContent(/See/)
     expect(screen.queryByTestId('codex-reference-list')).not.toBeInTheDocument()
     expect(screen.queryByTestId('codex-memory-citations')).not.toBeInTheDocument()
     expect(screen.queryByTestId('file-changes-card')).not.toBeInTheDocument()

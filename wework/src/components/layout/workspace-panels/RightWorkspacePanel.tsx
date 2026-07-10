@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   FileChangesReviewPanel,
@@ -103,7 +103,7 @@ interface RightWorkspacePanelProps {
   onRefreshReview?: () => void
 }
 
-export function RightWorkspacePanel({
+export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   visible,
   activeView,
   openTabs,
@@ -398,7 +398,7 @@ export function RightWorkspacePanel({
       </div>
     </section>
   )
-}
+})
 
 function RightWorkspaceTitleTab({
   tab,
