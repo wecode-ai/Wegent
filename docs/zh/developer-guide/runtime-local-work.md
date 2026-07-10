@@ -169,6 +169,8 @@ executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unar
 
 `cleanup-preview` 和 `cleanup` 只面向已归档 LocalTask 的残留文件，包括 executor 管理的 Git worktree 目录、LocalTask 记录、会话日志、运行时 handle 中记录的本地附件，以及本机附件草稿路径。清理目标必须从归档项的 `deviceId + workspacePath + localTaskId + threadId/runtimeHandle` 推导并做路径安全校验，只能删除 executor 管理目录、standalone chat 目录或本地附件草稿目录下的文件；普通 Project 根目录、未归档会话、运行中任务和未被前端提交的归档项不能被清理。
 
+当归档列表为空时，设置页仍提供“扫描残留文件”。该请求不依赖已删除的归档记录：executor 会扫描 `~/.wegent-executor/workspace/worktrees` 和 `~/.wecode/wegent-executor/workspace/worktrees` 下名称为 `runtime-<数字>` 的一级目录，并排除当前活跃或仍可追踪 LocalTask 对应的目录。扫描结果仍须由用户确认后才会删除，因此不会删除项目根目录、任意自定义目录或活跃任务的 worktree。
+
 如果被归档的 LocalTask 使用 Git worktree，Wework 会先在该任务的 `deviceId + workspacePath` 上执行 `git status --porcelain`。工作树干净时，归档成功后会通过设备命令执行 `git worktree remove --force` 删除对应 worktree 目录；存在未提交代码时，前端先提示用户，默认不归档也不删除目录。用户选择强制归档后，Wework 会继续归档并强制删除该 worktree，因此未提交变更不会被保留。这个清理只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。
 
 在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到 executor home 的附件草稿目录（配置 `WEGENT_EXECUTOR_HOME` 时为 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`，未配置时为 `~/.wegent-executor/workspace/attachments/draft`），并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 Tauri asset protocol 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Tauri App 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
