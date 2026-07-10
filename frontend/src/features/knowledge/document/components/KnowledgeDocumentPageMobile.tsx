@@ -261,8 +261,8 @@ export function KnowledgeDocumentPageMobile({
           guided_questions: data.guided_questions,
           max_calls_per_conversation: data.max_calls_per_conversation,
           exempt_calls_before_check: data.exempt_calls_before_check,
-          // Forward multimodal config assembled by the dialog (see desktop
-          // handleCreate for the same fix — omitting these dropped the toggle).
+          // Forward multimodal config assembled by the dialog — omitting these
+          // dropped the toggle on create (while edit passed `data` through).
           multimodal_analysis_enabled: data.multimodal_analysis_enabled,
           multimodal_analysis_model_ref: data.multimodal_analysis_model_ref,
           multimodal_analysis_video_prompt: data.multimodal_analysis_video_prompt,
