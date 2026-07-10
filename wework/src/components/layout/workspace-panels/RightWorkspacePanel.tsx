@@ -81,6 +81,7 @@ interface RightWorkspacePanelProps {
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
   preferLocalTerminal?: boolean
+  terminalContextTitle?: string | null
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   workspaceTargetError?: string | null
@@ -112,6 +113,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   devices,
   workspaceTarget,
   preferLocalTerminal = false,
+  terminalContextTitle,
   workspaceFileApi,
   openFileRequest,
   workspaceTargetError,
@@ -342,6 +344,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             defaultOpenTool="terminal"
             hideTerminalChrome
             preferLocalTerminal={preferLocalTerminal}
+            terminalContextTitle={terminalContextTitle}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />

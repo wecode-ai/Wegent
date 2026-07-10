@@ -239,6 +239,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
       devices={context.devices}
       workspaceTarget={context.workspaceTarget}
       preferLocalTerminal={context.preferLocalTerminal}
+      terminalContextTitle={context.terminalContextTitle}
       onRequestClose={closePanel}
       onTerminalTabsEmpty={onTerminalTabsEmpty}
     />
@@ -365,6 +366,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isBootstrapping = state.isBootstrapping
   const runtimeWork = state.runtimeWork
   const devices = state.devices
+  const runtimeTaskTitle = findRuntimeTask(runtimeWork, currentRuntimeTask)?.title.trim() || null
   const [rightPanelOpen, setRightPanelOpen] = useState(
     () => initialBlankBrowserMigration?.rightPanelOpen ?? false
   )
@@ -541,12 +543,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       devices,
       workspaceTarget: effectiveWorkspaceTarget,
       preferLocalTerminal: preferLocalWorkspaceTerminal,
+      terminalContextTitle: runtimeTaskTitle,
     }),
     [
       bottomPanelWorkspaceKey,
       devices,
       effectiveWorkspaceTarget,
       preferLocalWorkspaceTerminal,
+      runtimeTaskTitle,
       workspaceProject,
     ]
   )
@@ -1077,7 +1081,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const mainHeaderProjectAction = renderWorkspacePanelActions('primary-target')
   const mainHeaderEnvironmentAction = renderWorkspacePanelActions('environment')
   const panelChromeActions = renderWorkspacePanelActions('panel-toggles')
-  const runtimeTaskTitle = findRuntimeTask(runtimeWork, currentRuntimeTask)?.title.trim() || null
   const paneTaskTitle =
     runtimeTaskTitle && !isTauri ? (
       <div
@@ -1586,6 +1589,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               devices={devices}
               workspaceTarget={effectiveWorkspaceTarget}
               preferLocalTerminal={preferLocalWorkspaceTerminal}
+              terminalContextTitle={runtimeTaskTitle}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               workspaceTargetError={workspaceTargetError}

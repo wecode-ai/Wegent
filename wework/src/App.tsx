@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PanelLeft } from 'lucide-react'
+import { Check, Copy, PanelLeft } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
@@ -51,6 +51,11 @@ import {
   keybindingFromKeyboardEvent,
   mergeKeybindings,
 } from '@/lib/keybindings'
+import {
+  getWeworkDevInstanceInfo,
+  getWeworkDevInstanceRows,
+  getWeworkDocumentTitle,
+} from '@/lib/wework-dev-instance'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
@@ -131,6 +136,10 @@ function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
 }
 
 export default function App() {
+  useEffect(() => {
+    document.title = getWeworkDocumentTitle()
+  }, [])
+
   useEffect(() => {
     let cancelled = false
 
@@ -346,9 +355,69 @@ function AppShell() {
           >
             <AppRoutes onWorkbenchStartupReadyChange={setWorkbenchStartupReady} />
           </div>
+          <WeworkDevInstanceBadge />
         </div>
       </LocalRuntimeInitializer>
     </CodexHomeInitializer>
+  )
+}
+
+function WeworkDevInstanceBadge() {
+  const info = getWeworkDevInstanceInfo()
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  if (!info) return null
+
+  const rows = getWeworkDevInstanceRows(info)
+  const copyValue = async (key: string, value: string) => {
+    await navigator.clipboard?.writeText(value)
+    setCopiedKey(key)
+    window.setTimeout(() => setCopiedKey(current => (current === key ? null : current)), 1200)
+  }
+
+  return (
+    <div
+      data-testid="wework-dev-instance-badge"
+      className="group pointer-events-auto fixed bottom-3 right-3 z-critical max-w-[min(460px,calc(100vw-1.5rem))]"
+    >
+      <div className="ml-auto max-w-[min(360px,calc(100vw-1.5rem))] truncate rounded-md border border-border/80 bg-background/95 px-2.5 py-1.5 text-xs font-medium text-text-secondary shadow-[0_8px_24px_rgba(0,0,0,0.12)] backdrop-blur">
+        Debug Wework: <span className="text-text-primary">{info.title}</span>
+      </div>
+      <div className="pointer-events-none absolute bottom-full right-0 w-[min(460px,calc(100vw-1.5rem))] translate-y-1 pb-2 text-xs opacity-0 transition group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100">
+        <div className="rounded-lg border border-border/80 bg-background/98 p-2 shadow-[0_18px_48px_rgba(0,0,0,0.18)] backdrop-blur">
+          <div className="mb-1 px-2 py-1 font-semibold text-text-primary">Debug Wework</div>
+          <div className="space-y-1">
+            {rows.map(row => (
+              <div
+                key={row.key}
+                className="grid grid-cols-[7.5rem_minmax(0,1fr)_2rem] items-center gap-2 rounded-md px-2 py-1 hover:bg-surface"
+              >
+                <div className="text-text-muted">{row.label}</div>
+                <div
+                  className="min-w-0 truncate font-mono text-[11px] text-text-primary"
+                  title={row.value}
+                >
+                  {row.value}
+                </div>
+                <button
+                  type="button"
+                  data-testid={`copy-wework-dev-${row.key}-button`}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-black/[0.04] hover:text-text-primary"
+                  title={`Copy ${row.label}`}
+                  aria-label={`Copy ${row.label}`}
+                  onClick={() => void copyValue(row.key, row.value)}
+                >
+                  {copiedKey === row.key ? (
+                    <Check className="h-3.5 w-3.5 text-primary" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
