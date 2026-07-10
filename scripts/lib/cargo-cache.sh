@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-# Cargo build caches for local worktrees.
+# Shared Cargo build caches for local worktrees.
 #
-# Cargo target directories contain path-sensitive fingerprints and unhashed
-# binaries. Keep them isolated per worktree, while sccache (when installed)
-# shares compiler outputs safely across worktrees.
+# Keep one target directory per component so Cargo can reuse dependency
+# artifacts between worktrees. Cargo serializes concurrent access to a target
+# directory and invalidates artifacts when its fingerprints change.
 
 wegent_cargo_cache_root() {
   if [ -n "${WEGENT_CARGO_TARGET_ROOT:-}" ]; then
@@ -14,18 +14,6 @@ wegent_cargo_cache_root() {
   elif [ -n "${HOME:-}" ]; then
     printf '%s\n' "$HOME/.cache/wegent/cargo-target"
   fi
-}
-
-wegent_worktree_cache_key() {
-  local project_dir="$1"
-  local canonical_dir=""
-  local directory_name=""
-  local checksum=""
-
-  canonical_dir="$(cd "$project_dir" 2>/dev/null && pwd -P)" || return 1
-  directory_name="$(basename "$canonical_dir" | tr -c '[:alnum:]._-\n' '_')"
-  checksum="$(printf '%s' "$canonical_dir" | cksum | awk '{print $1}')"
-  printf '%s-%s\n' "$directory_name" "$checksum"
 }
 
 configure_wegent_sccache() {
@@ -84,12 +72,10 @@ configure_wegent_cargo_target_dir() {
   fi
 
   local cache_root=""
-  local worktree_key=""
   cache_root="$(wegent_cargo_cache_root)"
   [ -n "$cache_root" ] || return 0
-  worktree_key="$(wegent_worktree_cache_key "$project_dir")" || return 0
 
-  export CARGO_TARGET_DIR="$cache_root/$cache_name/worktrees/$worktree_key"
+  export CARGO_TARGET_DIR="$cache_root/$cache_name"
   export WEGENT_CARGO_TARGET_DIR_AUTO=1
   mkdir -p "$CARGO_TARGET_DIR"
   configure_wegent_sccache "$project_dir" "$CARGO_TARGET_DIR"

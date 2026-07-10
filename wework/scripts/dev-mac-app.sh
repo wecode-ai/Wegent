@@ -32,7 +32,7 @@ Environment:
   BACKEND_PORT          Backend port used when proxy targets are not set.
   CARGO_TARGET_DIR      Explicit Cargo target directory. Overrides auto cache.
   WEGENT_CARGO_TARGET_ROOT
-                        Root containing worktree-isolated Cargo targets.
+                        Root containing shared Cargo targets.
   WEGENT_DISABLE_SHARED_CARGO_TARGET
                         Set to 1 to keep Cargo's default per-worktree target.
   WEGENT_DISABLE_SCCACHE

@@ -255,9 +255,9 @@ pnpm --filter wecode-ai-assistant run start
 
 #### Wework and Local Rust Build Cache
 
-The Wework macOS development scripts isolate Cargo targets by Git worktree. This prevents Cargo's path-sensitive fingerprints and unhashed binaries from overwriting each other during parallel debugging. On the first `pnpm --dir wework run dev:mac`, the script installs `sccache` with Homebrew when it is missing, then reuses matching dependency and source compilation outputs across worktrees.
+The Wework macOS development scripts share Cargo targets by component across Git worktrees, so switching worktrees can reuse already compiled dependencies instead of compiling them from scratch. Cargo coordinates concurrent access to a target directory and rebuilds artifacts when their fingerprints change. On the first `pnpm --dir wework run dev:mac`, the script installs `sccache` with Homebrew when it is missing to reuse compiler outputs as well.
 
-- `pnpm --dir wework run dev:mac`, `pnpm --dir wework run build:mac`, the development executor sidecar, and `executor/local.sh build` use `$XDG_CACHE_HOME/wegent/cargo-target/<component>/worktrees/<worktree>`, or `~/.cache/wegent/cargo-target/...` when `XDG_CACHE_HOME` is not set.
+- `pnpm --dir wework run dev:mac`, `pnpm --dir wework run build:mac`, the development executor sidecar, and `executor/local.sh build` use `$XDG_CACHE_HOME/wegent/cargo-target/<component>`, or `~/.cache/wegent/cargo-target/...` when `XDG_CACHE_HOME` is not set.
 - When `sccache` is available, the scripts set `RUSTC_WRAPPER` and `SCCACHE_BASEDIRS` automatically, normalize source and target paths across worktrees, and disable Cargo incremental compilation, which is incompatible with shared compiler caching.
 - Set `WEGENT_CARGO_TARGET_ROOT=/path/to/cache` to choose another target cache root.
 - Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use Cargo's repository-local default `target/`.
