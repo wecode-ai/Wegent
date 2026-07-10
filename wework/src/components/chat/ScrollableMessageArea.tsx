@@ -53,6 +53,7 @@ interface ScrollableMessageAreaProps {
   stickyFooterClassName?: string
   scrollButtonClassName?: string
   scrollTestId?: string
+  externalScrollRef?: RefObject<HTMLDivElement | null>
   conversationKey?: string | number | null
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
@@ -116,6 +117,7 @@ function areScrollableMessageAreaPropsEqual(
     previous.stickyFooterClassName !== next.stickyFooterClassName ? 'stickyFooterClassName' : null,
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
     previous.scrollTestId !== next.scrollTestId ? 'scrollTestId' : null,
+    previous.externalScrollRef !== next.externalScrollRef ? 'externalScrollRef' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.devices !== next.devices ? 'devices' : null,
     previous.onRetryFailedMessage !== next.onRetryFailedMessage ? 'onRetryFailedMessage' : null,
@@ -176,6 +178,7 @@ function ScrollableMessagePaneContent({
   stickyFooterClassName,
   scrollButtonClassName,
   scrollTestId = 'chat-message-scroll-area',
+  externalScrollRef,
   conversationKey,
   devices,
   onRetryFailedMessage,
@@ -200,7 +203,8 @@ function ScrollableMessagePaneContent({
   onLoadTranscriptGap,
 }: ScrollableMessageAreaProps) {
   const { t } = useTranslation('common')
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const internalScrollRef = useRef<HTMLDivElement>(null)
+  const scrollRef = externalScrollRef ?? internalScrollRef
   const contentRef = useRef<HTMLDivElement>(null)
   const stickyFooterRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -655,7 +659,7 @@ function ScrollableMessagePaneContent({
         </div>
       )}
       <div
-        ref={scrollRef}
+        ref={internalScrollRef}
         data-testid={scrollTestId}
         className={cn(
           'h-full overflow-y-auto',

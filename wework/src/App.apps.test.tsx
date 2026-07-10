@@ -198,9 +198,7 @@ describe('App center route', () => {
     render(<App />)
 
     await waitForStartupScreenToClose()
-    expect(screen.getByTestId('wework-dev-instance-badge')).toHaveTextContent(
-      'Debug Wework: Runtime task'
-    )
+    expect(screen.getByTestId('wework-dev-instance-badge')).toHaveTextContent('Runtime task')
     fireEvent.click(screen.getByTestId('copy-wework-dev-port-button'))
     expect(writeText).toHaveBeenCalledWith('1420')
     fireEvent.click(screen.getByTestId('copy-wework-dev-parent-title-button'))

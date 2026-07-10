@@ -16,7 +16,14 @@ import {
   Upload,
   CornerDownLeft,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -30,6 +37,7 @@ interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
   popoverContainer: HTMLElement | null
   docked?: boolean
+  floatingFooter?: ReactNode
   devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
   onCommitChanges?: (message: string) => Promise<void>
@@ -51,6 +59,7 @@ export function EnvironmentInfoPopover({
   info,
   popoverContainer,
   docked = true,
+  floatingFooter,
   devices = [],
   onRefresh,
   onCommitChanges,
@@ -452,6 +461,9 @@ export function EnvironmentInfoPopover({
               <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
                 {commitError}
               </p>
+            )}
+            {!docked && floatingFooter && (
+              <div className="mt-3 border-t border-border pt-3">{floatingFooter}</div>
             )}
           </div>,
           popoverPortalContainer

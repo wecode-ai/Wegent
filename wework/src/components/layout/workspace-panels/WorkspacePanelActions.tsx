@@ -1,4 +1,5 @@
 import { memo, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { AlertCircle, Loader2, PanelBottom, PanelRight } from 'lucide-react'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
@@ -37,6 +38,7 @@ interface WorkspacePanelActionsProps {
   environmentInfoPopoverContainer: HTMLElement | null
   environmentInfoVisible?: boolean
   environmentInfoDocked?: boolean
+  environmentInfoFloatingFooter?: ReactNode
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
   onCommitAndPushEnvironmentChanges: (message: string) => Promise<void>
@@ -60,6 +62,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   environmentInfoPopoverContainer,
   environmentInfoVisible = true,
   environmentInfoDocked = true,
+  environmentInfoFloatingFooter,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
   onCommitAndPushEnvironmentChanges,
@@ -167,6 +170,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           info={environmentInfo}
           popoverContainer={environmentInfoPopoverContainer}
           docked={environmentInfoDocked}
+          floatingFooter={environmentInfoFloatingFooter}
           devices={devices}
           onRefresh={onRefreshEnvironmentInfo}
           onCommitChanges={onCommitEnvironmentChanges}
