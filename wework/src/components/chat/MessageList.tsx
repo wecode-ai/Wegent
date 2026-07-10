@@ -90,6 +90,8 @@ interface MessageListProps {
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   renderGapAfterMessage?: (
@@ -139,6 +141,8 @@ export const MessageList = memo(function MessageList({
   onOpenAssistantPlan,
   onEditLastUserMessage,
   canEditLastUserMessage = false,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   renderGapAfterMessage,
@@ -323,6 +327,8 @@ export const MessageList = memo(function MessageList({
                   onRequestUserInputSubmit={onRequestUserInputSubmit}
                   onRequestUserInputIgnore={onRequestUserInputIgnore}
                   onOpenAssistantPlan={onOpenAssistantPlan}
+                  onLoadFullTranscript={onLoadFullTranscript}
+                  loadingFullTranscript={loadingFullTranscript}
                   hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                   hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 />
@@ -392,6 +398,8 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
       : null,
+    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
+    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -1421,6 +1429,8 @@ function AssistantMessage({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onLoadFullTranscript,
+  loadingFullTranscript,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
 }: {
@@ -1449,6 +1459,8 @@ function AssistantMessage({
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }) {
@@ -1526,11 +1538,20 @@ function AssistantMessage({
               onRequestUserInputSubmit={onRequestUserInputSubmit}
               onRequestUserInputIgnore={onRequestUserInputIgnore}
               onOpenAssistantPlan={onOpenAssistantPlan}
+              onLoadFullTranscript={onLoadFullTranscript}
+              loadingFullTranscript={loadingFullTranscript}
               hideRequestUserInputBlocks={hideRequestUserInputBlocks}
               hiddenRequestUserInputIds={hiddenRequestUserInputIds}
             />
           )}
           {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
+          {message.contentTruncated ? (
+            <ContentTruncatedNotice
+              originalChars={message.contentOriginalChars}
+              onLoadFullTranscript={onLoadFullTranscript}
+              loadingFullTranscript={loadingFullTranscript}
+            />
+          ) : null}
           {hasVisibleContent ? (
             <AssistantMarkdown
               content={visibleContent}
@@ -1585,6 +1606,36 @@ function AssistantMessage({
             <MessageHoverActions message={message} align="left" visible={areHoverActionsVisible} />
           )}
       </div>
+    </div>
+  )
+}
+
+function ContentTruncatedNotice({
+  originalChars,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
+}: {
+  originalChars?: number
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
+}) {
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-muted">
+      <span>
+        早期内容已从当前视图卸载
+        {typeof originalChars === 'number' ? `，原始约 ${originalChars.toLocaleString()} 字` : ''}。
+      </span>
+      {onLoadFullTranscript ? (
+        <button
+          type="button"
+          data-testid="load-full-runtime-transcript-button"
+          onClick={() => void onLoadFullTranscript()}
+          disabled={loadingFullTranscript}
+          className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+        >
+          {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
+        </button>
+      ) : null}
     </div>
   )
 }

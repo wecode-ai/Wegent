@@ -51,7 +51,7 @@ use super::{
         CodexNotificationCacheMapper,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::transcript_messages,
+    transcript::{full_transcript_messages, transcript_messages},
     transcript_cache::{CachedTranscript, TranscriptCache, TranscriptSourceSignature},
     transcript_page::transcript_page,
     util::{
@@ -668,6 +668,9 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "before_cursor"));
         let after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        let include_full_content = bool_field(&payload, "includeFullContent")
+            .or_else(|| bool_field(&payload, "include_full_content"))
+            .unwrap_or(false);
         let refresh = bool_field(&payload, "refresh")
             .or_else(|| bool_field(&payload, "forceRefresh"))
             .unwrap_or(false);
@@ -729,47 +732,51 @@ impl RuntimeWorkRpcHandler {
                 limit,
                 before_cursor,
                 after_cursor,
+                full_content: include_full_content,
             }));
         };
 
-        if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
-            let messages = local_link
-                .as_ref()
-                .map(|link| {
-                    merge_cached_messages(
-                        cached.messages.clone(),
-                        cached_runtime_transcript_messages_for_provider(link, &cached.messages),
-                    )
-                })
-                .unwrap_or_else(|| cached.messages.clone());
-            let running = transcript_running(
-                local_link.as_ref(),
-                running_hint || cached.running,
-                &messages,
-            );
-            log_runtime_transcript_finished(RuntimeTranscriptLog {
-                started_at,
-                local_task_id: &local_task_id,
-                thread_id: &thread_id,
-                source: "transcript_cache",
-                refresh,
-                running_hint,
-                limit,
-                before_cursor: before_cursor.as_deref(),
-                after_cursor: after_cursor.as_deref(),
-                message_count: messages.len(),
-                running,
-            });
-            return Ok(transcript_response(TranscriptResponseInput {
-                local_task_id,
-                workspace_path: cached.workspace_path,
-                runtime: cached.runtime,
-                messages,
-                context_usage: cached.context_usage,
-                limit,
-                before_cursor,
-                after_cursor,
-            }));
+        if !include_full_content {
+            if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
+                let messages = local_link
+                    .as_ref()
+                    .map(|link| {
+                        merge_cached_messages(
+                            cached.messages.clone(),
+                            cached_runtime_transcript_messages_for_provider(link, &cached.messages),
+                        )
+                    })
+                    .unwrap_or_else(|| cached.messages.clone());
+                let running = transcript_running(
+                    local_link.as_ref(),
+                    running_hint || cached.running,
+                    &messages,
+                );
+                log_runtime_transcript_finished(RuntimeTranscriptLog {
+                    started_at,
+                    local_task_id: &local_task_id,
+                    thread_id: &thread_id,
+                    source: "transcript_cache",
+                    refresh,
+                    running_hint,
+                    limit,
+                    before_cursor: before_cursor.as_deref(),
+                    after_cursor: after_cursor.as_deref(),
+                    message_count: messages.len(),
+                    running,
+                });
+                return Ok(transcript_response(TranscriptResponseInput {
+                    local_task_id,
+                    workspace_path: cached.workspace_path,
+                    runtime: cached.runtime,
+                    messages,
+                    context_usage: cached.context_usage,
+                    limit,
+                    before_cursor,
+                    after_cursor,
+                    full_content: false,
+                }));
+            }
         }
 
         let mut source = "thread_read";
@@ -795,7 +802,7 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "workspace_path"))
             .unwrap_or_default();
 
-        if refresh {
+        if refresh && !include_full_content {
             if let Some(cached) = self.transcript_cache.peek(&thread_id) {
                 if let Some(updated) = self.incremental_cached_transcript(
                     cached,
@@ -830,6 +837,7 @@ impl RuntimeWorkRpcHandler {
                         limit,
                         before_cursor,
                         after_cursor,
+                        full_content: false,
                     }));
                 }
             }
@@ -837,7 +845,11 @@ impl RuntimeWorkRpcHandler {
 
         let transcript_thread = codex_thread_state(&thread);
         let context_usage = transcript_context_usage(&transcript_thread);
-        let transcript_messages = transcript_messages(&transcript_thread, &self.device_id);
+        let transcript_messages = if include_full_content {
+            full_transcript_messages(&transcript_thread, &self.device_id)
+        } else {
+            transcript_messages(&transcript_thread, &self.device_id)
+        };
         let messages = local_link
             .as_ref()
             .map(|link| {
@@ -849,18 +861,20 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or(transcript_messages);
         let running = transcript_running(local_link.as_ref(), running_hint, &messages);
         let message_count = messages.len();
-        self.transcript_cache.insert(
-            thread_id.clone(),
-            CachedTranscript::new(
-                workspace_path.clone(),
-                "codex".to_owned(),
-                messages.clone(),
-                running,
-                transcript_source_signature(&thread),
-            )
-            .with_context_usage(context_usage.clone())
-            .with_rollout_turns(rollout_turns(&transcript_thread)),
-        );
+        if !include_full_content {
+            self.transcript_cache.insert(
+                thread_id.clone(),
+                CachedTranscript::new(
+                    workspace_path.clone(),
+                    "codex".to_owned(),
+                    messages.clone(),
+                    running,
+                    transcript_source_signature(&thread),
+                )
+                .with_context_usage(context_usage.clone())
+                .with_rollout_turns(rollout_turns(&transcript_thread)),
+            );
+        }
         log_runtime_transcript_finished(RuntimeTranscriptLog {
             started_at,
             local_task_id: &local_task_id,
@@ -881,9 +895,18 @@ impl RuntimeWorkRpcHandler {
             runtime: "codex".to_owned(),
             messages,
             context_usage,
-            limit,
-            before_cursor,
-            after_cursor,
+            limit: if include_full_content { None } else { limit },
+            before_cursor: if include_full_content {
+                None
+            } else {
+                before_cursor
+            },
+            after_cursor: if include_full_content {
+                None
+            } else {
+                after_cursor
+            },
+            full_content: include_full_content,
         }))
     }
 
@@ -3862,6 +3885,7 @@ fn cached_transcript_response(
         limit,
         before_cursor: before_cursor.map(ToOwned::to_owned),
         after_cursor: after_cursor.map(ToOwned::to_owned),
+        full_content: false,
     })
 }
 
@@ -3874,6 +3898,7 @@ struct TranscriptResponseInput {
     limit: Option<usize>,
     before_cursor: Option<String>,
     after_cursor: Option<String>,
+    full_content: bool,
 }
 
 fn transcript_response(input: TranscriptResponseInput) -> Value {
@@ -3886,6 +3911,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         limit,
         before_cursor,
         after_cursor,
+        full_content,
     } = input;
     let turn_navigation = transcript_turn_navigation(&messages);
     let page = transcript_page(
@@ -3900,6 +3926,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         "workspacePath": workspace_path,
         "runtime": runtime,
         "messages": page.messages,
+        "fullContent": full_content,
         "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
         "rangeStart": page.range_start,

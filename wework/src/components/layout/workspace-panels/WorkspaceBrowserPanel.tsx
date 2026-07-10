@@ -138,17 +138,29 @@ function observeElementIfPresent(observer: ResizeObserver, element: Element | nu
   if (element) observer.observe(element)
 }
 
-function browserAnnotationInjectionScript() {
+// Exported for DOM-level regression tests of the injected browser behavior.
+// eslint-disable-next-line react-refresh/only-export-components
+export function browserAnnotationInjectionScript() {
   return String.raw`
 (() => {
   const log = (message, data = {}) => {
     console.info('[Wework][BrowserAnnotation][page]', message, data);
   };
-  const existing = document.getElementById('__wework_browser_annotation_layer__');
-  if (existing) {
-    log('remove existing annotation layer');
-    existing.remove();
+
+  // Tear down any previous annotation session completely (listeners + DOM).
+  // Removing only the layer leaves stale capture listeners that can recreate boxes.
+  if (typeof window.__weworkBrowserAnnotationClose === 'function') {
+    log('close previous annotation session before reinject');
+    try {
+      window.__weworkBrowserAnnotationClose();
+    } catch (error) {
+      log('previous annotation session close failed', {
+        error: String(error?.stack || error?.message || error),
+      });
+    }
   }
+  document.getElementById('__wework_browser_annotation_layer__')?.remove();
+  document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
 
   const state = {
     nextNumber: 1,
@@ -159,24 +171,8 @@ function browserAnnotationInjectionScript() {
     activeEditor: null,
     activeInput: null,
   };
-
-  window.__weworkBrowserAnnotationConsume = () => {
-    const items = state.published.slice();
-    state.published.length = 0;
-    if (items.length > 0) {
-      log('consume published annotations', { count: items.length, comments: items.map((item) => item.comment) });
-    }
-    return items;
-  };
-  window.__weworkBrowserAnnotationClear = () => {
-    log('clear annotations');
-    layer.querySelectorAll('[data-wework-annotation="editor"]').forEach((node) => node.remove());
-    layer.querySelectorAll('[data-wework-annotation="box"]').forEach((node) => node.remove());
-    state.nextNumber = 1;
-    state.draftBox = null;
-    state.activeEditor = null;
-    state.activeInput = null;
-  };
+  const isAnnotationLayerTarget = (target) =>
+    target instanceof Element && target.closest('#__wework_browser_annotation_layer__');
 
   const layer = document.createElement('div');
   layer.id = '__wework_browser_annotation_layer__';
@@ -237,9 +233,42 @@ function browserAnnotationInjectionScript() {
     state.hoverBox = null;
   };
 
+  const removeAnnotationVisualNodes = (root) => {
+    root.querySelectorAll('[data-wework-annotation="editor"]').forEach((node) => node.remove());
+    root.querySelectorAll('[data-wework-annotation="box"]').forEach((node) => node.remove());
+    root.querySelectorAll('[data-wework-annotation="hover"]').forEach((node) => node.remove());
+  };
+
+  const clearAnnotationVisuals = () => {
+    clearHoverBox();
+    // Clear both the live layer and any orphaned nodes left outside it.
+    // Orphans can remain when a previous injection session leaked boxes.
+    removeAnnotationVisualNodes(layer);
+    removeAnnotationVisualNodes(document);
+    state.nextNumber = 1;
+    state.published.length = 0;
+    state.draftBox = null;
+    state.activeEditor = null;
+    state.activeInput = null;
+    state.activeElement = null;
+  };
+
+  window.__weworkBrowserAnnotationConsume = () => {
+    const items = state.published.slice();
+    state.published.length = 0;
+    if (items.length > 0) {
+      log('consume published annotations', { count: items.length, comments: items.map((item) => item.comment) });
+    }
+    return items;
+  };
+  window.__weworkBrowserAnnotationClear = () => {
+    log('clear annotations');
+    clearAnnotationVisuals();
+  };
+
   const validTarget = (target) => {
     if (!(target instanceof Element)) return null;
-    if (target.closest('#__wework_browser_annotation_layer__')) return null;
+    if (isAnnotationLayerTarget(target)) return null;
     if (target === document.documentElement || target === document.body) return null;
     return target;
   };
@@ -252,8 +281,9 @@ function browserAnnotationInjectionScript() {
       rect,
     });
     clearHoverBox();
-    state.draftBox = makeBox(rect);
-    layer.appendChild(state.draftBox);
+    const draftBox = makeBox(rect);
+    state.draftBox = draftBox;
+    layer.appendChild(draftBox);
 
     const editor = document.createElement('div');
     Object.assign(editor.style, {
@@ -303,16 +333,17 @@ function browserAnnotationInjectionScript() {
     });
 
     const closeEditor = (removeDraft) => {
-      layer.querySelectorAll('[data-wework-annotation="editor"]').forEach((node) => node.remove());
       editor.remove();
       if (removeDraft) {
-        state.draftBox?.remove();
+        draftBox.remove();
       }
-      if (removeDraft) {
+      if (state.draftBox === draftBox) {
         state.draftBox = null;
       }
-      state.activeEditor = null;
-      state.activeInput = null;
+      if (state.activeEditor === editor) {
+        state.activeEditor = null;
+        state.activeInput = null;
+      }
     };
 
     const publish = () => {
@@ -337,7 +368,7 @@ function browserAnnotationInjectionScript() {
         fontWeight: '700',
         padding: '0 4px',
       });
-      state.draftBox.appendChild(badge);
+      draftBox.appendChild(badge);
       const annotation = {
         id: 'browser-annotation-' + Date.now() + '-' + number,
         number,
@@ -352,7 +383,6 @@ function browserAnnotationInjectionScript() {
       state.published.push(annotation);
       log('publish annotation', annotation);
       closeEditor(false);
-      state.draftBox = null;
     };
 
     button.addEventListener('click', (event) => {
@@ -396,7 +426,7 @@ function browserAnnotationInjectionScript() {
   const keepDraftFocus = (event) => {
     if (!state.draftBox) return false;
     const target = event.target;
-    if (target instanceof Element && target.closest('#__wework_browser_annotation_layer__')) {
+    if (isAnnotationLayerTarget(target)) {
       return false;
     }
     event.preventDefault();
@@ -411,6 +441,7 @@ function browserAnnotationInjectionScript() {
 
   const handleClick = (event) => {
     if (keepDraftFocus(event)) return;
+    if (isAnnotationLayerTarget(event.target)) return;
     const target = validTarget(event.target) || state.activeElement;
     if (!target) return;
     event.preventDefault();
@@ -423,10 +454,14 @@ function browserAnnotationInjectionScript() {
     document.removeEventListener('pointerdown', handlePointerDown, true);
     document.removeEventListener('mousemove', handleMouseMove, true);
     document.removeEventListener('click', handleClick, true);
+    clearAnnotationVisuals();
+    layer.remove();
+    // Defensive: remove any orphaned annotation nodes left outside the layer.
+    document.getElementById('__wework_browser_annotation_layer__')?.remove();
+    document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
     delete window.__weworkBrowserAnnotationConsume;
     delete window.__weworkBrowserAnnotationClose;
     delete window.__weworkBrowserAnnotationClear;
-    layer.remove();
   };
 
   window.__weworkBrowserAnnotationClose = cleanup;
@@ -561,11 +596,21 @@ export function WorkspaceBrowserPanel({
       nativeBrowserOpen: nativeBrowserOpenRef.current,
     })
     setAnnotationMode(false)
-    void evalEmbeddedBrowser('window.__weworkBrowserAnnotationClose?.(); true', label).catch(
-      error => {
-        console.error('Failed to close embedded browser annotation layer:', error)
-      }
-    )
+    setAnnotations([])
+    // Clear visuals first, then close the session. Also remove any orphaned
+    // annotation nodes so published boxes cannot linger after mode exit.
+    void evalEmbeddedBrowser(
+      `(() => {
+        try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
+        try { window.__weworkBrowserAnnotationClose?.(); } catch (_) {}
+        document.getElementById('__wework_browser_annotation_layer__')?.remove();
+        document.querySelectorAll('[data-wework-annotation]').forEach((node) => node.remove());
+        return true;
+      })()`,
+      label
+    ).catch(error => {
+      console.error('Failed to close embedded browser annotation layer:', error)
+    })
   }, [currentUrl, label])
 
   const enterAnnotationMode = useCallback(async () => {
@@ -606,8 +651,9 @@ export function WorkspaceBrowserPanel({
   useEffect(() => {
     const previousCount = previousCodeCommentCountRef.current
     previousCodeCommentCountRef.current = codeCommentCount
+    // After annotations are sent (or cleared from composer), leave annotation mode
+    // and remove any remaining page selection boxes.
     if (previousCount > 0 && codeCommentCount === 0 && annotationMode) {
-      setAnnotations([])
       exitAnnotationMode()
     }
   }, [annotationMode, codeCommentCount, exitAnnotationMode])
@@ -1095,8 +1141,17 @@ export function WorkspaceBrowserPanel({
             label={t('workbench.browser_annotation_clear')}
             onClick={() => {
               setAnnotations([])
+              // Prefer the injected Clear (resets numbering/state). Always also
+              // wipe visual nodes from the document so orphaned boxes cannot stay
+              // after the toolbar count already cleared.
               void evalEmbeddedBrowser(
-                'window.__weworkBrowserAnnotationClear?.(); true',
+                `(() => {
+                  try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
+                  document
+                    .querySelectorAll('[data-wework-annotation="box"], [data-wework-annotation="hover"], [data-wework-annotation="editor"]')
+                    .forEach((node) => node.remove());
+                  return true;
+                })()`,
                 label
               ).catch(error => {
                 console.error('Failed to clear embedded browser annotations:', error)

@@ -15,8 +15,41 @@ use super::util::{
 };
 
 const MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
+const MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS: usize = 200_000;
+const MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS: usize = 120_000;
+
+#[derive(Clone, Copy)]
+pub(crate) struct TranscriptBuildOptions {
+    truncate_content: bool,
+}
+
+impl TranscriptBuildOptions {
+    fn truncated() -> Self {
+        Self {
+            truncate_content: true,
+        }
+    }
+
+    fn full_content() -> Self {
+        Self {
+            truncate_content: false,
+        }
+    }
+}
 
 pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
+    transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::truncated())
+}
+
+pub(crate) fn full_transcript_messages(thread: &Value, device_id: &str) -> Vec<Value> {
+    transcript_messages_with_options(thread, device_id, TranscriptBuildOptions::full_content())
+}
+
+fn transcript_messages_with_options(
+    thread: &Value,
+    device_id: &str,
+    options: TranscriptBuildOptions,
+) -> Vec<Value> {
     let mut messages = Vec::new();
     let workspace_path = string_field(thread, "cwd").unwrap_or_default();
     let root_thread_id = string_field(thread, "id");
@@ -76,6 +109,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         },
                         &mut assistant,
                         false,
+                        options,
                     );
                     let pushed_user = push_user_message_once(
                         &mut messages,
@@ -91,8 +125,12 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         ));
                     }
                 }
-                "reasoning" => push_reasoning_block(&mut assistant.blocks, &item, created_at),
-                "plan" => assistant.blocks.push(plan_block(&item, created_at)),
+                "reasoning" => {
+                    push_reasoning_block(&mut assistant.blocks, &item, created_at, options)
+                }
+                "plan" => assistant
+                    .blocks
+                    .push(plan_block(&item, created_at, options)),
                 "commandexecution" | "functioncall" | "customtoolcall" | "dynamictoolcall"
                 | "mcptoolcall" | "mcpcall" | "toolsearchcall" | "websearchcall" | "websearch"
                 | "imagegeneration" | "imageview" | "sleep" | "localshellcall" | "shellcall" => {
@@ -102,6 +140,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         device_id,
                         &workspace_path,
                         created_at,
+                        options,
                     ) {
                         assistant.blocks.push(block);
                     }
@@ -111,7 +150,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 | "toolsearchoutput"
                 | "execcommandend"
                 | "mcptoolcallend" => {
-                    merge_tool_output(&mut assistant.blocks, &item, created_at);
+                    merge_tool_output(&mut assistant.blocks, &item, created_at, options);
                 }
                 "filechange" => {
                     if let Some(summary) = file_changes_from_file_change_item(
@@ -127,6 +166,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                                 device_id,
                                 &workspace_path,
                                 created_at,
+                                options,
                             ) {
                                 assistant.blocks.push(block);
                             }
@@ -149,6 +189,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                                 device_id,
                                 &workspace_path,
                                 created_at,
+                                options,
                             ) {
                                 assistant.blocks.push(block);
                             }
@@ -164,6 +205,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         device_id,
                         &workspace_path,
                         created_at,
+                        options,
                     ) {
                         assistant.blocks.push(block);
                     }
@@ -174,9 +216,8 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         created_at,
                         fold_commentary,
                         turn_cancelled && fold_commentary,
-                        &mut assistant.blocks,
-                        &mut assistant.assistant_parts,
-                        &mut assistant.memory_citations,
+                        &mut assistant,
+                        options,
                     );
                     if let Some(file_changes) = file_changes(&item) {
                         assistant.file_changes =
@@ -209,6 +250,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             },
                             &mut assistant,
                             false,
+                            options,
                         );
                         let pushed_user = push_user_message_once(
                             &mut messages,
@@ -230,9 +272,8 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             created_at,
                             fold_commentary,
                             turn_cancelled && fold_commentary,
-                            &mut assistant.blocks,
-                            &mut assistant.assistant_parts,
-                            &mut assistant.memory_citations,
+                            &mut assistant,
+                            options,
                         );
                         if let Some(file_changes) = file_changes(&item) {
                             assistant.file_changes =
@@ -247,9 +288,8 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                         created_at,
                         fold_commentary,
                         turn_cancelled && fold_commentary,
-                        &mut assistant.blocks,
-                        &mut assistant.assistant_parts,
-                        &mut assistant.memory_citations,
+                        &mut assistant,
+                        options,
                     );
                     if let Some(file_changes) = file_changes(&item) {
                         assistant.file_changes =
@@ -258,7 +298,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                 }
                 _ => {
                     if is_default_tool_output_item(&item) {
-                        merge_tool_output(&mut assistant.blocks, &item, created_at);
+                        merge_tool_output(&mut assistant.blocks, &item, created_at, options);
                     } else if is_default_tool_item(&item) {
                         if let Some(block) = workbench_block_from_codex_item(
                             &item,
@@ -266,6 +306,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
                             device_id,
                             &workspace_path,
                             created_at,
+                            options,
                         ) {
                             assistant.blocks.push(block);
                         }
@@ -285,6 +326,7 @@ pub(crate) fn transcript_messages(thread: &Value, device_id: &str) -> Vec<Value>
             },
             &mut assistant,
             true,
+            options,
         );
     }
     make_transcript_ids_unique(&mut messages);
@@ -347,8 +389,14 @@ pub(crate) fn workbench_block_from_notification(
     status: Option<&str>,
 ) -> Option<Value> {
     let item = notification_item(params);
-    let mut block =
-        workbench_block_from_codex_item(&item, turn_id, device_id, workspace_path, now_ms())?;
+    let mut block = workbench_block_from_codex_item(
+        &item,
+        turn_id,
+        device_id,
+        workspace_path,
+        now_ms(),
+        TranscriptBuildOptions::truncated(),
+    )?;
     if let Some(status) = status {
         if let Some(object) = block.as_object_mut() {
             object.insert("status".to_owned(), Value::String(status.to_owned()));
@@ -426,6 +474,7 @@ pub(crate) fn workbench_block_from_codex_item(
     device_id: &str,
     workspace_path: &str,
     fallback_timestamp: i64,
+    options: TranscriptBuildOptions,
 ) -> Option<Value> {
     let item_type = item_type(item);
     if item_type == "filechange" {
@@ -443,7 +492,7 @@ pub(crate) fn workbench_block_from_codex_item(
         ));
     }
     if is_likely_codex_tool_item_type(&item_type) || is_default_tool_item(item) {
-        return Some(tool_block(item, fallback_timestamp));
+        return Some(tool_block(item, fallback_timestamp, options));
     }
     None
 }
@@ -460,7 +509,7 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
         "status": tool_status(&item),
     });
     if let Some(object) = updates.as_object_mut() {
-        insert_tool_output_fields(object, &item);
+        insert_tool_output_fields(object, &item, TranscriptBuildOptions::truncated());
     }
     if let Some(input) = command_input_from_output(&item) {
         if let Some(object) = updates.as_object_mut() {
@@ -828,6 +877,7 @@ fn push_accumulated_assistant(
     context: AssistantEmitContext<'_>,
     assistant: &mut AssistantTurnAccumulation,
     include_file_only: bool,
+    options: TranscriptBuildOptions,
 ) {
     let should_emit = if include_file_only {
         assistant.has_output()
@@ -856,6 +906,7 @@ fn push_accumulated_assistant(
         file_changes: assistant.file_changes.clone(),
         assistant_parts: &assistant.assistant_parts,
         memory_citations: &assistant.memory_citations,
+        options,
     }));
     *segment_index += 1;
     assistant.clear_after_emit();
@@ -1049,27 +1100,40 @@ fn strip_url_query(source: &str) -> &str {
     source.split(['?', '#']).next().unwrap_or(source)
 }
 
-fn push_reasoning_block(blocks: &mut Vec<Value>, item: &Value, created_at: i64) {
+fn push_reasoning_block(
+    blocks: &mut Vec<Value>,
+    item: &Value,
+    created_at: i64,
+    options: TranscriptBuildOptions,
+) {
     if let Some(content) = reasoning_content(item) {
-        blocks.push(json!({
+        let mut block = json!({
             "id": item_id(item, "thinking"),
             "type": "thinking",
             "content": content,
             "status": "done",
             "timestamp": created_at,
-        }));
+        });
+        if options.truncate_content {
+            limit_content_field(&mut block, MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS);
+        }
+        blocks.push(block);
     }
 }
 
-fn plan_block(item: &Value, fallback_timestamp: i64) -> Value {
-    json!({
+fn plan_block(item: &Value, fallback_timestamp: i64, options: TranscriptBuildOptions) -> Value {
+    let mut block = json!({
         "id": format!("plan-{}", item_id(item, "plan")),
         "type": "plan",
         "process_kind": "plan",
         "content": extract_text(item).unwrap_or_default(),
         "status": "done",
         "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
-    })
+    });
+    if options.truncate_content {
+        limit_content_field(&mut block, MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS);
+    }
+    block
 }
 
 fn collect_assistant_message(
@@ -1077,28 +1141,37 @@ fn collect_assistant_message(
     fallback_timestamp: i64,
     fold_commentary: bool,
     interleave_visible_text: bool,
-    blocks: &mut Vec<Value>,
-    assistant_parts: &mut Vec<String>,
-    memory_citations: &mut Vec<Value>,
+    assistant: &mut AssistantTurnAccumulation,
+    options: TranscriptBuildOptions,
 ) {
     if let Some(content) = extract_text(item) {
         if interleave_visible_text {
-            blocks.push(process_text_block(item, content, fallback_timestamp));
+            assistant.blocks.push(process_text_block(
+                item,
+                content,
+                fallback_timestamp,
+                options,
+            ));
         } else {
             match assistant_message_phase(item, fold_commentary) {
                 AssistantMessagePhase::Process => {
-                    blocks.push(process_text_block(item, content, fallback_timestamp));
+                    assistant.blocks.push(process_text_block(
+                        item,
+                        content,
+                        fallback_timestamp,
+                        options,
+                    ));
                 }
                 AssistantMessagePhase::Final => {
-                    if !duplicates_completed_plan_block(&content, blocks) {
-                        assistant_parts.push(content);
+                    if !duplicates_completed_plan_block(&content, &assistant.blocks) {
+                        assistant.assistant_parts.push(content);
                     }
                 }
             }
         }
     }
     if let Some(memory_citation) = memory_citation(item) {
-        memory_citations.push(memory_citation);
+        assistant.memory_citations.push(memory_citation);
     }
 }
 
@@ -1140,14 +1213,23 @@ fn normalized_phase_or_status(value: String) -> String {
     value.replace(['_', '-'], "").to_ascii_lowercase()
 }
 
-fn process_text_block(item: &Value, content: String, fallback_timestamp: i64) -> Value {
-    json!({
+fn process_text_block(
+    item: &Value,
+    content: String,
+    fallback_timestamp: i64,
+    options: TranscriptBuildOptions,
+) -> Value {
+    let mut block = json!({
         "id": item_id(item, "text"),
         "type": "text",
         "content": content,
         "status": "done",
         "timestamp": item_timestamp(item).unwrap_or(fallback_timestamp),
-    })
+    });
+    if options.truncate_content {
+        limit_content_field(&mut block, MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS);
+    }
+    block
 }
 
 fn guidance_block(item: &Value, timestamp: i64) -> Value {
@@ -1192,6 +1274,7 @@ struct AssistantMessageDraft<'a> {
     file_changes: Option<Value>,
     assistant_parts: &'a [String],
     memory_citations: &'a [Value],
+    options: TranscriptBuildOptions,
 }
 
 fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
@@ -1204,6 +1287,9 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
         "createdAt": draft.created_at,
         "blocks": draft.blocks,
     });
+    if draft.options.truncate_content {
+        limit_content_field(&mut message, MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS);
+    }
     if draft.status != "streaming" {
         if let Some(completed_at) = draft.completed_at {
             if let Some(object) = message.as_object_mut() {
@@ -1234,7 +1320,7 @@ fn synthetic_assistant_message(draft: AssistantMessageDraft<'_>) -> Value {
     message
 }
 
-fn command_block(item: &Value, timestamp: i64) -> Value {
+fn command_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> Value {
     let mut block = json!({
         "id": item_id(item, "tool"),
         "type": "tool",
@@ -1245,17 +1331,17 @@ fn command_block(item: &Value, timestamp: i64) -> Value {
         "timestamp": timestamp,
     });
     if let Some(object) = block.as_object_mut() {
-        insert_tool_output_fields(object, item);
+        insert_tool_output_fields(object, item, options);
     }
     block
 }
 
-fn tool_block(item: &Value, timestamp: i64) -> Value {
+fn tool_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> Value {
     if matches!(
         item_type(item).as_str(),
         "commandexecution" | "shellcall" | "localshellcall"
     ) {
-        return command_block(item, timestamp);
+        return command_block(item, timestamp, options);
     }
     let mut block = json!({
         "id": tool_call_id(item),
@@ -1267,12 +1353,17 @@ fn tool_block(item: &Value, timestamp: i64) -> Value {
         "timestamp": timestamp,
     });
     if let Some(object) = block.as_object_mut() {
-        insert_tool_output_fields(object, item);
+        insert_tool_output_fields(object, item, options);
     }
     block
 }
 
-fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
+fn merge_tool_output(
+    blocks: &mut Vec<Value>,
+    item: &Value,
+    timestamp: i64,
+    options: TranscriptBuildOptions,
+) {
     let call_id = tool_call_id(item);
     if let Some(block) = blocks.iter_mut().rev().find(|block| {
         block
@@ -1282,7 +1373,7 @@ fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
     }) {
         if let Some(object) = block.as_object_mut() {
             merge_tool_input(object, command_input_from_output(item));
-            insert_tool_output_fields(object, item);
+            insert_tool_output_fields(object, item, options);
             object.insert("status".to_owned(), Value::String(tool_status(item)));
         }
         return;
@@ -1296,7 +1387,7 @@ fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
         "timestamp": timestamp,
     });
     if let Some(object) = block.as_object_mut() {
-        insert_tool_output_fields(object, item);
+        insert_tool_output_fields(object, item, options);
     }
     if let Some(input) = command_input_from_output(item) {
         if let Some(object) = block.as_object_mut() {
@@ -1306,8 +1397,12 @@ fn merge_tool_output(blocks: &mut Vec<Value>, item: &Value, timestamp: i64) {
     blocks.push(block);
 }
 
-fn insert_tool_output_fields(object: &mut Map<String, Value>, item: &Value) {
-    let output = limited_tool_output(item);
+fn insert_tool_output_fields(
+    object: &mut Map<String, Value>,
+    item: &Value,
+    options: TranscriptBuildOptions,
+) {
+    let output = limited_tool_output(item, options);
     object.insert("tool_output".to_owned(), output.value);
     if output.truncated {
         object.insert("tool_output_truncated".to_owned(), Value::Bool(true));
@@ -1337,9 +1432,19 @@ struct LimitedToolOutput {
     original_bytes: usize,
 }
 
-fn limited_tool_output(item: &Value) -> LimitedToolOutput {
+fn limited_tool_output(item: &Value, options: TranscriptBuildOptions) -> LimitedToolOutput {
     match raw_tool_output(item) {
-        RawToolOutput::String(text) => limited_tool_output_string(text),
+        RawToolOutput::String(text) => {
+            if options.truncate_content {
+                limited_tool_output_string(text)
+            } else {
+                LimitedToolOutput {
+                    value: Value::String(text.to_owned()),
+                    truncated: false,
+                    original_bytes: text.len(),
+                }
+            }
+        }
         RawToolOutput::Value(value) => LimitedToolOutput {
             value,
             truncated: false,
@@ -1375,6 +1480,40 @@ fn tail_utf8_bytes(text: &str, max_bytes: usize) -> String {
         start += 1;
     }
     text[start..].to_owned()
+}
+
+fn limit_content_field(value: &mut Value, max_chars: usize) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    let Some(content) = object
+        .get("content")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let original_chars = content.chars().count();
+    if original_chars <= max_chars {
+        object.remove("content_truncated");
+        object.remove("content_original_chars");
+        return;
+    }
+
+    object.insert(
+        "content".to_owned(),
+        Value::String(tail_chars(&content, max_chars)),
+    );
+    object.insert("content_truncated".to_owned(), Value::Bool(true));
+    object.insert("content_original_chars".to_owned(), json!(original_chars));
+}
+
+fn tail_chars(text: &str, max_chars: usize) -> String {
+    let total_chars = text.chars().count();
+    if total_chars <= max_chars {
+        return text.to_owned();
+    }
+    text.chars().skip(total_chars - max_chars).collect()
 }
 
 fn command_output_ref(item: &Value) -> Option<&str> {
@@ -2945,6 +3084,57 @@ mod tests {
             block["tool_output_original_bytes"],
             MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES + 1028
         );
+    }
+
+    #[test]
+    fn full_transcript_messages_keep_large_content_and_tool_output() {
+        let assistant_content = format!(
+            "{}assistant-tail",
+            "a".repeat(MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS + 16)
+        );
+        let output = format!(
+            "{}tool-tail",
+            "x".repeat(MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES + 1024)
+        );
+        let thread = json!({
+            "id": "thread-1",
+            "cwd": "/tmp/project",
+            "turns": [
+                {
+                    "id": "turn-1",
+                    "startedAt": 1_780_000_000,
+                    "status": "completed",
+                    "items": [
+                        {
+                            "type": "agentMessage",
+                            "phase": "final_answer",
+                            "text": assistant_content
+                        },
+                        {
+                            "type": "event_msg",
+                            "payload": {
+                                "type": "exec_command_end",
+                                "call_id": "call-1",
+                                "command": ["/bin/zsh", "-lc", "cat large.log"],
+                                "cwd": "/tmp/project",
+                                "aggregated_output": output,
+                                "status": "completed",
+                                "exit_code": 0
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let messages = full_transcript_messages(&thread, "device-1");
+        let message = &messages[0];
+        let block = &message["blocks"][0];
+
+        assert_eq!(message["content"], assistant_content);
+        assert!(message.get("content_truncated").is_none());
+        assert_eq!(block["tool_output"], output);
+        assert!(block.get("tool_output_truncated").is_none());
     }
 
     #[test]

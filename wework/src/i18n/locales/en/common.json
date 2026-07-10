@@ -503,7 +503,7 @@
     "load_older_messages": "Load older messages",
     "loading_older_messages": "Loading...",
     "empty_conversation_title": "Start a new conversation",
-    "empty_conversation_description": "Ask a question, paste context, or add attachments below. Codex responses will appear here.",
+    "empty_conversation_description": "Ask a question, paste context, or add attachments below. WeWork responses will appear here.",
     "account_fallback": "Current account",
     "personal_account": "Personal account",
     "remaining_usage": "Remaining usage",

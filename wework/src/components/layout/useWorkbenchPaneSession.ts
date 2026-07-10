@@ -147,6 +147,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [transcriptHasMoreBefore, setTranscriptHasMoreBefore] = useState(false)
   const [transcriptBeforeCursor, setTranscriptBeforeCursor] = useState<string | null>(null)
   const [transcriptLoadingMoreBefore, setTranscriptLoadingMoreBefore] = useState(false)
+  const [transcriptLoadingFullContent, setTranscriptLoadingFullContent] = useState(false)
+  const [transcriptFullContent, setTranscriptFullContent] = useState(false)
   const [loadedTranscriptRanges, setLoadedTranscriptRanges] = useState<LoadedTranscriptRange[]>([])
   const [turnNavigation, setTurnNavigation] = useState<RuntimeTurnNavigationItem[]>([])
   const [subagentStatuses, setSubagentStatuses] = useState<RuntimeSubagentStatus[]>([])
@@ -402,6 +404,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setTranscriptHasMoreBefore(false)
     setTranscriptBeforeCursor(null)
     setTranscriptLoadingMoreBefore(false)
+    setTranscriptLoadingFullContent(false)
+    setTranscriptFullContent(false)
     setLoadedTranscriptRanges([])
     setTurnNavigation([])
     setSubagentStatuses([])
@@ -411,6 +415,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         if (!cancelled) {
           const nextMessages = transcript.messages.length > 0 ? transcript.messages : seededMessages
           loadedRuntimeTranscriptKeyRef.current = loadKey
+          setTranscriptFullContent(transcript.fullContent === true)
           setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
           setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
           setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
@@ -436,6 +441,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       .catch(error => {
         if (!cancelled) {
           loadedRuntimeTranscriptKeyRef.current = null
+          setTranscriptFullContent(false)
           setTranscriptHasMoreBefore(false)
           setTranscriptBeforeCursor(null)
           setLoadedTranscriptRanges([])
@@ -523,7 +529,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [dispatchMessages, runtimeTaskStreamTargetKey])
 
   const loadMoreTranscriptBefore = useCallback(async () => {
-    if (!runtimeTaskLoadTarget || !transcriptBeforeCursor || transcriptLoadingMoreBefore) return
+    if (
+      !runtimeTaskLoadTarget ||
+      !transcriptBeforeCursor ||
+      transcriptLoadingMoreBefore ||
+      transcriptFullContent
+    )
+      return
 
     const { key: loadKey, address } = runtimeTaskLoadTarget
     const beforeCursor = transcriptBeforeCursor
@@ -557,11 +569,20 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     } finally {
       setTranscriptLoadingMoreBefore(false)
     }
-  }, [dispatchMessages, runtimeTaskLoadTarget, transcriptBeforeCursor, transcriptLoadingMoreBefore])
+  }, [
+    dispatchMessages,
+    runtimeTaskLoadTarget,
+    transcriptBeforeCursor,
+    transcriptFullContent,
+    transcriptLoadingMoreBefore,
+  ])
 
   const loadTranscriptTurnNavigationItem = useCallback(
     async (item: RuntimeTurnNavigationItem) => {
       if (!runtimeTaskLoadTarget || !item.cursor) {
+        return
+      }
+      if (transcriptFullContent) {
         return
       }
       if (messagesRef.current.some(message => message.id === item.id)) {
@@ -594,12 +615,18 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
       dispatchMessages({ type: 'reset', messages: nextMessages })
     },
-    [dispatchMessages, runtimeTaskLoadTarget, transcriptBeforeCursor, transcriptHasMoreBefore]
+    [
+      dispatchMessages,
+      runtimeTaskLoadTarget,
+      transcriptBeforeCursor,
+      transcriptFullContent,
+      transcriptHasMoreBefore,
+    ]
   )
 
   const loadTranscriptGap = useCallback(
     async (gap: LoadedTranscriptRange) => {
-      if (!runtimeTaskLoadTarget || gap.end <= gap.start) return
+      if (!runtimeTaskLoadTarget || transcriptFullContent || gap.end <= gap.start) return
 
       const { address } = runtimeTaskLoadTarget
       const limit = Math.min(RUNTIME_TRANSCRIPT_PAGE_SIZE, gap.end - gap.start)
@@ -621,8 +648,41 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       )
       dispatchMessages({ type: 'reset', messages: nextMessages })
     },
-    [dispatchMessages, runtimeTaskLoadTarget]
+    [dispatchMessages, runtimeTaskLoadTarget, transcriptFullContent]
   )
+
+  const loadFullTranscript = useCallback(async () => {
+    if (!runtimeTaskLoadTarget || transcriptLoadingFullContent || transcriptFullContent) return
+
+    const { address } = runtimeTaskLoadTarget
+    setTranscriptLoadingFullContent(true)
+    try {
+      const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
+        includeFullContent: true,
+        refresh: true,
+      })
+      const nextMessages =
+        transcript.messages.length > 0 ? transcript.messages : messagesRef.current
+      setTranscriptFullContent(transcript.fullContent === true)
+      setTranscriptHasMoreBefore(false)
+      setTranscriptBeforeCursor(null)
+      setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
+      setTurnNavigation(current =>
+        transcript.turnNavigation && transcript.turnNavigation.length > 0
+          ? transcript.turnNavigation
+          : current
+      )
+      dispatchMessages({ type: 'reset', messages: nextMessages })
+    } catch (error) {
+      console.error('[Wework] Runtime pane full transcript load failed', {
+        address,
+        error,
+      })
+      throw error
+    } finally {
+      setTranscriptLoadingFullContent(false)
+    }
+  }, [dispatchMessages, runtimeTaskLoadTarget, transcriptFullContent, transcriptLoadingFullContent])
 
   const getRuntimeModelFields = useCallback(
     (modelOptionsOverride?: ModelOptions) => {
@@ -1593,7 +1653,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     queuedMessages,
     subagentStatuses,
     transcriptHasMoreBefore,
+    transcriptFullContent,
     transcriptLoading,
+    transcriptLoadingFullContent,
     transcriptLoadingMoreBefore,
     turnNavigation.length,
   ])
@@ -1613,11 +1675,14 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     transcriptLoading,
     transcriptHasMoreBefore,
     transcriptLoadingMoreBefore,
+    transcriptLoadingFullContent,
+    transcriptFullContent,
     turnNavigation,
     subagentStatuses,
     goal,
     goalDraftActive,
     loadMoreTranscriptBefore,
+    loadFullTranscript,
     loadTranscriptTurnNavigationItem,
     loadTranscriptGap,
     send,

@@ -389,6 +389,14 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     role,
     subtaskId,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
+    contentTruncated:
+      message.contentTruncated === true || message.content_truncated === true ? true : undefined,
+    contentOriginalChars:
+      typeof message.contentOriginalChars === 'number'
+        ? message.contentOriginalChars
+        : typeof message.content_original_chars === 'number'
+          ? message.content_original_chars
+          : undefined,
     runtimeMessageIndex,
     status,
     runtimeStatus,
@@ -611,6 +619,18 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'thinking',
       content: typeof block.content === 'string' ? block.content : '',
+      contentTruncated:
+        typeof block.contentTruncated === 'boolean'
+          ? block.contentTruncated
+          : typeof block.content_truncated === 'boolean'
+            ? block.content_truncated
+            : undefined,
+      contentOriginalChars:
+        typeof block.contentOriginalChars === 'number'
+          ? block.contentOriginalChars
+          : typeof block.content_original_chars === 'number'
+            ? block.content_original_chars
+            : undefined,
       status,
       createdAt: timestamp,
     }
@@ -630,6 +650,18 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'text',
       content,
+      contentTruncated:
+        typeof block.contentTruncated === 'boolean'
+          ? block.contentTruncated
+          : typeof block.content_truncated === 'boolean'
+            ? block.content_truncated
+            : undefined,
+      contentOriginalChars:
+        typeof block.contentOriginalChars === 'number'
+          ? block.contentOriginalChars
+          : typeof block.content_original_chars === 'number'
+            ? block.content_original_chars
+            : undefined,
       status,
       createdAt: timestamp,
     }
@@ -649,6 +681,18 @@ function normalizeProcessingBlock(
       subtaskId,
       type: 'plan',
       content,
+      contentTruncated:
+        typeof block.contentTruncated === 'boolean'
+          ? block.contentTruncated
+          : typeof block.content_truncated === 'boolean'
+            ? block.content_truncated
+            : undefined,
+      contentOriginalChars:
+        typeof block.contentOriginalChars === 'number'
+          ? block.contentOriginalChars
+          : typeof block.content_original_chars === 'number'
+            ? block.content_original_chars
+            : undefined,
       status,
       createdAt: timestamp,
     }

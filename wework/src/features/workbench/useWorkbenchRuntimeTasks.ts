@@ -141,6 +141,7 @@ export function useWorkbenchRuntimeTasks({
             turnNavigation: Array.isArray(transcript.turnNavigation)
               ? transcript.turnNavigation
               : [],
+            fullContent: transcript.fullContent === true,
             rangeStart: typeof transcript.rangeStart === 'number' ? transcript.rangeStart : null,
             rangeEnd: typeof transcript.rangeEnd === 'number' ? transcript.rangeEnd : null,
             hasMoreBefore: Boolean(transcript.hasMoreBefore),
@@ -641,6 +642,7 @@ function runtimeTranscriptRequestKey(
     beforeCursor: options.beforeCursor ?? null,
     afterCursor: options.afterCursor ?? null,
     refresh: options.refresh ?? null,
+    includeFullContent: options.includeFullContent ?? null,
   })
 }
 
