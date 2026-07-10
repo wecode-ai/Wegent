@@ -34,6 +34,8 @@ interface WorkspacePanelActionsProps {
   devices?: DeviceInfo[]
   workspaceTarget?: WorkspaceTarget | null
   environmentInfo: EnvironmentInfo
+  environmentInfoPopoverContainer: HTMLElement | null
+  environmentInfoVisible?: boolean
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
   onCommitAndPushEnvironmentChanges: (message: string) => Promise<void>
@@ -54,6 +56,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   devices = [],
   workspaceTarget = null,
   environmentInfo,
+  environmentInfoPopoverContainer,
+  environmentInfoVisible = true,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
   onCommitAndPushEnvironmentChanges,
@@ -70,7 +74,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   const { t } = useTranslation('common')
   const [ideLoading, setIdeLoading] = useState(false)
   const [ideError, setIdeError] = useState<string | null>(null)
-  const showEnvironmentInfo = mode === 'all' || mode === 'environment'
+  const showEnvironmentInfo = environmentInfoVisible && (mode === 'all' || mode === 'environment')
   const showPrimaryTarget = mode === 'all' || mode === 'primary-target'
   const showBottomPanelToggle =
     mode === 'all' || mode === 'panel-toggles' || mode === 'bottom-panel-toggle'
@@ -158,6 +162,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       {showEnvironmentInfo && (
         <EnvironmentInfoPopover
           info={environmentInfo}
+          popoverContainer={environmentInfoPopoverContainer}
           devices={devices}
           onRefresh={onRefreshEnvironmentInfo}
           onCommitChanges={onCommitEnvironmentChanges}

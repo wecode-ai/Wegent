@@ -628,6 +628,26 @@ describe('DesktopWorkbenchLayout', () => {
     onLogout: vi.fn(),
   }
 
+  const activeProjectState = {
+    ...baseProps.state,
+    currentProject: {
+      id: 1,
+      name: 'github_wegent',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: {
+          targetType: 'local' as const,
+          deviceId: 'device-1',
+        },
+        workspace: {
+          source: 'local_path' as const,
+          localPath: '/workspace/github_wegent',
+        },
+      },
+    },
+  }
+
   function createPendingRequestUserInputMessage(includeAdjustment = false): WorkbenchMessage {
     return {
       id: 'assistant-request',
@@ -2097,9 +2117,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('desktop-window-controls')
     )
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
-    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
-      screen.getByTestId('environment-info-button')
-    )
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-bottom-workspace-panel-button')
     )
@@ -2191,9 +2209,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('h-8', 'w-8', 'bg-black/[0.045]')
     expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('h-8', 'w-8', 'text-text-secondary')
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
-    expect(screen.getByTestId('titlebar-main-actions')).toContainElement(
-      screen.getByTestId('environment-info-button')
-    )
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(
       screen.getByTestId('toggle-bottom-workspace-panel-button')
     )
@@ -2482,9 +2498,7 @@ describe('DesktopWorkbenchLayout', () => {
       'pointer-events-auto',
       'z-popover'
     )
-    expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
-      screen.getByTestId('environment-info-button')
-    )
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('workspace-panel-floating-actions')).toContainElement(
       screen.getByTestId('toggle-bottom-workspace-panel-button')
     )
@@ -5146,12 +5160,13 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
   })
 
-  test('opens the environment info popover and closes it from outside click', async () => {
+  test('keeps the environment info panel open until its icon is clicked', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
           ...baseProps.state,
+          currentProject: activeProjectState.currentProject,
           devices: [
             {
               id: 1,
@@ -5180,8 +5195,14 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('environment-info-panel-container')).toContainElement(
+      screen.getByTestId('environment-info-popover')
+    )
+    expect(screen.getByTestId('desktop-workbench-content')).toContainElement(
+      screen.getByTestId('environment-info-panel-container')
+    )
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
-      'w-[340px]',
+      'w-[300px]',
       'bg-background',
       'text-text-primary',
       'border-border',
@@ -5233,6 +5254,10 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await userEvent.click(document.body)
+
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
@@ -5638,14 +5663,14 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('does not reopen the branch menu when the environment popover is reopened', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    render(<DesktopWorkbenchLayout {...baseProps} state={activeProjectState} />)
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(screen.getByTestId('environment-branch-row'))
 
     expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
 
-    await userEvent.click(document.body)
+    await userEvent.click(screen.getByTestId('environment-info-button'))
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
@@ -5658,6 +5683,7 @@ describe('DesktopWorkbenchLayout', () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
+        state={activeProjectState}
         onLoadEnvironmentInfo={vi.fn().mockResolvedValue({
           additions: '+55',
           deletions: '-8',
@@ -5687,7 +5713,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('closes the branch menu when Escape is pressed', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} />)
+    render(<DesktopWorkbenchLayout {...baseProps} state={activeProjectState} />)
 
     await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(screen.getByTestId('environment-branch-row'))
@@ -5702,7 +5728,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
   })
 
-  test('loads environment info from the first workspace project when the popover opens', async () => {
+  test('does not show environment info without an active project or runtime task', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+8',
       deletions: '-3',
@@ -5741,20 +5767,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
+    expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(onLoadEnvironmentInfo).not.toHaveBeenCalled()
-
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
-    await waitFor(() =>
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 2, name: 'workspace' }),
-        {
-          deviceId: 'device-from-fallback',
-          path: '/repo',
-          source: 'project',
-        }
-      )
-    )
   })
 
   test('loads environment info automatically from the current runtime task workspace', async () => {
