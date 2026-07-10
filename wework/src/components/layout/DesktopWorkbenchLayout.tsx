@@ -602,7 +602,7 @@ export function DesktopWorkbenchLayout() {
           </div>
         </>
       )}
-      {settingsOpen ? (
+      {settingsOpen && (
         <ConnectionsSettingsPage
           autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
           onBack={() => {
@@ -611,7 +611,8 @@ export function DesktopWorkbenchLayout() {
             navigateTo('/')
           }}
         />
-      ) : (
+      )}
+      <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
         <DesktopWorkbenchMain
           sidebarCollapsed={effectiveSidebarCollapsed}
           sidebarResizing={sidebarResizing}
@@ -622,7 +623,7 @@ export function DesktopWorkbenchLayout() {
             standaloneChatKey: state.standaloneChatKey,
           }}
         />
-      )}
+      </div>
       <StandaloneBlankProjectDialog
         open={blankProjectDialogOpen}
         devices={state.devices}
