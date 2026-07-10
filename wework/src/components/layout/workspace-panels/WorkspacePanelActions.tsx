@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { memo, useMemo, useState } from 'react'
 import { AlertCircle, Loader2, PanelBottom, PanelRight } from 'lucide-react'
 import { createHttpClient } from '@/api/http'
 import { createProjectApi } from '@/api/projects'
@@ -46,7 +46,7 @@ interface WorkspacePanelActionsProps {
   onToggleBottomPanel: () => void
 }
 
-export function WorkspacePanelActions({
+export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   mode = 'all',
   currentProject = null,
   devices = [],
@@ -270,7 +270,7 @@ export function WorkspacePanelActions({
       )}
     </>
   )
-}
+})
 
 function CodeServerErrorDialog({ message, onClose }: { message: string; onClose: () => void }) {
   const { t } = useTranslation('common')

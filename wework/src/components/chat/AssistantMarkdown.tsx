@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { FileText, Link2 } from 'lucide-react'
 import { Streamdown } from 'streamdown'
@@ -11,6 +11,7 @@ import {
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
+import { useBufferedStreamingText } from './useBufferedStreamingText'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
@@ -37,20 +38,89 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   isStreaming = false,
   onOpenFile,
 }: AssistantMarkdownProps) {
-  const displayContent = prepareAssistantMarkdownContent(content)
+  const bufferedContent = useBufferedStreamingText(content, isStreaming)
+  const displayContent = prepareAssistantMarkdownContent(bufferedContent)
   const openFileRef = useRef(onOpenFile)
 
   useEffect(() => {
     openFileRef.current = onOpenFile
   }, [onOpenFile])
 
-  const openFile = (path: string, options?: WorkspaceFileOpenOptions) => {
+  const openFile = useCallback((path: string, options?: WorkspaceFileOpenOptions) => {
     if (options) {
       openFileRef.current?.(path, options)
       return
     }
     openFileRef.current?.(path)
-  }
+  }, [])
+  const components = useMemo(
+    () => ({
+      h1: ({ children }: { children?: ReactNode }) => (
+        <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold text-text-primary">
+          {children}
+        </h1>
+      ),
+      h2: ({ children }: { children?: ReactNode }) => (
+        <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold text-text-primary">
+          {children}
+        </h2>
+      ),
+      h3: ({ children }: { children?: ReactNode }) => (
+        <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold text-text-primary">
+          {children}
+        </h3>
+      ),
+      p: ({ children }: { children?: ReactNode }) => (
+        <p data-scroll-anchor className="mb-3 min-w-0 break-words leading-6">
+          {children}
+        </p>
+      ),
+      ul: ({ children }: { children?: ReactNode }) => (
+        <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>
+      ),
+      ol: ({ children }: { children?: ReactNode }) => (
+        <ol className="mb-3 list-decimal space-y-1.5 pl-8">{children}</ol>
+      ),
+      li: ({ children }: { children?: ReactNode }) => (
+        <li data-scroll-anchor className="min-w-0 break-words pl-1 leading-6">
+          {children}
+        </li>
+      ),
+      strong: ({ children }: { children?: ReactNode }) => (
+        <strong className="font-semibold">{children}</strong>
+      ),
+      code: MarkdownCode,
+      inlineCode: MarkdownInlineCode,
+      blockquote: ({ children }: { children?: ReactNode }) => (
+        <blockquote
+          data-scroll-anchor
+          className="mb-3 border-l-3 border-border pl-4 text-text-secondary"
+        >
+          {children}
+        </blockquote>
+      ),
+      table: ({ children }: { children?: ReactNode }) => (
+        <div data-scroll-anchor className="mb-3 max-w-full overflow-x-auto">
+          <table className="w-full min-w-max border-collapse text-[13px]">{children}</table>
+        </div>
+      ),
+      th: ({ children }: { children?: ReactNode }) => (
+        <th className="border-b border-border px-3 py-2 text-left font-semibold">{children}</th>
+      ),
+      td: ({ children }: { children?: ReactNode }) => (
+        <td className="border-b border-border px-3 py-2">{children}</td>
+      ),
+      a: ({ href, children }: { href?: string; children?: ReactNode }) => (
+        <AssistantMarkdownLink href={href} onOpenFile={openFile}>
+          {children}
+        </AssistantMarkdownLink>
+      ),
+      img: ({ src, alt }: { src?: string; alt?: string }) => (
+        <AssistantMarkdownImage src={src} alt={alt} />
+      ),
+    }),
+    [openFile]
+  )
 
   return (
     <div className="assistant-markdown min-w-0 max-w-full break-words">
@@ -61,88 +131,46 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         linkSafety={{ enabled: false }}
         lineNumbers={false}
         urlTransform={url => url}
-        components={{
-          h1: ({ children }) => (
-            <h1 data-scroll-anchor className="mb-4 mt-6 text-lg font-semibold text-text-primary">
-              {children}
-            </h1>
-          ),
-          h2: ({ children }) => (
-            <h2 data-scroll-anchor className="mb-3 mt-5 text-base font-semibold text-text-primary">
-              {children}
-            </h2>
-          ),
-          h3: ({ children }) => (
-            <h3 data-scroll-anchor className="mb-2 mt-4 text-sm font-semibold text-text-primary">
-              {children}
-            </h3>
-          ),
-          p: ({ children }) => (
-            <p data-scroll-anchor className="mb-3 min-w-0 break-words leading-6">
-              {children}
-            </p>
-          ),
-          ul: ({ children }) => <ul className="mb-3 list-disc space-y-1.5 pl-5">{children}</ul>,
-          ol: ({ children }) => <ol className="mb-3 list-decimal space-y-1.5 pl-8">{children}</ol>,
-          li: ({ children }) => (
-            <li data-scroll-anchor className="min-w-0 break-words pl-1 leading-6">
-              {children}
-            </li>
-          ),
-          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-          code: ({ className, children, node, ...props }) => {
-            const match = /language-(\w*)/.exec(className || '')
-            const text = reactNodeToText(children)
-            const isBlock =
-              ('data-block' in props && Boolean(props['data-block'])) ||
-              node?.properties?.dataBlock === 'true' ||
-              Boolean(match) ||
-              text.includes('\n')
-            if (isBlock) {
-              const lang = match ? match[1] || '' : ''
-              return <MarkdownCodeBlock lang={lang}>{text || children}</MarkdownCodeBlock>
-            }
-            return (
-              <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-                {children}
-              </code>
-            )
-          },
-          inlineCode: ({ children }) => (
-            <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
-              {children}
-            </code>
-          ),
-          blockquote: ({ children }) => (
-            <blockquote
-              data-scroll-anchor
-              className="mb-3 border-l-3 border-border pl-4 text-text-secondary"
-            >
-              {children}
-            </blockquote>
-          ),
-          table: ({ children }) => (
-            <div data-scroll-anchor className="mb-3 max-w-full overflow-x-auto">
-              <table className="w-full min-w-max border-collapse text-[13px]">{children}</table>
-            </div>
-          ),
-          th: ({ children }) => (
-            <th className="border-b border-border px-3 py-2 text-left font-semibold">{children}</th>
-          ),
-          td: ({ children }) => <td className="border-b border-border px-3 py-2">{children}</td>,
-          a: ({ href, children }) => (
-            <AssistantMarkdownLink href={href} onOpenFile={openFile}>
-              {children}
-            </AssistantMarkdownLink>
-          ),
-          img: ({ src, alt }) => <AssistantMarkdownImage src={src} alt={alt} />,
-        }}
+        components={components}
       >
         {displayContent}
       </Streamdown>
     </div>
   )
 }, areAssistantMarkdownPropsEqual)
+
+function MarkdownCode({
+  className,
+  children,
+  node,
+  ...props
+}: {
+  className?: string
+  children?: ReactNode
+  node?: { properties?: Record<string, unknown> }
+  [key: string]: unknown
+}) {
+  const match = /language-(\w*)/.exec(className || '')
+  const text = reactNodeToText(children)
+  const isBlock =
+    ('data-block' in props && Boolean(props['data-block'])) ||
+    node?.properties?.dataBlock === 'true' ||
+    Boolean(match) ||
+    text.includes('\n')
+  if (isBlock) {
+    const lang = match ? match[1] || '' : ''
+    return <MarkdownCodeBlock lang={lang}>{text || children}</MarkdownCodeBlock>
+  }
+  return <MarkdownInlineCode>{children}</MarkdownInlineCode>
+}
+
+function MarkdownInlineCode({ children }: { children?: ReactNode }) {
+  return (
+    <code className="break-words rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-text-primary">
+      {children}
+    </code>
+  )
+}
 
 function areAssistantMarkdownPropsEqual(
   previous: AssistantMarkdownProps,

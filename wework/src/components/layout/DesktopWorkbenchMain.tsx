@@ -212,6 +212,39 @@ interface DesktopWorkbenchMainProps {
   onSidebarCollapsedChange: (collapsed: boolean) => void
 }
 
+const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel({
+  panelKey,
+  open,
+  active,
+  context,
+  onRequestClose,
+  onTerminalTabsEmpty,
+}: {
+  panelKey: string
+  open: boolean
+  active: boolean
+  context: BottomPanelRenderContext
+  onRequestClose: (key: string) => void
+  onTerminalTabsEmpty: () => void
+}) {
+  const closePanel = useCallback(() => onRequestClose(panelKey), [onRequestClose, panelKey])
+
+  return (
+    <BottomWorkspacePanel
+      open={open}
+      active={active}
+      preserveContent
+      testIdsEnabled={active}
+      currentProject={context.currentProject}
+      devices={context.devices}
+      workspaceTarget={context.workspaceTarget}
+      preferLocalTerminal={context.preferLocalTerminal}
+      onRequestClose={closePanel}
+      onTerminalTabsEmpty={onTerminalTabsEmpty}
+    />
+  )
+})
+
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
   const [terminalPinnedPaneKeys, setTerminalPinnedPaneKeys] = useState<string[]>([])
@@ -555,6 +588,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     sourceSubtaskId?: string
   } | null>(null)
   const paneMessages = paneSession.messages
+  const paneMessagesRef = useRef(paneMessages)
+  useEffect(() => {
+    paneMessagesRef.current = paneMessages
+  }, [paneMessages])
   const pendingRequestUserInput = pendingRequestUserInputPayload(
     paneMessages,
     paneSession.answeredRequestUserInputIds
@@ -624,10 +661,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const inlineComposerDisabledReason = showConversationDeviceBanner
     ? undefined
     : composerDisabledReason
-  const projectChatWithModelSelectorSignal: ProjectChatControls = {
-    ...projectChat,
-    modelSelectorOpenSignal,
-  }
+  const projectChatWithModelSelectorSignal = useMemo<ProjectChatControls>(
+    () => ({
+      ...projectChat,
+      modelSelectorOpenSignal,
+    }),
+    [modelSelectorOpenSignal, projectChat]
+  )
   const emptyTitle = currentProject
     ? t('workbench.project_empty_title', {
         defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
@@ -782,6 +822,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workspaceTarget,
     ]
   )
+  const openDefaultEnvironmentChangesReview = useCallback(() => {
+    void openEnvironmentChangesReview()
+  }, [openEnvironmentChangesReview])
 
   const selectReviewView = useCallback(() => {
     if (reviewState.diff || reviewState.loading) {
@@ -887,7 +930,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             latestPreviousTurnSubtaskId !== null
               ? {
                   loadDiff: () =>
-                    loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessages),
+                    loadTurnFileChangesDiff(latestPreviousTurnSubtaskId, paneMessagesRef.current),
                   defaultFileTreeVisible: false,
                   sourceSubtaskId: latestPreviousTurnSubtaskId,
                 }
@@ -909,7 +952,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       loadTurnFileChangesDiff,
       openEnvironmentChangesReview,
       openReviewFromDiffLoader,
-      paneMessages,
       reviewState.reviewMode,
       tChat,
       workspaceTarget,
@@ -939,6 +981,46 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     () => setCurrentBottomPanelOpen(open => !open),
     [setCurrentBottomPanelOpen]
   )
+  const {
+    pauseCurrentResponse: pauseCurrentResponseAction,
+    compactContext: compactContextAction,
+    setCurrentGoal: setCurrentGoalAction,
+    pauseCurrentGoal: pauseCurrentGoalAction,
+    resumeCurrentGoal: resumeCurrentGoalAction,
+    clearCurrentGoal: clearCurrentGoalAction,
+  } = paneSession
+  const pauseCurrentResponse = useCallback(
+    () => void pauseCurrentResponseAction(),
+    [pauseCurrentResponseAction]
+  )
+  const compactCurrentContext = useCallback(
+    () => void compactContextAction(),
+    [compactContextAction]
+  )
+  const setCurrentGoal = useCallback(() => void setCurrentGoalAction(), [setCurrentGoalAction])
+  const pauseCurrentGoal = useCallback(
+    () => void pauseCurrentGoalAction(),
+    [pauseCurrentGoalAction]
+  )
+  const resumeCurrentGoal = useCallback(
+    () => void resumeCurrentGoalAction(),
+    [resumeCurrentGoalAction]
+  )
+  const clearCurrentGoal = useCallback(
+    () => void clearCurrentGoalAction(),
+    [clearCurrentGoalAction]
+  )
+  const closeBottomPanelContext = useCallback(
+    (key: string) => {
+      setBottomPanelOpenByKey(current => ({ ...current, [key]: false }))
+    },
+    [setBottomPanelOpenByKey]
+  )
+  const handleTerminalTabsEmpty = useCallback(() => {
+    if (currentRuntimeTask) {
+      onTerminalPaneUnpinned(paneKey)
+    }
+  }, [currentRuntimeTask, onTerminalPaneUnpinned, paneKey])
 
   useEffect(() => {
     const handleOpenTerminal = () => {
@@ -969,9 +1051,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       onListEnvironmentBranches={listEnvironmentBranches}
       onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
       onCreateEnvironmentBranch={createEnvironmentBranch}
-      onOpenEnvironmentChangesReview={() => {
-        void openEnvironmentChangesReview()
-      }}
+      onOpenEnvironmentChangesReview={openDefaultEnvironmentChangesReview}
       rightPanelOpen={rightPanelOpen}
       bottomPanelOpen={bottomPanelOpen}
       onToggleRightPanel={toggleRightPanel}
@@ -1322,20 +1402,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             guidanceMessages={paneGuidanceMessages}
                             codeComments={paneSession.codeCommentContexts}
                             isStreaming={paneIsResponseStreaming}
-                            onPause={() => void paneSession.pauseCurrentResponse()}
-                            onCompactContext={() => void paneSession.compactContext()}
+                            onPause={pauseCurrentResponse}
+                            onCompactContext={compactCurrentContext}
                             goal={paneSession.goal}
                             goalDraftActive={paneSession.goalDraftActive}
-                            onSetGoal={
-                              composerSupportsGoal
-                                ? () => void paneSession.setCurrentGoal()
-                                : undefined
-                            }
+                            onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
                             onCancelGoalDraft={paneSession.cancelGoalDraft}
                             onEditGoal={paneSession.editCurrentGoal}
-                            onPauseGoal={() => void paneSession.pauseCurrentGoal()}
-                            onResumeGoal={() => void paneSession.resumeCurrentGoal()}
-                            onClearGoal={() => void paneSession.clearCurrentGoal()}
+                            onPauseGoal={pauseCurrentGoal}
+                            onResumeGoal={resumeCurrentGoal}
+                            onClearGoal={clearCurrentGoal}
                             onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                             onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                             onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -1430,18 +1506,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   guidanceMessages={paneGuidanceMessages}
                   codeComments={paneSession.codeCommentContexts}
                   isStreaming={paneIsResponseStreaming}
-                  onPause={() => void paneSession.pauseCurrentResponse()}
-                  onCompactContext={() => void paneSession.compactContext()}
+                  onPause={pauseCurrentResponse}
+                  onCompactContext={compactCurrentContext}
                   goal={paneSession.goal}
                   goalDraftActive={paneSession.goalDraftActive}
-                  onSetGoal={
-                    composerSupportsGoal ? () => void paneSession.setCurrentGoal() : undefined
-                  }
+                  onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
                   onCancelGoalDraft={paneSession.cancelGoalDraft}
                   onEditGoal={paneSession.editCurrentGoal}
-                  onPauseGoal={() => void paneSession.pauseCurrentGoal()}
-                  onResumeGoal={() => void paneSession.resumeCurrentGoal()}
-                  onClearGoal={() => void paneSession.clearCurrentGoal()}
+                  onPauseGoal={pauseCurrentGoal}
+                  onResumeGoal={resumeCurrentGoal}
+                  onClearGoal={clearCurrentGoal}
                   onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                   onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                   onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -1517,24 +1591,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {bottomPanelContextsToRender.map(context => {
         const active = context.key === bottomPanelWorkspaceKey
         return (
-          <BottomWorkspacePanel
+          <MemoizedBottomWorkspacePanel
             key={context.key}
+            panelKey={context.key}
             open={active && (bottomPanelOpenByKey[context.key] ?? false)}
             active={active}
-            preserveContent
-            testIdsEnabled={active}
-            currentProject={context.currentProject}
-            devices={context.devices}
-            workspaceTarget={context.workspaceTarget}
-            preferLocalTerminal={context.preferLocalTerminal}
-            onRequestClose={() => {
-              setBottomPanelOpenByKey(current => ({ ...current, [context.key]: false }))
-            }}
-            onTerminalTabsEmpty={() => {
-              if (currentRuntimeTask) {
-                onTerminalPaneUnpinned(paneKey)
-              }
-            }}
+            context={context}
+            onRequestClose={closeBottomPanelContext}
+            onTerminalTabsEmpty={handleTerminalTabsEmpty}
           />
         )
       })}
