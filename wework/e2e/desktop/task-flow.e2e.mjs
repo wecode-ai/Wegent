@@ -545,14 +545,11 @@ async function main() {
       'The desktop controller did not connect from a webview'
     )
 
-    await control.command('waitFor', '[data-testid="new-chat-button"]', {
+    const composerSelector = '[data-testid="chat-message-input"][contenteditable="true"]'
+    await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
-    await control.command('click', '[data-testid="new-chat-button"]')
-    await control.command('waitFor', '[data-testid="chat-message-input"]', {
-      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-    })
-    await control.command('fill', '[data-testid="chat-message-input"]', { value: TASK_PROMPT })
+    await control.command('fill', composerSelector, { value: TASK_PROMPT })
     await control.command('waitFor', '[data-testid="send-message-button"]', { enabled: true })
     await control.command('click', '[data-testid="send-message-button"]')
     await control.command('waitFor', '[data-testid="message-assistant"]', {
