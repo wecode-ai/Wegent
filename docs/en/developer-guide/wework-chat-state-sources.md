@@ -78,6 +78,12 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.
 
+## Top-Level Page Transitions
+
+The workbench owns live state that cannot be serialized reliably, including composer drafts, Terminal sessions, and the in-app browser. When users move from the workbench to plugins, apps, or iframe apps, `AppRoutes` must keep `WorkbenchProvider` and `WorkbenchPage` mounted and only hide the workbench surface. Returning to the workbench then reuses the original component instances. A direct visit to an auxiliary page may defer the initial workbench mount to avoid creating unused background sessions.
+
+Do not unmount the workbench during route transitions, and do not add incomplete restoration fallbacks for Terminal or browser state. New top-level pages should join the auxiliary-page rendering branch without changing the workbench lifecycle.
+
 ## Audit Result
 
 - Desktop and mobile layouts no longer scan `messages` directly to decide whether the assistant is streaming; they read `paneSession.status.isAssistantStreaming`.

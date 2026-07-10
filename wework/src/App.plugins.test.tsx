@@ -599,6 +599,23 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
   })
 
+  test('preserves the workbench composer while visiting plugins', async () => {
+    window.history.pushState({}, '', '/')
+
+    render(<App />)
+
+    const composer = await screen.findByTestId('chat-message-input')
+    fireEvent.input(composer, { target: { textContent: '保留这段草稿' } })
+    await userEvent.click(screen.getByTestId('plugins-button'))
+    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+
+    window.history.pushState({}, '', '/')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(screen.getByTestId('chat-message-input')).toBe(composer)
+  })
+
   test('renders the plugins page on direct /plugins visit', async () => {
     window.history.pushState({}, '', '/plugins')
 

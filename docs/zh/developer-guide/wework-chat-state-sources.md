@@ -78,6 +78,12 @@ Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React st
 
 维护规则：不要用 fallback 在 UI 里把临时聊天补进左侧任务列表，也不要在 executor 中为临时线程伪造 rollout。临时聊天的主路径是 `ephemeral + sideSource + direct_thread_id`。
 
+## 顶层页面切换
+
+工作台包含输入草稿、Terminal 会话和内置浏览器等无法可靠序列化的实时状态。用户从工作台切换到插件、应用或 iframe 应用时，`AppRoutes` 必须保持 `WorkbenchProvider` 和 `WorkbenchPage` 挂载，只隐藏工作台表面；返回后继续使用原组件实例。直接打开辅助页面时可以延迟首次挂载工作台，避免创建没有使用过的后台会话。
+
+不要通过路由切换卸载工作台，也不要为 Terminal 或浏览器增加不完整的状态恢复 fallback。新增顶层页面时，应将它纳入辅助页面渲染分支，并保持工作台生命周期不变。
+
 ## 审核结果
 
 - 桌面和移动布局不再直接扫描 `messages` 判断是否 streaming，统一读取 `paneSession.status.isAssistantStreaming`。
