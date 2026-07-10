@@ -44,6 +44,14 @@ sidebar_position: 18
 7. `chat:done`、`chat:error`、取消事件通过 reducer 结算 assistant 消息，并触发 work list 刷新。
 8. 如果 runtime work 与消息状态不一致，不做兜底结算；必须修正缺失的 stream event、transcript 数据或 reducer action。
 
+## Goal 与任务执行状态
+
+Goal 条的运行态必须受当前 runtime task 的执行快照约束：当 App Server 明确返回当前任务 `running: false` 时，仍为 `active` 的 goal 在 UI 中必须派生为 `paused`，并停止累计显示的耗时。这避免在重新打开已中断任务时，goal 继续显示“进行中”并计时。
+
+- 仅当 `running` 是明确的布尔值时，任务执行状态才是已知状态；缺失该字段意味着状态尚不确定，不能据此暂停 goal。
+- 此派生只影响 Wework 的展示与计时，不会自动调用 goal 暂停接口。用户点击“暂停目标”才会持久化 `paused` 状态。
+- 任务重新处于 `running: true` 时，goal 继续使用 runtime goal API 返回的原始状态。
+
 ## 长输出内存边界
 
 Wework 的聊天 UI 不能把持续输出的完整正文长期保存在 React state 中。`WorkbenchMessage.content`、thinking/text/plan block 的 `content`、tool block 的 `toolOutput` 都必须通过统一的预览窗口进入 `messages`：

@@ -12,6 +12,7 @@ import {
   deriveRuntimePaneStatus,
   getRuntimePaneTaskExecution,
   hasSettledAssistantMessage,
+  pauseGoalForInactiveTask,
   type RuntimePaneSendPhase,
 } from '@/features/workbench/runtimePaneStatus'
 import {
@@ -281,23 +282,29 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   )
   const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = useMemo(() => {
+    let resolvedGoal: RuntimeGoal | null
     if (!currentRuntimeTaskLoadTarget) {
       if (pendingGoalState && isUnboundPendingGoalState(pendingGoalState)) {
-        return visibleRuntimeGoal(pendingGoalState.goal)
+        resolvedGoal = visibleRuntimeGoal(pendingGoalState.goal)
+      } else {
+        resolvedGoal = null
       }
-      return null
+    } else {
+      const visibleThreadGoal = visibleRuntimeGoal(threadGoal)
+      if (visibleThreadGoal) {
+        resolvedGoal = visibleThreadGoal
+      } else if (
+        pendingGoalState &&
+        isPendingGoalVisibleForRuntimeTarget(pendingGoalState, currentRuntimeTaskLoadTarget.address)
+      ) {
+        resolvedGoal = visibleRuntimeGoal(pendingGoalState.goal)
+      } else {
+        resolvedGoal = null
+      }
     }
 
-    const visibleThreadGoal = visibleRuntimeGoal(threadGoal)
-    if (visibleThreadGoal) return visibleThreadGoal
-    if (!pendingGoalState) return null
-    if (
-      isPendingGoalVisibleForRuntimeTarget(pendingGoalState, currentRuntimeTaskLoadTarget.address)
-    ) {
-      return visibleRuntimeGoal(pendingGoalState.goal)
-    }
-    return null
-  }, [currentRuntimeTaskLoadTarget, pendingGoalState, threadGoal])
+    return pauseGoalForInactiveTask(resolvedGoal, taskExecution)
+  }, [currentRuntimeTaskLoadTarget, pendingGoalState, taskExecution, threadGoal])
 
   /* eslint-disable react-hooks/set-state-in-effect -- Runtime task changes reset pane transcript state before the async transcript load completes. */
   useEffect(() => {
