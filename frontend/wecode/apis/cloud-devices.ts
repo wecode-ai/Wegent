@@ -67,6 +67,26 @@ export interface CloudDeviceFileConfig {
   available: boolean
 }
 
+/**
+ * Real-time resource utilization for a cloud device.
+ * Values are percentages (0-100) or null when unavailable.
+ */
+export interface CloudDeviceMetricsResponse {
+  cpu_usage: number | null
+  memory_usage: number | null
+  disk_usage: number | null
+}
+
+/**
+ * 1-hour time series of resource utilization.
+ * Each entry is [unix_seconds, percentage].
+ */
+export interface MetricsHistoryResponse {
+  cpu: [number, number][]
+  memory: [number, number][]
+  disk: [number, number][]
+}
+
 function withOptionalUserId(path: string, userId?: number): string {
   if (userId == null) {
     return path
@@ -142,5 +162,24 @@ export const cloudDeviceApis = {
     return apiClient.get(
       withOptionalUserId(`/cloud-devices/${encodeURIComponent(deviceId)}/file-config`, userId)
     )
+  },
+
+  /**
+   * Get real-time CPU/memory/disk usage for a cloud device.
+   * Does not require the device to be online.
+   *
+   * @param deviceId - Cloud device ID
+   */
+  async getMetrics(deviceId: string): Promise<CloudDeviceMetricsResponse> {
+    return apiClient.post(`/cloud-devices/${encodeURIComponent(deviceId)}/metrics`)
+  },
+
+  /**
+   * Get 1-hour usage history (time series) for a cloud device.
+   *
+   * @param deviceId - Cloud device ID
+   */
+  async getMetricsHistory(deviceId: string): Promise<MetricsHistoryResponse> {
+    return apiClient.post(`/cloud-devices/${encodeURIComponent(deviceId)}/metrics/history`)
   },
 }

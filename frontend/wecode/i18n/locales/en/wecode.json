@@ -30,7 +30,17 @@
     "capability_openclaw": "OpenClaw",
     "machines_count": "machine(s)",
     "powered_by_prefix": "Cloud computing powered by",
-    "powered_by_suffix": ""
+    "powered_by_suffix": "",
+    "metrics": {
+      "cpu": "CPU",
+      "memory": "MEM",
+      "disk": "Disk",
+      "loading": "Loading...",
+      "no_data": "No data",
+      "alert_title": "High resource usage",
+      "alert_desc": "CPU, memory, or disk usage exceeds 80%, which may affect task execution. Consider scaling up the cloud device or clearing the workspace cache.",
+      "alert_link": "View scaling guide"
+    }
   },
   "published_apps": {
     "tab": "Apps",
