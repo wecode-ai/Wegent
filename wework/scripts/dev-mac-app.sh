@@ -32,9 +32,11 @@ Environment:
   BACKEND_PORT          Backend port used when proxy targets are not set.
   CARGO_TARGET_DIR      Explicit Cargo target directory. Overrides auto cache.
   WEGENT_CARGO_TARGET_ROOT
-                        Shared Cargo target root for Wegent local builds.
+                        Root containing worktree-isolated Cargo targets.
   WEGENT_DISABLE_SHARED_CARGO_TARGET
                         Set to 1 to keep Cargo's default per-worktree target.
+  WEGENT_DISABLE_SCCACHE
+                        Set to 1 to disable automatic sccache detection.
   WEWORK_EXECUTOR_SIDECAR
                         Executor sidecar path. Defaults to source reload sidecar.
   WEGENT_EXECUTOR_DEV_RELOAD
@@ -181,6 +183,7 @@ else
   export VITE_SOCKET_PATH="${VITE_SOCKET_PATH:-/socket.io}"
   BEFORE_DEV_COMMAND="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
 fi
+install_wegent_sccache_with_homebrew
 configure_wegent_cargo_target_dir "$PROJECT_DIR" "wework-src-tauri"
 
 TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
