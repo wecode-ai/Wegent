@@ -148,6 +148,24 @@ function mockCodexAppServerInvoke(
   const apps = options.apps ?? []
 
   vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+    if (command === 'local_executor_codex_home_migration_status') {
+      return Promise.resolve({
+        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        nativeCodexHome: '/Users/test/.codex',
+        weworkCodexHomeExists: true,
+        nativeCodexHomeExists: false,
+        shouldPromptMigration: false,
+      })
+    }
+    if (command === 'local_executor_migrate_native_codex_home') {
+      return Promise.resolve({
+        weworkCodexHome: '/Users/test/.wegent-executor/codex',
+        nativeCodexHome: '/Users/test/.codex',
+        weworkCodexHomeExists: true,
+        nativeCodexHomeExists: true,
+        shouldPromptMigration: false,
+      })
+    }
     if (command === 'local_executor_ensure_started') {
       return Promise.resolve({ running: true, ready: true })
     }
@@ -693,6 +711,7 @@ describe('PluginsWorkspace', () => {
     vi.mocked(convertFileSrc).mockClear()
     vi.mocked(invoke).mockReset()
     vi.mocked(isTauri).mockReturnValue(false)
+    window.localStorage.clear()
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     mockSystemSkillsFetch()
   })
@@ -947,6 +966,100 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugins-add-custom-marketplace-empty-button'))
 
     expect(screen.getByTestId('plugins-marketplace-config-dialog')).toBeInTheDocument()
+  })
+
+  test('shows a loading skeleton instead of the empty marketplace state while local plugins load', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === 'local_executor_codex_home_migration_status') {
+        return Promise.resolve({
+          weworkCodexHome: '/Users/test/.wegent-executor/codex',
+          nativeCodexHome: '/Users/test/.codex',
+          weworkCodexHomeExists: true,
+          nativeCodexHomeExists: false,
+          shouldPromptMigration: false,
+        })
+      }
+      if (command === 'local_executor_ensure_started') {
+        return Promise.resolve({ running: true, ready: true })
+      }
+      if (command === 'local_executor_request') {
+        return new Promise(() => undefined)
+      }
+      return Promise.resolve(undefined)
+    })
+
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+
+    expect(await screen.findByTestId('plugins-marketplace-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-no-marketplace-welcome')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-publish-empty-button')).not.toBeInTheDocument()
+  })
+
+  test('prompts to migrate the native Codex home on first Wework plugin setup', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    vi.mocked(isTauri).mockReturnValue(true)
+    const marketplace = {
+      name: 'local-team',
+      displayName: 'Team',
+      path: '/Users/test/marketplace.json',
+    }
+    vi.mocked(invoke).mockImplementation((command: string, args?: unknown) => {
+      if (command === 'local_executor_codex_home_migration_status') {
+        return Promise.resolve({
+          weworkCodexHome: '/Users/test/.wegent-executor/codex',
+          nativeCodexHome: '/Users/test/.codex',
+          weworkCodexHomeExists: false,
+          nativeCodexHomeExists: true,
+          shouldPromptMigration: true,
+        })
+      }
+      if (command === 'local_executor_migrate_native_codex_home') {
+        return Promise.resolve({
+          weworkCodexHome: '/Users/test/.wegent-executor/codex',
+          nativeCodexHome: '/Users/test/.codex',
+          weworkCodexHomeExists: true,
+          nativeCodexHomeExists: true,
+          shouldPromptMigration: false,
+        })
+      }
+      if (command === 'local_executor_ensure_started') {
+        return Promise.resolve({ running: true, ready: true })
+      }
+      if (command === 'local_executor_request') {
+        const request = args as {
+          method?: string
+          params?: { method?: string }
+        }
+        if (request.params?.method === 'plugin/list') {
+          return Promise.resolve({
+            marketplaces: [codexMarketplaceResponse(marketplace, new Set(), false)],
+          })
+        }
+        if (request.params?.method === 'plugin/installed') {
+          return Promise.resolve({
+            marketplaces: [codexMarketplaceResponse(marketplace, new Set(), true)],
+          })
+        }
+      }
+      return Promise.resolve({})
+    })
+
+    render(<PluginsWorkspace cloudMarketplaceAvailable={false} />)
+
+    expect(await screen.findByTestId('plugins-codex-migration-dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('plugins-codex-migration-confirm-button'))
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith('local_executor_migrate_native_codex_home')
+    )
   })
 
   test('quickly adds the OpenAI official marketplace from the empty state', async () => {

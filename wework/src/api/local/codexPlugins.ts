@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
 import type {
@@ -21,6 +22,14 @@ export interface LocalCodexPluginsState {
   installRegistryPath: string
 }
 
+export interface LocalCodexHomeMigrationStatus {
+  weworkCodexHome: string
+  nativeCodexHome: string
+  weworkCodexHomeExists: boolean
+  nativeCodexHomeExists: boolean
+  shouldPromptMigration: boolean
+}
+
 export interface LocalCodexMarketplace {
   id: string
   name: string
@@ -28,6 +37,8 @@ export interface LocalCodexMarketplace {
 }
 
 export interface LocalCodexPluginApi {
+  codexHomeMigrationStatus(): Promise<LocalCodexHomeMigrationStatus>
+  migrateNativeCodexHome(): Promise<LocalCodexHomeMigrationStatus>
   readState(params?: {
     q?: string
     marketplaceId?: string
@@ -402,27 +413,6 @@ function filterPluginItems(
   )
 }
 
-async function readPluginDetail(
-  marketplace: CodexPluginMarketplaceEntry,
-  plugin: CodexPluginSummary
-): Promise<CodexPluginDetail | null> {
-  try {
-    const response = await codexAppServerRequest<{ plugin: CodexPluginDetail }>('plugin/read', {
-      marketplacePath: marketplace.path ?? null,
-      remoteMarketplaceName: marketplace.path ? null : marketplace.name,
-      pluginName: plugin.name,
-    })
-    return response.plugin
-  } catch (error) {
-    console.warn('[Wework plugins] failed to read Codex plugin detail', {
-      marketplace: marketplace.name,
-      plugin: plugin.name,
-      error,
-    })
-    return null
-  }
-}
-
 async function readState(
   params: {
     query?: string
@@ -467,17 +457,8 @@ async function readState(
     ),
     params.query
   )
-  const installedDetails = await Promise.all(
-    installedResponse.marketplaces.flatMap(marketplace =>
-      marketplace.plugins.map(async plugin => ({
-        marketplace,
-        plugin,
-        detail: await readPluginDetail(marketplace, plugin),
-      }))
-    )
-  )
-  const installedPlugins = installedDetails.map(({ marketplace, plugin, detail }) =>
-    toInstalledPlugin(marketplace, plugin, detail)
+  const installedPlugins = installedResponse.marketplaces.flatMap(marketplace =>
+    marketplace.plugins.map(plugin => toInstalledPlugin(marketplace, plugin))
   )
   const marketplaces = availableResponse.marketplaces.map(marketplaceInfo)
   const state: LocalCodexPluginsState = {
@@ -497,6 +478,30 @@ async function readState(
 
 export function createLocalCodexPluginApi(): LocalCodexPluginApi {
   return {
+    codexHomeMigrationStatus() {
+      if (!isTauriRuntime()) {
+        return Promise.resolve({
+          weworkCodexHome: '',
+          nativeCodexHome: '',
+          weworkCodexHomeExists: true,
+          nativeCodexHomeExists: false,
+          shouldPromptMigration: false,
+        })
+      }
+      return invoke<LocalCodexHomeMigrationStatus>('local_executor_codex_home_migration_status')
+    },
+    migrateNativeCodexHome() {
+      if (!isTauriRuntime()) {
+        return Promise.resolve({
+          weworkCodexHome: '',
+          nativeCodexHome: '',
+          weworkCodexHomeExists: true,
+          nativeCodexHomeExists: false,
+          shouldPromptMigration: false,
+        })
+      }
+      return invoke<LocalCodexHomeMigrationStatus>('local_executor_migrate_native_codex_home')
+    },
     readState(params = {}) {
       return readState({
         query: params.q,

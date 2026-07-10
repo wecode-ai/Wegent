@@ -17,7 +17,7 @@ import {
   X,
 } from 'lucide-react'
 import type { FormEvent, ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { useIsMobile } from '@/hooks/useIsMobile'
@@ -40,7 +40,7 @@ import type {
   SystemSkillCatalogItem,
   SystemSkillProviderError,
 } from '@/types/api'
-import type { LocalCodexMarketplace } from '@/api/local/codexPlugins'
+import type { LocalCodexHomeMigrationStatus, LocalCodexMarketplace } from '@/api/local/codexPlugins'
 import { type InstalledPluginItem } from './PluginManagementRows'
 import { ConfirmUninstallDialog, type CatalogItem } from './PluginCatalogSections'
 import { CustomMcpDialog, type CustomMcpFormState } from './McpManagementSections'
@@ -115,6 +115,7 @@ const OPENAI_OFFICIAL_MARKETPLACE = {
   name: 'OpenAI 官方市场',
   path: 'https://github.com/openai/plugins',
 }
+const CODEX_MIGRATION_DISMISSED_STORAGE_KEY = 'wework.plugins.codexMigrationDismissed'
 const emptyCustomMcpForm: CustomMcpFormState = {
   name: '',
   displayName: '',
@@ -629,6 +630,100 @@ function PluginMarketplaceWelcome({
   )
 }
 
+function PluginMarketplaceLoadingSkeleton({ message, hint }: { message: string; hint?: string }) {
+  return (
+    <div
+      data-testid="plugins-marketplace-loading"
+      className="space-y-8 border-t border-border pt-8"
+    >
+      <div className="flex items-center gap-3 text-sm text-text-secondary">
+        <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-text-muted" />
+        <div>
+          <div className="font-medium text-text-primary">{message}</div>
+          {hint && <div className="mt-1 text-xs leading-5 text-text-muted">{hint}</div>}
+        </div>
+      </div>
+      {['Featured', 'Productivity'].map(section => (
+        <section key={section} className="space-y-4">
+          <div className="border-b border-border pb-3">
+            <div className="h-5 w-28 animate-pulse rounded-md bg-surface" />
+          </div>
+          <div className="grid grid-cols-1 gap-x-10 gap-y-3 sm:grid-cols-2">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div
+                key={index}
+                className="grid min-h-[66px] grid-cols-[44px_minmax(0,1fr)_72px] items-center gap-3 rounded-lg px-2 py-2"
+              >
+                <div className="h-10 w-10 animate-pulse rounded-lg bg-surface" />
+                <div className="space-y-2">
+                  <div className="h-4 w-32 animate-pulse rounded-md bg-surface" />
+                  <div className="h-3 w-44 max-w-full animate-pulse rounded-md bg-surface" />
+                </div>
+                <div className="h-8 animate-pulse rounded-xl bg-surface" />
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function CodexMigrationDialog({
+  status,
+  isMigrating,
+  onDismiss,
+  onMigrate,
+}: {
+  status: LocalCodexHomeMigrationStatus
+  isMigrating: boolean
+  onDismiss: () => void
+  onMigrate: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/20 px-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        data-testid="plugins-codex-migration-dialog"
+        className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-2xl"
+      >
+        <div className="space-y-2">
+          <h2 className="text-base font-medium text-text-primary">迁移本机 Codex 插件配置？</h2>
+          <p className="text-sm leading-6 text-text-secondary">
+            检测到本机已有 Codex 目录，但 WeWork 的插件运行目录还没有初始化。可以复制现有 Codex
+            插件、技能和市场缓存作为 WeWork 的初始配置。
+          </p>
+        </div>
+        <div className="mt-4 space-y-1 rounded-lg bg-surface px-3 py-2 text-xs leading-5 text-text-muted">
+          <div className="truncate">来源：{status.nativeCodexHome}</div>
+          <div className="truncate">目标：{status.weworkCodexHome}</div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            data-testid="plugins-codex-migration-dismiss-button"
+            className="h-8 rounded-lg px-3 text-[13px] font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary"
+            onClick={onDismiss}
+            disabled={isMigrating}
+          >
+            暂不迁移
+          </button>
+          <button
+            type="button"
+            data-testid="plugins-codex-migration-confirm-button"
+            className="h-8 rounded-lg bg-text-primary px-3 text-[13px] font-medium text-background transition-colors hover:bg-text-primary/90 disabled:cursor-wait disabled:opacity-70"
+            onClick={onMigrate}
+            disabled={isMigrating}
+          >
+            {isMigrating ? '迁移中...' : '迁移'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 interface PluginsWorkspaceProps {
   sidebarCollapsed?: boolean
   topBarLeftActions?: ReactNode
@@ -674,6 +769,8 @@ export function PluginsWorkspace({
   const mcpApi = useMemo(() => createDefaultMcpApi(), [])
   const pluginApi = useMemo(() => createDefaultPluginApi(), [])
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
+  const initialMarketplaceLoadKeyRef = useRef<string | null>(null)
+  const [isMarketplaceConfigLoading, setIsMarketplaceConfigLoading] = useState(true)
   const [marketplaces, setMarketplaces] = useState<MarketplaceOption[]>([])
   const [selectedMarketplaceKey, setSelectedMarketplaceKey] = useState('')
   const [marketplaceForm, setMarketplaceForm] = useState<MarketplaceFormState | null>(null)
@@ -682,6 +779,9 @@ export function PluginsWorkspace({
   const [pendingMarketplaceDelete, setPendingMarketplaceDelete] =
     useState<PendingMarketplaceDelete | null>(null)
   const [installedPlugins, setInstalledPlugins] = useState<InstalledPluginItem[]>([])
+  const [codexMigrationStatus, setCodexMigrationStatus] =
+    useState<LocalCodexHomeMigrationStatus | null>(null)
+  const [isMigratingCodexHome, setIsMigratingCodexHome] = useState(false)
   const [, setSystemSkillState] = useState<SystemSkillState>({
     items: [],
     providerErrors: [],
@@ -1027,6 +1127,30 @@ export function PluginsWorkspace({
     setMarketplaceRefreshTick(previous => previous + 1)
   }
 
+  const dismissCodexMigration = () => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(CODEX_MIGRATION_DISMISSED_STORAGE_KEY, '1')
+    }
+    setCodexMigrationStatus(null)
+  }
+
+  const migrateCodexHome = () => {
+    setIsMigratingCodexHome(true)
+    localPluginApi
+      .migrateNativeCodexHome()
+      .then(() => {
+        dismissCodexMigration()
+        refreshMarketplace()
+      })
+      .catch((error: Error) => {
+        setPluginMarketplaceState(previous => ({
+          ...previous,
+          error: error.message,
+        }))
+      })
+      .finally(() => setIsMigratingCodexHome(false))
+  }
+
   const installMarketplacePlugin = (item: PluginMarketplaceItem) => {
     if (!selectedMarketplace) {
       return
@@ -1313,35 +1437,23 @@ export function PluginsWorkspace({
 
   useEffect(() => {
     let isCurrent = true
-    localPluginApi
-      .readState()
-      .then(state => {
-        if (!isCurrent) return
-        applyLocalMarketplaceState(state)
-      })
-      .catch(() => {
-        if (!isCurrent) return
-        const options = toMarketplaceOptions([], cloudMarketplaceAvailable)
-        setMarketplaces(options)
-        setSelectedMarketplaceKey(current => current || options[0]?.key || '')
-      })
-
-    return () => {
-      isCurrent = false
+    if (
+      typeof window !== 'undefined' &&
+      window.localStorage.getItem(CODEX_MIGRATION_DISMISSED_STORAGE_KEY) === '1'
+    ) {
+      return () => {
+        isCurrent = false
+      }
     }
-  }, [applyLocalMarketplaceState, cloudMarketplaceAvailable, localPluginApi])
 
-  useEffect(() => {
-    let isCurrent = true
     localPluginApi
-      .listInstalledPlugins()
-      .then(response => {
+      .codexHomeMigrationStatus()
+      .then(status => {
         if (!isCurrent) return
-        setInstalledPlugins(response.items.map(toInstalledPluginItem))
+        setCodexMigrationStatus(status.shouldPromptMigration ? status : null)
       })
       .catch(() => {
-        if (!isCurrent) return
-        setInstalledPlugins([])
+        if (isCurrent) setCodexMigrationStatus(null)
       })
 
     return () => {
@@ -1350,7 +1462,61 @@ export function PluginsWorkspace({
   }, [localPluginApi])
 
   useEffect(() => {
+    let isCurrent = true
+    setIsMarketplaceConfigLoading(true)
+    setPluginMarketplaceState(previous => ({
+      ...previous,
+      isLoading: true,
+      error: null,
+    }))
+    localPluginApi
+      .readState()
+      .then(state => {
+        if (!isCurrent) return
+        applyLocalMarketplaceState(state)
+        const selectedKey = state.selectedMarketplaceId
+          ? localMarketplaceKey(state.selectedMarketplaceId)
+          : ''
+        initialMarketplaceLoadKeyRef.current = selectedKey
+        setInstalledPlugins(state.installedPlugins.map(toInstalledPluginItem))
+        setPluginMarketplaceState({
+          items: state.marketplaceItems,
+          isLoading: false,
+          error: null,
+        })
+      })
+      .catch((error: Error) => {
+        if (!isCurrent) return
+        const options = toMarketplaceOptions([], cloudMarketplaceAvailable)
+        setMarketplaces(options)
+        setSelectedMarketplaceKey(current => current || options[0]?.key || '')
+        setInstalledPlugins([])
+        setPluginMarketplaceState({
+          items: [],
+          isLoading: false,
+          error: error.message,
+        })
+      })
+      .finally(() => {
+        if (isCurrent) setIsMarketplaceConfigLoading(false)
+      })
+
+    return () => {
+      isCurrent = false
+    }
+  }, [applyLocalMarketplaceState, cloudMarketplaceAvailable, localPluginApi])
+
+  useEffect(() => {
     if (activeTab !== 'plugins') return
+
+    if (isMarketplaceConfigLoading) {
+      setPluginMarketplaceState(previous => ({
+        ...previous,
+        isLoading: true,
+        error: null,
+      }))
+      return
+    }
 
     const marketplace =
       marketplaces.find(item => item.key === selectedMarketplaceLoadKey) ?? marketplaces[0] ?? null
@@ -1365,6 +1531,14 @@ export function PluginsWorkspace({
     }
 
     let isCurrent = true
+    if (
+      initialMarketplaceLoadKeyRef.current === marketplace.key &&
+      marketplaceRefreshTick === 0 &&
+      !normalizedQuery
+    ) {
+      initialMarketplaceLoadKeyRef.current = null
+      return
+    }
     const isGithubMarketplace =
       marketplace.kind === 'local' && /^https?:\/\/github\.com\//i.test(marketplace.path || '')
     const isExplicitRefresh = marketplaceRefreshTick > 0
@@ -1422,12 +1596,14 @@ export function PluginsWorkspace({
     }
   }, [
     activeTab,
+    isMarketplaceConfigLoading,
     localPluginApi,
     marketplaces,
     marketplaceRefreshTick,
     normalizedQuery,
     pluginApi,
     selectedMarketplaceLoadKey,
+    t,
   ])
 
   const selectedPlugin = useMemo(
@@ -1771,22 +1947,21 @@ export function PluginsWorkspace({
           {
             <div className="space-y-8">
               {pluginMarketplaceState.isLoading ? (
-                <div className="flex min-h-[180px] flex-col items-center justify-center gap-2 text-center text-sm text-text-secondary">
-                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-text-muted" />
-                  <div className="font-medium">
-                    {marketplaceLoadingMessage ||
-                      t('workbench.plugins_loading_marketplace', '正在加载插件市场')}
-                  </div>
-                  {selectedMarketplace?.kind === 'local' &&
-                    /^https?:\/\/github\.com\//i.test(selectedMarketplace.path || '') && (
-                      <div className="max-w-[360px] text-xs leading-5 text-text-muted">
-                        {t(
+                <PluginMarketplaceLoadingSkeleton
+                  message={
+                    marketplaceLoadingMessage ||
+                    t('workbench.plugins_loading_marketplace', '正在加载插件市场')
+                  }
+                  hint={
+                    selectedMarketplace?.kind === 'local' &&
+                    /^https?:\/\/github\.com\//i.test(selectedMarketplace.path || '')
+                      ? t(
                           'workbench.plugins_github_clone_hint',
                           '这个过程会在本地缓存仓库，完成后再次打开会直接读取缓存。'
-                        )}
-                      </div>
-                    )}
-                </div>
+                        )
+                      : undefined
+                  }
+                />
               ) : pluginMarketplaceState.error ? (
                 <div className="flex min-h-[180px] items-center justify-center text-sm font-semibold text-text-secondary">
                   {pluginMarketplaceState.error}
@@ -2195,6 +2370,14 @@ export function PluginsWorkspace({
             </div>
           </form>
         </div>
+      )}
+      {codexMigrationStatus && (
+        <CodexMigrationDialog
+          status={codexMigrationStatus}
+          isMigrating={isMigratingCodexHome}
+          onDismiss={dismissCodexMigration}
+          onMigrate={migrateCodexHome}
+        />
       )}
     </main>
   )

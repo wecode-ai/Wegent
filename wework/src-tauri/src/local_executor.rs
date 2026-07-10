@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
@@ -358,6 +359,16 @@ pub struct LocalExecutorLog {
     has_backend_auth_token: bool,
     pending_request_count: usize,
     status: LocalExecutorStatus,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexHomeMigrationStatus {
+    wework_codex_home: String,
+    native_codex_home: String,
+    wework_codex_home_exists: bool,
+    native_codex_home_exists: bool,
+    should_prompt_migration: bool,
 }
 
 struct LocalExecutorLogTail {
@@ -910,6 +921,57 @@ fn wework_codex_home_path(executor_home: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(PathBuf::from(executor_home).join("codex"))
+}
+
+fn native_codex_home_path() -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
+    Ok(PathBuf::from(home).join(".codex"))
+}
+
+fn codex_home_migration_status() -> Result<CodexHomeMigrationStatus, String> {
+    let executor_home = local_executor_home_path()?;
+    let wework_codex_home = wework_codex_home_path(&executor_home.display().to_string())?;
+    let native_codex_home = native_codex_home_path()?;
+    let wework_codex_home_exists = wework_codex_home.exists();
+    let native_codex_home_exists = native_codex_home.exists();
+    Ok(CodexHomeMigrationStatus {
+        wework_codex_home: wework_codex_home.display().to_string(),
+        native_codex_home: native_codex_home.display().to_string(),
+        wework_codex_home_exists,
+        native_codex_home_exists,
+        should_prompt_migration: !wework_codex_home_exists && native_codex_home_exists,
+    })
+}
+
+fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
+    for entry in fs::read_dir(source)
+        .map_err(|error| format!("failed to read {}: {error}", source.display()))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("failed to inspect {}: {error}", source_path.display()))?;
+        if file_type.is_dir() {
+            copy_directory_recursive(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+            }
+            fs::copy(&source_path, &destination_path).map_err(|error| {
+                format!(
+                    "failed to copy {} to {}: {error}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn local_executor_sidecar_env(
@@ -1778,6 +1840,25 @@ pub async fn local_executor_read_log(
         pending_request_count,
         status,
     })
+}
+
+#[tauri::command]
+pub async fn local_executor_codex_home_migration_status() -> Result<CodexHomeMigrationStatus, String>
+{
+    codex_home_migration_status()
+}
+
+#[tauri::command]
+pub async fn local_executor_migrate_native_codex_home() -> Result<CodexHomeMigrationStatus, String>
+{
+    let status = codex_home_migration_status()?;
+    if !status.should_prompt_migration {
+        return Ok(status);
+    }
+    let source = PathBuf::from(&status.native_codex_home);
+    let destination = PathBuf::from(&status.wework_codex_home);
+    copy_directory_recursive(&source, &destination)?;
+    codex_home_migration_status()
 }
 
 #[tauri::command]
