@@ -1,4 +1,9 @@
-import type { RuntimeTaskSummary, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  RuntimeGoal,
+  RuntimeTaskSummary,
+  RuntimeTaskAddress,
+  RuntimeWorkListResponse,
+} from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
 
@@ -32,9 +37,10 @@ export function getRuntimePaneTaskExecution(
     return { known: false, running: false, status: null }
   }
 
+  const running = typeof task.running === 'boolean' ? task.running : null
   return {
-    known: true,
-    running: task.running === true,
+    known: running !== null,
+    running: running === true,
     status: normalizeTaskStatus(task),
   }
 }
@@ -76,6 +82,22 @@ export function deriveRuntimePaneStatus({
       isWaitingForAssistantMessage,
     canSendQueuedMessage: Boolean(currentRuntimeTask) && !isBusy,
   }
+}
+
+/**
+ * A goal cannot be active while its owning runtime task is idle. The runtime
+ * task list is authoritative when it contains the task; an absent task may
+ * simply mean the list has not loaded yet, so its goal is left unchanged.
+ */
+export function pauseGoalForInactiveTask(
+  goal: RuntimeGoal | null,
+  taskExecution: RuntimePaneTaskExecution
+): RuntimeGoal | null {
+  if (!goal || goal.status !== 'active' || !taskExecution.known || taskExecution.running) {
+    return goal
+  }
+
+  return { ...goal, status: 'paused' }
 }
 
 export function findActiveAssistantMessage(

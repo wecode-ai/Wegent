@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'vitest'
-import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeGoal, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
-import { deriveRuntimePaneStatus, getRuntimePaneTaskExecution } from './runtimePaneStatus'
+import {
+  deriveRuntimePaneStatus,
+  getRuntimePaneTaskExecution,
+  pauseGoalForInactiveTask,
+} from './runtimePaneStatus'
 
 const runtimeAddress: RuntimeTaskAddress = {
   deviceId: 'device-1',
@@ -57,6 +61,51 @@ function runtimeWork(running: boolean, status?: string | null): RuntimeWorkListR
 }
 
 describe('runtime pane status', () => {
+  test('pauses an active goal when its known task is no longer running', () => {
+    const goal: RuntimeGoal = {
+      threadId: 'thread-1',
+      objective: 'Finish the task',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 12,
+      timeUsedSeconds: 30,
+      createdAt: 1770000000000,
+      updatedAt: 1770000000000,
+    }
+
+    expect(
+      pauseGoalForInactiveTask(goal, { known: true, running: false, status: 'interrupted' })
+    ).toMatchObject({ status: 'paused', timeUsedSeconds: 30 })
+  })
+
+  test('does not change an active goal before task execution is known', () => {
+    const goal: RuntimeGoal = {
+      threadId: 'thread-1',
+      objective: 'Finish the task',
+      status: 'active',
+      tokenBudget: null,
+      tokensUsed: 12,
+      timeUsedSeconds: 30,
+      createdAt: 1770000000000,
+      updatedAt: 1770000000000,
+    }
+
+    expect(pauseGoalForInactiveTask(goal, { known: false, running: false, status: null })).toBe(
+      goal
+    )
+  })
+
+  test('treats a task without a running flag as unknown', () => {
+    const runtimeWorkWithoutRunningState = runtimeWork(false)
+    runtimeWorkWithoutRunningState.chats[0].tasks[0].running = undefined
+
+    expect(getRuntimePaneTaskExecution(runtimeWorkWithoutRunningState, runtimeAddress)).toEqual({
+      known: false,
+      running: false,
+      status: null,
+    })
+  })
+
   test('derives one busy state from send phase, streaming message, and task execution', () => {
     const taskExecution = getRuntimePaneTaskExecution(runtimeWork(true), runtimeAddress)
     const status = deriveRuntimePaneStatus({
