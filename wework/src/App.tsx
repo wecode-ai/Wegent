@@ -41,15 +41,18 @@ import {
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
   TOGGLE_SIDE_PANEL_COMMAND,
+  TOGGLE_MODEL_SELECTOR_COMMAND,
   dispatchGoBackShortcut,
   dispatchGoForwardShortcut,
   dispatchOpenSettingsShortcut,
   dispatchOpenTerminalShortcut,
   dispatchToggleSidebarShortcut,
   dispatchToggleSidePanelShortcut,
+  dispatchToggleModelSelectorShortcut,
   isEditableShortcutTarget,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
+  setActiveKeybindings,
 } from '@/lib/keybindings'
 import {
   getWeworkDevInstanceInfo,
@@ -197,7 +200,7 @@ function AppShell() {
         const services = createLocalAppServices()
         const response = await services.runtimeWorkApi?.getKeybindings()
         if (!disposed) {
-          activeBindings = mergeKeybindings(response?.keybindings ?? [])
+          activeBindings = setActiveKeybindings(response?.keybindings ?? [])
         }
       } catch (error) {
         console.error('[Wework] Failed to load keybindings:', error)
@@ -212,6 +215,7 @@ function AppShell() {
       const goForwardKey = activeBindings[GO_FORWARD_COMMAND]
       const sidebarKey = activeBindings[TOGGLE_SIDEBAR_COMMAND]
       const sidePanelKey = activeBindings[TOGGLE_SIDE_PANEL_COMMAND]
+      const modelSelectorKey = activeBindings[TOGGLE_MODEL_SELECTOR_COMMAND]
       const eventKey = keybindingFromKeyboardEvent(event)
       const matchesRegisteredShortcut = [
         terminalKey,
@@ -220,6 +224,7 @@ function AppShell() {
         goForwardKey,
         sidebarKey,
         sidePanelKey,
+        modelSelectorKey,
       ].some(key => key && key === eventKey)
       if (!matchesRegisteredShortcut && isEditableShortcutTarget(event.target)) return
 
@@ -246,6 +251,11 @@ function AppShell() {
       if (sidePanelKey && eventKey === sidePanelKey) {
         event.preventDefault()
         dispatchToggleSidePanelShortcut()
+        return
+      }
+      if (modelSelectorKey && eventKey === modelSelectorKey) {
+        event.preventDefault()
+        dispatchToggleModelSelectorShortcut()
         return
       }
       if (!terminalKey || eventKey !== terminalKey) return

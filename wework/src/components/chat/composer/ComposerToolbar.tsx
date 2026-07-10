@@ -16,6 +16,7 @@ interface ComposerToolbarProps {
   isModelSelectionReady: boolean
   contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
@@ -40,6 +41,7 @@ export function ComposerToolbar({
   isModelSelectionReady,
   contextUsage,
   onSelectModel,
+  onSelectModelAndOptions,
   onSelectModelOption,
   onBlockedModelSelect,
   onFileSelect,
@@ -92,6 +94,7 @@ export function ComposerToolbar({
             openSignal={modelSelectorOpenSignal}
             disabled={disabled}
             onSelectModel={onSelectModel}
+            onSelectModelAndOptions={onSelectModelAndOptions}
             onSelectModelOption={onSelectModelOption}
             onBlockedModelSelect={onBlockedModelSelect}
             buttonClassName="opacity-90 hover:opacity-100"

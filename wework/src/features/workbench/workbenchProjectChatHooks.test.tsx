@@ -258,6 +258,64 @@ describe('workbench project chat hooks', () => {
     })
   })
 
+  test('updates the model and power setting atomically', async () => {
+    const solModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      config: {
+        ui: {
+          family: 'codex-official',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          controls: ['speed'],
+        },
+      },
+    }
+    const terraModel: UnifiedModel = {
+      name: 'gpt-5.6-terra',
+      type: 'runtime',
+      config: {
+        ui: {
+          family: 'codex-official',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          controls: ['speed'],
+        },
+      },
+    }
+    const onSelectionChange = vi.fn()
+    const api = { listModels: vi.fn().mockResolvedValue({ data: [solModel, terraModel] }) }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: solModel.name,
+          modelType: solModel.type,
+          options: { reasoning: 'high', speed: 'standard' },
+        },
+        onSelectionChange,
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(solModel))
+    act(() =>
+      result.current.setSelectedModelAndOptions(terraModel, {
+        reasoning: 'low',
+        speed: 'standard',
+      })
+    )
+
+    expect(result.current.selectedModel).toEqual(terraModel)
+    expect(result.current.selectedModelOptions).toEqual({
+      reasoning: 'low',
+      speed: 'standard',
+    })
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      modelName: terraModel.name,
+      modelType: terraModel.type,
+      options: { reasoning: 'low', speed: 'standard' },
+    })
+  })
+
   test('copies the selected model into a new runtime task scope', async () => {
     const gptModel: UnifiedModel = {
       name: 'gpt-5.5',

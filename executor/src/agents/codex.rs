@@ -2877,13 +2877,18 @@ fn normalize_reasoning_effort(value: Option<&str>) -> String {
         .replace(' ', "_");
     let aliased = match normalized.as_str() {
         "" | "none" | "off" | "false" | "disabled" | "关闭" => DEFAULT_REASONING_EFFORT,
-        "低" => "low",
+        "minimal" | "低" | "轻度" | "最低" => "low",
         "中" | "中等" => "medium",
         "高" => "high",
-        "超高" | "最高" | "extra_high" | "ultra" | "x-high" => "xhigh",
+        "超高" | "extra_high" | "extra-high" | "x_high" | "x-high" => "xhigh",
+        "最大" | "最高" | "maximum" => "max",
+        "极高" => "ultra",
         value => value,
     };
-    if matches!(aliased, "minimal" | "low" | "medium" | "high" | "xhigh") {
+    if matches!(
+        aliased,
+        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    ) {
         aliased.to_owned()
     } else {
         DEFAULT_REASONING_EFFORT.to_owned()
@@ -4062,6 +4067,36 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn normalize_reasoning_effort_preserves_supported_codex_levels() {
+        for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
+            assert_eq!(normalize_reasoning_effort(Some(effort)), effort);
+        }
+    }
+
+    #[test]
+    fn normalize_reasoning_effort_maps_aliases_to_supported_codex_levels() {
+        for (value, expected) in [
+            ("minimal", "low"),
+            ("轻度", "low"),
+            ("中等", "medium"),
+            ("extra high", "xhigh"),
+            ("x-high", "xhigh"),
+            ("最高", "max"),
+            ("maximum", "max"),
+            ("极高", "ultra"),
+        ] {
+            assert_eq!(normalize_reasoning_effort(Some(value)), expected);
+        }
+    }
+
+    #[test]
+    fn normalize_reasoning_effort_uses_default_for_disabled_or_unknown_values() {
+        for value in [None, Some("off"), Some("unknown")] {
+            assert_eq!(normalize_reasoning_effort(value), DEFAULT_REASONING_EFFORT);
+        }
+    }
 
     #[test]
     fn wework_codex_home_defaults_to_executor_home_codex() {

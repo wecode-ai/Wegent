@@ -118,6 +118,7 @@ export interface WorkbenchContextValue {
     isOptionsLocked: boolean
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
+    setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions

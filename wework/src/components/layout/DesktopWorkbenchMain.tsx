@@ -83,12 +83,12 @@ import { WEWORK_OPEN_TERMINAL_EVENT } from '@/lib/keybindings'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 import { BufferedChatInput } from './BufferedChatInput'
+import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
 
 const DESKTOP_CHAT_CONTENT_BASE_CLASS =
   'mx-auto min-w-0 px-0 transition-[width,max-width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
 const DESKTOP_CHAT_CONTENT_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_2rem))] max-w-[calc(100%_-_2rem)]`
 const DESKTOP_MESSAGE_LIST_WIDTH_CLASS = `${DESKTOP_CHAT_CONTENT_BASE_CLASS} w-[min(46rem,calc(100%_-_6rem))] max-w-[calc(100%_-_6rem)]`
-const DESKTOP_COMPOSER_FRAME_CLASS = `${DESKTOP_CHAT_CONTENT_WIDTH_CLASS} -translate-y-12`
 const DESKTOP_MESSAGE_LIST_CLASS = `${DESKTOP_MESSAGE_LIST_WIDTH_CLASS} px-0`
 const DESKTOP_STICKY_COMPOSER_FOOTER_CLASS =
   'pt-6 pb-2 bg-gradient-to-t from-background via-background to-transparent'
@@ -633,6 +633,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const rightPanelSessionKey = paneKey
   const previousRightPanelSessionKey = useRef(rightPanelSessionKey)
   const [modelSelectorOpenSignal, setModelSelectorOpenSignal] = useState(0)
+  const [projectMenuOpenSignal, setProjectMenuOpenSignal] = useState(0)
+  const [projectMenuAnchorElement, setProjectMenuAnchorElement] =
+    useState<HTMLButtonElement | null>(null)
   const hasConversation = paneMessages.length > 0 || currentRuntimeTask
   const activeDevice = findWorkbenchDevice(devices, activeDeviceId)
   const activeDeviceSupportsGoal = Boolean(
@@ -683,12 +686,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     }),
     [modelSelectorOpenSignal, projectChat]
   )
-  const emptyTitle = currentProject
-    ? t('workbench.project_empty_title', {
-        defaultValue: `我们应该在 ${currentProject.name} 中构建什么？`,
-        projectName: currentProject.name,
-      })
-    : t('workbench.empty_title', '我们该做什么？')
+  const emptyProjectWork = useMemo(
+    () => ({ ...paneProjectWork, projectMenuOpenSignal, projectMenuAnchorElement }),
+    [paneProjectWork, projectMenuAnchorElement, projectMenuOpenSignal]
+  )
+  const selectTaskSuggestion = useCallback(
+    (prompt: string) => {
+      paneSession.setInput(prompt)
+    },
+    [paneSession]
+  )
   const openRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
       setRightPanelOpen(true)
@@ -1489,61 +1496,60 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               />
             </div>
           ) : (
-            <div className="flex min-w-0 flex-1 items-center justify-center px-10">
-              <div
-                className={cn(
-                  DESKTOP_COMPOSER_FRAME_CLASS,
-                  chatContentResizing && 'transition-none'
-                )}
-                data-testid="desktop-empty-composer-frame"
-              >
-                <h1 className="mb-10 text-center text-[28px] font-normal leading-9 tracking-normal text-text-primary/95">
-                  {emptyTitle}
-                </h1>
-                <DeviceStatusPrompt
-                  devices={devices}
-                  upgradingDevices={upgradingDevices}
-                  onUpgradeDevice={upgradeDevice}
-                  onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
-                  activeDeviceId={activeDeviceId}
-                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                  hideAvailableUpdates
-                  className="mb-3"
-                />
-                <BufferedChatInput
-                  value={paneSession.input}
-                  onChange={paneSession.setInput}
-                  onSubmit={paneSession.send}
-                  disabled={composerDisabled}
-                  error={paneSession.error}
-                  disabledReason={inlineComposerDisabledReason}
-                  placeholder={t('workbench.input_placeholder', '随心输入')}
-                  variant="desktop"
-                  projectChat={projectChatWithModelSelectorSignal}
-                  projectWork={paneProjectWork}
-                  queuedMessages={paneQueuedMessages}
-                  guidanceMessages={paneGuidanceMessages}
-                  codeComments={paneSession.codeCommentContexts}
-                  isStreaming={paneIsResponseStreaming}
-                  onPause={pauseCurrentResponse}
-                  onCompactContext={compactCurrentContext}
-                  goal={paneSession.goal}
-                  taskPlan={paneSession.taskPlan}
-                  goalDraftActive={paneSession.goalDraftActive}
-                  onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
-                  onCancelGoalDraft={paneSession.cancelGoalDraft}
-                  onEditGoal={paneSession.editCurrentGoal}
-                  onPauseGoal={pauseCurrentGoal}
-                  onResumeGoal={resumeCurrentGoal}
-                  onClearGoal={clearCurrentGoal}
-                  onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                  onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
-                  onEditQueuedMessage={paneSession.editQueuedMessage}
-                  onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                  onClearCodeComments={paneSession.clearCodeComments}
-                />
-              </div>
-            </div>
+            <DesktopEmptyTaskLauncher
+              projectName={currentProject?.name}
+              onOpenProjectSelector={anchorElement => {
+                setProjectMenuAnchorElement(anchorElement)
+                setProjectMenuOpenSignal(signal => signal + 1)
+              }}
+              onSelectSuggestion={selectTaskSuggestion}
+              composer={
+                <>
+                  <DeviceStatusPrompt
+                    devices={devices}
+                    upgradingDevices={upgradingDevices}
+                    onUpgradeDevice={upgradeDevice}
+                    onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
+                    activeDeviceId={activeDeviceId}
+                    requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                    hideAvailableUpdates
+                    className="mb-3"
+                  />
+                  <BufferedChatInput
+                    value={paneSession.input}
+                    onChange={paneSession.setInput}
+                    onSubmit={paneSession.send}
+                    disabled={composerDisabled}
+                    error={paneSession.error}
+                    disabledReason={inlineComposerDisabledReason}
+                    placeholder={t('workbench.input_placeholder', '随心输入')}
+                    variant="desktop"
+                    projectChat={projectChatWithModelSelectorSignal}
+                    projectWork={emptyProjectWork}
+                    queuedMessages={paneQueuedMessages}
+                    guidanceMessages={paneGuidanceMessages}
+                    codeComments={paneSession.codeCommentContexts}
+                    isStreaming={paneIsResponseStreaming}
+                    onPause={pauseCurrentResponse}
+                    onCompactContext={compactCurrentContext}
+                    goal={paneSession.goal}
+                    taskPlan={paneSession.taskPlan}
+                    goalDraftActive={paneSession.goalDraftActive}
+                    onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
+                    onCancelGoalDraft={paneSession.cancelGoalDraft}
+                    onEditGoal={paneSession.editCurrentGoal}
+                    onPauseGoal={pauseCurrentGoal}
+                    onResumeGoal={resumeCurrentGoal}
+                    onClearGoal={clearCurrentGoal}
+                    onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                    onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
+                    onEditQueuedMessage={paneSession.editQueuedMessage}
+                    onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                    onClearCodeComments={paneSession.clearCodeComments}
+                  />
+                </>
+              }
+            />
           )}
           <aside
             ref={setEnvironmentInfoPanelRef}
