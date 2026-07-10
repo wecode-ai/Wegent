@@ -36,6 +36,7 @@ import type {
   RequestUserInputResponse,
   RuntimeGoal,
   RuntimeGoalCreateInput,
+  RuntimePlanEventPayload,
   RuntimeRollbackRequest,
   RuntimeSubagentActivityPayload,
   RuntimeSendRequest,
@@ -52,6 +53,7 @@ import type {
 } from '@/types/workbench'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import { reduceWorkbenchMessages } from '@wegent/chat-core'
+import { getCachedRuntimeTaskPlan, getLatestRuntimeTaskPlan } from '@/stream/responseApiStream'
 import { useWorkbenchPaneActive } from './workbenchPaneStack'
 
 interface WorkbenchPaneSessionOptions {
@@ -155,6 +157,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [turnNavigation, setTurnNavigation] = useState<RuntimeTurnNavigationItem[]>([])
   const [subagentStatuses, setSubagentStatuses] = useState<RuntimeSubagentStatus[]>([])
   const [threadGoal, setThreadGoal] = useState<RuntimeGoal | null>(null)
+  const [taskPlan, setTaskPlan] = useState<RuntimePlanEventPayload | null>(null)
   const [pendingGoalState, setPendingGoalState] = useState<PendingRuntimeGoalState | null>(null)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const loadedRuntimeTranscriptKeyRef = useRef<string | null>(null)
@@ -320,6 +323,26 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [currentRuntimeTaskLoadTarget])
 
   useEffect(() => {
+    const syncCachedPlan = () => {
+      const cachedPlan = currentRuntimeTaskLoadTarget
+        ? getCachedRuntimeTaskPlan(currentRuntimeTaskLoadTarget.address)
+        : getLatestRuntimeTaskPlan()
+      if (import.meta.env.DEV) {
+        console.warn('[Wework] Runtime task plan cache sync', {
+          currentRuntimeTaskId: currentRuntimeTaskLoadTarget?.address ?? null,
+          found: Boolean(cachedPlan),
+          stepCount: cachedPlan?.plan.length ?? 0,
+        })
+      }
+      if (cachedPlan) setTaskPlan(cachedPlan)
+    }
+
+    syncCachedPlan()
+    globalThis.addEventListener('wework-runtime-plan-updated', syncCachedPlan)
+    return () => globalThis.removeEventListener('wework-runtime-plan-updated', syncCachedPlan)
+  }, [currentRuntimeTaskLoadTarget])
+
+  useEffect(() => {
     return () => {
       if (messageActionFrameRef.current !== null) {
         cancelAnimationFrame(messageActionFrameRef.current)
@@ -442,6 +465,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setLoadedTranscriptRanges([])
     setTurnNavigation([])
     setSubagentStatuses([])
+    setTaskPlan(null)
     void loadRuntimeTranscriptForPaneRef
       .current(address, { limit: RUNTIME_TRANSCRIPT_PAGE_SIZE })
       .then(transcript => {
@@ -556,6 +580,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         setPendingGoalState(current =>
           current && isPendingGoalVisibleForRuntimeTarget(current, latestAddress) ? null : current
         )
+      },
+      onRuntimePlanUpdated: payload => {
+        if (import.meta.env.DEV) {
+          console.info('[Wework] Runtime task plan state updated', {
+            taskId: payload.taskId ?? null,
+            threadId: payload.threadId ?? null,
+            stepCount: payload.plan.length,
+          })
+        }
+        setTaskPlan(payload.plan.length > 0 ? payload : null)
       },
       onGuidanceApplied: payload => {
         const pendingEntry = [...pendingAppliedGuidancesRef.current.entries()].find(
@@ -1494,6 +1528,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         sendRuntimeMessage,
         setInput,
         setRuntimeGoal,
+        scopedSetInput,
       ]
     )
 
@@ -1695,6 +1730,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     codeCommentContexts.length,
     currentRuntimeTask,
     goal,
+    taskPlan,
     goalDraftActive,
     guidanceMessages,
     input.length,
@@ -1732,6 +1768,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     turnNavigation,
     subagentStatuses,
     goal,
+    taskPlan,
     goalDraftActive,
     loadMoreTranscriptBefore,
     loadFullTranscript,

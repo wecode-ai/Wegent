@@ -74,6 +74,8 @@
     "archive_runtime_task_remove_failed": "任务已归档，但删除工作树失败",
     "archive_runtime_task_remove_failed_detail": "任务已归档，但删除工作树失败：{{message}}",
     "runtime_task_running": "运行中",
+    "task_plan_progress": "第 {{current}} / {{total}} 步",
+    "task_plan_completed": "任务步骤已完成",
     "subagents_status": "子智能体状态",
     "subagents_running": "{{count}} 个运行中",
     "subagents_count": "{{count}} 个子智能体",

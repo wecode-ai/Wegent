@@ -194,6 +194,15 @@ impl CodexNotificationEventMapper {
                     notification.params,
                 );
             }
+            "turn/plan/updated" => {
+                self.emit_turn_plan_updated(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    notification.params,
+                );
+            }
             "item/fileChange/patchUpdated" => {
                 self.emit_file_change_patch_updated(
                     event_tx,
@@ -746,6 +755,49 @@ impl CodexNotificationEventMapper {
                     "status": "done",
                     "timestamp": now_ms(),
                 }
+            }),
+        );
+    }
+
+    fn emit_turn_plan_updated(
+        &self,
+        event_tx: &Option<broadcast::Sender<Value>>,
+        device_id: &str,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        params: &Value,
+    ) {
+        let Some(plan) = params.get("plan").and_then(Value::as_array) else {
+            return;
+        };
+
+        log_executor_event(
+            "codex structured task plan updated",
+            &[
+                ("local_task_id", local_task_id.to_owned()),
+                (
+                    "thread_id",
+                    string_field(params, "threadId").unwrap_or_default(),
+                ),
+                (
+                    "turn_id",
+                    string_field(params, "turnId").unwrap_or_default(),
+                ),
+                ("step_count", plan.len().to_string()),
+            ],
+        );
+
+        emit_response_event(
+            event_tx,
+            device_id,
+            "runtime.plan.updated",
+            local_task_id,
+            request,
+            json!({
+                "threadId": string_field(params, "threadId").or_else(|| string_field(params, "thread_id")),
+                "turnId": string_field(params, "turnId").or_else(|| string_field(params, "turn_id")),
+                "explanation": raw_string_field(params, "explanation"),
+                "plan": plan,
             }),
         );
     }
@@ -2449,6 +2501,42 @@ mod tests {
             "# Plan\n\n- Inspect the repo."
         );
         assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
+    }
+
+    #[test]
+    fn emits_codex_structured_turn_plan_updates_separately_from_plan_items() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "turn/plan/updated",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "explanation": "Implementing the requested change.",
+                    "plan": [
+                        {"step": "Inspect", "status": "completed"},
+                        {"step": "Implement", "status": "inProgress"},
+                        {"step": "Verify", "status": "pending"}
+                    ]
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["event"], "runtime.plan.updated");
+        assert_eq!(event["payload"]["data"]["threadId"], "thread-1");
+        assert_eq!(event["payload"]["data"]["turnId"], "turn-1");
+        assert_eq!(event["payload"]["data"]["plan"][1]["status"], "inProgress");
     }
 
     #[test]

@@ -6,6 +6,7 @@ import type {
   ChatErrorPayload,
   ChatStartPayload,
   RuntimeGoalEventPayload,
+  RuntimePlanEventPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimeSubagentActivityPayload,
 } from '@/types/api'
@@ -35,6 +36,7 @@ export interface ChatStreamHandlers {
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
   onDeviceOnline?: (payload: unknown) => void
   onDeviceOffline?: (payload: unknown) => void
