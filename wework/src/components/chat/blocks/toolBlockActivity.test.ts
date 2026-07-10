@@ -61,6 +61,22 @@ function fileChangesBlock(
 }
 
 describe('toolBlockActivity', () => {
+  test('groups consecutive completed tools by activity type', () => {
+    const rows = buildProcessingDisplayRows([
+      tool('read-1', "sed -n '1,5p' first.ts"),
+      tool('read-2', 'cat second.ts'),
+      tool('search-1', 'rg session_meta .'),
+      tool('cmd-1', 'node inspect.js'),
+    ])
+
+    expect(rows).toHaveLength(3)
+    expect(rows.map(row => (row.type === 'activity_group' ? row.label : ''))).toEqual([
+      '已读取 2 个文件',
+      '已搜索代码',
+      '已运行 1 条命令',
+    ])
+  })
+
   test('summarizes completed file, search, command, and failed command blocks', () => {
     expect(
       summarizeToolBlocks([

@@ -70,6 +70,17 @@ export function buildProcessingDisplayRows(
     completedTools = []
   }
 
+  const appendCompletedTool = (block: ToolBlock) => {
+    const previousBlock = completedTools.at(-1)
+    if (
+      previousBlock &&
+      getToolActivityGroupKey(previousBlock) !== getToolActivityGroupKey(block)
+    ) {
+      flushCompletedTools()
+    }
+    completedTools.push(block)
+  }
+
   const flushFileChanges = () => {
     if (consecutiveFileChanges.length === 0) return
     const block =
@@ -104,7 +115,7 @@ export function buildProcessingDisplayRows(
 
     if (groupCompletedTools && block.type === 'tool' && isCompletedToolBlock(block)) {
       flushFileChanges()
-      completedTools.push(block)
+      appendCompletedTool(block)
       continue
     }
 
@@ -116,6 +127,12 @@ export function buildProcessingDisplayRows(
   flushCompletedTools()
   flushFileChanges()
   return rows
+}
+
+function getToolActivityGroupKey(block: ToolBlock): string {
+  const name = block.toolName.toLowerCase()
+  if (isWebSearchToolName(name)) return 'web-search'
+  return getToolActivityKind(block)
 }
 
 function mergeConsecutiveFileChanges(blocks: FileChangesBlock[]): FileChangesBlock {

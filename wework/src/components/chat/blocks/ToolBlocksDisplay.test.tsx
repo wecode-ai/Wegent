@@ -307,12 +307,13 @@ describe('ToolBlocksDisplay', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
 
-    const activityToggle = screen.getByRole('button', {
-      name: /已搜索代码 已运行 1 条命令/,
-    })
+    const activityToggles = screen.getAllByTestId('processing-activity-group-toggle')
+    expect(activityToggles).toHaveLength(2)
+    expect(activityToggles[0]).toHaveTextContent('已搜索代码')
+    expect(activityToggles[1]).toHaveTextContent('已运行 1 条命令')
     expect(screen.getByTestId('processing-activity-search-icon')).toBeInTheDocument()
 
-    fireEvent.click(activityToggle)
+    activityToggles.forEach(toggle => fireEvent.click(toggle))
 
     expect(screen.getByText('已运行 git diff --name-only')).toBeInTheDocument()
     expect(
@@ -358,12 +359,17 @@ describe('ToolBlocksDisplay', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: /已处理/ }))
-    fireEvent.click(screen.getByRole('button', { name: /已读取 1 个文件 已搜索代码/ }))
+    const activityToggles = screen.getAllByTestId('processing-activity-group-toggle')
+    expect(activityToggles).toHaveLength(2)
+    expect(activityToggles[0]).toHaveTextContent('已搜索代码')
+    expect(activityToggles[1]).toHaveTextContent('已读取 1 个文件')
+    activityToggles.forEach(toggle => fireEvent.click(toggle))
 
-    const activityContent = screen.getByTestId('processing-activity-group-content')
-      .firstElementChild?.firstElementChild as HTMLElement
-    expect(activityContent).toHaveClass('mt-1.5', 'gap-1.5')
-    expect(activityContent).not.toHaveClass('border-l', 'pl-4', 'gap-3')
+    screen.getAllByTestId('processing-activity-group-content').forEach(content => {
+      const activityContent = content.firstElementChild?.firstElementChild as HTMLElement
+      expect(activityContent).toHaveClass('mt-1.5', 'gap-1.5')
+      expect(activityContent).not.toHaveClass('border-l', 'pl-4', 'gap-3')
+    })
     expect(screen.getByText('Searched for toolBlock in blocks')).toBeInTheDocument()
     expect(screen.getByText('Read toolBlockActivity.ts')).toBeInTheDocument()
     expect(screen.queryByText(/已运行 sed -n/)).not.toBeInTheDocument()
@@ -859,11 +865,12 @@ describe('ToolBlocksDisplay', () => {
       />
     )
 
-    const activityToggle = screen.getByRole('button', {
-      name: /已搜索代码 已运行 1 条命令/,
-    })
+    const activityToggles = screen.getAllByTestId('processing-activity-group-toggle')
 
-    expect(activityToggle).toHaveAttribute('aria-expanded', 'false')
+    expect(activityToggles).toHaveLength(2)
+    expect(activityToggles[0]).toHaveTextContent('已运行 1 条命令')
+    expect(activityToggles[1]).toHaveTextContent('已搜索代码')
+    activityToggles.forEach(toggle => expect(toggle).toHaveAttribute('aria-expanded', 'false'))
     expect(screen.queryByText(/已运行 \/bin\/zsh/)).not.toBeInTheDocument()
     expect(screen.getByText('正在运行 bin/paas-context --help')).toBeInTheDocument()
     expect(screen.queryByText('/workspace/project')).not.toBeInTheDocument()
