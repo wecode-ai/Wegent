@@ -102,6 +102,8 @@ const RIGHT_PANEL_SHELL_TRANSITION_CLASS =
   'transition-[width,opacity] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[width,opacity]'
 const RIGHT_PANEL_HANDLE_TRANSITION_CLASS =
   'transition-[left] duration-[240ms] ease-[cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none will-change-[left]'
+const DOCKED_ENVIRONMENT_INFO_WIDTH = 320
+const MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO = 680
 const MAX_CACHED_DESKTOP_WORKBENCH_TABS = 10
 const COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE = '5rem'
 const MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS = 'pl-[92px]'
@@ -393,6 +395,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [hasPreviousTurnReview, setHasPreviousTurnReview] = useState(false)
   const isTauri = isTauriRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
+  const [workbenchContentWidth, setWorkbenchContentWidth] = useState(0)
   const environmentInfoPanelRef = useRef<HTMLElement | null>(null)
   const [environmentInfoPanelElement, setEnvironmentInfoPanelElement] =
     useState<HTMLElement | null>(null)
@@ -416,6 +419,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     reloadDiff: undefined,
   })
   const closeRightPanel = useCallback(() => setRightPanelOpen(false), [setRightPanelOpen])
+  useLayoutEffect(() => {
+    const workbenchMain = workbenchMainRef.current
+    if (!workbenchMain) return
+
+    const updateWorkbenchContentWidth = () => {
+      setWorkbenchContentWidth(workbenchMain.getBoundingClientRect().width)
+    }
+
+    updateWorkbenchContentWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateWorkbenchContentWidth)
+    observer.observe(workbenchMain)
+    return () => observer.disconnect()
+  }, [])
   const {
     width: rightSplitChatWidth,
     resizing: rightSplitResizing,
@@ -425,6 +443,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     onCollapse: closeRightPanel,
   })
   const chatColumnWidth = rightPanelOpen ? rightSplitChatWidth : '100%'
+  const availableChatColumnWidth = rightPanelOpen ? rightSplitChatWidth : workbenchContentWidth
+  const environmentInfoDocked =
+    Boolean(currentRuntimeTask) &&
+    availableChatColumnWidth - DOCKED_ENVIRONMENT_INFO_WIDTH >=
+      MIN_CHAT_COLUMN_WIDTH_FOR_DOCKED_ENVIRONMENT_INFO
   const paneTitleWidth = rightPanelOpen ? chatColumnWidth : '100%'
   const rightPanelShellWidth = rightPanelOpen ? `calc(100% - ${rightSplitChatWidth}px)` : '0px'
   const rightPanelTitlebarWidth = rightPanelOpen
@@ -1062,7 +1085,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       workspaceTarget={workspaceTarget}
       environmentInfo={environmentInfo}
       environmentInfoPopoverContainer={environmentInfoPanelElement}
-      environmentInfoVisible={Boolean(currentRuntimeTask || currentProject)}
+      environmentInfoVisible={Boolean(currentRuntimeTask)}
+      environmentInfoDocked={environmentInfoDocked}
       onRefreshEnvironmentInfo={refreshEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
       onCommitAndPushEnvironmentChanges={commitAndPushEnvironmentChanges}
@@ -1548,7 +1572,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           <aside
             ref={setEnvironmentInfoPanelRef}
             data-testid="environment-info-panel-container"
-            className="relative z-popover h-full w-0 shrink-0 overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[>[data-testid=environment-info-popover]]:w-[312px]"
+            className="relative z-popover h-full w-0 shrink-0 overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[>[data-testid=environment-info-popover]]:w-[320px]"
           />
         </div>
         {rightPanelOpen && (

@@ -5209,6 +5209,9 @@ describe('DesktopWorkbenchLayout', () => {
       'backdrop-blur-3xl',
       'backdrop-saturate-150'
     )
+    expect(screen.getByTestId('environment-info-popover')).not.toHaveClass(
+      'shadow-[0_18px_44px_rgba(0,0,0,0.24)]'
+    )
     expect(screen.getByText('环境信息')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
     const deviceSection = screen.getByTestId('environment-device-section')

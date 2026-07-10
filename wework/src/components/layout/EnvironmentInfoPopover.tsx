@@ -16,7 +16,7 @@ import {
   Upload,
   CornerDownLeft,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -29,6 +29,7 @@ import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
 interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
   popoverContainer: HTMLElement | null
+  docked?: boolean
   devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
   onCommitChanges?: (message: string) => Promise<void>
@@ -42,15 +43,14 @@ interface EnvironmentInfoPopoverProps {
 
 type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
 
-const AUTO_OPEN_MIN_VIEWPORT_WIDTH = 1280
-
-function shouldAutoOpenEnvironmentInfo() {
-  return typeof window !== 'undefined' && window.innerWidth >= AUTO_OPEN_MIN_VIEWPORT_WIDTH
-}
+const FLOATING_POPOVER_WIDTH = 300
+const FLOATING_POPOVER_GAP = 8
+const FLOATING_POPOVER_MARGIN = 16
 
 export function EnvironmentInfoPopover({
   info,
   popoverContainer,
+  docked = true,
   devices = [],
   onRefresh,
   onCommitChanges,
@@ -62,14 +62,17 @@ export function EnvironmentInfoPopover({
   onOpenChangesReview,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [open, setOpen] = useState(shouldAutoOpenEnvironmentInfo)
+  const [open, setOpen] = useState(docked)
   const [workspacePathCopied, setWorkspacePathCopied] = useState(false)
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
   const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
   const [commitProgressLabel, setCommitProgressLabel] = useState('')
   const [commitError, setCommitError] = useState<string | null>(null)
+  const [floatingPopoverStyle, setFloatingPopoverStyle] = useState<CSSProperties>()
   const userToggledOpenRef = useRef(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
   const device = info.deviceId
@@ -181,6 +184,9 @@ export function EnvironmentInfoPopover({
   function handleToggleOpen() {
     userToggledOpenRef.current = true
     const nextOpen = !open
+    if (nextOpen && !docked) {
+      setFloatingPopoverStyle(getFloatingPopoverPosition())
+    }
     setOpen(nextOpen)
     if (nextOpen) {
       void onRefresh?.()
@@ -188,27 +194,39 @@ export function EnvironmentInfoPopover({
   }
 
   useEffect(() => {
-    function synchronizeAutoOpenState() {
-      if (!shouldAutoOpenEnvironmentInfo()) {
+    if (!open || docked) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
         setOpen(false)
-        return
-      }
-
-      if (!userToggledOpenRef.current) {
-        setOpen(true)
       }
     }
 
-    window.addEventListener('resize', synchronizeAutoOpenState)
-    return () => {
-      window.removeEventListener('resize', synchronizeAutoOpenState)
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => document.removeEventListener('pointerdown', handlePointerDown)
+  }, [docked, open])
+
+  function getFloatingPopoverPosition(): CSSProperties | undefined {
+    const anchor = rootRef.current?.getBoundingClientRect()
+    if (!anchor) return undefined
+
+    const maxLeft = window.innerWidth - FLOATING_POPOVER_WIDTH - FLOATING_POPOVER_MARGIN
+    return {
+      left: `${Math.max(FLOATING_POPOVER_MARGIN, Math.min(anchor.right - FLOATING_POPOVER_WIDTH, maxLeft))}px`,
+      top: `${anchor.bottom + FLOATING_POPOVER_GAP}px`,
     }
-  }, [])
+  }
 
   const branchLabel = info.branchName?.trim() || t('workbench.environment_branch_empty', '暂无分支')
+  const popoverPortalContainer = docked
+    ? popoverContainer
+    : typeof document !== 'undefined'
+      ? document.body
+      : null
 
   return (
-    <div>
+    <div ref={rootRef}>
       <button
         type="button"
         data-testid="environment-info-button"
@@ -222,11 +240,16 @@ export function EnvironmentInfoPopover({
       </button>
 
       {open &&
-        popoverContainer &&
+        popoverPortalContainer &&
         createPortal(
           <div
+            ref={popoverRef}
             data-testid="environment-info-popover"
-            className="mt-3 w-[300px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
+            style={docked ? undefined : floatingPopoverStyle}
+            className={cn(
+              'w-[300px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-md backdrop-blur-3xl backdrop-saturate-150',
+              docked ? 'ml-2 mt-3' : 'fixed z-system'
+            )}
           >
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[13px] font-medium text-text-primary">
@@ -431,7 +454,7 @@ export function EnvironmentInfoPopover({
               </p>
             )}
           </div>,
-          popoverContainer
+          popoverPortalContainer
         )}
       {open &&
         commitFormOpen &&

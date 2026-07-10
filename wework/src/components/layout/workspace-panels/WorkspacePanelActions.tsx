@@ -36,6 +36,7 @@ interface WorkspacePanelActionsProps {
   environmentInfo: EnvironmentInfo
   environmentInfoPopoverContainer: HTMLElement | null
   environmentInfoVisible?: boolean
+  environmentInfoDocked?: boolean
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
   onCommitAndPushEnvironmentChanges: (message: string) => Promise<void>
@@ -58,6 +59,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   environmentInfo,
   environmentInfoPopoverContainer,
   environmentInfoVisible = true,
+  environmentInfoDocked = true,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
   onCommitAndPushEnvironmentChanges,
@@ -161,8 +163,10 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
     <>
       {showEnvironmentInfo && (
         <EnvironmentInfoPopover
+          key={environmentInfoDocked ? 'docked' : 'floating'}
           info={environmentInfo}
           popoverContainer={environmentInfoPopoverContainer}
+          docked={environmentInfoDocked}
           devices={devices}
           onRefresh={onRefreshEnvironmentInfo}
           onCommitChanges={onCommitEnvironmentChanges}
