@@ -113,8 +113,8 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
           continue
         }
 
-        // Validate file size
-        if (!isValidFileSize(file.size)) {
+        // Validate file size (videos use the larger 1 GB limit)
+        if (!isValidFileSize(file.size, file.name)) {
           validationErrors.push(`${file.name}: ${t('common:attachment.errors.file_too_large')}`)
           continue
         }

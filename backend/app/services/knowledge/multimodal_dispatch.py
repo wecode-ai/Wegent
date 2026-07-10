@@ -193,6 +193,33 @@ def validate_multimodal_dispatch(
     ext = file_extension or attachment.file_extension
     media_type = multimodal_media_type(ext)
 
+    # 3. Capability + provider gate: mirror the converter-side check
+    #    (model_config.py) so a misconfigured or stale KB model ref is rejected
+    #    BEFORE document creation. Without this, the API or a historical config
+    #    could bypass the frontend selector, create the document, enter
+    #    PENDING_CONVERSION, and only fail at converter execution time.
+    capabilities = model_config.get("modelCapabilities") or {}
+    supports_video = capabilities.get("supportsVideo") is True
+    supports_image = capabilities.get("supportsImage") is True
+    if media_type == "video" and not supports_video:
+        raise ModelRefResolutionError(
+            "MULTIMODAL_MODEL_NOT_SUPPORT_VIDEO",
+            "Configured multimodal analysis model does not declare supportsVideo=true",
+        )
+    if media_type == "image" and not supports_image and not supports_video:
+        raise ModelRefResolutionError(
+            "MULTIMODAL_MODEL_NOT_SUPPORT_IMAGE",
+            "Configured multimodal analysis model declares neither supportsImage "
+            "nor supportsVideo",
+        )
+    # The multimodal pipeline is Gemini-specific (gemini_analyzer). Reject
+    # non-Gemini providers up-front rather than failing in the converter.
+    if (model_config.get("model") or "").lower() != "gemini":
+        raise ModelRefResolutionError(
+            "MULTIMODAL_MODEL_NOT_GEMINI",
+            "Multimodal analysis currently requires a Gemini provider model",
+        )
+
     original_filename = attachment.original_filename or attachment.name or ""
 
     if media_type == "video":

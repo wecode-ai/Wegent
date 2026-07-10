@@ -94,13 +94,33 @@ def resolve_dispatch_or_none(
             "MULTIMODAL_ANALYSIS_MODEL_NOT_CONFIGURED",
             "No multimodal analysis model configured for this knowledge base",
         )
-    return validate_multimodal_dispatch(
+    ctx = validate_multimodal_dispatch(
         db,
         knowledge_base=knowledge_base,
         attachment_id=attachment_id,
         uploader=uploader,
         file_extension=file_extension,
     )
+    # Closed-loop staging gate. The switch (KNOWLEDGE_MULTIMODAL_VIDEO_STAGING_ENABLED)
+    # only means "video is allowed", not "a staging provider is actually wired".
+    # Internal deployments inject video_source_ref / gcs paths via a patch that
+    # WRAPS validate_multimodal_dispatch, so this check runs AFTER that patch has
+    # applied and is safe — internal injection is unaffected. In the open-source
+    # build (or any deployment that enables the switch without a provider), all
+    # provider fields stay empty: fail fast here instead of persisting the doc
+    # and failing later in the worker (NoOp provider).
+    if (
+        ctx is not None
+        and getattr(ctx, "media_type", None) == "video"
+        and not getattr(ctx, "video_source_ref", None)
+        and not getattr(ctx, "media_staging_config", None)
+        and not getattr(ctx, "gcs_upload_path", None)
+    ):
+        raise ModelRefResolutionError(
+            "MULTIMODAL_VIDEO_STAGING_NOT_CONFIGURED",
+            "Video multimodal staging provider is not configured",
+        )
+    return ctx
 
 
 def resolve_dispatch_for_document_or_none(

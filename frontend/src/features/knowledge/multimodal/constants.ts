@@ -23,11 +23,11 @@ export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp
  * Used to build the file input `accept` attribute when a KB has multimodal
  * analysis enabled.
  *
- * NOTE: the open-source attachments.ts VIDEO_EXTENSIONS does not include
- * `.webm`/`.m4v` (added by the multimodal pipeline); we supplement here to
- * stay in sync with the backend `_MULTIMODAL_VIDEO_EXTENSIONS`.
+ * VIDEO_EXTENSIONS (attachments.ts) is the single source of truth for video
+ * extensions and already includes `.webm`/`.m4v`, aligned with the backend
+ * ``_MULTIMODAL_VIDEO_EXTENSIONS``.
  */
-export const MULTIMODAL_EXTENSIONS = [...VIDEO_EXTENSIONS, '.webm', '.m4v', ...IMAGE_EXTENSIONS]
+export const MULTIMODAL_EXTENSIONS = [...VIDEO_EXTENSIONS, ...IMAGE_EXTENSIONS]
 
 /**
  * Maximum multimodal image file size (100 MB, aligned with backend

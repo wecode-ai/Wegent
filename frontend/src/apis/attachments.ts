@@ -226,9 +226,16 @@ export const SUPPORTED_MIME_TYPES = [
 ]
 
 /**
- * Maximum file size (100 MB)
+ * Maximum file size (100 MB) — applies to non-video attachments.
  */
 export const MAX_FILE_SIZE = 100 * 1024 * 1024
+
+/**
+ * Maximum video file size (1 GB), aligned with the backend
+ * ``MULTIMODAL_VIDEO_MAX_BYTES``. Only applied when the file is recognized as
+ * a video by ``isVideoFileName``.
+ */
+export const MAX_VIDEO_FILE_SIZE = 1024 * 1024 * 1024
 
 /**
  * Check if a file extension is supported
@@ -241,10 +248,14 @@ export function isSupportedExtension(_filename: string): boolean {
 }
 
 /**
- * Check if file size is within limits
+ * Check if file size is within limits. When a filename is supplied and the
+ * file is a video, the larger ``MAX_VIDEO_FILE_SIZE`` (1 GB) applies; otherwise
+ * the default ``MAX_FILE_SIZE`` (100 MB). Callers that don't pass a filename
+ * keep the legacy 100 MB behavior.
  */
-export function isValidFileSize(size: number): boolean {
-  return size <= MAX_FILE_SIZE
+export function isValidFileSize(size: number, filename?: string): boolean {
+  const max = filename && isVideoFileName(filename) ? MAX_VIDEO_FILE_SIZE : MAX_FILE_SIZE
+  return size <= max
 }
 
 /**
@@ -320,9 +331,11 @@ export function getFileIcon(extension: string): string {
 export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
 /**
- * Video file extensions supported for attachments / media analysis
+ * Video file extensions supported for attachments / media analysis.
+ * Kept in sync with the backend ``_MULTIMODAL_VIDEO_EXTENSIONS`` so that
+ * isVideoFileName / upload gating / reanalyze all agree with the pipeline.
  */
-export const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mkv', '.mov', '.flv', '.wmv']
+export const VIDEO_EXTENSIONS = ['.mp4', '.avi', '.mkv', '.mov', '.flv', '.wmv', '.webm', '.m4v']
 
 /**
  * HTML file extensions
