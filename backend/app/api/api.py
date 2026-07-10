@@ -19,6 +19,7 @@ from app.api.endpoints import (
     knowledge,
     knowledge_open,
     knowledge_transfer,
+    knowledge_video_upload,
     local_executor,
     mcp_providers,
     oidc,
@@ -187,6 +188,11 @@ api_router.include_router(
 )
 api_router.include_router(
     knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge_video_upload.router,
+    prefix="/knowledge-documents/attachments/video-upload",
+    tags=["knowledge-video-upload"],
 )
 api_router.include_router(
     knowledge.qa_history_router,

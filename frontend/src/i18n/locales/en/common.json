@@ -1527,6 +1527,7 @@
       "unrecognized_type_hint": "Please upload documents, images, or text files",
       "file_too_large": "File is too large",
       "file_too_large_hint": "File size cannot exceed {{size}} MB. Please compress and try again",
+      "video_upload_unavailable": "Video upload is not configured; video files are not supported",
       "parse_failed": "Failed to parse file",
       "parse_failed_hint": "The file may be corrupted or in an unusual format. Please re-export and upload again",
       "encrypted_pdf": "Cannot parse encrypted file",

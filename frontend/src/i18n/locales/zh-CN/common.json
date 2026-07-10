@@ -1521,6 +1521,7 @@
       "unrecognized_type_hint": "请上传文档、图片或文本类文件",
       "file_too_large": "文件太大了",
       "file_too_large_hint": "文件大小不能超过 {{size}} MB，请压缩后重试",
+      "video_upload_unavailable": "视频上传未配置，暂不支持上传视频文件",
       "parse_failed": "文件解析失败",
       "parse_failed_hint": "该文件可能已损坏或格式异常，请尝试重新导出后上传",
       "encrypted_pdf": "无法解析加密文件",
