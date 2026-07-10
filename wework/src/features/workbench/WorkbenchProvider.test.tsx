@@ -11,10 +11,12 @@ import {
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
+import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
+import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import {
   CachedWorkbenchPaneStack,
@@ -837,6 +839,30 @@ function RuntimePaneSessionIdentityProbe() {
         }
       >
         rebuild same runtime address
+      </button>
+    </div>
+  )
+}
+
+function RuntimePlanScopeProbe() {
+  const { workbench, paneSession } = useWorkbenchProbeSession()
+  const runtimeTask = {
+    deviceId: 'device-1',
+    workspacePath: '/workspace/project-alpha',
+    taskId: 'runtime-plan-scope',
+  }
+
+  return (
+    <div>
+      <span data-testid="runtime-plan-scope-task">
+        {workbench.state.currentRuntimeTask?.taskId ?? 'none'}
+      </span>
+      <TaskPlanProgress plan={paneSession.taskPlan} />
+      <button type="button" onClick={() => void workbench.openRuntimeTask(runtimeTask)}>
+        open runtime plan scope
+      </button>
+      <button type="button" onClick={workbench.startNewChat}>
+        start new plan scope chat
       </button>
     </div>
   )
@@ -4690,6 +4716,40 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     expect(runtimeSubscribeCount()).toBe(1)
     expect(runtimeCleanup).not.toHaveBeenCalled()
+  })
+
+  test('clears the task plan progress when starting a new chat', async () => {
+    renderWorkbench(<RuntimePlanScopeProbe />)
+
+    await userEvent.click(await screen.findByText('open runtime plan scope'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-plan-scope-task')).toHaveTextContent('runtime-plan-scope')
+    )
+
+    await act(async () => {
+      emitResponseApiEvent(
+        {},
+        'runtime.plan.updated',
+        {
+          taskId: 'runtime-plan-scope',
+          deviceId: 'device-1',
+          data: {
+            plan: [{ step: 'Implement the fix', status: 'inProgress' }],
+          },
+        },
+        createResponseApiStreamState()
+      )
+      globalThis.dispatchEvent(new Event('wework-runtime-plan-updated'))
+    })
+
+    await waitFor(() => expect(screen.getByTestId('runtime-plan-progress-button')).toBeInTheDocument())
+
+    await userEvent.click(screen.getByText('start new plan scope chat'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('runtime-plan-scope-task')).toHaveTextContent('none')
+      expect(screen.queryByTestId('runtime-plan-progress-button')).not.toBeInTheDocument()
+    })
   })
 
   test('reuses the current runtime task address for follow-up messages', async () => {
