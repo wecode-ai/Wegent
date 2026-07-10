@@ -1604,31 +1604,32 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         client_origin: str,
         project_id: int,
     ) -> tuple[list[Any], int]:
-        rows = [
-            *self._owned_active_task_candidate_rows(
-                db,
-                TaskResource,
-                user_id=user_id,
-                client_origin=client_origin,
-                project_id=project_id,
-            ),
-            *self._owned_active_task_candidate_rows(
-                db,
-                task_model_for_user(user_id),
-                user_id=user_id,
-                client_origin=client_origin,
-                project_id=project_id,
-            ),
-        ]
+        legacy_rows = self._owned_active_task_candidate_rows(
+            db,
+            TaskResource,
+            user_id=user_id,
+            client_origin=client_origin,
+            project_id=project_id,
+        )
+        legacy_rows = self._exclude_migrated_legacy_index_rows(db, legacy_rows)
+        shard_rows = self._owned_active_task_candidate_rows(
+            db,
+            task_model_for_user(user_id),
+            user_id=user_id,
+            client_origin=client_origin,
+            project_id=project_id,
+        )
         filtered_rows = [
             row
-            for row in rows
+            for row in [*shard_rows, *legacy_rows]
             if row.kind == "Task"
             and row.is_group_chat == is_group_chat
             and (not exclude_system_namespace or row.namespace != "system")
         ]
-        ordered_rows = self._order_tasks_by_created_at_desc(filtered_rows)
-        return ordered_rows[skip : skip + limit], len(filtered_rows)
+        ordered_rows = self._order_tasks_by_created_at_desc(
+            self._deduplicate_tasks_by_id(filtered_rows)
+        )
+        return ordered_rows[skip : skip + limit], len(ordered_rows)
 
     def _owned_active_task_candidate_rows(
         self,
@@ -1642,6 +1643,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         return (
             db.query(
                 model.id,
+                model.user_id,
                 model.created_at,
                 model.kind,
                 model.namespace,
@@ -1680,7 +1682,7 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
 
     def _ordered_limited_rows(self, query, model: type, *, limit: int) -> list:
         return (
-            query.with_entities(model.id, model.created_at)
+            query.with_entities(model.id, model.user_id, model.created_at)
             .order_by(model.created_at.desc(), model.id.desc())
             .limit(limit)
             .all()
