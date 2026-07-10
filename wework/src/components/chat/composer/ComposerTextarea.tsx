@@ -1,5 +1,5 @@
 import { ClipboardList, Cpu, Package, Plug, Target } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEventHandler, RefObject } from 'react'
 import type { InitialConfigType } from '@lexical/react/LexicalComposer'
 import { LexicalComposer } from '@lexical/react/LexicalComposer'
@@ -9,6 +9,7 @@ import { LexicalErrorBoundary } from '@lexical/react/LexicalErrorBoundary'
 import { OnChangePlugin } from '@lexical/react/LexicalOnChangePlugin'
 import { PlainTextPlugin } from '@lexical/react/LexicalPlainTextPlugin'
 import {
+  $addUpdateTag,
   COMMAND_PRIORITY_HIGH,
   COMMAND_PRIORITY_LOW,
   $getSelection,
@@ -22,6 +23,7 @@ import {
   DROP_COMMAND,
   PASTE_COMMAND,
   SELECTION_CHANGE_COMMAND,
+  SKIP_DOM_SELECTION_TAG,
   type LexicalEditor,
 } from 'lexical'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -427,16 +429,20 @@ function ComposerValuePlugin({
   useEffect(() => {
     if (isComposing) return
     if (value === lastEditorValueRef.current) return
+    const editorFocused = editor.getRootElement() === document.activeElement
 
-    editor.update(() => {
-      const currentValue = $getComposerValue()
-      if (currentValue === value) {
+    editor.update(
+      () => {
+        const currentValue = $getComposerValue()
+        if (currentValue === value) {
+          lastEditorValueRef.current = value
+          return
+        }
+        $setComposerValue(value, editorFocused ? value.length : undefined)
         lastEditorValueRef.current = value
-        return
-      }
-      $setComposerValue(value, value.length)
-      lastEditorValueRef.current = value
-    })
+      },
+      editorFocused ? undefined : { tag: SKIP_DOM_SELECTION_TAG }
+    )
   }, [editor, isComposing, value])
 
   return (
@@ -730,6 +736,9 @@ export function ComposerTextarea({
   const appsSourceRef = useRef<typeof onListLocalApps>(undefined)
   const mountedRef = useRef(true)
   const editorRef = useRef<LexicalEditor | null>(null)
+  const composerElementRef = useRef<HTMLDivElement | null>(null)
+  const textareaRefRef = useRef(textareaRef)
+  const commitEditorValueRef = useRef<(value: string, cursor: number) => void>(() => {})
   const valueRef = useRef(value)
   const selectionRangeRef = useRef({ start: value.length, end: value.length })
   const activeMenuRef = useRef<ActiveComposerMenu | null>(null)
@@ -754,6 +763,10 @@ export function ComposerTextarea({
   useEffect(() => {
     valueRef.current = value
   }, [value])
+  useLayoutEffect(() => {
+    textareaRefRef.current = textareaRef
+    ;(textareaRef as { current: HTMLElement | null }).current = composerElementRef.current
+  }, [textareaRef])
 
   const dedupedSkills = useMemo(() => dedupeLocalSkills(skills), [skills])
 
@@ -1128,6 +1141,9 @@ export function ComposerTextarea({
     },
     [onChange, updateAutocompleteTrigger]
   )
+  useLayoutEffect(() => {
+    commitEditorValueRef.current = commitEditorValue
+  }, [commitEditorValue])
 
   const selectMentionCandidate = useCallback(
     (candidate: ComposerMentionCandidate, explicitTrigger?: ComposerTextTrigger | null) => {
@@ -1266,23 +1282,26 @@ export function ComposerTextarea({
     [disabled]
   )
 
-  const setComposerElementRef = useCallback(
-    (element: HTMLDivElement | null) => {
-      ;(textareaRef as { current: HTMLElement | null }).current = element
-      if (!element) return
-      element.setAttribute('placeholder', placeholder)
-      element.setAttribute('rows', String(rows))
-      Object.defineProperty(element, 'value', {
-        configurable: true,
-        get: () => valueRef.current,
-        set: nextValue => {
-          const normalizedValue = String(nextValue ?? '')
-          commitEditorValue(normalizedValue, normalizedValue.length)
-        },
-      })
-    },
-    [commitEditorValue, placeholder, rows, textareaRef]
-  )
+  const setComposerElementRef = useCallback((element: HTMLDivElement | null) => {
+    composerElementRef.current = element
+    ;(textareaRefRef.current as { current: HTMLElement | null }).current = element
+    if (!element) return
+    Object.defineProperty(element, 'value', {
+      configurable: true,
+      get: () => valueRef.current,
+      set: nextValue => {
+        const normalizedValue = String(nextValue ?? '')
+        commitEditorValueRef.current(normalizedValue, normalizedValue.length)
+      },
+    })
+  }, [])
+
+  useEffect(() => {
+    const element = composerElementRef.current
+    if (!element) return
+    element.setAttribute('placeholder', placeholder)
+    element.setAttribute('rows', String(rows))
+  }, [placeholder, rows])
 
   const initialConfig = useMemo<InitialConfigType>(
     () => ({
@@ -1291,7 +1310,10 @@ export function ComposerTextarea({
       theme: {
         paragraph: 'm-0',
       },
-      editorState: () => $setComposerValue(value, value.length),
+      editorState: () => {
+        $addUpdateTag(SKIP_DOM_SELECTION_TAG)
+        $setComposerValue(value)
+      },
       onError(error) {
         throw error
       },
@@ -1399,10 +1421,21 @@ export function ComposerTextarea({
   const ensureEditorSelection = useCallback(() => {
     const editor = editorRef.current
     if (!editor) return
+    const rootElement = editor.getRootElement()
+    const domSelection = window.getSelection()
+    const domSelectionWithinEditor = Boolean(
+      rootElement && domSelection?.anchorNode && rootElement.contains(domSelection.anchorNode)
+    )
     editor.update(() => {
+      const latestValue = valueRef.current
+      const cursor = Math.min(selectionRangeRef.current.end, latestValue.length)
+      if ($getComposerValue() !== latestValue) {
+        $setComposerValue(latestValue, cursor)
+        return
+      }
       const selection = $getSelection()
-      if (!$isRangeSelection(selection)) {
-        $selectComposerOffset($getComposerValue().length)
+      if (!domSelectionWithinEditor || !$isRangeSelection(selection)) {
+        $selectComposerOffset(cursor)
       }
     })
   }, [])

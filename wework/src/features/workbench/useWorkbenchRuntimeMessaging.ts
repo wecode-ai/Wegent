@@ -644,6 +644,7 @@ export function useWorkbenchRuntimeMessaging({
         })
         const resolvedWorkspacePath = address.workspacePath ?? optimisticWorkspacePath
         const resolvedSameIdentity = isSameRuntimeTaskIdentity(optimisticAddress, address)
+        const optimisticTaskStillSelected = runtimeTasks.isCurrentRuntimeTask(optimisticAddress)
         if (!resolvedSameIdentity) {
           dispatch({ type: 'runtime_task_optimistic_removed', address: optimisticAddress })
         }
@@ -683,7 +684,7 @@ export function useWorkbenchRuntimeMessaging({
           options?.onRuntimeTaskOptimisticOpen?.(address, {
             previousAddress: optimisticAddress,
           })
-          if (options?.openInMainPane !== false) {
+          if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
             runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
           }
         }
@@ -691,7 +692,6 @@ export function useWorkbenchRuntimeMessaging({
           await refreshWorkLists()
         }
         if (options?.openInMainPane !== false) {
-          runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
           dispatch({ type: 'blank_chat_committed' })
         }
         return address
