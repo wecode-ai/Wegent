@@ -1267,7 +1267,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn get_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let Some(thread_id) = runtime_session_id_from_link(&link) else {
+        let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
 
@@ -1286,7 +1286,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn set_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let Some(thread_id) = runtime_session_id_from_link(&link) else {
+        let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
 
@@ -1321,7 +1321,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn clear_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let Some(thread_id) = runtime_session_id_from_link(&link) else {
+        let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
 
@@ -1755,8 +1755,14 @@ impl RuntimeWorkRpcHandler {
         let message = string_field(&payload, "message")
             .or_else(|| string_field(&payload, "guidance"))
             .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| AppIpcError::new("bad_request", "message is required"))?;
+            .unwrap_or_default();
+        let steer_input = guidance_input_items(&message, payload.get("attachments"));
+        if steer_input.is_empty() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "message or image attachment is required",
+            ));
+        }
         let Some(active_turn) = self.wait_for_active_codex_turn(&local_task_id).await else {
             return Ok(json!({
                 "success": false,
@@ -1771,12 +1777,6 @@ impl RuntimeWorkRpcHandler {
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
-        let steer_input = json!([
-            {
-                "type": "text",
-                "text": message,
-            }
-        ]);
         let additional_context = payload
             .get("additionalContext")
             .or_else(|| payload.get("additional_context"))
@@ -1787,7 +1787,7 @@ impl RuntimeWorkRpcHandler {
             .steer_turn(
                 &active_turn.thread_id,
                 &active_turn.turn_id,
-                steer_input,
+                Value::Array(steer_input),
                 additional_context,
             )
             .await
@@ -2513,7 +2513,6 @@ impl RuntimeWorkRpcHandler {
         if self.is_active_local_task(&route.local_task_id) {
             return;
         }
-
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
             self.register_codex_thread_workspace_root(&started_thread_id, &route.request);
         }
@@ -3151,9 +3150,10 @@ impl RuntimeWorkRpcHandler {
 
         let workspace_path = workspace_path(payload)
             .ok_or_else(|| AppIpcError::new("not_found", "runtime task was not found"))?;
+        // A local task ID identifies Wework's persisted task record; it is not a
+        // Codex thread ID. Keep this unresolved until a provider thread is known.
         let mut link =
             RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path, local_task_id);
-        link.thread_id = Some(link.local_task_id.clone());
         link.status = if archived { "archived" } else { "active" }.to_owned();
         link.running = false;
         log_runtime_archive_link("runtime task payload created pending link", &link, archived);
@@ -4388,6 +4388,33 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
         .collect()
 }
 
+fn guidance_image_inputs(value: Option<&Value>) -> Vec<Value> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|attachment| {
+            let mime_type = string_field(attachment, "mime_type")
+                .or_else(|| string_field(attachment, "mimeType"))?;
+            if !mime_type.starts_with("image/") {
+                return None;
+            }
+            let path = string_field(attachment, "local_path")
+                .or_else(|| string_field(attachment, "localPath"))?;
+            Some(json!({ "type": "localImage", "path": path }))
+        })
+        .collect()
+}
+
+fn guidance_input_items(message: &str, attachments: Option<&Value>) -> Vec<Value> {
+    let mut inputs = Vec::new();
+    if !message.trim().is_empty() {
+        inputs.push(json!({ "type": "text", "text": message }));
+    }
+    inputs.extend(guidance_image_inputs(attachments));
+    inputs
+}
+
 fn copy_attachment_field(source: &Map<String, Value>, target: &mut Map<String, Value>, key: &str) {
     if let Some(value) = source.get(key).cloned() {
         target.insert(key.to_owned(), value);
@@ -4458,6 +4485,22 @@ fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
     link.thread_id
         .clone()
         .or_else(|| runtime_session_id_from_handle(&link.runtime_handle))
+}
+
+fn codex_thread_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
+    runtime_session_id_from_link(link).filter(|thread_id| is_codex_thread_id(thread_id))
+}
+
+fn is_codex_thread_id(thread_id: &str) -> bool {
+    let thread_id = thread_id.strip_prefix("urn:uuid:").unwrap_or(thread_id);
+    thread_id.len() == 36
+        && thread_id
+            .chars()
+            .enumerate()
+            .all(|(index, character)| match index {
+                8 | 13 | 18 | 23 => character == '-',
+                _ => character.is_ascii_hexdigit(),
+            })
 }
 
 fn runtime_thread_path_from_link(link: &RuntimeTaskLink) -> Option<String> {
@@ -5211,6 +5254,28 @@ mod tests {
     }
 
     #[test]
+    fn runtime_session_ids_only_accept_codex_uuid_thread_ids() {
+        assert!(is_codex_thread_id("019f4c0d-b036-78f3-b879-7e5ed203ad61"));
+        assert!(is_codex_thread_id(
+            "urn:uuid:019f4c0d-b036-78f3-b879-7e5ed203ad61"
+        ));
+        assert!(!is_codex_thread_id("runtime-481327491"));
+        assert!(!is_codex_thread_id("thread-1"));
+
+        let mut link = RuntimeTaskLink::new_pending(
+            "runtime-481327491".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some(link.local_task_id.clone());
+        assert_eq!(
+            runtime_session_id_from_link(&link).as_deref(),
+            Some("runtime-481327491")
+        );
+        assert_eq!(codex_thread_id_from_link(&link), None);
+    }
+
+    #[test]
     fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
         for method in [
             "marketplace/add",
@@ -5889,6 +5954,39 @@ mod tests {
         assert!(target_paths.contains(
             &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
         ));
+    }
+
+    #[test]
+    fn guidance_inputs_include_only_local_images() {
+        let attachments = json!([
+            {
+                "mime_type": "image/png",
+                "local_path": "/tmp/screenshot.png"
+            },
+            {
+                "mime_type": "text/plain",
+                "local_path": "/tmp/notes.txt"
+            },
+            {
+                "mime_type": "image/jpeg"
+            }
+        ]);
+
+        assert_eq!(
+            guidance_image_inputs(Some(&attachments)),
+            vec![json!({
+                "type": "localImage",
+                "path": "/tmp/screenshot.png"
+            })]
+        );
+        assert_eq!(
+            guidance_input_items("", Some(&attachments)),
+            vec![json!({
+                "type": "localImage",
+                "path": "/tmp/screenshot.png"
+            })]
+        );
+        assert!(guidance_input_items("", None).is_empty());
     }
 
     #[test]

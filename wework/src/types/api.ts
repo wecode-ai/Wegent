@@ -549,6 +549,8 @@ export interface RuntimeSendResponse {
 export interface RuntimeGuidanceRequest {
   address: RuntimeTaskAddress
   message: string
+  attachmentIds?: number[]
+  attachments?: Attachment[]
   clientGuidanceId?: string
   client_guidance_id?: string
   additionalContext?: RuntimeAdditionalContext
@@ -1767,6 +1769,15 @@ export interface RuntimeGoalEventPayload {
   deviceId?: string
   threadId?: string
   goal?: RuntimeGoal | null
+}
+
+export interface RuntimeGuidanceAppliedPayload {
+  taskId?: string
+  subtaskId?: string
+  deviceId?: string
+  guidanceId: string
+  message: string
+  appliedAtMs: number
 }
 
 export interface ChatGuidanceQueuedPayload {

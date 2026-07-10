@@ -90,6 +90,7 @@ export interface RuntimePaneActionOptions {
 
 export interface RuntimePaneGuidanceResult {
   sent: boolean
+  turnId?: string
   code?: string | null
   error?: string | null
 }

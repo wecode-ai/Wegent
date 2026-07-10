@@ -248,15 +248,18 @@ export function useWorkbenchRuntimeMessaging({
             error: response.error || '引导发送失败',
           }
         }
-        try {
-          await refreshWorkLists()
-        } catch (error) {
+        void refreshWorkLists().catch(error => {
           console.warn('[Wework] Runtime guidance accepted but work list refresh failed', {
             taskId: response.taskId ?? response.task_id ?? request.address.taskId,
             error: error instanceof Error ? error.message : String(error),
           })
+        })
+        return {
+          sent: true,
+          turnId: response.turnId ?? response.turn_id,
+          code: response.code,
+          error: response.error,
         }
-        return { sent: true, code: response.code, error: response.error }
       } catch (error) {
         console.warn('[Wework] Runtime guidance failed', {
           taskId: request.address.taskId,

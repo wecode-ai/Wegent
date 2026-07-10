@@ -549,6 +549,38 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 9m 18s 后停止了')
   })
 
+  test('keeps late cancelled output without rendering it as active thinking', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-cancelled-late-output',
+            subtaskId: 21,
+            role: 'assistant',
+            content: '取消后仍收到的模型输出。',
+            status: 'streaming',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'late-process',
+                subtaskId: 21,
+                type: 'text',
+                content: '补充分析。',
+                status: 'streaming',
+                createdAt: Date.parse('2026-06-11T10:00:10Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('取消后仍收到的模型输出。')).toBeInTheDocument()
+    expect(screen.getByText('补充分析。')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
   test('renders tagged proposed plan content as regular assistant markdown', () => {
     render(
       <MessageList
@@ -1469,6 +1501,40 @@ describe('MessageList', () => {
     expect(collapseContent).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByText('我正在检查项目结构。')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
+  })
+
+  test('keeps processing expanded for the assistant continuation after runtime guidance', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-after-guidance',
+            role: 'assistant',
+            content: '继续处理。',
+            status: 'done',
+            runtimeGuidanceContinuation: true,
+            blocks: [
+              {
+                id: 'guidance-1',
+                subtaskId: 12,
+                type: 'tool',
+                toolName: 'conversation_guidance',
+                toolInput: { message: '也看看内存' },
+                status: 'done',
+                createdAt: 1770000002000,
+              },
+            ],
+            createdAt: '2026-06-24T08:00:02.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByText('已引导对话')).toBeInTheDocument()
   })
 
   test('renders final answer web search sources as a Codex-style source chip', async () => {
