@@ -466,6 +466,21 @@ fn wework_cli_launcher_content(
     let app_bundle = app_bundle_path
         .map(|path| shell_single_quote(&path.to_string_lossy()))
         .unwrap_or_else(|| "''".to_string());
+    // Debug `tauri dev` sets WEWORK_EXECUTOR_SIDECAR to the source-tree sidecar script.
+    // CLI launches are a fresh process without that env; bake the absolute path into the
+    // launcher so `wework <path>` can start a healthy local executor outside `dev:mac`.
+    let executor_sidecar = std::env::var_os("WEWORK_EXECUTOR_SIDECAR")
+        .map(std::path::PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .and_then(|path| {
+            if path.is_absolute() {
+                Some(path)
+            } else {
+                std::env::current_dir().ok().map(|cwd| cwd.join(path))
+            }
+        })
+        .map(|path| shell_single_quote(&path.to_string_lossy()))
+        .unwrap_or_else(|| "''".to_string());
 
     format!(
         r#"#!/usr/bin/env bash
@@ -512,6 +527,11 @@ fi
 ABSOLUTE_PATH="$(cd "$TARGET_PATH" && pwd -P)"
 APP_BUNDLE={app_bundle}
 WEWORK_EXECUTABLE={executable}
+WEWORK_EXECUTOR_SIDECAR={executor_sidecar}
+
+if [ -n "$WEWORK_EXECUTOR_SIDECAR" ]; then
+  export WEWORK_EXECUTOR_SIDECAR
+fi
 
 if [ -x "$WEWORK_EXECUTABLE" ]; then
   "$WEWORK_EXECUTABLE" --open-workspace "$ABSOLUTE_PATH" >/dev/null 2>&1 &
@@ -2747,8 +2767,34 @@ mod tests {
 
         assert!(content.contains("# Wework CLI launcher"));
         assert!(content.contains("APP_BUNDLE='/Applications/WeWork.app'"));
+        assert!(content.contains("WEWORK_EXECUTOR_SIDECAR=''"));
+        assert!(content.contains("export WEWORK_EXECUTOR_SIDECAR"));
         assert!(content.contains("\"$WEWORK_EXECUTABLE\" --open-workspace \"$ABSOLUTE_PATH\""));
         assert!(content.contains("exec open \"$APP_BUNDLE\" --args --open-workspace"));
+    }
+
+    #[test]
+    fn bakes_configured_executor_sidecar_into_cli_launcher() {
+        let previous = std::env::var_os("WEWORK_EXECUTOR_SIDECAR");
+        std::env::set_var(
+            "WEWORK_EXECUTOR_SIDECAR",
+            "/repo/wework/scripts/dev-executor-sidecar.sh",
+        );
+
+        let content = wework_cli_launcher_content(
+            std::path::Path::new("/tmp/debug/app"),
+            None,
+        );
+
+        assert!(content.contains(
+            "WEWORK_EXECUTOR_SIDECAR='/repo/wework/scripts/dev-executor-sidecar.sh'"
+        ));
+        assert!(content.contains("export WEWORK_EXECUTOR_SIDECAR"));
+
+        match previous {
+            Some(value) => std::env::set_var("WEWORK_EXECUTOR_SIDECAR", value),
+            None => std::env::remove_var("WEWORK_EXECUTOR_SIDECAR"),
+        }
     }
 
     #[test]
