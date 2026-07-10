@@ -258,7 +258,7 @@ pnpm --filter wecode-ai-assistant run start
 The Wework macOS development scripts isolate Cargo targets by Git worktree. This prevents Cargo's path-sensitive fingerprints and unhashed binaries from overwriting each other during parallel debugging. On the first `pnpm --dir wework run dev:mac`, the script installs `sccache` with Homebrew when it is missing, then reuses matching dependency and source compilation outputs across worktrees.
 
 - `pnpm --dir wework run dev:mac`, `pnpm --dir wework run build:mac`, the development executor sidecar, and `executor/local.sh build` use `$XDG_CACHE_HOME/wegent/cargo-target/<component>/worktrees/<worktree>`, or `~/.cache/wegent/cargo-target/...` when `XDG_CACHE_HOME` is not set.
-- When `sccache` is available, the scripts set `RUSTC_WRAPPER` automatically and disable Cargo incremental compilation, which is incompatible with shared compiler caching.
+- When `sccache` is available, the scripts set `RUSTC_WRAPPER` and `SCCACHE_BASEDIRS` automatically, normalize source and target paths across worktrees, and disable Cargo incremental compilation, which is incompatible with shared compiler caching.
 - Set `WEGENT_CARGO_TARGET_ROOT=/path/to/cache` to choose another target cache root.
 - Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use Cargo's repository-local default `target/`.
 - Set `WEGENT_DISABLE_SCCACHE=1` to skip automatic installation and disable `sccache`.
