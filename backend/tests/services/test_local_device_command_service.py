@@ -409,6 +409,9 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     git_commit_definition = resolve_local_device_command(
         "git_commit", settings.LOCAL_DEVICE_COMMANDS
     )
+    git_push_definition = resolve_local_device_command(
+        "git_push", settings.LOCAL_DEVICE_COMMANDS
+    )
     git_generate_commit_message_definition = resolve_local_device_command(
         "git_generate_commit_message", settings.LOCAL_DEVICE_COMMANDS
     )
@@ -508,6 +511,10 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_commit_definition is not None
     assert git_commit_definition.command == "git commit"
     assert git_commit_definition.post_processor is None
+    assert git_push_definition is not None
+    assert "@{u}" not in git_push_definition.command
+    assert 'exec git push -u origin "$branch"' in git_push_definition.command
+    assert git_push_definition.post_processor is None
     assert git_generate_commit_message_definition is not None
     assert "Generate a Git commit subject line" in (
         git_generate_commit_message_definition.command

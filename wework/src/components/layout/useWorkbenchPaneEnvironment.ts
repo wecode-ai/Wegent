@@ -21,6 +21,8 @@ export interface WorkbenchPaneEnvironment {
   projectWork: ProjectWorkControls
   refreshEnvironmentInfo: () => Promise<void>
   commitEnvironmentChanges: (message: string) => Promise<void>
+  commitAndPushEnvironmentChanges: (message: string) => Promise<void>
+  pushEnvironmentChanges: () => Promise<void>
   loadEnvironmentDiff?: (
     workspaceTarget: WorkspaceTarget,
     mode?: EnvironmentDiffMode
@@ -43,6 +45,8 @@ export function useWorkbenchPaneEnvironment({
     loadEnvironmentInfo,
     loadEnvironmentDiff,
     commitEnvironmentChanges,
+    commitAndPushEnvironmentChanges,
+    pushEnvironmentChanges,
     listEnvironmentBranches,
     checkoutEnvironmentBranch,
     createEnvironmentBranch,
@@ -260,6 +264,24 @@ export function useWorkbenchPaneEnvironment({
     [activeWorkspaceTarget, commitEnvironmentChanges, workspaceProject, workspaceTargetError]
   )
 
+  const commitAndPushPaneEnvironmentChanges = useCallback(
+    async (message: string) => {
+      if (!activeWorkspaceTarget) {
+        throw new Error(workspaceTargetError ?? 'Workspace is not ready')
+      }
+      await commitAndPushEnvironmentChanges(workspaceProject, message, activeWorkspaceTarget)
+      setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
+    },
+    [activeWorkspaceTarget, commitAndPushEnvironmentChanges, workspaceProject, workspaceTargetError]
+  )
+
+  const pushPaneEnvironmentChanges = useCallback(async () => {
+    if (!activeWorkspaceTarget) {
+      throw new Error(workspaceTargetError ?? 'Workspace is not ready')
+    }
+    await pushEnvironmentChanges(workspaceProject, activeWorkspaceTarget)
+  }, [activeWorkspaceTarget, pushEnvironmentChanges, workspaceProject, workspaceTargetError])
+
   const listPaneEnvironmentBranches = useCallback(() => {
     const {
       workspaceProject: latestWorkspaceProject,
@@ -321,6 +343,8 @@ export function useWorkbenchPaneEnvironment({
     },
     refreshEnvironmentInfo,
     commitEnvironmentChanges: commitPaneEnvironmentChanges,
+    commitAndPushEnvironmentChanges: commitAndPushPaneEnvironmentChanges,
+    pushEnvironmentChanges: pushPaneEnvironmentChanges,
     loadEnvironmentDiff: activeWorkspaceTarget
       ? (target, mode) => loadEnvironmentDiff(workspaceProject, target, mode)
       : undefined,

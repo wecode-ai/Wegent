@@ -145,6 +145,8 @@ const workbenchValue: WorkbenchContextValue = {
   loadEnvironmentInfo: vi.fn(),
   loadEnvironmentDiff: vi.fn(),
   commitEnvironmentChanges: vi.fn(),
+  commitAndPushEnvironmentChanges: vi.fn(),
+  pushEnvironmentChanges: vi.fn(),
   listEnvironmentBranches: vi.fn(),
   checkoutEnvironmentBranch: vi.fn(),
   createEnvironmentBranch: vi.fn(),

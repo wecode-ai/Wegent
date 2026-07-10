@@ -37,6 +37,12 @@ const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 #[cfg(unix)]
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
+const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
+if [ -z "$branch" ]; then
+  echo "Cannot push detached HEAD" >&2
+  exit 64
+fi
+exec git push -u origin "$branch""#;
 const WORKSPACE_TREE_SCRIPT: &str = r#"
 import json
 import os
@@ -973,6 +979,11 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         )),
         "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
         "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
+        "git_push" => Some(command_definition(
+            "sh -c <git_push>",
+            &["sh", "-c", GIT_PUSH_SCRIPT],
+            None,
+        )),
         "browser_relay_restart" => Some(command_definition(
             "sh -lc <browser_relay_restart>",
             &[

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{env, future::Future, path::Path, pin::Pin};
+use std::{env, future::Future, path::PathBuf, pin::Pin};
 
 mod agno;
 mod backend_url;
@@ -45,7 +45,10 @@ pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
 
 const DEFAULT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
-const MACOS_CODEX_APP_BINARY: &str = "/Applications/Codex.app/Contents/Resources/codex";
+const MACOS_CODEX_APP_BINARIES: [&str; 2] = [
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCommandPlanner {
@@ -83,19 +86,39 @@ pub fn resolve_codex_binary() -> String {
 /// Explicit paths are returned unchanged. A bare `codex` name prefers the
 /// macOS app bundle when present, otherwise it is looked up on `PATH`.
 pub fn resolve_codex_binary_path(value: &str) -> String {
+    let app_candidates = if cfg!(target_os = "macos") {
+        MACOS_CODEX_APP_BINARIES
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let search_paths = env::var_os("PATH")
+        .map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    resolve_codex_binary_path_from_candidates(value, &app_candidates, &search_paths)
+}
+
+fn resolve_codex_binary_path_from_candidates(
+    value: &str,
+    app_candidates: &[PathBuf],
+    search_paths: &[PathBuf],
+) -> String {
     let trimmed = value.trim();
     if trimmed.contains('/') || trimmed.contains('\\') {
         return trimmed.to_owned();
     }
 
-    if trimmed == "codex" && cfg!(target_os = "macos") && Path::new(MACOS_CODEX_APP_BINARY).exists()
-    {
-        return MACOS_CODEX_APP_BINARY.to_owned();
+    if trimmed == "codex" {
+        if let Some(path) = app_candidates.iter().find(|path| path.is_file()) {
+            return path.display().to_string();
+        }
     }
 
-    env::var_os("PATH")
-        .into_iter()
-        .flat_map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
+    search_paths
+        .iter()
         .map(|path| path.join(trimmed))
         .find(|path| path.is_file())
         .map(|path| path.display().to_string())
@@ -324,6 +347,7 @@ impl AgentEngine for AgentProcessEngine {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
     use super::*;
@@ -380,5 +404,24 @@ mod tests {
         let _timeout = EnvGuard::remove("WEGENT_CLAUDE_CODE_PROCESS_TIMEOUT_SECONDS");
 
         assert_eq!(claude_code_process_timeout_seconds(), 86_400);
+    }
+
+    #[test]
+    fn codex_binary_resolver_prefers_available_macos_app_candidate() {
+        let available_binary = std::env::current_exe().expect("current test binary should exist");
+        let app_candidates = vec![
+            PathBuf::from("/missing/Codex.app/Contents/Resources/codex"),
+            available_binary.clone(),
+        ];
+
+        let resolved = resolve_codex_binary_path_from_candidates("codex", &app_candidates, &[]);
+
+        assert_eq!(resolved, available_binary.display().to_string());
+    }
+
+    #[test]
+    fn macos_codex_app_candidates_include_current_chatgpt_bundle() {
+        assert!(MACOS_CODEX_APP_BINARIES
+            .contains(&"/Applications/ChatGPT.app/Contents/Resources/codex"));
     }
 }

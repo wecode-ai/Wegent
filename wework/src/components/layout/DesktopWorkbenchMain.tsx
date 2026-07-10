@@ -322,6 +322,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     projectWork: paneProjectWork,
     refreshEnvironmentInfo,
     commitEnvironmentChanges,
+    commitAndPushEnvironmentChanges,
+    pushEnvironmentChanges,
     loadEnvironmentDiff,
     listEnvironmentBranches,
     checkoutEnvironmentBranch,
@@ -966,6 +968,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       environmentInfo={environmentInfo}
       onRefreshEnvironmentInfo={refreshEnvironmentInfo}
       onCommitEnvironmentChanges={commitEnvironmentChanges}
+      onCommitAndPushEnvironmentChanges={commitAndPushEnvironmentChanges}
+      onPushEnvironmentChanges={pushEnvironmentChanges}
       onListEnvironmentBranches={listEnvironmentBranches}
       onCheckoutEnvironmentBranch={checkoutEnvironmentBranch}
       onCreateEnvironmentBranch={createEnvironmentBranch}

@@ -518,6 +518,30 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
         Some(&review_request),
         "native commit message generation must not dispatch through the generic command handler"
     );
+    let push_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-git-push",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_push",
+                    "path": "/tmp/project"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(push_response["ok"], true);
+    let request = seen_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.argv[0], "sh");
+    assert!(!request.argv[2].contains("@{u}"));
+    assert!(
+        request.argv[2].contains("exec git push -u origin \"$branch\""),
+        "push must publish the current branch under the same remote branch name"
+    );
 }
 
 #[tokio::test]

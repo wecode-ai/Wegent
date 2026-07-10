@@ -50,6 +50,12 @@ GIT_WORKSPACE_DIFF_COMMAND = (
     "done'"
 )
 
+GIT_PUSH_COMMAND = (
+    "sh -c 'branch=$(git branch --show-current); "
+    '[ -n "$branch" ] || { echo "Cannot push detached HEAD" >&2; exit 64; }; '
+    'exec git push -u origin "$branch"\''
+)
+
 WORKSPACE_ROOT_GUARD_SCRIPT = """
 def fail(message, code=64):
     print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
@@ -1456,6 +1462,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     ),
     "git_add_all": LocalDeviceCommandDefinition(command="git add --all"),
     "git_commit": LocalDeviceCommandDefinition(command="git commit"),
+    "git_push": LocalDeviceCommandDefinition(command=GIT_PUSH_COMMAND),
     "git_generate_commit_message": LocalDeviceCommandDefinition(
         command=GIT_GENERATE_COMMIT_MESSAGE_COMMAND,
         post_processor="json",
