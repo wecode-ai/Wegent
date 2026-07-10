@@ -710,7 +710,7 @@ function ScrollableMessagePaneContent({
                 <p className="mt-2 max-w-sm text-xs leading-5 text-text-muted">
                   {t(
                     'workbench.empty_conversation_description',
-                    '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。'
+                    '在下方输入问题、粘贴上下文或添加附件，WeWork 会在这里展示回复。'
                   )}
                 </p>
               </div>

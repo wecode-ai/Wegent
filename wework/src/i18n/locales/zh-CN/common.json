@@ -502,7 +502,7 @@
     "load_older_messages": "加载更早记录",
     "loading_older_messages": "正在加载...",
     "empty_conversation_title": "开始新的对话",
-    "empty_conversation_description": "在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。",
+    "empty_conversation_description": "在下方输入问题、粘贴上下文或添加附件，WeWork 会在这里展示回复。",
     "account_fallback": "当前账号",
     "personal_account": "个人账户",
     "remaining_usage": "剩余用量",
