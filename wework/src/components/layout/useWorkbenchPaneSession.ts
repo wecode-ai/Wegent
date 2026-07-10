@@ -29,7 +29,10 @@ import type { RequestUserInputPayload } from '@/components/chat/RequestUserInput
 import { debugComposerEvent, textMetrics } from '@/components/chat/composer/composerDebug'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import { appendCodeCommentContexts } from '@/lib/code-comment-context'
-import { readRuntimeTerminalAdditionalContext } from '@/lib/runtime-terminal-context'
+import {
+  markRuntimeTerminalAdditionalContextDelivered,
+  readRuntimeTerminalAdditionalContext,
+} from '@/lib/runtime-terminal-context'
 import type {
   Attachment,
   ModelOptions,
@@ -847,6 +850,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         ...(additionalContext ? { additionalContext } : {}),
       })
       if (sent) {
+        markRuntimeTerminalAdditionalContextDelivered(additionalContext)
         setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
       } else {
         setSendPhase('idle')
@@ -896,6 +900,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         ...(additionalContext ? { additionalContext } : {}),
       })
       if (sent) {
+        markRuntimeTerminalAdditionalContextDelivered(additionalContext)
         setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
       } else {
         setSendPhase('idle')
@@ -961,6 +966,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       try {
         const sent = await editLastUserMessage(request)
         if (sent) {
+          markRuntimeTerminalAdditionalContextDelivered(additionalContext)
           setSendPhase(current => (current === 'submitting' ? 'awaiting_assistant' : current))
           return true
         }
@@ -1163,6 +1169,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 )
           )
           return
+        }
+        if (result.sent) {
+          markRuntimeTerminalAdditionalContextDelivered(additionalContext)
         }
         if (!result.sent) {
           pendingAppliedGuidancesRef.current.delete(id)

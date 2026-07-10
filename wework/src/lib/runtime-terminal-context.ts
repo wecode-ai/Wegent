@@ -30,10 +30,21 @@ interface TerminalContextRecord {
   title?: string | null
   cwd?: string | null
   kind?: string | null
-  chunks: string[]
+  chunks: TerminalContextChunk[]
   length: number
+  lastDeliveredChunkId: number
   updatedAt: number
   truncated: boolean
+}
+
+interface TerminalContextChunk {
+  id: number
+  value: string
+}
+
+interface PendingTerminalContextDelivery {
+  sessionId: string
+  lastChunkId: number
 }
 
 const TERMINAL_CONTEXT_KEY = 'wework.terminal.current'
@@ -42,8 +53,10 @@ const MAX_TERMINAL_CONTEXT_LINES = 80
 const MAX_TERMINAL_CHUNK_BYTES = 512
 const recordsBySession = new Map<string, TerminalContextRecord>()
 const sessionIdsByTarget = new Map<string, Set<string>>()
+const pendingDeliveriesByValue = new Map<string, PendingTerminalContextDelivery>()
 let terminalContextInjectionEnabled = defaultAppPreferences.terminalContextInjectionEnabled
 let preferencesListenerInstalled = false
+let nextChunkId = 1
 
 installPreferencesListener()
 
@@ -59,6 +72,7 @@ export function appendRuntimeTerminalContext(input: TerminalContextAppendInput):
     sessionId: input.sessionId,
     chunks: [],
     length: 0,
+    lastDeliveredChunkId: 0,
     updatedAt: Date.now(),
     truncated: false,
   }
@@ -70,12 +84,14 @@ export function appendRuntimeTerminalContext(input: TerminalContextAppendInput):
   record.targetKeys = targetKeys
 
   const chunk = tail(text, MAX_TERMINAL_CHUNK_BYTES)
-  record.chunks.push(chunk)
+  const chunkId = nextChunkId
+  nextChunkId += 1
+  record.chunks.push({ id: chunkId, value: chunk })
   record.length += chunk.length
 
   while (record.length > MAX_TERMINAL_CONTEXT_BYTES && record.chunks.length > 1) {
-    const removed = record.chunks.shift() ?? ''
-    record.length -= removed.length
+    const removed = record.chunks.shift()
+    record.length -= removed?.value.length ?? 0
     record.truncated = true
   }
 
@@ -102,26 +118,58 @@ export function readRuntimeTerminalAdditionalContext(
   const latest = records[0]
   if (!latest) return undefined
 
-  const output = tailLines(latest.chunks.join(''), MAX_TERMINAL_CONTEXT_LINES).trim()
+  const pendingChunks = latest.chunks.filter(chunk => chunk.id > latest.lastDeliveredChunkId)
+  const output = tailLines(
+    pendingChunks.map(chunk => chunk.value).join(''),
+    MAX_TERMINAL_CONTEXT_LINES
+  ).trim()
   if (!output) return undefined
+
+  const value = [
+    'Wework terminal context:',
+    `kind: ${latest.kind ?? 'unknown'}`,
+    `sessionId: ${latest.sessionId}`,
+    latest.title ? `title: ${latest.title}` : null,
+    latest.cwd ? `cwd: ${latest.cwd}` : null,
+    `capturedAt: ${new Date(latest.updatedAt).toISOString()}`,
+    `truncated: ${latest.truncated}`,
+    'new output since the last delivered terminal context:',
+    output,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join('\n')
+  const lastChunkId = pendingChunks[pendingChunks.length - 1]?.id
+  if (lastChunkId === undefined) return undefined
+  pendingDeliveriesByValue.set(value, { sessionId: latest.sessionId, lastChunkId })
 
   return {
     [TERMINAL_CONTEXT_KEY]: {
       kind: 'application',
-      value: [
-        'Wework terminal context:',
-        `kind: ${latest.kind ?? 'unknown'}`,
-        `sessionId: ${latest.sessionId}`,
-        latest.title ? `title: ${latest.title}` : null,
-        latest.cwd ? `cwd: ${latest.cwd}` : null,
-        `capturedAt: ${new Date(latest.updatedAt).toISOString()}`,
-        `truncated: ${latest.truncated}`,
-        'recent output:',
-        output,
-      ]
-        .filter((line): line is string => Boolean(line))
-        .join('\n'),
+      value,
     },
+  }
+}
+
+export function markRuntimeTerminalAdditionalContextDelivered(
+  context: RuntimeAdditionalContext | undefined
+): void {
+  const value = context?.[TERMINAL_CONTEXT_KEY]?.value
+  if (!value) return
+
+  const delivery = pendingDeliveriesByValue.get(value)
+  if (!delivery) return
+
+  const record = recordsBySession.get(delivery.sessionId)
+  if (record) {
+    record.lastDeliveredChunkId = Math.max(record.lastDeliveredChunkId, delivery.lastChunkId)
+  }
+  for (const [pendingValue, pendingDelivery] of pendingDeliveriesByValue) {
+    if (
+      pendingDelivery.sessionId === delivery.sessionId &&
+      pendingDelivery.lastChunkId <= delivery.lastChunkId
+    ) {
+      pendingDeliveriesByValue.delete(pendingValue)
+    }
   }
 }
 
@@ -141,6 +189,8 @@ export function mergeRuntimeAdditionalContext(
 export function resetRuntimeTerminalContextForTests(): void {
   recordsBySession.clear()
   sessionIdsByTarget.clear()
+  pendingDeliveriesByValue.clear()
+  nextChunkId = 1
   terminalContextInjectionEnabled = defaultAppPreferences.terminalContextInjectionEnabled
 }
 
