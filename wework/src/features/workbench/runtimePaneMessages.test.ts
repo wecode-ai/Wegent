@@ -614,6 +614,41 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     )
   })
 
+  test('ignores invalid short-content truncation markers from a runtime transcript', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '这是一段完整的短回复。',
+        content_truncated: true,
+        content_original_chars: 11,
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      content: '这是一段完整的短回复。',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+    })
+  })
+
+  test('keeps valid runtime content truncation markers so full content can be loaded', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '回复末尾预览',
+        contentTruncated: true,
+        contentOriginalChars: 200_001,
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      contentTruncated: true,
+      contentOriginalChars: 200_001,
+    })
+  })
+
   test('keeps user-authored Codex directive text unchanged', () => {
     const messages = runtimeMessagesToWorkbenchMessages([
       {
