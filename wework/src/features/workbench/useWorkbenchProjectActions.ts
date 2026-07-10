@@ -2,11 +2,13 @@ import { useCallback } from 'react'
 import type { Dispatch } from 'react'
 import {
   checkoutProjectBranch,
+  commitAndPushProjectChanges,
   commitProjectChanges,
   createAndCheckoutProjectBranch,
   listProjectBranches,
   loadProjectEnvironment,
   loadProjectEnvironmentDiff,
+  pushProjectChanges,
   type EnvironmentDiffMode,
 } from '@/api/environment'
 import type { ExecutorClient } from '@/api/executorAccess'
@@ -211,6 +213,18 @@ export function useWorkbenchProjectActions({
     [executorClient]
   )
 
+  const commitAndPushEnvironmentChanges = useCallback(
+    (project: ProjectWithTasks | null, message: string, workspaceTarget?: WorkspaceTarget | null) =>
+      commitAndPushProjectChanges(executorClient.commands, project, message, workspaceTarget),
+    [executorClient]
+  )
+
+  const pushEnvironmentChanges = useCallback(
+    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
+      pushProjectChanges(executorClient.commands, project, workspaceTarget),
+    [executorClient]
+  )
+
   const listEnvironmentBranches = useCallback(
     (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
       listProjectBranches(executorClient.commands, project, workspaceTarget),
@@ -252,6 +266,8 @@ export function useWorkbenchProjectActions({
     loadEnvironmentInfo,
     loadEnvironmentDiff,
     commitEnvironmentChanges,
+    commitAndPushEnvironmentChanges,
+    pushEnvironmentChanges,
     listEnvironmentBranches,
     checkoutEnvironmentBranch,
     createEnvironmentBranch,

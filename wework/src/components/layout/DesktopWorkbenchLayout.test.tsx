@@ -5383,6 +5383,176 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
+  test('renders the environment commit menu as the compact commit or push panel', async () => {
+    const onCommitAndPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+    const onPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCommitAndPushEnvironmentChanges={onCommitAndPushEnvironmentChanges}
+        onPushEnvironmentChanges={onPushEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+
+    const popover = await screen.findByTestId('environment-info-popover')
+    const commitMenuButton = await screen.findByTestId('environment-commit-button')
+    expect(commitMenuButton).toHaveTextContent('提交或推送')
+
+    await userEvent.click(commitMenuButton)
+
+    const commitPanel = screen.getByTestId('environment-commit-form')
+    expect(commitPanel).toHaveClass('fixed', 'left-1/2', 'w-[430px]', 'rounded-xl')
+    expect(popover).not.toContainElement(commitPanel)
+    expect(commitPanel).toHaveTextContent('包含未暂存的更改')
+
+    const scopedPanel = within(commitPanel)
+    expect(scopedPanel.getByTestId('environment-confirm-commit-button')).toHaveTextContent('提交')
+    expect(scopedPanel.getByTestId('environment-commit-and-push-button')).toHaveTextContent(
+      '提交并推送'
+    )
+    expect(scopedPanel.getByTestId('environment-push-button')).toHaveTextContent('推送')
+
+    await userEvent.click(scopedPanel.getByTestId('environment-commit-and-push-button'))
+    await waitFor(() =>
+      expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, name: 'github_wegent' }),
+        '',
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
+      )
+    )
+
+    await userEvent.click(screen.getByTestId('environment-commit-button'))
+    await userEvent.click(screen.getByTestId('environment-push-button'))
+    await waitFor(() =>
+      expect(onPushEnvironmentChanges).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 1, name: 'github_wegent' }),
+        {
+          deviceId: 'device-1',
+          path: '/workspace/github_wegent',
+          source: 'project',
+        }
+      )
+    )
+  })
+
+  test('shows the environment commit progress row while generating a message', async () => {
+    const onCommitEnvironmentChanges = vi.fn(
+      () =>
+        new Promise<void>(() => {
+          // Keep the action pending so the in-popover progress row remains visible.
+        })
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onCommitEnvironmentChanges={onCommitEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(await screen.findByTestId('environment-commit-button'))
+    await userEvent.click(screen.getByTestId('environment-confirm-commit-button'))
+
+    await waitFor(() => expect(onCommitEnvironmentChanges).toHaveBeenCalled())
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('environment-commit-progress-row')).toHaveTextContent(
+      '正在生成消息...'
+    )
+    expect(screen.getByTestId('environment-commit-progress-stop-icon')).toBeInTheDocument()
+  })
+
+  test('shows the environment push progress row while pushing', async () => {
+    const onPushEnvironmentChanges = vi.fn(
+      () =>
+        new Promise<void>(() => {
+          // Keep the action pending so the in-popover progress row remains visible.
+        })
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onPushEnvironmentChanges={onPushEnvironmentChanges}
+        state={{
+          ...baseProps.state,
+          currentProject: {
+            id: 1,
+            name: 'github_wegent',
+            tasks: [],
+            config: {
+              mode: 'workspace',
+              execution: {
+                targetType: 'local',
+                deviceId: 'device-1',
+              },
+              workspace: {
+                source: 'local_path',
+                localPath: '/workspace/github_wegent',
+              },
+            },
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    await userEvent.click(await screen.findByTestId('environment-commit-button'))
+    await userEvent.click(screen.getByTestId('environment-push-button'))
+
+    await waitFor(() => expect(onPushEnvironmentChanges).toHaveBeenCalled())
+    expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('environment-commit-progress-row')).toHaveTextContent('正在推送...')
+    expect(screen.getByTestId('environment-commit-progress-stop-icon')).toBeInTheDocument()
+  })
+
   test('switches and creates branches from the environment popover', async () => {
     const onListEnvironmentBranches = vi
       .fn()

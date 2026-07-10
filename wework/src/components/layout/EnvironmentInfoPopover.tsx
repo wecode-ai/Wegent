@@ -1,13 +1,20 @@
 import {
+  Check,
+  ChevronDown,
   CircleDot,
   Copy,
   FolderOpen,
   GitCommit,
+  GitBranch,
   GitPullRequest,
   Info,
   Laptop,
+  LoaderCircle,
   MapPin,
   Settings,
+  Square,
+  Upload,
+  CornerDownLeft,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
@@ -24,11 +31,15 @@ interface EnvironmentInfoPopoverProps {
   devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
   onCommitChanges?: (message: string) => Promise<void>
+  onCommitAndPushChanges?: (message: string) => Promise<void>
+  onPushChanges?: () => Promise<void>
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
   onOpenChangesReview?: () => void
 }
+
+type CommitPanelAction = 'commit' | 'commit-and-push' | 'push'
 
 const POPOVER_WIDTH = 340
 const POPOVER_GAP = 8
@@ -57,6 +68,8 @@ export function EnvironmentInfoPopover({
   devices = [],
   onRefresh,
   onCommitChanges,
+  onCommitAndPushChanges,
+  onPushChanges,
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
@@ -68,6 +81,7 @@ export function EnvironmentInfoPopover({
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
   const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
+  const [commitProgressLabel, setCommitProgressLabel] = useState('')
   const [commitError, setCommitError] = useState<string | null>(null)
   const [popoverPosition, setPopoverPosition] = useState<PopoverPosition | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -113,29 +127,70 @@ export function EnvironmentInfoPopover({
     window.setTimeout(() => setWorkspacePathCopied(false), 1200)
   }
 
-  async function handleSubmitCommit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const trimmedMessage = commitMessage.trim()
-    if (!onCommitChanges) {
-      return
+  function getCommitErrorMessage(error: unknown) {
+    const fallback = t('workbench.environment_commit_failed', '提交失败')
+    if (!(error instanceof Error) || !error.message) {
+      return fallback
     }
+    if (
+      error.message === 'No changes to commit' ||
+      error.message === 'No staged changes to summarize'
+    ) {
+      return t('workbench.environment_no_changes_to_commit', '没有可提交的更改')
+    }
+    return error.message
+  }
+
+  function getCommitProgressLabel(action: CommitPanelAction, message: string) {
+    if (action === 'push') {
+      return t('workbench.environment_pushing_changes', '正在推送...')
+    }
+    if (!message) {
+      return t('workbench.environment_generating_commit_message', '正在生成消息...')
+    }
+    if (action === 'commit-and-push') {
+      return t('workbench.environment_commit_and_pushing_changes', '正在提交并推送...')
+    }
+    return t('workbench.environment_committing_changes', '正在提交...')
+  }
+
+  async function handleCommitPanelAction(action: CommitPanelAction) {
+    const trimmedMessage = commitMessage.trim()
+    if (action === 'commit' && !onCommitChanges) return
+    if (action === 'commit-and-push' && !onCommitAndPushChanges) return
+    if (action === 'push' && !onPushChanges) return
 
     setCommitError(null)
+    setCommitProgressLabel(getCommitProgressLabel(action, trimmedMessage))
     setCommitStatus('committing')
+    setCommitFormOpen(false)
     try {
-      await onCommitChanges(trimmedMessage)
+      if (action === 'push') {
+        await onPushChanges?.()
+      } else if (action === 'commit-and-push') {
+        await onCommitAndPushChanges?.(trimmedMessage)
+      } else {
+        await onCommitChanges?.(trimmedMessage)
+      }
       setCommitStatus('success')
       setCommitFormOpen(false)
-      setCommitMessage('')
-      window.setTimeout(() => setCommitStatus('idle'), 1600)
+      if (action !== 'push') {
+        setCommitMessage('')
+      }
+      window.setTimeout(() => {
+        setCommitStatus('idle')
+        setCommitProgressLabel('')
+      }, 1600)
     } catch (error) {
       setCommitStatus('idle')
-      setCommitError(
-        error instanceof Error
-          ? error.message
-          : t('workbench.environment_commit_failed', '提交失败')
-      )
+      setCommitProgressLabel('')
+      setCommitError(getCommitErrorMessage(error))
     }
+  }
+
+  async function handleSubmitCommit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await handleCommitPanelAction('commit')
   }
 
   function handleToggleOpen() {
@@ -322,65 +377,52 @@ export function EnvironmentInfoPopover({
                   )}
                   {hasGitInfo && (
                     <>
-                      <button
-                        type="button"
-                        data-testid="environment-commit-button"
-                        disabled={!onCommitChanges || commitStatus === 'committing'}
-                        onClick={() => {
-                          setCommitFormOpen(open => !open)
-                          setCommitError(null)
-                        }}
-                        className="flex h-9 w-full items-center gap-3 rounded-md text-left text-[13px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted"
-                      >
-                        <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center text-text-secondary">
-                          <GitCommit className="h-[18px] w-[18px]" />
-                        </span>
-                        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                          {t('workbench.environment_commit', '提交')}
-                        </span>
-                        {commitStatus === 'success' && (
-                          <span className="shrink-0 text-xs text-green-500">
-                            {t('workbench.environment_committed', '已提交')}
-                          </span>
-                        )}
-                      </button>
-                      {commitFormOpen && (
-                        <form
-                          className="mb-2 ml-[30px] mt-1 space-y-2"
-                          onSubmit={handleSubmitCommit}
+                      {commitStatus === 'committing' ? (
+                        <div
+                          data-testid="environment-commit-progress-row"
+                          className="flex h-8 w-full items-center gap-3 rounded-md bg-[#eef4ff] px-0 text-left text-[13px] leading-[18px] text-text-secondary"
                         >
-                          <input
-                            data-testid="environment-commit-message-input"
-                            value={commitMessage}
-                            onChange={event => setCommitMessage(event.target.value)}
-                            className="h-8 w-full rounded-md border border-border bg-background px-2 text-[13px] text-text-primary outline-none placeholder:text-text-muted focus:border-text-primary"
-                            placeholder={t('workbench.environment_commit_message_placeholder')}
-                            autoFocus
-                          />
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              type="button"
-                              data-testid="environment-cancel-commit-button"
-                              onClick={() => {
-                                setCommitFormOpen(false)
-                                setCommitError(null)
-                              }}
-                              className="h-7 rounded-md px-2 text-xs text-text-secondary hover:bg-hover hover:text-text-primary"
-                            >
-                              {t('workbench.environment_commit_cancel', '取消')}
-                            </button>
-                            <button
-                              type="submit"
-                              data-testid="environment-confirm-commit-button"
-                              disabled={commitStatus === 'committing'}
-                              className="h-7 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                              {commitStatus === 'committing'
-                                ? t('workbench.environment_committing', '提交中')
-                                : t('workbench.environment_commit_confirm', '确认')}
-                            </button>
-                          </div>
-                        </form>
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                            <LoaderCircle className="h-4 w-4 animate-spin" />
+                          </span>
+                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                            {commitProgressLabel ||
+                              t('workbench.environment_committing_changes', '正在提交...')}
+                          </span>
+                          <span
+                            data-testid="environment-commit-progress-stop-icon"
+                            className="flex h-4 w-4 shrink-0 items-center justify-center text-text-muted"
+                            aria-hidden="true"
+                          >
+                            <Square className="h-3.5 w-3.5 fill-current" strokeWidth={0} />
+                          </span>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          data-testid="environment-commit-button"
+                          disabled={!onCommitChanges}
+                          onClick={() => {
+                            setCommitFormOpen(open => !open)
+                            setCommitError(null)
+                          }}
+                          className={cn(
+                            'flex h-8 w-full items-center gap-3 rounded-md text-left text-[13px] leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted',
+                            commitFormOpen && 'bg-hover'
+                          )}
+                        >
+                          <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary">
+                            <GitCommit className="h-4 w-4" />
+                          </span>
+                          <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                            {t('workbench.environment_commit_or_push', '提交或推送')}
+                          </span>
+                          {commitStatus === 'success' && (
+                            <span className="shrink-0 text-xs text-green-500">
+                              {t('workbench.environment_committed', '已提交')}
+                            </span>
+                          )}
+                        </button>
                       )}
                       <button
                         type="button"
@@ -424,6 +466,110 @@ export function EnvironmentInfoPopover({
               </p>
             )}
           </div>,
+          document.body
+        )}
+      {open &&
+        commitFormOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <form
+            ref={commitPanelRef}
+            data-testid="environment-commit-form"
+            className="fixed left-1/2 top-[36vh] z-system-popover w-[430px] max-w-[calc(100vw-2rem)] -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-background text-text-primary shadow-[0_18px_48px_rgba(0,0,0,0.20)]"
+            onSubmit={handleSubmitCommit}
+          >
+            <div className="flex h-10 items-center gap-2 px-4 text-[13px] leading-[18px] text-text-secondary">
+              <GitBranch className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate font-medium">{branchLabel}</span>
+              <ChevronDown className="h-4 w-4 shrink-0" />
+              <span className="ml-3 flex shrink-0 gap-1.5 font-medium">
+                <span className="text-green-500">{additions}</span>
+                <span className="text-red-500">{deletions}</span>
+              </span>
+            </div>
+
+            <textarea
+              data-testid="environment-commit-message-input"
+              value={commitMessage}
+              onChange={event => setCommitMessage(event.target.value)}
+              onKeyDown={event => {
+                if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+              className="min-h-[74px] w-full resize-none bg-background px-4 py-2 text-[13px] leading-5 text-text-primary outline-none placeholder:text-text-muted"
+              placeholder={t('workbench.environment_commit_message_placeholder')}
+              autoFocus
+            />
+
+            <div
+              data-testid="environment-include-unstaged-row"
+              className="flex h-10 items-center gap-2 px-4 text-[13px] leading-[18px] text-text-primary"
+            >
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded border border-border bg-background text-text-primary">
+                <Check className="h-3 w-3" strokeWidth={2.4} />
+              </span>
+              <span className="min-w-0 flex-1 truncate">
+                {t('workbench.environment_include_unstaged_changes', '包含未暂存的更改')}
+              </span>
+            </div>
+
+            <div className="border-t border-border p-1.5">
+              <button
+                type="submit"
+                data-testid="environment-confirm-commit-button"
+                disabled={!onCommitChanges || commitStatus === 'committing'}
+                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <GitCommit className="h-4 w-4 shrink-0 text-text-secondary" />
+                <span className="min-w-0 flex-1 truncate">
+                  {commitStatus === 'committing'
+                    ? t('workbench.environment_committing', '提交中')
+                    : t('workbench.environment_commit', '提交')}
+                </span>
+                <span className="ml-auto inline-flex h-5 shrink-0 items-center gap-0.5 rounded-md bg-surface px-1.5 text-[11px] leading-none text-text-muted">
+                  <span>⌘</span>
+                  <CornerDownLeft className="h-3 w-3" aria-hidden="true" />
+                </span>
+              </button>
+              <button
+                type="button"
+                data-testid="environment-commit-and-push-button"
+                disabled={!onCommitAndPushChanges || commitStatus === 'committing'}
+                onClick={() => void handleCommitPanelAction('commit-and-push')}
+                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
+              >
+                <Upload className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">
+                  {t('workbench.environment_commit_and_push', '提交并推送')}
+                </span>
+              </button>
+              <button
+                type="button"
+                data-testid="environment-push-button"
+                disabled={!onPushChanges || commitStatus === 'committing'}
+                onClick={() => void handleCommitPanelAction('push')}
+                className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-[18px] text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:text-text-muted disabled:hover:bg-transparent"
+              >
+                <Upload className="h-4 w-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">
+                  {t('workbench.environment_push', '推送')}
+                </span>
+              </button>
+              <button
+                type="button"
+                data-testid="environment-cancel-commit-button"
+                onClick={() => {
+                  setCommitFormOpen(false)
+                  setCommitError(null)
+                }}
+                className="hidden"
+              >
+                {t('workbench.environment_commit_cancel', '取消')}
+              </button>
+            </div>
+          </form>,
           document.body
         )}
     </div>

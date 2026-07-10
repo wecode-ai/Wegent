@@ -36,6 +36,8 @@ interface WorkspacePanelActionsProps {
   environmentInfo: EnvironmentInfo
   onRefreshEnvironmentInfo: () => Promise<void>
   onCommitEnvironmentChanges: (message: string) => Promise<void>
+  onCommitAndPushEnvironmentChanges: (message: string) => Promise<void>
+  onPushEnvironmentChanges: () => Promise<void>
   onListEnvironmentBranches: () => Promise<string[]>
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
@@ -54,6 +56,8 @@ export function WorkspacePanelActions({
   environmentInfo,
   onRefreshEnvironmentInfo,
   onCommitEnvironmentChanges,
+  onCommitAndPushEnvironmentChanges,
+  onPushEnvironmentChanges,
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
@@ -157,6 +161,8 @@ export function WorkspacePanelActions({
           devices={devices}
           onRefresh={onRefreshEnvironmentInfo}
           onCommitChanges={onCommitEnvironmentChanges}
+          onCommitAndPushChanges={onCommitAndPushEnvironmentChanges}
+          onPushChanges={onPushEnvironmentChanges}
           onListBranches={onListEnvironmentBranches}
           onCheckoutBranch={onCheckoutEnvironmentBranch}
           onCreateBranch={onCreateEnvironmentBranch}

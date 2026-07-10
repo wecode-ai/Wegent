@@ -65,6 +65,8 @@ const baseProps = {
   },
   onRefreshEnvironmentInfo: vi.fn(),
   onCommitEnvironmentChanges: vi.fn(),
+  onCommitAndPushEnvironmentChanges: vi.fn(),
+  onPushEnvironmentChanges: vi.fn(),
   onListEnvironmentBranches: vi.fn(),
   onCheckoutEnvironmentBranch: vi.fn(),
   onCreateEnvironmentBranch: vi.fn(),

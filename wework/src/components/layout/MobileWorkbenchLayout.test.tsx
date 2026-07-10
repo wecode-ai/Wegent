@@ -313,6 +313,8 @@ function createWorkbenchMocks(props: LegacyMobileWorkbenchLayoutProps) {
     loadEnvironmentDiff: props.onLoadEnvironmentDiff ?? vi.fn().mockResolvedValue(''),
     commitEnvironmentChanges:
       props.onCommitEnvironmentChanges ?? vi.fn().mockResolvedValue(undefined),
+    commitAndPushEnvironmentChanges: vi.fn().mockResolvedValue(undefined),
+    pushEnvironmentChanges: vi.fn().mockResolvedValue(undefined),
     listEnvironmentBranches: props.onListEnvironmentBranches ?? vi.fn().mockResolvedValue([]),
     checkoutEnvironmentBranch:
       props.onCheckoutEnvironmentBranch ?? vi.fn().mockResolvedValue(undefined),

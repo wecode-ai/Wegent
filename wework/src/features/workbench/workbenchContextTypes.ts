@@ -228,6 +228,15 @@ export interface WorkbenchContextValue {
     message: string,
     workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
+  commitAndPushEnvironmentChanges: (
+    project: ProjectWithTasks | null,
+    message: string,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
+  pushEnvironmentChanges: (
+    project: ProjectWithTasks | null,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
   listEnvironmentBranches: (
     project: ProjectWithTasks | null,
     workspaceTarget?: WorkspaceTarget | null

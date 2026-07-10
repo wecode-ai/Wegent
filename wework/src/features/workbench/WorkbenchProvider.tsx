@@ -861,6 +861,10 @@ export function WorkbenchProvider({
   const stableLoadEnvironmentInfo = useStableEvent(projectActions.loadEnvironmentInfo)
   const stableLoadEnvironmentDiff = useStableEvent(projectActions.loadEnvironmentDiff)
   const stableCommitEnvironmentChanges = useStableEvent(projectActions.commitEnvironmentChanges)
+  const stableCommitAndPushEnvironmentChanges = useStableEvent(
+    projectActions.commitAndPushEnvironmentChanges
+  )
+  const stablePushEnvironmentChanges = useStableEvent(projectActions.pushEnvironmentChanges)
   const stableListEnvironmentBranches = useStableEvent(projectActions.listEnvironmentBranches)
   const stableCheckoutEnvironmentBranch = useStableEvent(projectActions.checkoutEnvironmentBranch)
   const stableCreateEnvironmentBranch = useStableEvent(projectActions.createEnvironmentBranch)
@@ -1157,6 +1161,8 @@ export function WorkbenchProvider({
     loadEnvironmentInfo: projectActions.loadEnvironmentInfo,
     loadEnvironmentDiff: projectActions.loadEnvironmentDiff,
     commitEnvironmentChanges: projectActions.commitEnvironmentChanges,
+    commitAndPushEnvironmentChanges: projectActions.commitAndPushEnvironmentChanges,
+    pushEnvironmentChanges: projectActions.pushEnvironmentChanges,
     listEnvironmentBranches: projectActions.listEnvironmentBranches,
     checkoutEnvironmentBranch: projectActions.checkoutEnvironmentBranch,
     createEnvironmentBranch: projectActions.createEnvironmentBranch,
@@ -1231,6 +1237,8 @@ export function WorkbenchProvider({
       loadEnvironmentInfo: stableLoadEnvironmentInfo,
       loadEnvironmentDiff: stableLoadEnvironmentDiff,
       commitEnvironmentChanges: stableCommitEnvironmentChanges,
+      commitAndPushEnvironmentChanges: stableCommitAndPushEnvironmentChanges,
+      pushEnvironmentChanges: stablePushEnvironmentChanges,
       listEnvironmentBranches: stableListEnvironmentBranches,
       checkoutEnvironmentBranch: stableCheckoutEnvironmentBranch,
       createEnvironmentBranch: stableCreateEnvironmentBranch,
@@ -1262,6 +1270,7 @@ export function WorkbenchProvider({
       stableCompactRuntimePaneTask,
       stableClearRuntimeGoal,
       stableCheckoutEnvironmentBranch,
+      stableCommitAndPushEnvironmentChanges,
       stableCommitEnvironmentChanges,
       stableCreateDeviceDirectory,
       stableCreateEnvironmentBranch,
@@ -1288,6 +1297,7 @@ export function WorkbenchProvider({
       stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,
       stablePauseCurrentResponse,
+      stablePushEnvironmentChanges,
       stablePrepareDeviceWorkspace,
       stableRefreshDevices,
       stableRefreshWorkLists,
