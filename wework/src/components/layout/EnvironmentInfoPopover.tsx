@@ -380,7 +380,7 @@ export function EnvironmentInfoPopover({
                       {commitStatus === 'committing' ? (
                         <div
                           data-testid="environment-commit-progress-row"
-                          className="flex h-8 w-full items-center gap-3 rounded-md bg-[#eef4ff] px-0 text-left text-[13px] leading-[18px] text-text-secondary"
+                          className="flex h-8 w-full items-center gap-3 rounded-md bg-hover px-0 text-left text-[13px] leading-[18px] text-text-secondary"
                         >
                           <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                             <LoaderCircle className="h-4 w-4 animate-spin" />
