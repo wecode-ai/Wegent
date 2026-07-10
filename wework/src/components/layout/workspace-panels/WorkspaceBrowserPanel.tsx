@@ -136,7 +136,9 @@ function observeElementIfPresent(observer: ResizeObserver, element: Element | nu
   if (element) observer.observe(element)
 }
 
-function browserAnnotationInjectionScript() {
+// Exported for DOM-level regression tests of the injected browser behavior.
+// eslint-disable-next-line react-refresh/only-export-components
+export function browserAnnotationInjectionScript() {
   return String.raw`
 (() => {
   const log = (message, data = {}) => {
@@ -157,6 +159,8 @@ function browserAnnotationInjectionScript() {
     activeEditor: null,
     activeInput: null,
   };
+  const isAnnotationLayerTarget = (target) =>
+    target instanceof Element && target.closest('#__wework_browser_annotation_layer__');
 
   window.__weworkBrowserAnnotationConsume = () => {
     const items = state.published.slice();
@@ -237,7 +241,7 @@ function browserAnnotationInjectionScript() {
 
   const validTarget = (target) => {
     if (!(target instanceof Element)) return null;
-    if (target.closest('#__wework_browser_annotation_layer__')) return null;
+    if (isAnnotationLayerTarget(target)) return null;
     if (target === document.documentElement || target === document.body) return null;
     return target;
   };
@@ -250,8 +254,9 @@ function browserAnnotationInjectionScript() {
       rect,
     });
     clearHoverBox();
-    state.draftBox = makeBox(rect);
-    layer.appendChild(state.draftBox);
+    const draftBox = makeBox(rect);
+    state.draftBox = draftBox;
+    layer.appendChild(draftBox);
 
     const editor = document.createElement('div');
     Object.assign(editor.style, {
@@ -301,16 +306,17 @@ function browserAnnotationInjectionScript() {
     });
 
     const closeEditor = (removeDraft) => {
-      layer.querySelectorAll('[data-wework-annotation="editor"]').forEach((node) => node.remove());
       editor.remove();
       if (removeDraft) {
-        state.draftBox?.remove();
+        draftBox.remove();
       }
-      if (removeDraft) {
+      if (state.draftBox === draftBox) {
         state.draftBox = null;
       }
-      state.activeEditor = null;
-      state.activeInput = null;
+      if (state.activeEditor === editor) {
+        state.activeEditor = null;
+        state.activeInput = null;
+      }
     };
 
     const publish = () => {
@@ -335,7 +341,7 @@ function browserAnnotationInjectionScript() {
         fontWeight: '700',
         padding: '0 4px',
       });
-      state.draftBox.appendChild(badge);
+      draftBox.appendChild(badge);
       const annotation = {
         id: 'browser-annotation-' + Date.now() + '-' + number,
         number,
@@ -350,7 +356,6 @@ function browserAnnotationInjectionScript() {
       state.published.push(annotation);
       log('publish annotation', annotation);
       closeEditor(false);
-      state.draftBox = null;
     };
 
     button.addEventListener('click', (event) => {
@@ -394,7 +399,7 @@ function browserAnnotationInjectionScript() {
   const keepDraftFocus = (event) => {
     if (!state.draftBox) return false;
     const target = event.target;
-    if (target instanceof Element && target.closest('#__wework_browser_annotation_layer__')) {
+    if (isAnnotationLayerTarget(target)) {
       return false;
     }
     event.preventDefault();
@@ -409,6 +414,7 @@ function browserAnnotationInjectionScript() {
 
   const handleClick = (event) => {
     if (keepDraftFocus(event)) return;
+    if (isAnnotationLayerTarget(event.target)) return;
     const target = validTarget(event.target) || state.activeElement;
     if (!target) return;
     event.preventDefault();
