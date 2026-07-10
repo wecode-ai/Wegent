@@ -1,7 +1,53 @@
 import { describe, expect, test, vi } from 'vitest'
-import { createResponseApiStreamState, emitResponseApiEvent } from './responseApiStream'
+import {
+  createResponseApiStreamState,
+  emitResponseApiEvent,
+  getCachedRuntimeTaskPlan,
+} from './responseApiStream'
 
 describe('emitResponseApiEvent', () => {
+  test('maps structured Codex task-plan updates without treating them as plan text', () => {
+    const onRuntimePlanUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onRuntimePlanUpdated },
+      'runtime.plan.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          explanation: 'Working through the repository.',
+          plan: [
+            { step: 'Inspect the workspace', status: 'completed' },
+            { step: 'Implement the UI', status: 'inProgress' },
+            { step: 'Run tests', status: 'pending' },
+          ],
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onRuntimePlanUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      explanation: 'Working through the repository.',
+      plan: [
+        { step: 'Inspect the workspace', status: 'completed' },
+        { step: 'Implement the UI', status: 'inProgress' },
+        { step: 'Run tests', status: 'pending' },
+      ],
+    })
+    expect(getCachedRuntimeTaskPlan({ deviceId: 'device-1', taskId: 'task-1' })).toEqual(
+      onRuntimePlanUpdated.mock.calls[0]?.[0]
+    )
+  })
+
   test('reads text delta offsets from response data', () => {
     const onChatChunk = vi.fn()
 

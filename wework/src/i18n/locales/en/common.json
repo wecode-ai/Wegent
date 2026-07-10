@@ -74,6 +74,8 @@
     "archive_runtime_task_remove_failed": "Task archived, but failed to remove the worktree",
     "archive_runtime_task_remove_failed_detail": "Task archived, but failed to remove the worktree: {{message}}",
     "runtime_task_running": "Running",
+    "task_plan_progress": "Step {{current}} / {{total}}",
+    "task_plan_completed": "Task steps completed",
     "subagents_status": "Subagent status",
     "subagents_running": "{{count}} running",
     "subagents_count": "{{count}} subagents",

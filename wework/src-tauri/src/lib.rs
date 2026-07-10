@@ -2781,14 +2781,10 @@ mod tests {
             "/repo/wework/scripts/dev-executor-sidecar.sh",
         );
 
-        let content = wework_cli_launcher_content(
-            std::path::Path::new("/tmp/debug/app"),
-            None,
-        );
+        let content = wework_cli_launcher_content(std::path::Path::new("/tmp/debug/app"), None);
 
-        assert!(content.contains(
-            "WEWORK_EXECUTOR_SIDECAR='/repo/wework/scripts/dev-executor-sidecar.sh'"
-        ));
+        assert!(content
+            .contains("WEWORK_EXECUTOR_SIDECAR='/repo/wework/scripts/dev-executor-sidecar.sh'"));
         assert!(content.contains("export WEWORK_EXECUTOR_SIDECAR"));
 
         match previous {

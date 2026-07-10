@@ -45,9 +45,24 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
     if (nativeCleanup || nativeSubscribePromise) return
     nativeSubscribePromise = deps
       .subscribe(event => {
+        if (import.meta.env.DEV && event.event === 'runtime.plan.updated') {
+          console.warn('[Wework] Local runtime task plan event received', {
+            taskId: stringField(asRecord(event.payload), 'taskId') ?? null,
+            deviceId: stringField(asRecord(event.payload), 'deviceId') ?? null,
+          })
+        }
         for (const [subscriptionId, subscription] of Array.from(subscriptions)) {
-          if (!isLocalExecutorEventInScope(event, subscription.handlers.scope)) {
+          const inScope = isLocalExecutorEventInScope(event, subscription.handlers.scope)
+          if (!inScope && event.event !== 'runtime.plan.updated') {
             continue
+          }
+          if (!inScope && import.meta.env.DEV) {
+            console.warn(
+              '[Wework] Local runtime task plan event cached outside subscription scope',
+              {
+                subscriptionId,
+              }
+            )
           }
           subscription.eventCount += 1
           if (event.event === 'response.output_text.delta') {
@@ -65,6 +80,9 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
             event.payload,
             subscription.state
           )
+        }
+        if (event.event === 'runtime.plan.updated') {
+          globalThis.dispatchEvent(new Event('wework-runtime-plan-updated'))
         }
       })
       .then(unlisten => {
@@ -154,6 +172,7 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onSubagentActivity ||
     handlers.onRuntimeGoalUpdated ||
     handlers.onRuntimeGoalCleared ||
+    handlers.onRuntimePlanUpdated ||
     handlers.onGuidanceApplied
   )
 }

@@ -2212,6 +2212,7 @@ fn log_codex_raw_turn_message(message: &Value) {
             | "item/reasoning/delta"
             | "item/reasoningSummary/delta"
             | "item/fileChange/patchUpdated"
+            | "turn/plan/updated"
             | "item/started"
             | "item/completed"
             | "turn/completed"

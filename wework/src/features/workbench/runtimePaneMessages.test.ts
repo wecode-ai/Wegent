@@ -40,6 +40,38 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect('messageId' in actions[0]).toBe(false)
   })
 
+  test('forwards structured task-plan updates for the active runtime task', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onRuntimePlanUpdated = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onRuntimePlanUpdated,
+    })
+
+    handlers.onRuntimePlanUpdated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      explanation: 'Implement the requested change.',
+      plan: [{ step: 'Implement', status: 'inProgress' }],
+    })
+
+    expect(onRuntimePlanUpdated).toHaveBeenCalledWith({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      explanation: 'Implement the requested change.',
+      plan: [{ step: 'Implement', status: 'inProgress' }],
+    })
+  })
+
   test('streams camelCase reasoning chunks into assistant messages', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {

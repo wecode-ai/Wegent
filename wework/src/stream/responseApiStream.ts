@@ -2,6 +2,7 @@ import type {
   ChatBlock,
   RuntimeContextUsage,
   RuntimeGoal,
+  RuntimePlanEventPayload,
   RuntimeTokenUsageBreakdown,
 } from '@/types/api'
 import type { ChatStreamHandlers } from './chatStream'
@@ -46,6 +47,7 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.guidance.applied',
   'runtime.goal.updated',
   'runtime.goal.cleared',
+  'runtime.plan.updated',
   'thread/tokenUsage/updated',
   'thread.tokenUsage.updated',
   'response.status.updated',
@@ -54,6 +56,27 @@ export const RESPONSE_API_STREAM_EVENTS = [
 
 export interface ResponseApiStreamState {
   toolContexts: Map<string, { name?: string; input?: Record<string, unknown> }>
+}
+
+const runtimeTaskPlans = new Map<string, RuntimePlanEventPayload>()
+let latestRuntimeTaskPlan: RuntimePlanEventPayload | null = null
+
+function runtimeTaskPlanKey(
+  payload: Pick<RuntimePlanEventPayload, 'deviceId' | 'taskId'>
+): string | null {
+  if (!payload.deviceId || !payload.taskId) return null
+  return `${payload.deviceId}:${payload.taskId}`
+}
+
+export function getCachedRuntimeTaskPlan(
+  address: Pick<RuntimePlanEventPayload, 'deviceId' | 'taskId'>
+): RuntimePlanEventPayload | null {
+  const key = runtimeTaskPlanKey(address)
+  return key ? (runtimeTaskPlans.get(key) ?? null) : null
+}
+
+export function getLatestRuntimeTaskPlan(): RuntimePlanEventPayload | null {
+  return latestRuntimeTaskPlan
 }
 
 export function createResponseApiStreamState(): ResponseApiStreamState {
@@ -685,6 +708,38 @@ export function emitResponseApiEvent(
       threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
       goal: null,
     })
+    return
+  }
+
+  if (eventName === 'runtime.plan.updated') {
+    const plan = data.plan
+    if (!Array.isArray(plan)) return
+    const normalizedPlan = plan.flatMap(item => {
+      const step = asRecord(item)
+      const text = stringField(step, 'step')
+      const status = stringField(step, 'status')
+      if (!text || !['pending', 'inProgress', 'completed'].includes(status ?? '')) return []
+      return [{ step: text, status: status as 'pending' | 'inProgress' | 'completed' }]
+    })
+    const payload = {
+      ...base,
+      threadId: stringField(data, 'threadId') ?? stringField(data, 'thread_id'),
+      turnId: stringField(data, 'turnId') ?? stringField(data, 'turn_id'),
+      explanation: stringField(data, 'explanation'),
+      plan: normalizedPlan,
+    }
+    if (import.meta.env.DEV) {
+      console.warn('[Wework] Runtime task plan parsed', {
+        taskId: payload.taskId ?? null,
+        deviceId: payload.deviceId ?? null,
+        threadId: payload.threadId ?? null,
+        stepCount: payload.plan.length,
+      })
+    }
+    const planKey = runtimeTaskPlanKey(payload)
+    if (planKey) runtimeTaskPlans.set(planKey, payload)
+    latestRuntimeTaskPlan = payload
+    handlers.onRuntimePlanUpdated?.(payload)
     return
   }
 

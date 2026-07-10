@@ -1473,6 +1473,13 @@ fn handle_executor_line_inner(
         }
         ExecutorLine::Event(event) => {
             update_ready_event_inner(inner, &event);
+            if event.event == "runtime.plan.updated" {
+                log::info!(
+                    "Forwarding runtime task plan event to frontend: task_id={:?}, device_id={:?}",
+                    event.payload.get("taskId"),
+                    event.payload.get("deviceId")
+                );
+            }
             app.emit(LOCAL_EXECUTOR_EVENT, event)
                 .map_err(|error| error.to_string())?;
         }
@@ -2137,8 +2144,7 @@ pub async fn local_executor_update_codex_local_config(
 #[tauri::command]
 pub async fn local_executor_initialize_codex_home(
     options: CodexHomeInitializeOptions,
-) -> Result<CodexHomeMigrationStatus, String>
-{
+) -> Result<CodexHomeMigrationStatus, String> {
     let status = codex_home_migration_status()?;
     log::info!(
         "Codex home initialization started: migrate_native_home={}, remote_apps_enabled={}, should_prompt_migration={}, native={}, wework={}",
@@ -2320,8 +2326,12 @@ mod tests {
     fn codex_local_config_remote_apps_defaults_to_disabled() {
         assert!(!read_remote_apps_enabled_from_config(""));
         assert!(!read_remote_apps_enabled_from_config("[features]\n"));
-        assert!(!read_remote_apps_enabled_from_config("[features]\napps = false\n"));
-        assert!(!read_remote_apps_enabled_from_config("[other]\napps = true\n"));
+        assert!(!read_remote_apps_enabled_from_config(
+            "[features]\napps = false\n"
+        ));
+        assert!(!read_remote_apps_enabled_from_config(
+            "[other]\napps = true\n"
+        ));
     }
 
     #[test]

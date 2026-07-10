@@ -11,6 +11,7 @@ import type {
   ProjectWithTasks,
   RuntimeContextUsage,
   RuntimeGoal,
+  RuntimePlanEventPayload,
   RuntimeWorkListResponse,
   SkillRef,
   UnifiedModel,
@@ -22,6 +23,7 @@ import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
+import { TaskPlanProgress } from './composer/TaskPlanProgress'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -102,6 +104,7 @@ export interface ChatInputProps {
   onPause?: () => void
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
+  taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
   onCancelGoalDraft?: () => void
@@ -188,6 +191,7 @@ export function ChatInput({
   onPause,
   onCompactContext,
   goal,
+  taskPlan,
   goalDraftActive = false,
   onSetGoal,
   onCancelGoalDraft,
@@ -274,6 +278,7 @@ export function ChatInput({
   if (variant === 'desktop') {
     return (
       <div className="w-full">
+        <TaskPlanProgress plan={taskPlan} />
         {queuePanel}
         {errorBanner}
         <PluginTrialTemplateStrip templates={controls.trialTemplates ?? []} />
@@ -347,6 +352,7 @@ export function ChatInput({
 
   return (
     <div className="w-full">
+      <TaskPlanProgress plan={taskPlan} />
       {queuePanel}
       {errorBanner}
       <PluginTrialTemplateStrip templates={controls.trialTemplates ?? []} />

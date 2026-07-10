@@ -10,6 +10,7 @@ import type {
   ChatBlockUpdatedPayload,
   RuntimeContextUsage,
   RuntimeGoalEventPayload,
+  RuntimePlanEventPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimeSubagentActivityPayload,
   NormalizedRuntimeMessage,
@@ -32,6 +33,7 @@ export interface RuntimeTaskStreamHandlers {
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
 }
 
@@ -246,6 +248,24 @@ export function createRuntimeTaskStreamHandlers(
     onRuntimeGoalCleared: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       handlers.onRuntimeGoalCleared?.(payload)
+    },
+    onRuntimePlanUpdated: payload => {
+      const matched = isRuntimeTaskStreamPayload(address, payload)
+      debugRuntimeStreamEvent('plan:updated', address, payload, matched, {
+        threadId: payload.threadId ?? null,
+        turnId: payload.turnId ?? null,
+        stepCount: payload.plan.length,
+      })
+      if (import.meta.env.DEV) {
+        console.info('[Wework] Runtime task plan scoped', {
+          matched,
+          currentTaskId: address.taskId,
+          eventTaskId: payload.taskId ?? null,
+          stepCount: payload.plan.length,
+        })
+      }
+      if (!matched) return
+      handlers.onRuntimePlanUpdated?.(payload)
     },
     onGuidanceApplied: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
