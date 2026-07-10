@@ -16,6 +16,8 @@ Patches JobService with:
 import logging
 from typing import Any, Dict, Optional
 
+from fastapi import HTTPException
+
 import app.services.adapters.executor_job as _executor_job_mod
 
 logger = logging.getLogger(__name__)
@@ -45,9 +47,9 @@ async def _cleanup_orphan_pod(
     """
     ek_service = _executor_job_mod.executor_kinds_service
 
-    # Step 1: try the normal stale cleanup path
-    cleanup_result = await _original_cleanup_stale_task_executor(
-        self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=False
+    # Step 1: try the normal stale cleanup path (patched version, handles 404)
+    cleanup_result = await self.cleanup_stale_task_executor(
+        db, task_id=task_id, inactive_hours=inactive_hours, dry_run=False
     )
 
     if cleanup_result.get("deleted"):
@@ -222,12 +224,29 @@ async def cleanup_orphan_pods(
             )
             continue
 
-        cleanup_result = await self._cleanup_orphan_pod(
-            task_id=task_id,
-            pod_name=pod_name,
-            inactive_hours=stale_hours,
-            db=db,
-        )
+        try:
+            cleanup_result = await self._cleanup_orphan_pod(
+                task_id=task_id,
+                pod_name=pod_name,
+                inactive_hours=stale_hours,
+                db=db,
+            )
+        except Exception as exc:
+            logger.error(
+                "+++ [executor_job] Error cleaning orphan pod task_id=%s pod_name=%s error=%s",
+                task_id,
+                pod_name,
+                exc,
+            )
+            result["failed"].append(
+                {
+                    "task_id": task_id,
+                    "pod_name": pod_name,
+                    "reason": "error",
+                    "error": str(exc),
+                }
+            )
+            continue
         _append_pod_result(result, cleanup_result, task_id=task_id)
 
     logger.info(
@@ -281,9 +300,24 @@ async def _cleanup_stale_task_executor_wecode(
         inactive_hours,
         dry_run,
     )
-    result = await _original_cleanup_stale_task_executor(
-        self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=dry_run
-    )
+    try:
+        result = await _original_cleanup_stale_task_executor(
+            self, db, task_id=task_id, inactive_hours=inactive_hours, dry_run=dry_run
+        )
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            logger.info(
+                "+++ [executor_job] Task not in DB for task_id=%s, treating as executor_not_found",
+                task_id,
+            )
+            result = {
+                "task_id": task_id,
+                "deleted": False,
+                "skipped": False,
+                "reason": "executor_not_found",
+            }
+        else:
+            raise
     logger.info(
         "+++ [executor_job] cleanup_stale_task_executor_wecode result task_id=%s result=%s",
         task_id,
