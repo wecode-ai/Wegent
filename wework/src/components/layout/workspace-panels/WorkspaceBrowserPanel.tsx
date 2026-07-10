@@ -231,11 +231,18 @@ export function browserAnnotationInjectionScript() {
     state.hoverBox = null;
   };
 
+  const removeAnnotationVisualNodes = (root) => {
+    root.querySelectorAll('[data-wework-annotation="editor"]').forEach((node) => node.remove());
+    root.querySelectorAll('[data-wework-annotation="box"]').forEach((node) => node.remove());
+    root.querySelectorAll('[data-wework-annotation="hover"]').forEach((node) => node.remove());
+  };
+
   const clearAnnotationVisuals = () => {
     clearHoverBox();
-    layer.querySelectorAll('[data-wework-annotation="editor"]').forEach((node) => node.remove());
-    layer.querySelectorAll('[data-wework-annotation="box"]').forEach((node) => node.remove());
-    layer.querySelectorAll('[data-wework-annotation="hover"]').forEach((node) => node.remove());
+    // Clear both the live layer and any orphaned nodes left outside it.
+    // Orphans can remain when a previous injection session leaked boxes.
+    removeAnnotationVisualNodes(layer);
+    removeAnnotationVisualNodes(document);
     state.nextNumber = 1;
     state.published.length = 0;
     state.draftBox = null;
@@ -1106,8 +1113,17 @@ export function WorkspaceBrowserPanel({
             label={t('workbench.browser_annotation_clear')}
             onClick={() => {
               setAnnotations([])
+              // Prefer the injected Clear (resets numbering/state). Always also
+              // wipe visual nodes from the document so orphaned boxes cannot stay
+              // after the toolbar count already cleared.
               void evalEmbeddedBrowser(
-                'window.__weworkBrowserAnnotationClear?.(); true',
+                `(() => {
+                  try { window.__weworkBrowserAnnotationClear?.(); } catch (_) {}
+                  document
+                    .querySelectorAll('[data-wework-annotation="box"], [data-wework-annotation="hover"], [data-wework-annotation="editor"]')
+                    .forEach((node) => node.remove());
+                  return true;
+                })()`,
                 label
               ).catch(error => {
                 console.error('Failed to clear embedded browser annotations:', error)

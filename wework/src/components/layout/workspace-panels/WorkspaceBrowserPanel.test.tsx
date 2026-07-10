@@ -242,6 +242,50 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveTextContent('1')
   })
 
+  test('clear button wipes page annotation boxes while staying in annotation mode', async () => {
+    mockBrowserHostRect()
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValueOnce([
+      {
+        id: 'browser-annotation-1',
+        number: 1,
+        comment: '这里要改',
+        x: 20,
+        y: 30,
+        width: 140,
+        height: 120,
+      },
+    ])
+    render(<WorkspaceBrowserPanel active onAddCodeComment={vi.fn()} />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
+    })
+
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveTextContent('1')
+    })
+
+    embeddedBrowserMocks.evalEmbeddedBrowser.mockClear()
+    fireEvent.click(screen.getByTestId('workspace-browser-annotation-clear-button'))
+
+    expect(screen.queryByTestId('workspace-browser-annotation-count')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-annotation-close-button')).toBeInTheDocument()
+    expect(embeddedBrowserMocks.evalEmbeddedBrowser).toHaveBeenCalledWith(
+      expect.stringContaining('__weworkBrowserAnnotationClear'),
+      'workspace-browser'
+    )
+    expect(embeddedBrowserMocks.evalEmbeddedBrowser).toHaveBeenCalledWith(
+      expect.stringContaining('[data-wework-annotation="box"]'),
+      'workspace-browser'
+    )
+  })
+
   test('clears page annotation boxes when code comments are sent and mode exits', async () => {
     mockBrowserHostRect()
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValueOnce([

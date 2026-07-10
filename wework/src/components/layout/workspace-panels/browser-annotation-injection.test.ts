@@ -151,4 +151,20 @@ describe('browser annotation injection', () => {
     expect(document.getElementById('__wework_browser_annotation_layer__')).not.toBeNull()
     expect(annotationWindow.__weworkBrowserAnnotationConsume?.()).toEqual([])
   })
+
+  test('clear removes orphaned boxes that are no longer under the annotation layer', () => {
+    const firstInput = openEditor(document.querySelector('#first-target')!)
+    firstInput!.value = 'First comment'
+    click(publishButton()!)
+
+    const orphan = document.querySelector('[data-wework-annotation="box"]')
+    expect(orphan).not.toBeNull()
+    // Simulate a leaked box that left the live annotation layer.
+    document.body.appendChild(orphan!)
+
+    annotationWindow.__weworkBrowserAnnotationClear?.()
+
+    expect(document.querySelectorAll('[data-wework-annotation="box"]')).toHaveLength(0)
+    expect(document.getElementById('__wework_browser_annotation_layer__')).not.toBeNull()
+  })
 })
