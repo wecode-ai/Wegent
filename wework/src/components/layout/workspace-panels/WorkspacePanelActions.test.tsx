@@ -163,7 +163,7 @@ describe('WorkspacePanelActions', () => {
 
       const popover = screen.getByTestId('environment-info-popover')
       expect(workspaceContainer).toContainElement(popover)
-      expect(popover).toHaveClass('w-[330px]')
+      expect(popover).toHaveClass('w-[300px]')
       expect(popover).not.toHaveClass('absolute', 'fixed')
     } finally {
       workspaceContainer.remove()

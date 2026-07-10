@@ -5202,7 +5202,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('environment-info-panel-container')
     )
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
-      'w-[330px]',
+      'w-[300px]',
       'bg-background',
       'text-text-primary',
       'border-border',

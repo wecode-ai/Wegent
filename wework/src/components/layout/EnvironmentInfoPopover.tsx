@@ -226,7 +226,7 @@ export function EnvironmentInfoPopover({
         createPortal(
           <div
             data-testid="environment-info-popover"
-            className="mt-3 w-[330px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
+            className="mt-3 w-[300px] rounded-2xl border border-border bg-background px-5 py-5 text-text-primary shadow-[0_18px_44px_rgba(0,0,0,0.24)] backdrop-blur-3xl backdrop-saturate-150"
           >
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[13px] font-medium text-text-primary">
