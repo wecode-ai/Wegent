@@ -12,7 +12,7 @@ import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
 import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
-import { parseRuntimeTaskRoute } from '@/lib/navigation'
+import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
@@ -26,6 +26,7 @@ import type {
   DeviceInfo,
   ProjectWithTasks,
   RuntimeTaskAddress,
+  RuntimeTaskCreateResponse,
   RuntimeGoal,
   RuntimeGuidanceResponse,
   RuntimeTranscriptResponse,
@@ -700,6 +701,20 @@ function ProjectSendProbe() {
       </button>
       <button type="button" onClick={() => void paneSession.send()}>
         send
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const address = {
+            deviceId: 'device-1',
+            taskId: 'runtime-b',
+            workspacePath: '/workspace/project-alpha',
+          }
+          window.history.pushState({}, '', buildRuntimeTaskRoute(address))
+          void workbench.openRuntimeTask(address)
+        }}
+      >
+        open runtime b
       </button>
       <MessageList
         messages={paneSession.messages}
@@ -2098,6 +2113,78 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
       deviceId: 'device-1',
       taskId: request.taskId,
+    })
+  })
+
+  test('does not reopen a newly created task after the user switches tasks', async () => {
+    const createResponse = deferred<RuntimeTaskCreateResponse>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-b',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime B',
+                      runtime: 'codex',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      createRuntimeTask: vi.fn(() => createResponse.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(await screen.findByText('select project'))
+    await userEvent.click(screen.getByText('set input'))
+    await userEvent.click(screen.getByText('send'))
+    await waitFor(() => expect(runtimeWorkApi.createRuntimeTask).toHaveBeenCalledTimes(1))
+    const optimisticRequest = runtimeWorkApi.createRuntimeTask.mock.calls[0][0]
+
+    await userEvent.click(screen.getByText('open runtime b'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+        'device-1:runtime-b'
+      )
+    )
+
+    await act(async () => {
+      createResponse.resolve({
+        accepted: true,
+        deviceId: 'device-1',
+        taskId: optimisticRequest.taskId,
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+      })
+      await createResponse.promise
+    })
+
+    expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent(
+      'device-1:runtime-b'
+    )
+    expect(parseRuntimeTaskRoute(window.location.pathname, window.location.search)).toEqual({
+      deviceId: 'device-1',
+      taskId: 'runtime-b',
     })
   })
 

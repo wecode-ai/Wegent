@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { describe, expect, test, vi } from 'vitest'
@@ -187,6 +187,68 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('skill-selector-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('project-work-button')).toBeInTheDocument()
     expect(screen.queryByTestId('voice-input-button')).not.toBeInTheDocument()
+  })
+
+  test('does not move selection when an unfocused composer syncs its value', async () => {
+    const renderComposers = (backgroundValue?: string) => (
+      <>
+        <ChatInput
+          value="foreground draft"
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+        />
+        {backgroundValue !== undefined ? (
+          <ChatInput
+            value={backgroundValue}
+            onChange={vi.fn()}
+            onSubmit={vi.fn()}
+            disabled={false}
+            variant="desktop"
+          />
+        ) : null}
+      </>
+    )
+    const { rerender } = render(renderComposers())
+    const foregroundComposer = screen.getByTestId('chat-message-input')
+    foregroundComposer.focus()
+    await waitFor(() => {
+      expect(foregroundComposer).toHaveFocus()
+      expect(foregroundComposer.contains(window.getSelection()?.anchorNode ?? null)).toBe(true)
+    })
+
+    const textNode = document.createTreeWalker(foregroundComposer, NodeFilter.SHOW_TEXT).nextNode()
+    expect(textNode).not.toBeNull()
+    const range = document.createRange()
+    range.setStart(textNode!, 5)
+    range.collapse(true)
+    const selection = window.getSelection()!
+    act(() => {
+      selection.removeAllRanges()
+      selection.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+
+    expect(foregroundComposer).toHaveFocus()
+    expect(foregroundComposer.contains(window.getSelection()?.anchorNode ?? null)).toBe(true)
+    expect(window.getSelection()?.anchorOffset).toBe(5)
+
+    rerender(renderComposers('background initial value'))
+
+    await waitFor(() => {
+      expect(foregroundComposer).toHaveFocus()
+      expect(foregroundComposer.contains(window.getSelection()?.anchorNode ?? null)).toBe(true)
+      expect(window.getSelection()?.anchorOffset).toBe(5)
+    })
+
+    rerender(renderComposers('background update'))
+
+    await waitFor(() => {
+      expect(foregroundComposer).toHaveFocus()
+      expect(foregroundComposer.contains(window.getSelection()?.anchorNode ?? null)).toBe(true)
+      expect(window.getSelection()?.anchorOffset).toBe(5)
+    })
   })
 
   test('selects plan mode from the add context menu', async () => {
