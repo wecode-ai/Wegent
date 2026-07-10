@@ -75,7 +75,9 @@ describe('createLocalAppServices', () => {
       name: 'local-wework',
       is_active: true,
     })
-    await expect(services.modelApi.listModels()).resolves.toEqual({
+    const models = await services.modelApi.listModels()
+
+    expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
           name: 'gpt-5.5',
@@ -96,23 +98,12 @@ describe('createLocalAppServices', () => {
           }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
-        expect.objectContaining({
-          name: 'Sol',
-          type: 'runtime',
-          modelId: 'Sol',
-        }),
-        expect.objectContaining({
-          name: 'Terra',
-          type: 'runtime',
-          modelId: 'Terra',
-        }),
-        expect.objectContaining({
-          name: 'Luna',
-          type: 'runtime',
-          modelId: 'Luna',
-        }),
       ]),
     })
+    const modelIds = models.data.map(model => model.modelId)
+    expect(modelIds).not.toContain('Sol')
+    expect(modelIds).not.toContain('Terra')
+    expect(modelIds).not.toContain('Luna')
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
