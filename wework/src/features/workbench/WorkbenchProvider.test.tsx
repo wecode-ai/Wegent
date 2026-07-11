@@ -954,6 +954,21 @@ function ArchiveRuntimeTaskProbe() {
     <div>
       <span data-testid="workbench-error">{workbench.state.error ?? ''}</span>
       <span data-testid="archive-result">{lastArchiveResult}</span>
+      <span data-testid="current-runtime-task">
+        {workbench.state.currentRuntimeTask?.taskId ?? ''}
+      </span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openRuntimeTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-b',
+          })
+        }
+      >
+        open runtime b
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -3786,6 +3801,43 @@ describe('WorkbenchProvider runtime tasks', () => {
       'device-1',
       expect.objectContaining({ command_key: 'git_worktree_remove' })
     )
+  })
+
+  test('keeps a newly opened task selected when a different task finishes archiving', async () => {
+    const archiveRequest = deferred<{
+      accepted: boolean
+      taskId: string
+      workspacePath: string
+      runtime: 'codex'
+    }>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork()),
+      archiveConversation: vi.fn().mockReturnValue(archiveRequest.promise),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ArchiveRuntimeTaskProbe />, services)
+
+    await waitFor(() => expect(screen.getByText('archive worktree task')).toBeInTheDocument())
+    await userEvent.click(screen.getByText('archive worktree task'))
+    await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
+
+    await userEvent.click(screen.getByText('open runtime b'))
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task')).toHaveTextContent('runtime-b')
+    )
+
+    archiveRequest.resolve({
+      accepted: true,
+      taskId: 'runtime-worktree',
+      workspacePath: '/workspace/worktrees/9/project-alpha',
+      runtime: 'codex',
+    })
+
+    await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
+    expect(screen.getByTestId('current-runtime-task')).toHaveTextContent('runtime-b')
   })
 
   test('force archives and removes a dirty worktree task', async () => {

@@ -194,7 +194,7 @@ interface ArchiveConversationsConfirmDialogProps {
 
 const PROJECT_CREATE_MENU_WIDTH = 248
 const PROJECT_CREATE_MENU_MARGIN = 8
-const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 2200
+const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 3000
 const MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS = 'left-[92px]'
 const SIDEBAR_CHROME_TAB_BUTTON_CLASS =
   'group relative flex h-8 w-8 min-w-0 items-center justify-center rounded-lg px-0 text-center text-[13px] font-medium leading-none transition-colors'
@@ -1406,7 +1406,8 @@ function RuntimeTaskRow({
             ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
             : marked
               ? 'bg-[rgb(var(--color-sidebar-marked))] text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-marked-hover))]'
-              : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
+              : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]',
+          (archivePending || archiving) && 'hidden'
         )}
       >
         <span title={task.title} className="min-w-0 flex-1 truncate">
