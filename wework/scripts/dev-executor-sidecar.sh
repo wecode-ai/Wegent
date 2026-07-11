@@ -14,7 +14,38 @@ if [ "${WEGENT_CARGO_TARGET_DIR_AUTO:-0}" = "1" ]; then
   unset CARGO_TARGET_DIR
   unset WEGENT_CARGO_TARGET_DIR_AUTO
 fi
-configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor"
+
+executor_source_cache_key() {
+  (
+    cd "$EXECUTOR_DIR"
+    {
+      shasum Cargo.toml Cargo.lock
+      find src -type f -exec shasum {} + | LC_ALL=C sort
+    } | shasum | awk '{print $1}'
+  )
+}
+
+configure_executor_dev_target_dir() {
+  if [ "${WEGENT_DISABLE_SHARED_CARGO_TARGET:-0}" = "1" ] || [ -n "${CARGO_TARGET_DIR:-}" ]; then
+    configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor"
+    return 0
+  fi
+
+  local cache_root
+  cache_root="$(wegent_cargo_cache_root)"
+  if [ -z "$cache_root" ]; then
+    configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor"
+    return 0
+  fi
+
+  export CARGO_TARGET_DIR="$cache_root/executor-dev/$(executor_source_cache_key)"
+  export WEGENT_CARGO_TARGET_DIR_AUTO=1
+  mkdir -p "$CARGO_TARGET_DIR"
+  configure_wegent_sccache "$PROJECT_DIR" "$CARGO_TARGET_DIR"
+}
+
+configure_executor_dev_target_dir
+export WEGENT_EXECUTOR_SOURCE_DIR="$EXECUTOR_DIR"
 
 if [ "${WEGENT_EXECUTOR_DEV_RELOAD:-1}" != "0" ] && [ -z "${WEGENT_EXECUTOR_BINARY:-}" ]; then
   cargo build \
