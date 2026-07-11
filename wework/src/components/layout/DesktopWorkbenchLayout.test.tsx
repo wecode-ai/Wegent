@@ -1,6 +1,6 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
@@ -396,10 +396,6 @@ function createDefaultImNotificationSettings() {
 }
 
 describe('DesktopWorkbenchLayout', () => {
-  afterEach(() => {
-    cleanup()
-  })
-
   function createDeferred<T>() {
     let resolve!: (value: T) => void
     let reject!: (error: unknown) => void
@@ -655,49 +651,13 @@ describe('DesktopWorkbenchLayout', () => {
   const activeProjectRuntimeTask = {
     deviceId: 'device-1',
     workspacePath: '/workspace/github_wegent',
-    taskId: 'runtime-github-wegent',
+    taskId: 'runtime-project-1',
   }
-
-  const activeProjectRuntimeWork: RuntimeWorkListResponse = {
-    projects: [
-      {
-        project: { key: 'project:1', id: 1, name: 'github_wegent' },
-        deviceWorkspaces: [
-          {
-            id: 1,
-            projectId: 1,
-            deviceId: activeProjectRuntimeTask.deviceId,
-            available: true,
-            mapped: true,
-            workspacePath: activeProjectRuntimeTask.workspacePath,
-            tasks: [
-              {
-                taskId: activeProjectRuntimeTask.taskId,
-                workspacePath: activeProjectRuntimeTask.workspacePath,
-                title: 'Runtime task',
-                runtime: 'codex',
-              },
-            ],
-          },
-        ],
-      },
-    ],
-    chats: [],
-    totalTasks: 1,
-  }
-
-  const activeProjectRuntimeState = {
-    ...activeProjectState,
-    currentRuntimeTask: activeProjectRuntimeTask,
-    runtimeWork: activeProjectRuntimeWork,
-    selectedDeviceWorkspaceId: 1,
-  }
-
-  const activeRuntimeWorkspaceTarget = {
-    deviceId: activeProjectRuntimeTask.deviceId,
-    path: activeProjectRuntimeTask.workspacePath,
+  const activeProjectRuntimeTarget = {
+    deviceId: 'device-1',
+    path: '/workspace/github_wegent',
     source: 'runtime' as const,
-    taskId: activeProjectRuntimeTask.taskId,
+    taskId: 'runtime-project-1',
   }
 
   function createPendingRequestUserInputMessage(includeAdjustment = false): WorkbenchMessage {
@@ -1496,7 +1456,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-plan-panel')).not.toHaveTextContent('新生成的计划')
   })
 
-  test('renders project-specific empty prompt after selecting a project', () => {
+  test('renders a project-specific empty prompt that opens the project chooser', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1508,18 +1468,28 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '我们应该在 gitlab-wegent 中构建什么？'
+      '我们应该在 gitlab-wegent 中做些什么？'
     )
+    expect(screen.getByTestId('empty-project-title-button')).toHaveAttribute('title', '更改项目')
+
+    await userEvent.click(screen.getByTestId('empty-project-title-button'))
+
+    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
   })
 
   test('keeps the empty composer at the intended desktop proportion', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
+      'flex',
+      'min-h-0',
+      'flex-1',
+      'flex-col'
+    )
+    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
       'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]',
-      '-translate-y-12'
+      'shrink-0'
     )
   })
 
@@ -1544,10 +1514,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
-      'flex',
-      'flex-col',
       'overflow-visible',
-      'scrollbar-none'
+      'scrollbar-none',
+      'flex',
+      'flex-col'
     )
     expect(screen.getByTestId('desktop-chat-scroll')).not.toHaveClass(
       'pb-[var(--desktop-floating-composer-clearance)]'
@@ -1587,17 +1557,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('project-work-button')).not.toBeInTheDocument()
   })
 
-  test('renders subagent status in the docked environment panel without shifting messages', () => {
-    mockDesktopWorkbenchMainWidth(1100)
+  test('renders subagent status below the top bar without shifting messages', () => {
+    mockDesktopWorkbenchMainWidth(1024)
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        state={{
-          ...baseProps.state,
-          currentRuntimeTask: activeProjectRuntimeTask,
-          runtimeWork: activeProjectRuntimeWork,
-          selectedDeviceWorkspaceId: 1,
-        }}
+        state={{ ...baseProps.state, currentRuntimeTask: activeProjectRuntimeTask }}
         messages={[
           {
             id: 'message-1',
@@ -2008,26 +1973,25 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    const scrollContainer = screen.getByTestId('desktop-workbench-content')
-    Object.defineProperty(scrollContainer, 'clientHeight', {
+    const scrollContainer = screen.getByTestId('desktop-chat-scroll')
+    const scroller = screen.getByTestId('desktop-workbench-content')
+    Object.defineProperty(scroller, 'clientHeight', {
       value: 200,
       configurable: true,
     })
-    Object.defineProperty(scrollContainer, 'scrollHeight', {
+    Object.defineProperty(scroller, 'scrollHeight', {
       value: 600,
       configurable: true,
     })
-    Object.defineProperty(scrollContainer, 'scrollTop', {
+    Object.defineProperty(scroller, 'scrollTop', {
       value: 0,
       writable: true,
       configurable: true,
     })
 
-    fireEvent.scroll(screen.getByTestId('desktop-chat-scroll'))
+    fireEvent.scroll(scrollContainer)
 
-    await waitFor(() =>
-      expect(screen.getByTestId('scroll-to-bottom-button')).toHaveClass('bottom-4', 'z-popover')
-    )
+    expect(await screen.findByTestId('scroll-to-bottom-button')).toHaveClass('bottom-4', 'z-10')
   })
 
   test('keeps queued messages inside the sticky composer footer flow', () => {
@@ -2201,9 +2165,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('transition-[margin]', 'duration-[300ms]')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('will-change-[margin]')
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'max-w-[calc(100%_-_2rem)]'
+    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
+      'w-[min(46rem,calc(100%_-_2rem))]'
     )
     expect(document.querySelector('aside')).toBeInTheDocument()
 
@@ -2212,9 +2175,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('新对话')).toBeInTheDocument()
     expect(sidebar).toHaveStyle({ width: '240px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'max-w-[calc(100%_-_2rem)]'
+    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
+      'w-[min(46rem,calc(100%_-_2rem))]'
     )
   })
 
@@ -5221,14 +5183,15 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
   })
 
-  test.skip('keeps the environment info panel open until its icon is clicked', async () => {
+  test('keeps the environment info panel open until its icon is clicked', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
           ...baseProps.state,
-          currentProject: activeProjectState.currentProject,
           currentRuntimeTask: activeProjectRuntimeTask,
+          currentProject: activeProjectState.currentProject,
           devices: [
             {
               id: 1,
@@ -5254,16 +5217,14 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
-    const environmentPopover = await screen.findByTestId('environment-info-popover')
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
     expect(screen.getByTestId('environment-info-panel-container')).toContainElement(
-      environmentPopover
+      screen.getByTestId('environment-info-popover')
     )
     expect(screen.getByTestId('desktop-workbench-content')).toContainElement(
       screen.getByTestId('environment-info-panel-container')
     )
-    expect(environmentPopover).toHaveClass(
+    expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[300px]',
       'bg-background',
       'text-text-primary',
@@ -5271,9 +5232,12 @@ describe('DesktopWorkbenchLayout', () => {
       'backdrop-blur-3xl',
       'backdrop-saturate-150'
     )
-    expect(environmentPopover).not.toHaveClass('shadow-[0_18px_44px_rgba(0,0,0,0.24)]')
+    expect(screen.getByTestId('environment-info-popover')).not.toHaveClass(
+      'shadow-[0_18px_44px_rgba(0,0,0,0.24)]'
+    )
     expect(screen.getByText('环境信息')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('+173')).toBeInTheDocument())
     const deviceSection = screen.getByTestId('environment-device-section')
     const gitSection = screen.getByTestId('environment-git-section')
     expect(deviceSection).not.toContainElement(gitSection)
@@ -5325,7 +5289,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
   })
 
-  test.skip('opens environment changes review in the right workspace panel', async () => {
+  test('opens environment changes review in the right workspace panel', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onLoadEnvironmentDiff = vi
       .fn()
       .mockResolvedValue(
@@ -5339,8 +5304,6 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentRuntimeTask: activeProjectRuntimeTask,
-          runtimeWork: activeProjectRuntimeWork,
-          selectedDeviceWorkspaceId: 1,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -5361,15 +5324,10 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(await screen.findByTestId('environment-changes-button'))
 
     await waitFor(() =>
-      expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(
-        null,
-        activeRuntimeWorkspaceTarget,
-        'branch'
-      )
+      expect(onLoadEnvironmentDiff).toHaveBeenCalledWith(null, activeProjectRuntimeTarget, 'branch')
     )
     expect(screen.queryByRole('dialog', { name: '本轮文件变更' })).not.toBeInTheDocument()
     expect(screen.getByTestId('right-workspace-panel')).toBeInTheDocument()
@@ -5381,7 +5339,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('file-changes-review-panel')).toHaveTextContent('new')
   })
 
-  test.skip('submits environment commits from the popover', async () => {
+  test('submits environment commits from the popover', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onCommitEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
     render(
       <DesktopWorkbenchLayout
@@ -5390,8 +5349,6 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentRuntimeTask: activeProjectRuntimeTask,
-          runtimeWork: activeProjectRuntimeWork,
-          selectedDeviceWorkspaceId: 1,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -5412,25 +5369,22 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(await screen.findByTestId('environment-commit-button'))
-    await userEvent.type(
-      await screen.findByTestId('environment-commit-message-input'),
-      'feat: ship'
-    )
-    await userEvent.click(await screen.findByTestId('environment-confirm-commit-button'))
+    await userEvent.type(screen.getByTestId('environment-commit-message-input'), 'feat: ship')
+    await userEvent.click(screen.getByTestId('environment-confirm-commit-button'))
 
     await waitFor(() =>
       expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(
         null,
         'feat: ship',
-        activeRuntimeWorkspaceTarget
+        activeProjectRuntimeTarget
       )
     )
     expect(screen.getByText('已提交')).toBeInTheDocument()
   })
 
-  test.skip('submits an empty environment commit message so AI can generate it', async () => {
+  test('submits an empty environment commit message so AI can generate it', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onCommitEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
     render(
       <DesktopWorkbenchLayout
@@ -5439,8 +5393,6 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentRuntimeTask: activeProjectRuntimeTask,
-          runtimeWork: activeProjectRuntimeWork,
-          selectedDeviceWorkspaceId: 1,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -5461,23 +5413,19 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(await screen.findByTestId('environment-commit-button'))
 
-    const confirmButton = await screen.findByTestId('environment-confirm-commit-button')
+    const confirmButton = screen.getByTestId('environment-confirm-commit-button')
     expect(confirmButton).toBeEnabled()
     await userEvent.click(confirmButton)
 
     await waitFor(() =>
-      expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(
-        null,
-        '',
-        activeRuntimeWorkspaceTarget
-      )
+      expect(onCommitEnvironmentChanges).toHaveBeenCalledWith(null, '', activeProjectRuntimeTarget)
     )
   })
 
-  test.skip('renders the environment commit menu as the compact commit or push panel', async () => {
+  test('renders the environment commit menu as the compact commit or push panel', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onCommitAndPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
     const onPushEnvironmentChanges = vi.fn().mockResolvedValue(undefined)
 
@@ -5489,8 +5437,6 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentRuntimeTask: activeProjectRuntimeTask,
-          runtimeWork: activeProjectRuntimeWork,
-          selectedDeviceWorkspaceId: 1,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -5511,15 +5457,13 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
     const popover = await screen.findByTestId('environment-info-popover')
     const commitMenuButton = await screen.findByTestId('environment-commit-button')
     expect(commitMenuButton).toHaveTextContent('提交或推送')
 
     await userEvent.click(commitMenuButton)
 
-    const commitPanel = await screen.findByTestId('environment-commit-form')
+    const commitPanel = screen.getByTestId('environment-commit-form')
     expect(commitPanel).toHaveClass('fixed', 'left-1/2', 'w-[430px]', 'rounded-xl')
     expect(popover).not.toContainElement(commitPanel)
     expect(commitPanel).toHaveTextContent('包含未暂存的更改')
@@ -5536,18 +5480,19 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onCommitAndPushEnvironmentChanges).toHaveBeenCalledWith(
         null,
         '',
-        activeRuntimeWorkspaceTarget
+        activeProjectRuntimeTarget
       )
     )
 
-    await userEvent.click(await screen.findByTestId('environment-commit-button'))
-    await userEvent.click(await screen.findByTestId('environment-push-button'))
+    await userEvent.click(screen.getByTestId('environment-commit-button'))
+    await userEvent.click(screen.getByTestId('environment-push-button'))
     await waitFor(() =>
-      expect(onPushEnvironmentChanges).toHaveBeenCalledWith(null, activeRuntimeWorkspaceTarget)
+      expect(onPushEnvironmentChanges).toHaveBeenCalledWith(null, activeProjectRuntimeTarget)
     )
   })
 
-  test.skip('shows the environment commit progress row while generating a message', async () => {
+  test('shows the environment commit progress row while generating a message', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onCommitEnvironmentChanges = vi.fn(
       () =>
         new Promise<void>(() => {
@@ -5562,8 +5507,6 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentRuntimeTask: activeProjectRuntimeTask,
-          runtimeWork: activeProjectRuntimeWork,
-          selectedDeviceWorkspaceId: 1,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -5584,9 +5527,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(await screen.findByTestId('environment-commit-button'))
-    await userEvent.click(await screen.findByTestId('environment-confirm-commit-button'))
+    await userEvent.click(screen.getByTestId('environment-confirm-commit-button'))
 
     await waitFor(() => expect(onCommitEnvironmentChanges).toHaveBeenCalled())
     expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
@@ -5597,7 +5539,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-commit-progress-stop-icon')).toBeInTheDocument()
   })
 
-  test.skip('shows the environment push progress row while pushing', async () => {
+  test('shows the environment push progress row while pushing', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onPushEnvironmentChanges = vi.fn(
       () =>
         new Promise<void>(() => {
@@ -5612,8 +5555,6 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentRuntimeTask: activeProjectRuntimeTask,
-          runtimeWork: activeProjectRuntimeWork,
-          selectedDeviceWorkspaceId: 1,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -5634,9 +5575,8 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(await screen.findByTestId('environment-commit-button'))
-    await userEvent.click(await screen.findByTestId('environment-push-button'))
+    await userEvent.click(screen.getByTestId('environment-push-button'))
 
     await waitFor(() => expect(onPushEnvironmentChanges).toHaveBeenCalled())
     expect(screen.queryByTestId('environment-commit-form')).not.toBeInTheDocument()
@@ -5645,7 +5585,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-commit-progress-stop-icon')).toBeInTheDocument()
   })
 
-  test.skip('switches and creates branches from the environment popover', async () => {
+  test('switches and creates branches from the environment popover', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     const onListEnvironmentBranches = vi
       .fn()
       .mockResolvedValue(['main', 'human/chipmunk-20260603-053420', 'human/alpaca-20260603-050330'])
@@ -5661,8 +5602,6 @@ describe('DesktopWorkbenchLayout', () => {
         state={{
           ...baseProps.state,
           currentRuntimeTask: activeProjectRuntimeTask,
-          runtimeWork: activeProjectRuntimeWork,
-          selectedDeviceWorkspaceId: 1,
           currentProject: {
             id: 1,
             name: 'github_wegent',
@@ -5683,7 +5622,6 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
     await userEvent.click(await screen.findByTestId('environment-branch-row'))
 
     expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
@@ -5700,32 +5638,34 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onCheckoutEnvironmentBranch).toHaveBeenCalledWith(
         null,
         'human/alpaca-20260603-050330',
-        activeRuntimeWorkspaceTarget
+        activeProjectRuntimeTarget
       )
     )
 
     await userEvent.click(await screen.findByTestId('environment-branch-row'))
     await userEvent.click(await screen.findByTestId('environment-open-new-branch-button'))
-    await userEvent.type(
-      await screen.findByTestId('environment-new-branch-input'),
-      'human/new-branch'
-    )
-    await userEvent.click(await screen.findByTestId('environment-confirm-new-branch-button'))
+    await userEvent.type(screen.getByTestId('environment-new-branch-input'), 'human/new-branch')
+    await userEvent.click(screen.getByTestId('environment-confirm-new-branch-button'))
 
     await waitFor(() =>
       expect(onCreateEnvironmentBranch).toHaveBeenCalledWith(
         null,
         'human/new-branch',
-        activeRuntimeWorkspaceTarget
+        activeProjectRuntimeTarget
       )
     )
   })
 
-  test.skip('does not reopen the branch menu when the environment popover is reopened', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} state={activeProjectRuntimeState} />)
+  test('does not reopen the branch menu when the environment popover is reopened', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
+    )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-    await userEvent.click(await screen.findByTestId('environment-branch-row'))
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
 
     expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
 
@@ -5738,11 +5678,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
   })
 
-  test.skip('keeps environment diff stats and branch row visible without a current branch', async () => {
+  test('keeps environment diff stats and branch row visible without a current branch', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        state={activeProjectRuntimeState}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
         onLoadEnvironmentInfo={vi.fn().mockResolvedValue({
           additions: '+55',
           deletions: '-8',
@@ -5756,8 +5697,6 @@ describe('DesktopWorkbenchLayout', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-
     await waitFor(() => expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument())
     expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent(
       '/workspace/plain-folder'
@@ -5766,16 +5705,21 @@ describe('DesktopWorkbenchLayout', () => {
     expect(gitSection).toHaveTextContent('变更')
     expect(gitSection).toHaveTextContent('+55')
     expect(gitSection).toHaveTextContent('-8')
-    expect(await screen.findByTestId('environment-branch-row')).toHaveTextContent('暂无分支')
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('暂无分支')
     expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('create-pull-request-button')).not.toBeInTheDocument()
   })
 
-  test.skip('closes the branch menu when Escape is pressed', async () => {
-    render(<DesktopWorkbenchLayout {...baseProps} state={activeProjectRuntimeState} />)
+  test('closes the branch menu when Escape is pressed', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
+    )
 
-    await userEvent.click(screen.getByTestId('environment-info-button'))
-    await userEvent.click(await screen.findByTestId('environment-branch-row'))
+    await userEvent.click(screen.getByTestId('environment-branch-row'))
 
     expect(await screen.findByTestId('environment-branch-menu')).toBeInTheDocument()
 

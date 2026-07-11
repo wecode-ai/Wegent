@@ -4,7 +4,7 @@ sidebar_position: 34
 
 # E2E Automation
 
-Wework provides a dedicated Playwright E2E entrypoint and a test-only frontend automation bridge for operating the Wework Vite/React frontend in CI. The default entrypoint runs in browser mode, which covers most frontend interactions; native window behavior should be covered separately with Tauri/WebDriver tests when needed.
+Wework provides a dedicated Playwright E2E entrypoint and a test-only frontend automation bridge for operating the Wework Vite/React frontend in CI. The default entrypoint runs in browser mode, which covers most frontend interactions; the desktop task-flow E2E below covers native-window and task-execution behavior.
 
 ## Running Tests
 
@@ -18,6 +18,12 @@ Run Wework E2E:
 
 ```bash
 pnpm --filter wework e2e
+```
+
+Run the real desktop task-flow E2E:
+
+```bash
+pnpm --filter wework e2e:desktop
 ```
 
 The command starts a test-only Vite server through `wework/playwright.config.ts`:
@@ -40,6 +46,28 @@ Default configuration:
 - `WEWORK_RESPONSE_API_MOCK_URL`: `http://127.0.0.1:9998`
 
 Tests do not mock backend APIs. When Backend is not running, the login-page smoke test only verifies that the frontend renders the login entrypoint. Business flows after login must start a real Backend and required services in CI.
+
+## Desktop Task-Flow E2E
+
+`wework/e2e/desktop/task-flow.e2e.mjs` covers the real task lifecycle in a local workspace:
+
+1. Builds and starts the real Tauri Wework application, opening an isolated workspace with `--open-workspace`.
+2. Starts the real `wegent-executor` sidecar, which starts a real `codex app-server`.
+3. Fills in a task and clicks send in the native WebView, then waits for the real conversation to render.
+4. Verifies the request issued by Codex to the model service, the workspace file written by a real Codex tool call, and the final UI response.
+5. Sends a follow-up in the same conversation and verifies its request and rendered response.
+6. Starts a streaming response, cancels it through the desktop UI, and verifies the stopped state and closed model stream.
+7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
+
+The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback OpenAI Responses-compatible service as a custom Codex model provider. That service returns deterministic tool calls and final text; the tool call is still executed by real Codex in the isolated workspace.
+
+The environment needs Rust, Tauri build dependencies, and a real Codex binary. The runner finds `codex` on `PATH` by default; an installed or `prepare:codex`-prepared real binary can also be selected explicitly:
+
+```bash
+CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
+```
+
+Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Tauri application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
 
 ## Responses API Mock
 
@@ -73,17 +101,19 @@ Available methods:
 - `clearAuthToken()`: clears the auth token.
 - `clearStorage()`: clears local auth state and browser storage.
 
+The desktop E2E build additionally injects `VITE_WEWORK_DESKTOP_E2E_CONTROL_URL`. Only when E2E mode and this URL are both present does the frontend poll a local loopback controller for `click`, `fill`, and wait assertions; normal development and production builds have no controller endpoint. The controller drives real WebView DOM events and does not replace task, model-selection, Executor, or Codex implementations.
+
 ## Test Helper
 
 `wework/e2e/fixtures/wework-app.ts` provides a `WeworkApp` Playwright helper that wraps `window.__WEWORK_E2E__` in typed test operations:
 
 ```ts
-const app = new WeworkApp(page)
+const app = new WeworkApp(page);
 
-await app.goto("/")
-await app.waitForTestId("login-form")
-await app.navigate("/apps")
-const route = await app.route()
+await app.goto("/");
+await app.waitForTestId("login-form");
+await app.navigate("/apps");
+const route = await app.route();
 ```
 
 New E2E tests should prefer this helper and `data-testid` locators instead of unstable CSS selectors or visible copy.
@@ -96,6 +126,13 @@ CI can run Wework E2E as a separate job:
 pnpm install --frozen-lockfile
 pnpm --filter wework exec playwright install chromium
 pnpm --filter wework e2e
+```
+
+Desktop task-flow E2E requires a Linux runner with a graphical session, for example:
+
+```bash
+pnpm --filter wework prepare:codex
+xvfb-run -a pnpm --filter wework e2e:desktop
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.

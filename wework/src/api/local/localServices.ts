@@ -67,6 +67,8 @@ import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import { requestLocalCodexOfficialModels } from './codexOfficialModels'
 import {
+  codexModelPickerLabel,
+  codexModelPickerSortOrder,
   codexOfficialModelIdFromModelName,
   codexOfficialModelName,
   CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME,
@@ -119,10 +121,11 @@ function localCodexModelFamily(model: CodexOfficialModel): string {
 function localCodexModel(model: CodexOfficialModel, codexAuthConfigured: boolean): UnifiedModel {
   const modelFamily = localCodexModelFamily(model)
   const providerFamilyLabel = model.providerType === 'provider' ? model.providerName : undefined
+  const modelLabel = codexModelPickerLabel(model.modelId)
   return {
     name: codexOfficialModelName(model),
     type: 'runtime',
-    displayName: model.modelId,
+    displayName: modelLabel,
     provider: 'local',
     modelId: model.modelId,
     config: {
@@ -137,9 +140,12 @@ function localCodexModel(model: CodexOfficialModel, codexAuthConfigured: boolean
       ui: {
         family: modelFamily,
         ...(providerFamilyLabel ? { familyLabel: providerFamilyLabel } : {}),
-        modelLabel: model.modelId,
+        modelLabel,
+        reasoningEfforts: model.supportedReasoningEfforts,
+        defaultReasoningEffort: model.defaultReasoningEffort,
         controls: ['speed'],
-        sortOrder: model.providerType === 'provider' ? 15 : 10,
+        sortOrder:
+          (model.providerType === 'provider' ? 100 : 0) + codexModelPickerSortOrder(model.modelId),
       },
     },
     runtime: {

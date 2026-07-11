@@ -328,6 +328,13 @@ export function reduceWorkbenchMessages<
               ...clearMessageError(message),
               content: action.content ?? message.content,
               streamTextOffset: undefined,
+              // A completed response is authoritative. Do not retain a stream
+              // offset or truncation metadata from a superseded partial response.
+              ...(action.content !== undefined && {
+                contentTruncated: undefined,
+                contentOriginalChars: undefined,
+                contentLoadRef: undefined
+              }),
               status: 'done' as const,
               blocks: finalizeProcessingBlocks(
                 action.blocks ?? message.blocks,
@@ -367,6 +374,11 @@ export function reduceWorkbenchMessages<
           ? limitWorkbenchMessage({
               ...clearMessageError(message),
               content: action.content ?? message.content,
+              ...(action.content !== undefined && {
+                contentTruncated: undefined,
+                contentOriginalChars: undefined,
+                contentLoadRef: undefined
+              }),
               status: 'done' as const,
               runtimeStatus: 'cancelled' as const,
               completedAt,

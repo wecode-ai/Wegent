@@ -416,19 +416,14 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     typeof subtaskId === 'string'
       ? normalizeProcessingBlocks(subtaskId, message.blocks, messageCreatedAtMs)
       : []
+  const contentTruncated = hasTruncatedRuntimeContent(message)
   return {
     id: message.id,
     role,
     subtaskId,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
-    contentTruncated:
-      message.contentTruncated === true || message.content_truncated === true ? true : undefined,
-    contentOriginalChars:
-      typeof message.contentOriginalChars === 'number'
-        ? message.contentOriginalChars
-        : typeof message.content_original_chars === 'number'
-          ? message.content_original_chars
-          : undefined,
+    contentTruncated: contentTruncated || undefined,
+    contentOriginalChars: contentTruncated ? runtimeMessageOriginalChars(message) : undefined,
     runtimeMessageIndex,
     status,
     runtimeStatus,
@@ -443,6 +438,32 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     completedAt,
     stoppedNotice,
   }
+}
+
+function hasTruncatedRuntimeContent(message: NormalizedRuntimeMessage): boolean {
+  if (message.contentTruncated !== true && message.content_truncated !== true) return false
+
+  const originalChars = runtimeMessageOriginalChars(message)
+  return (
+    originalChars !== undefined && originalChars > runtimeContentCharacterCount(message.content)
+  )
+}
+
+function runtimeMessageOriginalChars(message: NormalizedRuntimeMessage): number | undefined {
+  const originalChars =
+    typeof message.contentOriginalChars === 'number'
+      ? message.contentOriginalChars
+      : typeof message.content_original_chars === 'number'
+        ? message.content_original_chars
+        : undefined
+
+  return originalChars !== undefined && Number.isFinite(originalChars) && originalChars >= 0
+    ? originalChars
+    : undefined
+}
+
+function runtimeContentCharacterCount(content: string): number {
+  return Array.from(content).length
 }
 
 function warnAndDropRuntimeStreamEvent(
