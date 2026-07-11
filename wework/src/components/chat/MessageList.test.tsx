@@ -3813,6 +3813,7 @@ describe('MessageList', () => {
     await user.click(screen.getByTestId('assistant-error-retry'))
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
   })
 
   test('classifies hidden raw failed content before generic task status errors', () => {
@@ -3892,11 +3893,12 @@ describe('MessageList', () => {
       />
     )
 
-    await user.click(screen.getByTestId('assistant-error-retry'))
     await user.click(screen.getByTestId('assistant-error-switch-model-retry'))
+    await user.click(screen.getByTestId('assistant-error-retry'))
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
     expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
   })
 
   test('uses backend error type before raw error text when rendering failed messages', () => {
