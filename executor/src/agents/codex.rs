@@ -1222,20 +1222,18 @@ async fn read_shared_turn_notifications(
     state: &mut CodexRunState,
     mut options: SharedTurnNotificationOptions,
 ) -> Result<ExecutionOutcome, String> {
+    let mut cancel_requested = false;
     let mut last_outcome: Option<ExecutionOutcome> = None;
     loop {
         let notification = if let Some(cancel_rx) = options.cancellation.as_mut() {
             tokio::select! {
                 _ = cancel_rx => {
                     options.cancellation = None;
+                    cancel_requested = true;
                     if let Some(turn_id) = options.active_turn_id.as_deref() {
-                        interrupt_shared_turn_detached(
-                            client.clone(),
-                            thread_id.to_owned(),
-                            turn_id.to_owned(),
-                        );
+                        interrupt_shared_turn(client, thread_id, turn_id).await?;
                     }
-                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+                    continue;
                 }
                 message = notification_rx.recv() => shared_notification_result(message, last_outcome.clone())?,
             }
@@ -1270,6 +1268,11 @@ async fn read_shared_turn_notifications(
                 }
             }
             options.active_turn_id = Some(turn_id);
+            if cancel_requested {
+                if let Some(turn_id) = options.active_turn_id.as_deref() {
+                    interrupt_shared_turn(client, thread_id, turn_id).await?;
+                }
+            }
         }
 
         if let Some(sender) = &options.notifications {
@@ -1344,38 +1347,6 @@ async fn interrupt_shared_turn(
         )
         .await
         .map(|_| ())
-}
-
-fn interrupt_shared_turn_detached(
-    client: CodexAppServerClient,
-    thread_id: String,
-    turn_id: String,
-) {
-    tokio::spawn(async move {
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            interrupt_shared_turn(&client, &thread_id, &turn_id),
-        )
-        .await;
-        if !matches!(result, Ok(Ok(()))) {
-            client.restart().await;
-            log_executor_event(
-                "codex shared turn interrupt recovery restarted app-server",
-                &[
-                    ("thread_id", thread_id),
-                    ("turn_id", turn_id),
-                    (
-                        "error",
-                        match result {
-                            Ok(Err(error)) => error,
-                            Err(_) => "turn/interrupt timed out".to_owned(),
-                            Ok(Ok(())) => unreachable!(),
-                        },
-                    ),
-                ],
-            );
-        }
-    });
 }
 
 async fn answer_shared_request_user_input(

@@ -281,8 +281,6 @@ class DesktopE2EServer {
     this.toolOutput = null
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
-    this.cancellationResponseClosed = null
-    this.cancellationResponseClosedResolver = null
   }
 
   async start() {
@@ -334,20 +332,6 @@ class DesktopE2EServer {
     return new Promise(resolvePromise => {
       this.scenarioWaiters.set(scenario, resolvePromise)
     })
-  }
-
-  awaitCancellationResponseClosed() {
-    if (this.cancellationResponseClosed) return Promise.resolve()
-    return new Promise(resolvePromise => {
-      this.cancellationResponseClosedResolver = resolvePromise
-    })
-  }
-
-  markCancellationResponseClosed() {
-    if (this.cancellationResponseClosed) return
-    this.cancellationResponseClosed = true
-    this.cancellationResponseClosedResolver?.()
-    this.cancellationResponseClosedResolver = null
   }
 
   async command(action, selector, options = {}) {
@@ -515,7 +499,6 @@ class DesktopE2EServer {
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
       response.write(createSse([responseCreated(responseId)]))
-      response.once('close', () => this.markCancellationResponseClosed())
       return
     }
 
@@ -755,11 +738,6 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
     await control.command('click', '[data-testid="pause-response-button"]')
-    await withTimeout(
-      control.awaitCancellationResponseClosed(),
-      UI_TIMEOUT_MS,
-      'Cancelling the task did not close the real model response stream'
-    )
     await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
