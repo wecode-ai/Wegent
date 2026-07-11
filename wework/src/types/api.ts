@@ -721,6 +721,69 @@ export interface RuntimeTaskArchiveResponse {
   error?: string | null
 }
 
+export interface RuntimeWorktreeSettings {
+  deviceId: string
+  worktreeRoot: string
+  resolvedWorktreeRoot: string
+  autoCleanupEnabled: boolean
+  keepCount: number
+}
+
+export interface RuntimeWorktreeSettingsPatch {
+  deviceId: string
+  worktreeRoot?: string
+  autoCleanupEnabled?: boolean
+  keepCount?: number
+}
+
+export interface RuntimeWorktreeConversation extends RuntimeTaskAddress {
+  title: string
+  status: string
+  running: boolean
+  updatedAt?: number | null
+}
+
+export interface RuntimeManagedWorktree {
+  deviceId: string
+  worktreeId: string
+  path: string
+  repositoryName: string
+  sourcePath?: string | null
+  createdAt?: number | null
+  updatedAt?: number | null
+  state: 'active' | 'restorable' | 'missing' | 'deleted' | string
+  snapshotAt?: number | null
+  lastError?: string | null
+  conversations: RuntimeWorktreeConversation[]
+}
+
+export interface RuntimeWorktreeListResponse {
+  success: boolean
+  deviceId: string
+  items: RuntimeManagedWorktree[]
+}
+
+export interface RuntimeWorktreePrepareRequest {
+  deviceId: string
+  sourcePath: string
+  worktreeId: string
+  ref?: string | null
+}
+
+export interface RuntimeWorktreeMutationResponse {
+  success: boolean
+  deviceId: string
+  worktree: RuntimeManagedWorktree
+  path?: string
+  archivedTaskCount?: number
+}
+
+export interface RuntimeWorktreeDeleteRequest {
+  deviceId: string
+  path: string
+  preserveSnapshot?: boolean
+}
+
 export interface ArchivedConversationsListRequest {
   deviceId?: string | null
   workspacePath?: string | null

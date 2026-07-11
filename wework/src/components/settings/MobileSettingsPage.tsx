@@ -2,6 +2,7 @@ import {
   Archive,
   ArrowLeft,
   ChevronRight,
+  FolderGit2,
   Info,
   Package,
   Palette,
@@ -20,13 +21,27 @@ import { ModelSettingsPage } from './ModelSettingsPage'
 import { PluginSettingsPage } from './PluginSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
+import { WorktreesSettingsPage } from './WorktreesSettingsPage'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 
 interface MobileSettingsPageProps {
   onBack: () => void
   onOpenPlugins?: () => void
+  services?: WorkbenchServices
+  devices?: DeviceInfo[]
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onRefreshWorkLists?: () => Promise<void>
 }
 
-export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPageProps) {
+export function MobileSettingsPage({
+  onBack,
+  onOpenPlugins,
+  services,
+  devices = [],
+  onOpenRuntimeTask,
+  onRefreshWorkLists,
+}: MobileSettingsPageProps) {
   const { t } = useTranslation('common')
   const [activePage, setActivePage] = useState<
     | 'menu'
@@ -37,6 +52,7 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
     | 'personal'
     | 'model-settings'
     | 'plugins'
+    | 'worktrees'
     | 'archived-conversations'
   >('menu')
 
@@ -166,7 +182,44 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           <div className="h-11 min-w-[44px]" />
         </header>
         <div className="mt-6 min-h-0 flex-1 overflow-auto">
-          <ArchivedConversationsSettingsPage />
+          <ArchivedConversationsSettingsPage
+            api={services?.runtimeWorkApi}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
+            onLeaveSettings={onBack}
+          />
+        </div>
+      </main>
+    )
+  }
+
+  if (activePage === 'worktrees') {
+    return (
+      <main
+        data-testid="mobile-worktrees-settings-page"
+        className="flex h-dvh flex-col overflow-hidden bg-background px-5 pb-[max(18px,env(safe-area-inset-bottom))] pt-[max(18px,env(safe-area-inset-top))] text-text-primary"
+      >
+        <header className="flex shrink-0 items-center justify-between">
+          <button
+            type="button"
+            data-testid="mobile-worktrees-back-button"
+            onClick={() => setActivePage('menu')}
+            className="flex h-11 min-w-[44px] items-center justify-center rounded-full bg-surface text-text-primary hover:bg-muted"
+            aria-label={t('workbench.settings_back_to_app')}
+          >
+            <ArrowLeft className="h-6 w-6" />
+          </button>
+          <h1 className="text-lg font-semibold">{t('workbench.settings_nav_worktrees')}</h1>
+          <div className="h-11 min-w-[44px]" />
+        </header>
+        <div className="mt-6 min-h-0 flex-1 overflow-auto">
+          <WorktreesSettingsPage
+            api={services?.runtimeWorkApi}
+            devices={devices}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
+            onLeaveSettings={onBack}
+          />
         </div>
       </main>
     )
@@ -353,6 +406,16 @@ export function MobileSettingsPage({ onBack, onOpenPlugins }: MobileSettingsPage
           <span className="min-w-0 flex-1 truncate">
             {t('workbench.settings_nav_personal', '个人')}
           </span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
+        </button>
+        <button
+          type="button"
+          data-testid="mobile-settings-worktrees-button"
+          onClick={() => setActivePage('worktrees')}
+          className="flex min-h-[56px] w-full items-center gap-3 rounded-2xl bg-surface px-4 text-left text-base font-medium text-text-primary hover:bg-muted"
+        >
+          <FolderGit2 className="h-5 w-5 shrink-0 text-text-secondary" />
+          <span className="min-w-0 flex-1 truncate">{t('workbench.settings_nav_worktrees')}</span>
           <ChevronRight className="h-5 w-5 shrink-0 text-text-muted" />
         </button>
         <button

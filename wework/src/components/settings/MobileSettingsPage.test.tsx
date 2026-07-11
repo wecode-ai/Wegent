@@ -29,9 +29,9 @@ describe('MobileSettingsPage', () => {
     expect(screen.queryByTestId('mobile-settings-about-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('mobile-settings-plugins-button')).toHaveTextContent('插件')
     expect(screen.getByTestId('mobile-settings-personal-button')).toHaveTextContent('个人')
-    expect(screen.queryByTestId('mobile-settings-worktrees-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-settings-worktrees-button')).toBeInTheDocument()
     expect(screen.getByTestId('mobile-settings-archived-conversations-button')).toHaveTextContent(
-      '已归档对话'
+      '已归档任务'
     )
     expect(screen.getByTestId('mobile-settings-plugins-config-button')).toHaveTextContent('插件')
 

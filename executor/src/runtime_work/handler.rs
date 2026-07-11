@@ -61,6 +61,7 @@ use super::{
         infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
         prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
     },
+    worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
 
 const CODEX_THREAD_LIST_PAGE_SIZE: usize = 100;
@@ -248,6 +249,7 @@ pub struct RuntimeWorkRpcHandler {
     store: RuntimeWorkStore,
     transcript_cache: TranscriptCache,
     thread_list_cache: CodexThreadListCache,
+    worktrees: WorktreeManager,
 }
 
 struct ActiveTurnCancellation {
@@ -304,6 +306,7 @@ impl RuntimeWorkRpcHandler {
             store: RuntimeWorkStore::from_env(),
             transcript_cache: TranscriptCache::default(),
             thread_list_cache: CodexThreadListCache::default(),
+            worktrees: WorktreeManager::from_env(),
         };
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
@@ -367,6 +370,13 @@ impl RuntimeWorkRpcHandler {
                 self.archive_project_conversations(payload).await
             }
             "runtime.archived_conversations.archive_all" => self.archive_all_conversations().await,
+            "runtime.worktrees.settings.get" => self.get_worktree_settings().await,
+            "runtime.worktrees.settings.update" => self.update_worktree_settings(payload).await,
+            "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,
+            "runtime.worktrees.list" => self.list_worktrees().await,
+            "runtime.worktrees.delete" => self.delete_worktree(payload).await,
+            "runtime.worktrees.restore" => self.restore_worktree(payload).await,
+            "runtime.worktrees.prune" => self.prune_worktrees().await,
             "runtime.workspaces.open" => self.open_workspace(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
@@ -375,6 +385,145 @@ impl RuntimeWorkRpcHandler {
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
         }
+    }
+
+    async fn get_worktree_settings(&self) -> Result<Value, AppIpcError> {
+        let settings = self.worktrees.settings();
+        let mut value = serde_json::to_value(settings)
+            .map_err(|error| AppIpcError::new("worktree_settings_failed", error.to_string()))?;
+        value["deviceId"] = Value::String(self.device_id.clone());
+        Ok(value)
+    }
+
+    async fn update_worktree_settings(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let patch = serde_json::from_value::<WorktreeSettingsPatch>(payload)
+            .map_err(|error| AppIpcError::new("invalid_worktree_settings", error.to_string()))?;
+        let settings = self
+            .worktrees
+            .update_settings(patch)
+            .map_err(|error| AppIpcError::new("worktree_settings_failed", error))?;
+        let _ = self.worktrees.prune(&self.store.list_task_summaries(true));
+        let mut value = serde_json::to_value(settings)
+            .map_err(|error| AppIpcError::new("worktree_settings_failed", error.to_string()))?;
+        value["deviceId"] = Value::String(self.device_id.clone());
+        Ok(value)
+    }
+
+    async fn prepare_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let source_path = string_field(&payload, "sourcePath")
+            .or_else(|| string_field(&payload, "source_path"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "sourcePath is required"))?;
+        let worktree_id = string_field(&payload, "worktreeId")
+            .or_else(|| string_field(&payload, "worktree_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "worktreeId is required"))?;
+        let git_ref = string_field(&payload, "ref");
+        let record = self
+            .worktrees
+            .prepare(Path::new(&source_path), &worktree_id, git_ref.as_deref())
+            .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+        let _ = self.worktrees.prune(&self.store.list_task_summaries(true));
+        Ok(json!({
+            "success": true,
+            "deviceId": self.device_id,
+            "worktree": record,
+            "path": record.path,
+        }))
+    }
+
+    async fn list_worktrees(&self) -> Result<Value, AppIpcError> {
+        let entries = self
+            .worktrees
+            .list(&self.store.list_task_summaries(true))
+            .map_err(|error| AppIpcError::new("worktree_list_failed", error))?;
+        let items = entries
+            .into_iter()
+            .map(|(record, tasks)| {
+                json!({
+                    "deviceId": self.device_id,
+                    "worktreeId": record.worktree_id,
+                    "path": record.path,
+                    "repositoryName": record.repository_name,
+                    "sourcePath": record.source_path,
+                    "createdAt": record.created_at,
+                    "updatedAt": record.updated_at,
+                    "state": record.state,
+                    "snapshotAt": record.snapshot_at,
+                    "lastError": record.last_error,
+                    "conversations": tasks.into_iter().map(|task| json!({
+                        "deviceId": self.device_id,
+                        "taskId": task.local_task_id,
+                        "threadId": task.thread_id,
+                        "workspacePath": task.workspace_path,
+                        "title": task.title,
+                        "status": task.status,
+                        "running": task.running,
+                        "updatedAt": task.updated_at,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"success": true, "deviceId": self.device_id, "items": items}))
+    }
+
+    async fn delete_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let path = string_field(&payload, "path")
+            .ok_or_else(|| AppIpcError::new("bad_request", "path is required"))?;
+        let preserve_snapshot = bool_field(&payload, "preserveSnapshot")
+            .or_else(|| bool_field(&payload, "preserve_snapshot"))
+            .unwrap_or(true);
+        let linked = self
+            .store
+            .list_task_summaries(true)
+            .into_iter()
+            .filter(|task| {
+                normalize_workspace_path(&task.workspace_path) == normalize_workspace_path(&path)
+            })
+            .collect::<Vec<_>>();
+        for task in linked.iter().filter(|task| task.status != "archived") {
+            let result = self
+                .archive_task(
+                    json!({"taskId": task.local_task_id, "workspacePath": task.workspace_path}),
+                )
+                .await?;
+            if result["accepted"] != true {
+                return Err(AppIpcError::new(
+                    "worktree_archive_failed",
+                    result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Failed to archive linked task"),
+                ));
+            }
+        }
+        let record = self
+            .worktrees
+            .delete(Path::new(&path), preserve_snapshot)
+            .map_err(|error| AppIpcError::new("worktree_delete_failed", error))?;
+        Ok(json!({
+            "success": true,
+            "deviceId": self.device_id,
+            "worktree": record,
+            "archivedTaskCount": linked.iter().filter(|task| task.status != "archived").count(),
+        }))
+    }
+
+    async fn restore_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let path = string_field(&payload, "path")
+            .or_else(|| workspace_path(&payload))
+            .ok_or_else(|| AppIpcError::new("bad_request", "path is required"))?;
+        let record = self
+            .worktrees
+            .restore(Path::new(&path))
+            .map_err(|error| AppIpcError::new("worktree_restore_failed", error))?;
+        Ok(json!({"success": true, "deviceId": self.device_id, "worktree": record}))
+    }
+
+    async fn prune_worktrees(&self) -> Result<Value, AppIpcError> {
+        let removed = self
+            .worktrees
+            .prune(&self.store.list_task_summaries(true))
+            .map_err(|error| AppIpcError::new("worktree_prune_failed", error))?;
+        Ok(json!({"success": true, "deviceId": self.device_id, "removed": removed}))
     }
 
     async fn get_keybindings(&self) -> Result<Value, AppIpcError> {
@@ -1225,6 +1374,12 @@ impl RuntimeWorkRpcHandler {
 
     async fn unarchive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let mut link = self.task_link_from_payload(&payload, true).await?;
+        if let Err(error) = self
+            .worktrees
+            .restore_if_known(Path::new(&link.workspace_path))
+        {
+            return Ok(task_action_failure(&link, error));
+        }
         if let Some(thread_id) = link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method("thread/unarchive", json!({"threadId": thread_id}))
@@ -1462,6 +1617,21 @@ impl RuntimeWorkRpcHandler {
                 ),
             ],
         );
+        let has_other_link = self.store.list_task_summaries(true).iter().any(|task| {
+            normalize_workspace_path(&task.workspace_path)
+                == normalize_workspace_path(&link.workspace_path)
+        });
+        if !has_other_link {
+            if let Err(error) = self
+                .worktrees
+                .forget_if_known(Path::new(&link.workspace_path))
+            {
+                log_executor_event(
+                    "runtime archived conversation worktree snapshot cleanup failed",
+                    &[("local_task_id", link.local_task_id), ("error", error)],
+                );
+            }
+        }
     }
 
     async fn delete_archived_tasks_bulk(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1632,6 +1802,16 @@ impl RuntimeWorkRpcHandler {
                     .map(|link| link.workspace_path.clone())
             })
             .unwrap_or_default();
+        if let Err(error) = self.worktrees.restore_if_known(Path::new(&workspace_path)) {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "error": error,
+                "code": "worktree_restore_required",
+                "taskId": local_task_id,
+                "workspacePath": workspace_path,
+            }));
+        }
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);

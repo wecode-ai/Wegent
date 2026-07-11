@@ -1109,6 +1109,7 @@ export function WorkbenchProvider({
   )
 
   const value: WorkbenchContextValue = {
+    services: resolvedServices,
     state,
     isStartupReady,
     workspaceFileApi,
@@ -1187,6 +1188,7 @@ export function WorkbenchProvider({
   }
   const paneValue: WorkbenchPaneContextValue = useMemo(
     () => ({
+      services: resolvedServices,
       state: paneState,
       isStartupReady,
       workspaceFileApi,
@@ -1268,6 +1270,7 @@ export function WorkbenchProvider({
       projectExecutionMode,
       projectWorktreeBranch,
       runtimeTaskReminders,
+      resolvedServices,
       stableArchiveChatConversations,
       stableArchiveProjectConversations,
       stableArchiveProjectsConversations,

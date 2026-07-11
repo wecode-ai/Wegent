@@ -518,17 +518,10 @@ describe('createLocalAppServices', () => {
           if (data.command_key === 'git_is_worktree') {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
-          if (data.command_key === 'project_workspace_root') {
-            return {
-              success: true,
-              stdout: '/Users/me/.wegent-executor/workspace/projects',
-              stderr: '',
-              exit_code: 0,
-            }
-          }
-          if (data.command_key === 'git_worktree_add') {
-            return { success: true, stdout: '', stderr: '', exit_code: 0 }
-          }
+        }
+        if (method === 'runtime.worktrees.prepare') {
+          const path = `/Users/me/.wegent-executor/workspace/worktrees/${data.worktreeId}/project`
+          return { success: true, path, worktree: { path } }
         }
         if (method === 'runtime.tasks.create') {
           return {
@@ -586,12 +579,10 @@ describe('createLocalAppServices', () => {
       args: ['/Users/me/project'],
       timeout_seconds: 15,
     })
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
+    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
       deviceId: 'device-uuid',
-      command_key: 'git_worktree_add',
-      args: ['/Users/me/project', worktreePath],
-      timeout_seconds: 120,
-      max_output_bytes: 1024 * 1024,
+      sourcePath: '/Users/me/project',
+      worktreeId: expect.stringMatching(/^runtime-\d+$/),
     })
     expect(createPayload).toEqual(
       expect.objectContaining({
@@ -625,17 +616,10 @@ describe('createLocalAppServices', () => {
           if (data.command_key === 'git_is_worktree') {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
-          if (data.command_key === 'project_workspace_root') {
-            return {
-              success: true,
-              stdout: '/Users/me/.wegent-executor/workspace/projects',
-              stderr: '',
-              exit_code: 0,
-            }
-          }
-          if (data.command_key === 'git_worktree_add') {
-            return { success: true, stdout: '', stderr: '', exit_code: 0 }
-          }
+        }
+        if (method === 'runtime.worktrees.prepare') {
+          const path = `/Users/me/.wegent-executor/workspace/worktrees/${data.worktreeId}/project`
+          return { success: true, path, worktree: { path } }
         }
         if (method === 'runtime.tasks.create') {
           return {
@@ -672,12 +656,11 @@ describe('createLocalAppServices', () => {
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
     const worktreePath = String(createPayload.workspacePath)
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
+    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
       deviceId: 'device-uuid',
-      command_key: 'git_worktree_add',
-      args: ['/Users/me/project', worktreePath, 'develop'],
-      timeout_seconds: 120,
-      max_output_bytes: 1024 * 1024,
+      sourcePath: '/Users/me/project',
+      worktreeId: expect.stringMatching(/^runtime-\d+$/),
+      ref: 'develop',
     })
     expect(createPayload).toEqual(
       expect.objectContaining({

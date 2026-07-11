@@ -104,6 +104,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     listDeviceDirectories: onListDeviceDirectories,
     createDeviceDirectory: onCreateDeviceDirectory,
     refreshWorkLists: onRefreshWorkLists,
+    services,
   } = useWorkbenchPaneContext()
   const { t } = useTranslation('common')
   const activeItem = 'chat'
@@ -211,6 +212,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   if (settingsOpen) {
     return (
       <MobileSettingsPage
+        services={services}
+        devices={state.devices}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+        onRefreshWorkLists={onRefreshWorkLists}
         onBack={() => {
           setSettingsOpen(false)
           navigateTo('/')

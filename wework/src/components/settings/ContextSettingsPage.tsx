@@ -5,6 +5,7 @@ import {
   saveLocalCodexInstructions,
 } from '@/api/local/codexInstructions'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SettingsPage, SettingsPageHeader, SettingsSwitch } from './settings-ui'
 import {
   defaultAppPreferences,
   getAppPreferences,
@@ -114,17 +115,13 @@ export function ContextSettingsPage() {
   }
 
   return (
-    <div data-testid="context-settings-page" className="mx-auto w-full max-w-[760px] pb-10">
-      <div>
-        <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-          {t('workbench.context_settings_title')}
-        </h1>
-        <p className="mt-2 text-sm text-text-secondary">
-          {t('workbench.context_settings_subtitle')}
-        </p>
-      </div>
+    <SettingsPage data-testid="context-settings-page">
+      <SettingsPageHeader
+        title={t('workbench.context_settings_title')}
+        description={t('workbench.context_settings_subtitle')}
+      />
 
-      <section className="mt-6 overflow-hidden rounded-lg border border-border bg-background">
+      <section className="overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-2.5">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.context_settings_terminal_title')}
@@ -140,20 +137,15 @@ export function ContextSettingsPage() {
               {t('workbench.context_settings_terminal_injection_description')}
             </p>
           </div>
-          <label className="relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center">
-            <input
-              data-testid="context-terminal-injection-toggle"
-              type="checkbox"
-              checked={preferences.terminalContextInjectionEnabled}
-              disabled={loading || saving}
-              onChange={event => {
-                void handleTerminalContextChange(event.target.checked)
-              }}
-              className="peer sr-only"
-            />
-            <span className="absolute inset-0 rounded-full bg-muted transition peer-checked:bg-text-primary peer-disabled:opacity-50" />
-            <span className="absolute left-1 h-5 w-5 rounded-full bg-background shadow transition peer-checked:translate-x-5 peer-disabled:opacity-70" />
-          </label>
+          <SettingsSwitch
+            data-testid="context-terminal-injection-toggle"
+            checked={preferences.terminalContextInjectionEnabled}
+            disabled={loading || saving}
+            onCheckedChange={checked => {
+              void handleTerminalContextChange(checked)
+            }}
+            aria-label={t('workbench.context_settings_terminal_injection')}
+          />
         </div>
       </section>
 
@@ -237,6 +229,6 @@ export function ContextSettingsPage() {
           </span>
         </div>
       )}
-    </div>
+    </SettingsPage>
   )
 }

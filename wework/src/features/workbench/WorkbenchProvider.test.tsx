@@ -264,6 +264,7 @@ function createRuntimeWorkApiMock(overrides: Record<string, unknown> = {}) {
       workspacePath: '/workspace/project-alpha',
       runtime: 'codex',
     }),
+    deleteWorktree: vi.fn().mockResolvedValue({ success: true }),
     bindRuntimeTaskImSessions: vi.fn(),
     getImNotificationSettings: vi.fn().mockResolvedValue({
       global: { enabled: false, sessionKey: null, session: null },
@@ -3735,12 +3736,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(services.projectApi.deleteProject).not.toHaveBeenCalled()
   })
 
-  test('returns dirty result before archiving a worktree task with uncommitted changes', async () => {
-    const executeCommand = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: ' M src/App.tsx\n',
-      stderr: '',
-    })
+  test('archives a worktree task without prompting and preserves a snapshot', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -3778,9 +3774,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       ),
     })
     const services = createWorkbenchServices({
-      deviceApi: { executeCommand } as Partial<
-        WorkbenchServices['deviceApi']
-      > as WorkbenchServices['deviceApi'],
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
     })
 
@@ -3789,21 +3782,14 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByText('archive worktree task')).toBeInTheDocument())
     await userEvent.click(screen.getByText('archive worktree task'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('archive-result')).toHaveTextContent('dirty_worktree')
-    )
+    await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
     expect(screen.getByTestId('workbench-error')).toHaveTextContent('')
-    expect(runtimeWorkApi.archiveConversation).not.toHaveBeenCalled()
-    expect(executeCommand).toHaveBeenCalledWith('device-1', {
-      command_key: 'git_status_porcelain',
+    expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1)
+    expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
+      deviceId: 'device-1',
       path: '/workspace/worktrees/9/project-alpha',
-      timeout_seconds: 10,
-      max_output_bytes: 65536,
+      preserveSnapshot: true,
     })
-    expect(executeCommand).not.toHaveBeenCalledWith(
-      'device-1',
-      expect.objectContaining({ command_key: 'git_worktree_remove' })
-    )
   })
 
   test('keeps a newly opened task selected when a different task finishes archiving', async () => {
@@ -3843,13 +3829,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('current-runtime-task')).toHaveTextContent('runtime-b')
   })
 
-  test('force archives and removes a dirty worktree task', async () => {
-    const executeCommand = vi.fn().mockImplementation(async (_deviceId, data) => {
-      if (data.command_key === 'git_worktree_remove') {
-        return { success: true, stdout: '', stderr: '' }
-      }
-      throw new Error(`unexpected command: ${data.command_key}`)
-    })
+  test('force archive also uses the snapshot-capable worktree API', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -3887,9 +3867,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       ),
     })
     const services = createWorkbenchServices({
-      deviceApi: { executeCommand } as Partial<
-        WorkbenchServices['deviceApi']
-      > as WorkbenchServices['deviceApi'],
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
     })
 
@@ -3899,30 +3876,15 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('force archive worktree task'))
 
     await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
-    expect(executeCommand).not.toHaveBeenCalledWith(
-      'device-1',
-      expect.objectContaining({ command_key: 'git_status_porcelain' })
-    )
-    expect(executeCommand).toHaveBeenCalledWith('device-1', {
-      command_key: 'git_worktree_remove',
+    expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
+      deviceId: 'device-1',
       path: '/workspace/worktrees/9/project-alpha',
-      args: ['/workspace/worktrees/9/project-alpha', '/workspace/worktrees/9/project-alpha'],
-      timeout_seconds: 30,
-      max_output_bytes: 8192,
+      preserveSnapshot: true,
     })
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
   })
 
-  test('archives clean worktree tasks before removing the worktree', async () => {
-    const executeCommand = vi.fn().mockImplementation(async (_deviceId, data) => {
-      if (data.command_key === 'git_status_porcelain') {
-        return { success: true, stdout: '', stderr: '' }
-      }
-      if (data.command_key === 'git_worktree_remove') {
-        return { success: true, stdout: '', stderr: '' }
-      }
-      throw new Error(`unexpected command: ${data.command_key}`)
-    })
+  test('archives a task before snapshotting and removing its worktree', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -3960,9 +3922,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       ),
     })
     const services = createWorkbenchServices({
-      deviceApi: { executeCommand } as Partial<
-        WorkbenchServices['deviceApi']
-      > as WorkbenchServices['deviceApi'],
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
     })
 
@@ -3973,30 +3932,19 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1))
     await waitFor(() =>
-      expect(executeCommand).toHaveBeenCalledWith('device-1', {
-        command_key: 'git_worktree_remove',
+      expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
+        deviceId: 'device-1',
         path: '/workspace/worktrees/9/project-alpha',
-        args: ['/workspace/worktrees/9/project-alpha', '/workspace/worktrees/9/project-alpha'],
-        timeout_seconds: 30,
-        max_output_bytes: 8192,
+        preserveSnapshot: true,
       })
     )
-    const removeCallOrder = executeCommand.mock.invocationCallOrder.at(-1)
+    const removeCallOrder = runtimeWorkApi.deleteWorktree.mock.invocationCallOrder.at(-1)
     expect(runtimeWorkApi.archiveConversation.mock.invocationCallOrder[0]).toBeLessThan(
       removeCallOrder ?? 0
     )
   })
 
-  test('prompts before force archiving project conversations with dirty worktrees', async () => {
-    const executeCommand = vi.fn().mockImplementation(async (_deviceId, data) => {
-      if (data.command_key === 'git_status_porcelain') {
-        return { success: true, stdout: ' M src/App.tsx\n', stderr: '' }
-      }
-      if (data.command_key === 'git_worktree_remove') {
-        return { success: true, stdout: '', stderr: '' }
-      }
-      throw new Error(`unexpected command: ${data.command_key}`)
-    })
+  test('archives project conversations without a dirty-worktree prompt', async () => {
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
         createRuntimeWork({
@@ -4034,9 +3982,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       ),
     })
     const services = createWorkbenchServices({
-      deviceApi: { executeCommand } as Partial<
-        WorkbenchServices['deviceApi']
-      > as WorkbenchServices['deviceApi'],
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
     })
 
@@ -4047,24 +3992,11 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await userEvent.click(screen.getByText('archive project conversations'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('archive-result')).toHaveTextContent('dirty_worktree')
-    )
-    expect(runtimeWorkApi.archiveProjectConversations).not.toHaveBeenCalled()
-    expect(executeCommand).not.toHaveBeenCalledWith(
-      'device-1',
-      expect.objectContaining({ command_key: 'git_worktree_remove' })
-    )
-
-    await userEvent.click(screen.getByText('force archive project conversations'))
-
     await waitFor(() => expect(runtimeWorkApi.archiveProjectConversations).toHaveBeenCalledTimes(1))
-    expect(executeCommand).toHaveBeenCalledWith('device-1', {
-      command_key: 'git_worktree_remove',
+    expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
+      deviceId: 'device-1',
       path: '/workspace/worktrees/9/project-alpha',
-      args: ['/workspace/worktrees/9/project-alpha', '/workspace/worktrees/9/project-alpha'],
-      timeout_seconds: 30,
-      max_output_bytes: 8192,
+      preserveSnapshot: true,
     })
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
   })

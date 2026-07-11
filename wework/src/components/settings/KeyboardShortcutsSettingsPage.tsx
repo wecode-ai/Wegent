@@ -1,7 +1,8 @@
-import { CornerDownLeft, Keyboard, Loader2, RotateCcw, Search, Trash2 } from 'lucide-react'
+import { CornerDownLeft, Loader2, RotateCcw, Search, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import {
   DEFAULT_KEYBINDINGS,
   GO_BACK_COMMAND,
@@ -198,31 +199,22 @@ export function KeyboardShortcutsSettingsPage() {
   }, [recordingCommand, saveOverride])
 
   return (
-    <section className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <header className="border-b border-border px-8 py-6">
-        <div className="flex items-center gap-3">
-          <Keyboard className="h-5 w-5 text-text-secondary" />
-          <div>
-            <h1 className="text-xl font-semibold text-text-primary">
-              {t('workbench.keyboard_shortcuts_title', '键盘快捷键')}
-            </h1>
-            <p className="mt-1 text-sm text-text-secondary">
-              {t('workbench.keyboard_shortcuts_description', '管理当前设备上的本地快捷键')}
-            </p>
-          </div>
-        </div>
-        <div className="relative mt-5 max-w-md">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
-          <input
-            data-testid="keyboard-shortcuts-search-input"
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-            placeholder={t('workbench.keyboard_shortcuts_search', '搜索快捷键')}
-            className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-[13px] leading-[18px] outline-none focus:border-primary"
-          />
-        </div>
-      </header>
-      <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
+    <SettingsPage data-testid="keyboard-shortcuts-settings-page">
+      <SettingsPageHeader
+        title={t('workbench.keyboard_shortcuts_title', '键盘快捷键')}
+        description={t('workbench.keyboard_shortcuts_description', '管理当前设备上的本地快捷键')}
+      />
+      <div className="relative mb-6 max-w-md">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+        <input
+          data-testid="keyboard-shortcuts-search-input"
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder={t('workbench.keyboard_shortcuts_search', '搜索快捷键')}
+          className="h-8 w-full rounded-md border border-border bg-background pl-9 pr-3 text-[13px] leading-[18px] outline-none focus:border-primary"
+        />
+      </div>
+      <div>
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-text-secondary">
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -250,7 +242,7 @@ export function KeyboardShortcutsSettingsPage() {
                   <div className="text-sm font-medium text-text-primary">
                     {t(`workbench.${labels.label}`, commandFallback(item.command))}
                   </div>
-                  <div className="mt-1 text-xs leading-5 text-text-secondary">
+                  <div className="mt-0.5 text-xs leading-4 text-text-secondary">
                     {t(`workbench.${labels.description}`, commandDescriptionFallback(item.command))}
                   </div>
                 </div>
@@ -311,6 +303,6 @@ export function KeyboardShortcutsSettingsPage() {
           })}
         </div>
       </div>
-    </section>
+    </SettingsPage>
   )
 }

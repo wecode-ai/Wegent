@@ -308,7 +308,7 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('settings-nav-general')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]'
     )
-    expect(screen.queryByTestId('settings-nav-worktrees')).not.toBeInTheDocument()
+    expect(screen.getByTestId('settings-nav-worktrees')).toBeInTheDocument()
   })
 
   test('adds titlebar clearance for the settings back button in Tauri', () => {
@@ -652,7 +652,7 @@ describe('ConnectionsSettingsPage', () => {
     const toggle = await screen.findByTestId('codex-plugin-remote-apps-toggle')
     expect(screen.getByTestId('settings-category-integrations')).toHaveTextContent('集成')
     expect(screen.getByTestId('settings-nav-plugins')).toHaveTextContent('插件')
-    expect(toggle).not.toBeChecked()
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
 
     await userEvent.click(toggle)
 
@@ -661,7 +661,7 @@ describe('ConnectionsSettingsPage', () => {
         remoteAppsEnabled: true,
       })
     })
-    expect(toggle).toBeChecked()
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
   })
 
   test('opens appearance settings from the browser path on reload', () => {

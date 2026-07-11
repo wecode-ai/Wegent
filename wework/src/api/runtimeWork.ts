@@ -48,6 +48,12 @@ import type {
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
+  RuntimeWorktreeDeleteRequest,
+  RuntimeWorktreeListResponse,
+  RuntimeWorktreeMutationResponse,
+  RuntimeWorktreePrepareRequest,
+  RuntimeWorktreeSettings,
+  RuntimeWorktreeSettingsPatch,
 } from '@/types/api'
 import type { HttpClient } from './http'
 import type { KeybindingOverride } from '@/lib/keybindings'
@@ -128,6 +134,24 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeWorkspaceRemoveRequest
     ): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/remove', data)
+    },
+    getWorktreeSettings(data: { deviceId: string }): Promise<RuntimeWorktreeSettings> {
+      return client.post('/runtime-work/worktrees/settings', data)
+    },
+    updateWorktreeSettings(data: RuntimeWorktreeSettingsPatch): Promise<RuntimeWorktreeSettings> {
+      return client.put('/runtime-work/worktrees/settings', data)
+    },
+    listWorktrees(data: { deviceId: string }): Promise<RuntimeWorktreeListResponse> {
+      return client.post('/runtime-work/worktrees/list', data)
+    },
+    prepareWorktree(data: RuntimeWorktreePrepareRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return client.post('/runtime-work/worktrees/prepare', data)
+    },
+    deleteWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return client.post('/runtime-work/worktrees/delete', data)
+    },
+    restoreWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return client.post('/runtime-work/worktrees/restore', data)
     },
     bindRuntimeTaskImSessions(
       data: BindRuntimeTaskIMSessionsRequest

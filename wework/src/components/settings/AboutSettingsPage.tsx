@@ -3,6 +3,7 @@ import type { ComponentType } from 'react'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { SettingsPage } from './settings-ui'
 
 const PROJECT_URL = 'https://github.com/wecode-ai/Wegent'
 const LICENSE_URL = `${PROJECT_URL}/blob/main/LICENSE`
@@ -116,9 +117,10 @@ export function AboutSettingsPage() {
   }
 
   return (
-    <div
+    <SettingsPage
       data-testid="about-settings-page"
-      className="mx-auto flex w-full max-w-[560px] flex-col items-center px-4 pb-10 pt-8 text-center md:pt-14"
+      width="narrow"
+      className="flex flex-col items-center px-4 pt-8 text-center md:pt-14"
     >
       <div className="flex h-20 w-20 items-center justify-center rounded-[18px] border border-border bg-surface shadow-sm">
         <Bot className="h-10 w-10 text-primary" />
@@ -188,6 +190,6 @@ export function AboutSettingsPage() {
         <span className="text-text-muted">·</span>
         <AboutLink label="Discord" url={DISCORD_URL} />
       </div>
-    </div>
+    </SettingsPage>
   )
 }
