@@ -180,7 +180,7 @@ def test_build_ingestion_result_auto_unitizes_qa_documents(
     assert "Each detected question and answer pair becomes one node" in second_node.text
 
 
-def test_build_ingestion_result_preserves_qa_question_continuation() -> None:
+def test_build_ingestion_result_rejects_multiline_question() -> None:
     result = build_ingestion_result(
         documents=[
             Document(
@@ -201,11 +201,8 @@ def test_build_ingestion_result_preserves_qa_question_continuation() -> None:
         embed_model=MagicMock(),
     )
 
-    assert result.parser_subtype == "qa_pair"
-    assert "Include uploaded files and pasted text." in result.index_nodes[0].text
-    assert result.index_nodes[0].metadata["question"] == (
-        "What does Wegent index? Include uploaded files and pasted text."
-    )
+    assert result.parser_subtype == "markdown_sentence"
+    assert all(node.metadata["node_role"] == "chunk" for node in result.index_nodes)
 
 
 def test_build_ingestion_result_generates_unique_ids_for_mixed_question_numbering() -> (
@@ -268,15 +265,13 @@ def test_build_ingestion_result_unitizes_plain_qa_labels() -> None:
     ]
 
 
-def test_build_ingestion_result_preserves_uncovered_text_in_mixed_qa_document() -> None:
+def test_build_ingestion_result_preserves_short_prefix_for_qa_document() -> None:
     result = build_ingestion_result(
         documents=[
             Document(
                 text=(
                     "# FAQ\n\n"
-                    "This introduction contains important operational context that "
-                    "is not part of any individual question and must remain "
-                    "available to retrieval after QA unitization.\n\n"
+                    "Important note.\n\n"
                     "**Q1: What is indexed?**\n\n"
                     "**A:** Indexed text is stored as retrievable nodes with "
                     "source metadata.\n\n"
@@ -297,7 +292,120 @@ def test_build_ingestion_result_preserves_uncovered_text_in_mixed_qa_document() 
         "qa_pair",
         "chunk",
     ]
-    assert "important operational context" in result.index_nodes[2].text
+    assert "Important note." in result.index_nodes[2].text
+
+
+def test_qa_answer_ends_at_first_blank_line() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: What is indexed?\n"
+                    "A: The focused answer is indexed.\n\n"
+                    "This prose is outside the answer and makes coverage low.\n"
+                    "It must not be swallowed by the preceding answer.\n\n"
+                    "Q2: How is it returned?\n"
+                    "A: The answer remains readable."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+    assert all(node.metadata["node_role"] == "chunk" for node in result.index_nodes)
+
+
+def test_qa_pairs_must_be_separated_by_a_blank_line() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: How do I configure it?\n"
+                    "A: Follow these steps.\n"
+                    "Q2: How do I verify it?\n"
+                    "A: Run the verification command."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+
+
+def test_qa_and_answer_markers_do_not_require_a_blank_line() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: What is indexed?\n"
+                    "A: The complete answer is indexed as one Q/A node.\n\n"
+                    "Q2: Is a blank required before A?\n"
+                    "A: No. The A marker may immediately follow the Q line."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert len(result.index_nodes) == 2
+
+
+def test_qa_coverage_below_eighty_percent_uses_normal_splitter() -> None:
+    preface = "Ordinary preface content. " * 20
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    f"{preface}\n\n"
+                    "Q1: What is indexed?\n"
+                    "A: The focused answer is indexed.\n\n"
+                    "Q2: How is it returned?\n"
+                    "A: The answer remains readable."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+    assert all(node.metadata["node_role"] == "chunk" for node in result.index_nodes)
+
+
+def test_long_contiguous_answer_remains_one_qa_node() -> None:
+    long_answer = "\n".join(
+        f"Answer line {index} contains a distinct operational detail."
+        for index in range(100)
+    )
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: What is indexed?\n"
+                    f"A: {long_answer}\n\n"
+                    "Q2: How is it returned?\n"
+                    "A: The answer remains readable and searchable."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert len(result.index_nodes) == 2
+    assert long_answer in result.index_nodes[0].text
 
 
 def test_build_ingestion_result_does_not_unitize_single_qa_document() -> None:
@@ -583,10 +691,7 @@ def test_document_indexer_counts_only_qa_pair_nodes_for_mixed_qa_documents() -> 
                 )
             ),
             Document(
-                text=(
-                    "This appendix has no question and answer markers, but it "
-                    "must still be preserved as fallback chunk text."
-                )
+                text="Note.",
             ),
         ],
         chunk_metadata=ChunkMetadata(
