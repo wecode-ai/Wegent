@@ -86,6 +86,23 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
+async function stopProcessGroup(child) {
+  if (!child?.pid) return
+
+  const signalGroup = signal => {
+    try {
+      process.kill(-child.pid, signal)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  signalGroup('SIGTERM')
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  if (signalGroup(0)) signalGroup('SIGKILL')
+}
+
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
@@ -154,13 +171,7 @@ async function runServer(sessionPath, token) {
       }
       if (request.method === 'POST' && url.pathname === '/shutdown') {
         json(response, 200, { ok: true })
-        if (app?.pid) {
-          try {
-            process.kill(-app.pid, 'SIGTERM')
-          } catch {
-            app.kill('SIGTERM')
-          }
-        }
+        await stopProcessGroup(app)
         server.close(() => process.exit(0))
         return
       }
