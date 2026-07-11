@@ -420,6 +420,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         if (!cancelled && requestedGoalRevision === goalRevisionRef.current) {
           const loadedGoal = response.accepted ? response.goal : null
           commitThreadGoal(loadedGoal)
+          if (loadedGoal?.status === 'active') {
+            void refreshWorkListsRef.current().catch(() => undefined)
+          }
           if (loadedGoal) {
             clearRuntimePaneGoalSeed(runtimeTaskLoadTarget.address)
             setPendingGoalState(current =>
@@ -560,6 +563,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             if (requestedGoalRevision !== goalRevisionRef.current) return
             const loadedGoal = response.accepted ? response.goal : null
             commitThreadGoal(loadedGoal)
+            if (loadedGoal?.status === 'active') {
+              void refreshWorkListsRef.current().catch(() => undefined)
+            }
             if (loadedGoal) {
               clearRuntimePaneGoalSeed(address)
               const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
@@ -586,6 +592,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       onRuntimeGoalUpdated: payload => {
         const loadedGoal = payload.goal ?? null
         commitThreadGoal(loadedGoal)
+        void refreshWorkListsRef.current().catch(() => undefined)
         if (loadedGoal?.status !== 'active') setGoalContinuation(null)
         clearRuntimePaneGoalSeed(address)
         const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
@@ -595,6 +602,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       },
       onRuntimeGoalCleared: () => {
         commitThreadGoal(null)
+        void refreshWorkListsRef.current().catch(() => undefined)
         setGoalContinuation(null)
         clearRuntimePaneGoalSeed(address)
         const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
@@ -604,6 +612,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       },
       onRuntimeGoalContinuation: payload => {
         setGoalContinuation(payload.status === 'started' ? payload : null)
+        void refreshWorkListsRef.current().catch(() => undefined)
       },
       onRuntimePlanUpdated: payload => {
         if (import.meta.env.DEV) {
@@ -1665,6 +1674,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         if (!response.accepted) return false
 
         commitThreadGoal(response.goal)
+        if (response.goal.status === 'active') {
+          await refreshWorkLists()
+        }
         return true
       } catch (error) {
         console.error('[Wework] Runtime goal status update failed', {
@@ -1675,7 +1687,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         return false
       }
     },
-    [currentRuntimeTask, goal, setRuntimeGoal]
+    [currentRuntimeTask, goal, refreshWorkLists, setRuntimeGoal]
   )
 
   const pauseCurrentGoal = useCallback(
@@ -1724,6 +1736,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       if (!response.accepted) return false
 
       commitThreadGoal(null)
+      await refreshWorkLists()
       return true
     } catch (error) {
       console.error('[Wework] Runtime goal clear failed', {
@@ -1732,7 +1745,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       })
       return false
     }
-  }, [clearRuntimeGoal, currentRuntimeTask, goal])
+  }, [clearRuntimeGoal, currentRuntimeTask, goal, refreshWorkLists])
 
   const cancelGuidanceMessage = useCallback(() => undefined, [])
   const goalContinuing = goal?.status === 'active' && goalContinuation?.status === 'started'

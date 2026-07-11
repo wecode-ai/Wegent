@@ -22,6 +22,7 @@ pub(crate) struct RuntimeTaskLink {
     pub runtime: String,
     pub status: String,
     pub running: bool,
+    pub goal_status: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub runtime_handle: Value,
@@ -43,6 +44,7 @@ impl RuntimeTaskLink {
             runtime: "codex".to_owned(),
             status: "running".to_owned(),
             running: true,
+            goal_status: None,
             created_at: now_ms(),
             updated_at: now_ms(),
             runtime_handle: json!({}),
@@ -69,6 +71,7 @@ impl RuntimeTaskLink {
             runtime,
             status: "active".to_owned(),
             running: false,
+            goal_status: None,
             created_at: now_ms(),
             updated_at: now_ms(),
             runtime_handle,
@@ -92,9 +95,15 @@ impl RuntimeTaskLink {
             .as_ref()
             .and_then(|link| local_terminal_status_if_current(link, thread));
         let local_running = local_link.as_ref().is_some_and(|link| link.running);
+        let goal_active = local_link
+            .as_ref()
+            .is_some_and(RuntimeTaskLink::has_active_goal);
+        let goal_status = local_link
+            .as_ref()
+            .and_then(|link| link.goal_status.clone());
         let status = if local_archived {
             "archived".to_owned()
-        } else if local_running {
+        } else if goal_active || local_running {
             "running".to_owned()
         } else if let Some(status) = &local_terminal_status {
             status.clone()
@@ -103,7 +112,7 @@ impl RuntimeTaskLink {
         };
         let running = !local_archived
             && local_terminal_status.is_none()
-            && (local_running || normalized_running_status(&status));
+            && (goal_active || local_running || normalized_running_status(&status));
         Self {
             local_task_id: local_link
                 .as_ref()
@@ -120,6 +129,7 @@ impl RuntimeTaskLink {
             runtime: "codex".to_owned(),
             status,
             running,
+            goal_status,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
             updated_at: timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms),
             runtime_handle: local_link
@@ -142,6 +152,7 @@ impl RuntimeTaskLink {
             runtime: self.runtime.clone(),
             status: self.status.clone(),
             running: self.running,
+            goal_status: self.goal_status.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
@@ -150,6 +161,14 @@ impl RuntimeTaskLink {
             list_order: self.list_order,
             group_workspace_path: self.group_workspace_path.clone(),
         }
+    }
+}
+
+impl RuntimeTaskLink {
+    pub fn has_active_goal(&self) -> bool {
+        self.goal_status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("active"))
     }
 }
 
@@ -180,6 +199,7 @@ impl Default for RuntimeTaskLink {
             runtime: "codex".to_owned(),
             status: "active".to_owned(),
             running: false,
+            goal_status: None,
             created_at: now_ms(),
             updated_at: now_ms(),
             runtime_handle: json!({}),
@@ -650,6 +670,31 @@ mod tests {
 
         assert_eq!(link.status, "active");
         assert!(!link.running);
+    }
+
+    #[test]
+    fn active_goal_keeps_task_running_when_thread_list_is_idle() {
+        let local_link = RuntimeTaskLink {
+            local_task_id: "task-1".to_owned(),
+            thread_id: Some("thread-1".to_owned()),
+            workspace_path: "/workspace/project".to_owned(),
+            goal_status: Some("active".to_owned()),
+            ..RuntimeTaskLink::default()
+        };
+
+        let link = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "status": "idle",
+                "cwd": "/workspace/project",
+            }),
+            Some(local_link),
+            "/workspace/project".to_owned(),
+        );
+
+        assert_eq!(link.status, "running");
+        assert!(link.running);
+        assert_eq!(link.goal_status.as_deref(), Some("active"));
     }
 
     #[test]

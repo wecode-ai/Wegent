@@ -1277,6 +1277,12 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                self.sync_runtime_task_goal_status(
+                    &link.local_task_id,
+                    result
+                        .get("goal")
+                        .and_then(|goal| string_field(goal, "status")),
+                );
                 let mut response = task_action_success(&link);
                 response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
                 Ok(response)
@@ -1312,6 +1318,12 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                self.sync_runtime_task_goal_status(
+                    &link.local_task_id,
+                    result
+                        .get("goal")
+                        .and_then(|goal| string_field(goal, "status")),
+                );
                 let mut response = task_action_success(&link);
                 response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
                 Ok(response)
@@ -1331,6 +1343,7 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                self.sync_runtime_task_goal_status(&link.local_task_id, None);
                 let mut response = task_action_success(&link);
                 response["cleared"] = result.get("cleared").cloned().unwrap_or(Value::Bool(false));
                 Ok(response)
@@ -2265,6 +2278,8 @@ impl RuntimeWorkRpcHandler {
                 let mut event_mapper = CodexNotificationEventMapper::default();
                 let mut cache_mapper = CodexNotificationCacheMapper::default();
                 while let Some(message) = notification_rx.recv().await {
+                    mapper_handler
+                        .sync_runtime_task_goal_from_notification(&mapper_local_task_id, &message);
                     cache_mapper.map(
                         &mapper_handler.store,
                         &mapper_local_task_id,
@@ -3419,7 +3434,7 @@ impl RuntimeWorkRpcHandler {
             runtime_handle.insert("threadPath".to_owned(), Value::String(path));
             link.runtime_handle = Value::Object(runtime_handle);
         }
-        if local_active {
+        if local_active || link.has_active_goal() {
             link.status = "running".to_owned();
             link.running = true;
         }
@@ -3593,8 +3608,13 @@ impl RuntimeWorkRpcHandler {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
             }
-            link.status = status.to_owned();
-            link.running = status == "running";
+            let goal_active = link.has_active_goal();
+            link.status = if goal_active {
+                "running".to_owned()
+            } else {
+                status.to_owned()
+            };
+            link.running = goal_active || status == "running";
             link.updated_at = now_ms();
             if link.thread_id.is_some() && status != "running" {
                 retain_runtime_handle_user_messages(&mut link.runtime_handle);
@@ -3609,6 +3629,40 @@ impl RuntimeWorkRpcHandler {
         }
         self.thread_list_cache.invalidate();
     }
+
+    fn sync_runtime_task_goal_from_notification(&self, local_task_id: &str, message: &Value) {
+        let notification = codex_notification(message);
+        let goal_status = match notification.method.as_str() {
+            "thread/goal/updated" => notification
+                .params
+                .get("goal")
+                .and_then(|goal| string_field(goal, "status")),
+            "thread/goal/cleared" => None,
+            _ => return,
+        };
+        self.sync_runtime_task_goal_status(local_task_id, goal_status);
+    }
+
+    fn sync_runtime_task_goal_status(&self, local_task_id: &str, goal_status: Option<String>) {
+        let active_goal = goal_status
+            .as_deref()
+            .is_some_and(|status| status.eq_ignore_ascii_case("active"));
+        let task_active = self.is_active_local_task(local_task_id);
+        let updated = self.store.update_task(local_task_id, |link| {
+            link.goal_status = goal_status.clone();
+            if active_goal {
+                link.status = "running".to_owned();
+                link.running = true;
+            } else if !task_active {
+                link.status = goal_status.clone().unwrap_or_else(|| "active".to_owned());
+                link.running = false;
+            }
+            link.updated_at = now_ms();
+        });
+        if updated.is_some() {
+            self.thread_list_cache.invalidate();
+        }
+    }
 }
 
 fn is_unmapped_pending_codex_shadow(
@@ -3622,7 +3676,7 @@ fn is_unmapped_pending_codex_shadow(
 }
 
 fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
-    if !is_inactive_running_codex_task(link) {
+    if link.has_active_goal() || !is_inactive_running_codex_task(link) {
         return false;
     }
     link.status = "active".to_owned();
