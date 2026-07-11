@@ -1,4 +1,4 @@
-import { ArrowUp, Square } from 'lucide-react'
+import { ArrowUp, ClipboardList, Square } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ModelOptions, RuntimeContextUsage, UnifiedModel } from '@/types/api'
 import { AddContextMenu } from './AddContextMenu'
@@ -71,6 +71,7 @@ export function ComposerToolbar({
         ) : planModeActive ? (
           <ComposerModePill
             label={t('workbench.plan_mode', '计划模式')}
+            icon={ClipboardList}
             testId="plan-mode-pill"
             cancelTestId="cancel-plan-mode-button"
             cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}
