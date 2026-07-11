@@ -184,6 +184,17 @@ function responseCompleted(id) {
   }
 }
 
+function responseFailed(id, message) {
+  return {
+    type: 'response.failed',
+    response: {
+      id,
+      status: 'failed',
+      error: { code: 'server_error', message },
+    },
+  }
+}
+
 function functionCall(callId, name, argumentsValue) {
   return {
     type: 'response.output_item.done',
@@ -535,7 +546,10 @@ class DesktopE2EServer {
       )
       const retryRequests = this.scenarioRequests.get('retry') ?? []
       if (retryRequests.length === 1) {
-        json(response, 500, { error: 'WEWORK_DESKTOP_E2E_RETRY_FAILURE' })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          responseFailed(responseId, 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'),
+        ])
         return
       }
       this.writeSse(response, [
