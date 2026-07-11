@@ -256,7 +256,7 @@ export function CompactChatComposer({
               <Maximize2 className="h-4 w-4" />
             </button>
           )}
-          {isStreaming ? (
+          {isStreaming && !canSend ? (
             <button
               type="button"
               data-testid="pause-response-button"

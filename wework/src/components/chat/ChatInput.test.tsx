@@ -346,6 +346,28 @@ describe('ChatInput', () => {
     expect(onPause).toHaveBeenCalledTimes(1)
   })
 
+  test('shows desktop send button for a draft while the assistant is streaming', async () => {
+    const onSubmit = vi.fn()
+
+    render(
+      <ChatInput
+        value="继续修复"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        variant="desktop"
+        isStreaming
+      />
+    )
+
+    expect(screen.getByTestId('send-message-button')).toBeEnabled()
+    expect(screen.queryByTestId('pause-response-button')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(onSubmit).toHaveBeenCalledWith('继续修复')
+  })
+
   test('renders queued messages and guidance controls above the composer', async () => {
     const queuedMessages: QueuedWorkbenchMessage[] = [
       {
@@ -504,6 +526,27 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('pause-response-button'))
 
     expect(onPause).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows compact send button for a draft while the assistant is streaming', async () => {
+    const onSubmit = vi.fn()
+
+    render(
+      <ChatInput
+        value="继续修复"
+        onChange={vi.fn()}
+        onSubmit={onSubmit}
+        disabled={false}
+        isStreaming
+      />
+    )
+
+    expect(screen.getByTestId('send-message-button')).toBeEnabled()
+    expect(screen.queryByTestId('pause-response-button')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(onSubmit).toHaveBeenCalledWith('继续修复')
   })
 
   test('does not render voice input in the compact composer', async () => {

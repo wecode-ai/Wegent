@@ -103,7 +103,7 @@ export function ComposerToolbar({
         ) : (
           <div className="h-11 w-32 shrink-0" data-testid="model-selector-loading" />
         )}
-        {isStreaming ? (
+        {isStreaming && !canSend ? (
           <button
             type="button"
             data-testid="pause-response-button"
