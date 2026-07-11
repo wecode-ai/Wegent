@@ -25,6 +25,8 @@ const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const MODEL_API_KEY = 'wework-e2e-test-key'
 const MODEL_PROVIDER_ID = 'wework-e2e'
 const MODEL_ID = 'gpt-5.4'
+const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
+const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -260,24 +262,31 @@ function requestAdvertisesShellTool(request) {
   return tools.some(tool => tool?.name === 'exec_command' || tool?.name === 'shell_command')
 }
 
-function selectShellTool(request, workspacePath) {
+function selectTool(request, name, argumentsValue) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
-  const command = `printf '%s\\n' '${ARTIFACT_CONTENT}' > ${ARTIFACT_NAME}`
+  assert.ok(names.has(name), `Real Codex did not advertise ${name}: ${[...names].join(', ')}`)
+  return { name, arguments: argumentsValue }
+}
 
-  if (names.has('exec_command')) {
-    return {
-      name: 'exec_command',
-      arguments: { cmd: command, workdir: workspacePath, yield_time_ms: 1000 },
-    }
+function selectShellTool(request, workspacePath) {
+  const command = `printf '%s\\n' '${ARTIFACT_CONTENT}' > ${ARTIFACT_NAME}`
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  if (tools.some(tool => tool?.name === 'exec_command')) {
+    return selectTool(request, 'exec_command', {
+      cmd: command,
+      workdir: workspacePath,
+      yield_time_ms: 1000,
+    })
   }
-  if (names.has('shell_command')) {
-    return {
-      name: 'shell_command',
-      arguments: { command, workdir: workspacePath, timeout_ms: 10_000 },
-    }
+  if (tools.some(tool => tool?.name === 'shell_command')) {
+    return selectTool(request, 'shell_command', {
+      command,
+      workdir: workspacePath,
+      timeout_ms: 10_000,
+    })
   }
-  throw new Error(`Real Codex did not advertise a supported shell tool: ${[...names].join(', ')}`)
+  throw new Error('Real Codex did not advertise a supported shell tool')
 }
 
 class DesktopE2EServer {
@@ -326,7 +335,7 @@ class DesktopE2EServer {
 
   setScenario(scenario) {
     assert.ok(
-      ['initial', 'follow_up', 'cancellation', 'retry'].includes(scenario),
+      ['initial', 'follow_up', 'cancellation', 'retry', 'fresh_chat'].includes(scenario),
       `Unknown desktop E2E scenario: ${scenario}`
     )
     this.scenario = scenario
@@ -517,6 +526,22 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(FOLLOW_UP_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'fresh_chat') {
+      this.recordScenarioRequest('fresh_chat', modelRequest)
+      assert.ok(JSON.stringify(body).includes(FRESH_CHAT_PROMPT), 'The fresh chat prompt was lost')
+      assert.equal(
+        JSON.stringify(body).includes(TASK_PROMPT),
+        false,
+        'The new conversation inherited the previous task context'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(FRESH_CHAT_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
@@ -747,7 +772,6 @@ async function main() {
       control.toolOutput,
       'Codex did not report its real tool execution to the model service'
     )
-
     phase = 'follow-up'
     control.setScenario('follow_up')
     await sendPrompt(control, composerSelector, FOLLOW_UP_PROMPT)
@@ -803,6 +827,24 @@ async function main() {
       2,
       'Retry did not issue exactly one additional request for the failed user message'
     )
+
+    phase = 'fresh-chat'
+    control.setScenario('fresh_chat')
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    const freshChatSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      freshChatSnapshot.text.includes(TASK_PROMPT),
+      false,
+      'The new conversation retained the previous task'
+    )
+    await sendPrompt(control, composerSelector, FRESH_CHAT_PROMPT)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: FRESH_CHAT_COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
 
     await writeFile(
       join(resultDir, 'model-requests.json'),
