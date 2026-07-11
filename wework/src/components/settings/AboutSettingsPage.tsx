@@ -12,6 +12,14 @@ function formatVersionTemplate(template: string, version: string): string {
   return template.replace('{{version}}', version)
 }
 
+function calculateDownloadPercent(
+  downloadedBytes: number,
+  totalBytes: number | null
+): number | null {
+  if (!totalBytes || totalBytes <= 0) return null
+  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
+}
+
 function formatUpdateError(message: string | null, t: ReturnType<typeof useTranslation>['t']) {
   if (!message) return null
   if (message.toLowerCase().includes('updater does not have any endpoints set')) {
@@ -70,9 +78,13 @@ export function AboutSettingsPage() {
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const updateStatus = appUpdate?.status ?? 'idle'
+  const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
   const formattedUpdateError = formatUpdateError(updateError, t)
   const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
+  const downloadPercent = downloadProgress
+    ? calculateDownloadPercent(downloadProgress.downloadedBytes, downloadProgress.totalBytes)
+    : null
   const updateButtonLabel = availableUpdate
     ? formatVersionTemplate(
         t('workbench.app_update_install', {
@@ -135,6 +147,37 @@ export function AboutSettingsPage() {
           >
             {formattedUpdateError ?? updateMessage}
           </span>
+        ) : null}
+        {updateStatus === 'installing' ? (
+          <div data-testid="about-update-download-progress" className="w-[240px] space-y-1.5">
+            <div
+              role="progressbar"
+              aria-label={t('workbench.app_update_downloading', {
+                defaultValue: '正在下载更新',
+              })}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              {...(downloadPercent !== null ? { 'aria-valuenow': downloadPercent } : {})}
+              className="h-1.5 overflow-hidden rounded-full bg-muted"
+            >
+              <div
+                className={
+                  downloadPercent === null
+                    ? 'h-full w-1/3 animate-pulse rounded-full bg-primary'
+                    : 'h-full rounded-full bg-primary transition-[width] duration-200'
+                }
+                style={downloadPercent === null ? undefined : { width: `${downloadPercent}%` }}
+              />
+            </div>
+            <span className="block text-xs leading-5 text-text-secondary">
+              {downloadPercent === null
+                ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
+                : t('workbench.app_update_downloading_progress', {
+                    defaultValue: '正在下载更新 {{progress}}%',
+                    progress: downloadPercent,
+                  })}
+            </span>
+          </div>
         ) : null}
       </div>
 

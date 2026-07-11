@@ -17,6 +17,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        Self::log_execution_request_summary("runtime.tasks.create", &request);
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
@@ -66,6 +67,39 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
+    pub(super) fn log_execution_request_summary(method: &str, request: &ExecutionRequest) {
+        let model_config = &request.model_config;
+        let base_url = model_config
+            .get("base_url")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let api_key_present = model_config
+            .get("api_key")
+            .and_then(Value::as_str)
+            .map(|value| !value.is_empty())
+            .unwrap_or(false);
+        let use_user_config = model_config
+            .get("runtime_config")
+            .and_then(Value::as_object)
+            .and_then(|config| config.get("codex"))
+            .and_then(Value::as_object)
+            .and_then(|codex| codex.get("use_user_config"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let model_id = model_config
+            .get("model_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let keys: Vec<String> = model_config
+            .as_object()
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default();
+        wework_debug_log(&format!(
+            "{method} task_id={} model_id={} base_url={} api_key_present={} use_user_config={} model_config_keys={:?}",
+            request.task_id, model_id, base_url, api_key_present, use_user_config, keys
+        ));
+    }
+
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -98,6 +132,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
+        Self::log_execution_request_summary("runtime.tasks.send", &request);
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }

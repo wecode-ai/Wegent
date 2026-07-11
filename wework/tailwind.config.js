@@ -30,6 +30,11 @@ export default {
         'mobile-drawer': 'rgb(var(--color-mobile-drawer))',
         popover: 'rgb(var(--color-popover) / <alpha-value>)',
         'code-bg': 'rgb(var(--color-code-bg) / <alpha-value>)',
+        'reasoning-standard': 'rgb(var(--color-reasoning-standard) / <alpha-value>)',
+        'reasoning-ultra-start': 'rgb(var(--color-reasoning-ultra-start) / <alpha-value>)',
+        'reasoning-ultra-end': 'rgb(var(--color-reasoning-ultra-end) / <alpha-value>)',
+        'reasoning-ultra-text': 'rgb(var(--color-reasoning-ultra-text) / <alpha-value>)',
+        'reasoning-contrast': 'rgb(var(--color-reasoning-contrast) / <alpha-value>)',
       },
       borderRadius: {
         DEFAULT: 'var(--radius)',

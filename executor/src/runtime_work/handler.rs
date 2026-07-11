@@ -21,11 +21,12 @@ use tokio::time::sleep;
 use crate::{
     agents::{
         combined_codex_developer_instructions, strip_wework_browser_instructions,
-        CodexActiveTurnCallback, CodexAppServerClient, CodexAppServerTurnOptions,
-        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
+        CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
-    logging::log_executor_event,
+    logging::{log_executor_event, wework_debug_log},
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
 };

@@ -11,10 +11,12 @@ import {
 import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
+import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
+import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import {
   CachedWorkbenchPaneStack,
@@ -842,6 +844,30 @@ function RuntimePaneSessionIdentityProbe() {
   )
 }
 
+function RuntimePlanScopeProbe() {
+  const { workbench, paneSession } = useWorkbenchProbeSession()
+  const runtimeTask = {
+    deviceId: 'device-1',
+    workspacePath: '/workspace/project-alpha',
+    taskId: 'runtime-plan-scope',
+  }
+
+  return (
+    <div>
+      <span data-testid="runtime-plan-scope-task">
+        {workbench.state.currentRuntimeTask?.taskId ?? 'none'}
+      </span>
+      <TaskPlanProgress plan={paneSession.taskPlan} />
+      <button type="button" onClick={() => void workbench.openRuntimeTask(runtimeTask)}>
+        open runtime plan scope
+      </button>
+      <button type="button" onClick={workbench.startNewChat}>
+        start new plan scope chat
+      </button>
+    </div>
+  )
+}
+
 function RuntimeProjectMutationProbe() {
   const workbench = useWorkbench()
   return (
@@ -1067,6 +1093,7 @@ function RuntimeOpenProbe() {
       </span>
       <span data-testid="runtime-open-error">{workbench.state.error ?? ''}</span>
       <span data-testid="runtime-goal-objective">{paneSession.goal?.objective ?? 'none'}</span>
+      <span data-testid="runtime-goal-status">{paneSession.goal?.status ?? 'none'}</span>
       <span data-testid="current-runtime-task-running">
         {workbench.currentRuntimeTaskRunning ? 'running' : 'idle'}
       </span>
@@ -1134,6 +1161,15 @@ function RuntimeOpenProbe() {
       </button>
       <button type="button" onClick={() => void paneSession.pauseCurrentResponse()}>
         stop current response
+      </button>
+      <button type="button" onClick={paneSession.editCurrentGoal}>
+        edit runtime goal
+      </button>
+      <button type="button" onClick={() => paneSession.setInput('更新后的目标')}>
+        set edited runtime goal
+      </button>
+      <button type="button" onClick={() => void paneSession.send()}>
+        send runtime goal
       </button>
       <MessageList
         messages={paneSession.messages}
@@ -4692,6 +4728,42 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeCleanup).not.toHaveBeenCalled()
   })
 
+  test('clears the task plan progress when starting a new chat', async () => {
+    renderWorkbench(<RuntimePlanScopeProbe />)
+
+    await userEvent.click(await screen.findByText('open runtime plan scope'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-plan-scope-task')).toHaveTextContent('runtime-plan-scope')
+    )
+
+    await act(async () => {
+      emitResponseApiEvent(
+        {},
+        'runtime.plan.updated',
+        {
+          taskId: 'runtime-plan-scope',
+          deviceId: 'device-1',
+          data: {
+            plan: [{ step: 'Implement the fix', status: 'inProgress' }],
+          },
+        },
+        createResponseApiStreamState()
+      )
+      globalThis.dispatchEvent(new Event('wework-runtime-plan-updated'))
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-plan-progress-button')).toBeInTheDocument()
+    )
+
+    await userEvent.click(screen.getByText('start new plan scope chat'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('runtime-plan-scope-task')).toHaveTextContent('none')
+      expect(screen.queryByTestId('runtime-plan-progress-button')).not.toBeInTheDocument()
+    })
+  })
+
   test('reuses the current runtime task address for follow-up messages', async () => {
     const sendRuntimeMessage = vi.fn().mockResolvedValue({
       accepted: true,
@@ -5637,6 +5709,131 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('none')
     )
+  })
+
+  test('keeps an active runtime goal active while the task list is between automatic turns', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                      status: 'idle',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      getRuntimeGoal: vi.fn().mockResolvedValue({
+        accepted: true,
+        goal: createRuntimeGoal({ status: 'active' }),
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
+    )
+    expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
+  })
+
+  test('resumes a paused runtime goal when editing and sending its objective', async () => {
+    const setRuntimeGoal = vi.fn().mockResolvedValue({
+      accepted: true,
+      goal: createRuntimeGoal({ objective: '更新后的目标', status: 'active' }),
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      getRuntimeGoal: vi.fn().mockResolvedValue({
+        accepted: true,
+        goal: createRuntimeGoal({ status: 'paused' }),
+      }),
+      setRuntimeGoal,
+      sendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true, taskId: 'runtime-a' }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('paused')
+    )
+    await userEvent.click(screen.getByText('edit runtime goal'))
+    await userEvent.click(screen.getByText('set edited runtime goal'))
+    await userEvent.click(screen.getByText('send runtime goal'))
+
+    await waitFor(() =>
+      expect(setRuntimeGoal).toHaveBeenCalledWith({
+        address: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        objective: '更新后的目标',
+        status: 'active',
+      })
+    )
+    expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
   test('accepts current runtime stream blocks when device id is omitted', async () => {

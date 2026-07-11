@@ -394,6 +394,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     isStreaming={paneIsResponseStreaming}
                     onPause={() => void paneSession.pauseCurrentResponse()}
                     onCompactContext={() => void paneSession.compactContext()}
+                    taskPlan={paneSession.taskPlan}
                     onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
@@ -484,6 +485,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 isStreaming={paneIsResponseStreaming}
                 onPause={() => void paneSession.pauseCurrentResponse()}
                 onCompactContext={() => void paneSession.compactContext()}
+                taskPlan={paneSession.taskPlan}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}

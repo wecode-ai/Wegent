@@ -29,7 +29,7 @@ use crate::{
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
-    logging::{log_executor_event, task_fields},
+    logging::{log_executor_event, task_fields, wework_debug_log},
     process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
@@ -83,6 +83,7 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
 pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
+pub type CodexActiveTurnFinishedCallback = Box<dyn Fn() + Send + 'static>;
 
 #[derive(Default)]
 pub struct CodexAppServerTurnOptions {
@@ -97,6 +98,7 @@ pub struct CodexAppServerTurnOptions {
     pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     pub thread_started: Option<CodexThreadStartedCallback>,
     pub active_turn_started: Option<CodexActiveTurnCallback>,
+    pub active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
 }
 
 pub trait CodexTurnInterrupter: Send + Sync {
@@ -768,6 +770,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         request_user_input_answers,
         thread_started,
         active_turn_started,
+        active_turn_finished,
     } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
@@ -934,6 +937,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 request_user_input_answers,
                 goal_run_active,
                 active_turn_started,
+                active_turn_finished,
             },
         )
         .await;
@@ -1208,6 +1212,7 @@ struct SharedTurnNotificationOptions {
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     goal_run_active: bool,
     active_turn_started: Option<CodexActiveTurnCallback>,
+    active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
 }
 
 async fn read_shared_turn_notifications(
@@ -1217,18 +1222,20 @@ async fn read_shared_turn_notifications(
     state: &mut CodexRunState,
     mut options: SharedTurnNotificationOptions,
 ) -> Result<ExecutionOutcome, String> {
-    let mut cancel_requested = false;
     let mut last_outcome: Option<ExecutionOutcome> = None;
     loop {
         let notification = if let Some(cancel_rx) = options.cancellation.as_mut() {
             tokio::select! {
                 _ = cancel_rx => {
                     options.cancellation = None;
-                    cancel_requested = true;
                     if let Some(turn_id) = options.active_turn_id.as_deref() {
-                        interrupt_shared_turn(client, thread_id, turn_id).await?;
+                        interrupt_shared_turn_detached(
+                            client.clone(),
+                            thread_id.to_owned(),
+                            turn_id.to_owned(),
+                        );
                     }
-                    continue;
+                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
                 }
                 message = notification_rx.recv() => shared_notification_result(message, last_outcome.clone())?,
             }
@@ -1256,18 +1263,13 @@ async fn read_shared_turn_notifications(
         }
         log_codex_raw_turn_message(&message);
 
-        if let Some(turn_id) = turn_started_notification_turn_id(&message) {
+        if let Some(turn_id) = active_root_turn_notification_id(&message, state) {
             if options.active_turn_id.as_deref() != Some(turn_id.as_str()) {
                 if let Some(callback) = options.active_turn_started.as_ref() {
                     callback(thread_id.to_owned(), turn_id.clone());
                 }
             }
             options.active_turn_id = Some(turn_id);
-            if cancel_requested {
-                if let Some(turn_id) = options.active_turn_id.as_deref() {
-                    interrupt_shared_turn(client, thread_id, turn_id).await?;
-                }
-            }
         }
 
         if let Some(sender) = &options.notifications {
@@ -1290,6 +1292,9 @@ async fn read_shared_turn_notifications(
 
         if let Some(outcome) = state.handle_message(&message) {
             options.active_turn_id = None;
+            if let Some(callback) = options.active_turn_finished.as_ref() {
+                callback();
+            }
             if !matches!(outcome, ExecutionOutcome::Completed { .. }) {
                 return Ok(outcome);
             }
@@ -1341,6 +1346,25 @@ async fn interrupt_shared_turn(
         .map(|_| ())
 }
 
+fn interrupt_shared_turn_detached(
+    client: CodexAppServerClient,
+    thread_id: String,
+    turn_id: String,
+) {
+    tokio::spawn(async move {
+        if let Err(error) = interrupt_shared_turn(&client, &thread_id, &turn_id).await {
+            log_executor_event(
+                "codex shared turn interrupt failed",
+                &[
+                    ("thread_id", thread_id),
+                    ("turn_id", turn_id),
+                    ("error", error),
+                ],
+            );
+        }
+    });
+}
+
 async fn answer_shared_request_user_input(
     client: &CodexAppServerClient,
     message: &Value,
@@ -1383,11 +1407,14 @@ fn turn_start_response_turn_id(response: &Value) -> Option<String> {
         .or_else(|| string_value(response, "turn_id"))
 }
 
-fn turn_started_notification_turn_id(message: &Value) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
+fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) == Some("turn/completed") {
         return None;
     }
     let params = message_params(message);
+    if state.is_subagent_message(params) {
+        return None;
+    }
     params
         .get("turn")
         .and_then(|turn| string_value(turn, "id"))
@@ -1836,6 +1863,18 @@ impl JsonRpcConnection {
         let mut line = serde_json::to_vec(&message)
             .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
         line.push(b'\n');
+        let preview = serde_json::to_string(&message).unwrap_or_default();
+        let preview = if preview.len() > 2048 {
+            format!("{}...", &preview[..2048])
+        } else {
+            preview
+        };
+        wework_debug_log(&format!(
+            "codex rpc send id={:?} method={:?} body={}",
+            message.get("id"),
+            message.get("method"),
+            preview
+        ));
         self.stdin
             .write_all(&line)
             .await
@@ -1856,8 +1895,20 @@ impl JsonRpcConnection {
         if bytes_read == 0 {
             return Err("codex app-server exited before completing the turn".to_owned());
         }
-        serde_json::from_str(&line)
-            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))
+        let message: Value = serde_json::from_str(&line)
+            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))?;
+        let preview = if line.len() > 2048 {
+            format!("{}...", &line[..2048])
+        } else {
+            line.clone()
+        };
+        wework_debug_log(&format!(
+            "codex rpc recv id={:?} method={:?} body={}",
+            message.get("id"),
+            message.get("method"),
+            preview.trim()
+        ));
+        Ok(message)
     }
 }
 
@@ -2212,6 +2263,7 @@ fn log_codex_raw_turn_message(message: &Value) {
             | "item/reasoning/delta"
             | "item/reasoningSummary/delta"
             | "item/fileChange/patchUpdated"
+            | "turn/plan/updated"
             | "item/started"
             | "item/completed"
             | "turn/completed"
@@ -2510,6 +2562,27 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
+
+    let base_url = non_empty_config(&request.model_config, "base_url");
+    let api_key_present = api_key(&request.model_config).is_some();
+    let use_user_config = use_user_runtime_config(&request.model_config);
+    let provider_id = explicit_model_provider(&request.model_config)
+        .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned());
+    wework_debug_log(&format!(
+        "build_codex_launch_config model_id={:?} base_url={:?} api_key_present={} \
+         use_user_config={} model_provider={} config_overrides={} model_config_keys={:?}",
+        model_id(request),
+        base_url,
+        api_key_present,
+        use_user_config,
+        provider_id,
+        launch_config.config_overrides.len(),
+        request
+            .model_config
+            .as_object()
+            .map(|object| object.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+    ));
     launch_config
 }
 
@@ -2769,7 +2842,21 @@ fn header_overrides(
     project_id: Option<&str>,
 ) -> Vec<String> {
     let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Vec::new();
+        let headers = parse_header_map(default_headers);
+        return if headers.is_empty() {
+            Vec::new()
+        } else {
+            headers
+                .into_iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{}={}",
+                        toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
+                        toml_value(&value)
+                    )
+                })
+                .collect()
+        };
     };
 
     let mut headers = parse_header_map(default_headers);
@@ -2876,13 +2963,18 @@ fn normalize_reasoning_effort(value: Option<&str>) -> String {
         .replace(' ', "_");
     let aliased = match normalized.as_str() {
         "" | "none" | "off" | "false" | "disabled" | "关闭" => DEFAULT_REASONING_EFFORT,
-        "低" => "low",
+        "minimal" | "低" | "轻度" | "最低" => "low",
         "中" | "中等" => "medium",
         "高" => "high",
-        "超高" | "最高" | "extra_high" | "ultra" | "x-high" => "xhigh",
+        "超高" | "extra_high" | "extra-high" | "x_high" | "x-high" => "xhigh",
+        "最大" | "最高" | "maximum" => "max",
+        "极高" => "ultra",
         value => value,
     };
-    if matches!(aliased, "minimal" | "low" | "medium" | "high" | "xhigh") {
+    if matches!(
+        aliased,
+        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    ) {
         aliased.to_owned()
     } else {
         DEFAULT_REASONING_EFFORT.to_owned()
@@ -4063,6 +4155,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn normalize_reasoning_effort_preserves_supported_codex_levels() {
+        for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
+            assert_eq!(normalize_reasoning_effort(Some(effort)), effort);
+        }
+    }
+
+    #[test]
+    fn normalize_reasoning_effort_maps_aliases_to_supported_codex_levels() {
+        for (value, expected) in [
+            ("minimal", "low"),
+            ("轻度", "low"),
+            ("中等", "medium"),
+            ("extra high", "xhigh"),
+            ("x-high", "xhigh"),
+            ("最高", "max"),
+            ("maximum", "max"),
+            ("极高", "ultra"),
+        ] {
+            assert_eq!(normalize_reasoning_effort(Some(value)), expected);
+        }
+    }
+
+    #[test]
+    fn normalize_reasoning_effort_uses_default_for_disabled_or_unknown_values() {
+        for value in [None, Some("off"), Some("unknown")] {
+            assert_eq!(normalize_reasoning_effort(value), DEFAULT_REASONING_EFFORT);
+        }
+    }
+
+    #[test]
     fn wework_codex_home_defaults_to_executor_home_codex() {
         let _lock = crate::test_env::lock();
         let home = unique_test_path("wework-codex-home-default");
@@ -4783,6 +4905,48 @@ mod tests {
             .expect_err("empty objective should be rejected");
 
         assert_eq!(error, "initial goal objective is required");
+    }
+
+    #[test]
+    fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_child_turns() {
+        let mut state = CodexRunState::default();
+        state.set_root_thread_id("thread-root");
+
+        let active_item = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-root",
+                "turnId": "turn-current",
+                "item": { "type": "reasoning" }
+            }
+        });
+        assert_eq!(
+            active_root_turn_notification_id(&active_item, &state).as_deref(),
+            Some("turn-current")
+        );
+
+        let completed_turn = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-root",
+                "turn": { "id": "turn-current", "status": "completed" }
+            }
+        });
+        assert_eq!(
+            active_root_turn_notification_id(&completed_turn, &state),
+            None
+        );
+
+        let child_item = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-root",
+                "turnId": "child-turn",
+                "agentPath": "/root/worker",
+                "item": { "type": "reasoning" }
+            }
+        });
+        assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
     }
 
     #[test]

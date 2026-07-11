@@ -11,6 +11,7 @@ import type {
   ProjectWithTasks,
   RuntimeContextUsage,
   RuntimeGoal,
+  RuntimePlanEventPayload,
   RuntimeWorkListResponse,
   SkillRef,
   UnifiedModel,
@@ -22,6 +23,7 @@ import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
+import { TaskPlanProgress } from './composer/TaskPlanProgress'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -40,6 +42,7 @@ export interface ProjectChatControls {
   isOptionsLocked: boolean
   modelSelectorOpenSignal?: number
   setSelectedModel: (model: UnifiedModel | null) => void
+  setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   setSelectedModelOption: (optionId: string, value: string) => void
   getSelectedModel?: () => UnifiedModel | null
   getSelectedModelOptions?: () => ModelOptions
@@ -62,6 +65,7 @@ export interface ProjectWorkControls {
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
+  isGitProject?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
   onSelectProjectWorkspace?: (projectId: number, deviceWorkspaceId: number | null) => void
@@ -76,6 +80,8 @@ export interface ProjectWorkControls {
   onCreateBranch?: (branchName: string) => Promise<void>
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
+  projectMenuOpenSignal?: number
+  projectMenuAnchorElement?: HTMLElement | null
 }
 
 export interface ChatInputProps {
@@ -102,6 +108,8 @@ export interface ChatInputProps {
   onPause?: () => void
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
+  goalContinuing?: boolean
+  taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
   onCancelGoalDraft?: () => void
@@ -188,6 +196,8 @@ export function ChatInput({
   onPause,
   onCompactContext,
   goal,
+  goalContinuing = false,
+  taskPlan,
   goalDraftActive = false,
   onSetGoal,
   onCancelGoalDraft,
@@ -274,12 +284,14 @@ export function ChatInput({
   if (variant === 'desktop') {
     return (
       <div className="w-full">
+        <TaskPlanProgress plan={taskPlan} />
         {queuePanel}
         {errorBanner}
         <PluginTrialTemplateStrip templates={controls.trialTemplates ?? []} />
         {displayedGoal && !goalDraftActive && (
           <GoalStatusBar
             goal={displayedGoal}
+            continuing={goalContinuing}
             onEditGoal={onEditGoal}
             onPauseGoal={onPauseGoal}
             onResumeGoal={onResumeGoal}
@@ -299,6 +311,7 @@ export function ChatInput({
           attachmentErrors={controls.errors}
           contextUsage={controls.contextUsage}
           onSelectModel={controls.setSelectedModel}
+          onSelectModelAndOptions={controls.setSelectedModelAndOptions}
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}
           onFileSelect={files => {
@@ -347,12 +360,14 @@ export function ChatInput({
 
   return (
     <div className="w-full">
+      <TaskPlanProgress plan={taskPlan} />
       {queuePanel}
       {errorBanner}
       <PluginTrialTemplateStrip templates={controls.trialTemplates ?? []} />
       {displayedGoal && !goalDraftActive && (
         <GoalStatusBar
           goal={displayedGoal}
+          continuing={goalContinuing}
           onEditGoal={onEditGoal}
           onPauseGoal={onPauseGoal}
           onResumeGoal={onResumeGoal}

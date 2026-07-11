@@ -188,6 +188,11 @@ impl RuntimeWorkRpcHandler {
                         turn_id,
                     );
                 });
+            let finished_turn_handler = handler.clone();
+            let finished_turn_local_task_id = turn_local_task_id.clone();
+            let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                finished_turn_handler.clear_active_codex_turn(&finished_turn_local_task_id);
+            });
             let result = handler
                 .codex_app_server
                 .run_turn_with_cancel(
@@ -204,11 +209,23 @@ impl RuntimeWorkRpcHandler {
                         request_user_input_answers: Some(request_user_input_rx),
                         thread_started: Some(thread_started),
                         active_turn_started: Some(active_turn_started),
+                        active_turn_finished: Some(active_turn_finished),
                     },
                 )
                 .await;
 
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                emit_response_event(
+                    &handler.event_tx,
+                    &handler.device_id,
+                    "response.incomplete",
+                    &turn_local_task_id,
+                    &request,
+                    json!({
+                        "type": "cancelled",
+                        "error": {"message": "cancelled"},
+                    }),
+                );
                 let _ = mapper_handle.await;
                 handler.clear_active_turn_cancellation(&turn_local_task_id);
                 handler.clear_active_codex_turn(&turn_local_task_id);

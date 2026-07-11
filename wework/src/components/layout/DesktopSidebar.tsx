@@ -1050,8 +1050,15 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
   } | null>(null)
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const status = appUpdate?.status ?? 'idle'
+  const downloadProgress = appUpdate?.downloadProgress ?? null
   const error = appUpdate?.error ?? null
   const busy = status === 'checking' || status === 'installing'
+  const downloadPercent = downloadProgress
+    ? calculateSidebarUpdateDownloadPercent(
+        downloadProgress.downloadedBytes,
+        downloadProgress.totalBytes
+      )
+    : null
 
   const showErrorTooltip = () => {
     if (!error || !buttonRef.current) return
@@ -1073,6 +1080,16 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
         { version: availableUpdate.version }
       )
     : t('workbench.app_update_check', '检查更新')
+  const downloadTitle =
+    downloadPercent === null
+      ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
+      : formatSidebarTemplate(
+          t('workbench.app_update_downloading_progress', {
+            defaultValue: '正在下载更新 {{progress}}%',
+            progress: downloadPercent,
+          }),
+          { progress: String(downloadPercent) }
+        )
 
   return (
     <div
@@ -1095,8 +1112,8 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
           }
           void appUpdate.checkNow()
         }}
-        title={error ?? title}
-        aria-label={error ?? title}
+        title={error ?? (status === 'installing' ? downloadTitle : title)}
+        aria-label={error ?? (status === 'installing' ? downloadTitle : title)}
         className={cn(
           'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
           error
@@ -1104,12 +1121,14 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
             : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
         )}
       >
-        {busy ? (
+        {status === 'installing' && downloadPercent !== null ? (
+          <SidebarUpdateDownloadProgress progress={downloadPercent} />
+        ) : busy ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
           <Download className="sidebar-update-download-icon h-4 w-4" />
         )}
-        {availableUpdate && (
+        {availableUpdate && !busy && (
           <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-[rgb(var(--color-sidebar-hover))]" />
         )}
         {error && (
@@ -1129,6 +1148,33 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
           )
         : null}
     </div>
+  )
+}
+
+function calculateSidebarUpdateDownloadPercent(
+  downloadedBytes: number,
+  totalBytes: number | null
+): number | null {
+  if (!totalBytes || totalBytes <= 0) return null
+  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
+}
+
+function SidebarUpdateDownloadProgress({ progress }: { progress: number }) {
+  return (
+    <span
+      data-testid="sidebar-app-update-download-progress"
+      role="progressbar"
+      aria-label={`Update download ${progress}%`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={progress}
+      className="flex h-4 w-4 items-center justify-center rounded-full"
+      style={{
+        background: `conic-gradient(rgb(var(--color-primary)) ${progress}%, rgb(var(--color-sidebar-hover)) 0)`,
+      }}
+    >
+      <span className="h-2 w-2 rounded-full bg-[rgb(var(--color-sidebar))]" />
+    </span>
   )
 }
 

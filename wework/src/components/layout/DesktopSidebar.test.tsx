@@ -99,6 +99,7 @@ function renderSidebar(
     const value: AppUpdateContextValue = {
       availableUpdate: null,
       status: 'idle',
+      downloadProgress: null,
       message: null,
       error: null,
       checkNow: vi.fn().mockResolvedValue(null),
@@ -203,6 +204,21 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('sidebar-app-update-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('sidebar-app-update-action')).not.toBeInTheDocument()
     expect(screen.getByTestId('settings-button')).toHaveClass('pr-10')
+  })
+
+  test('shows download progress in the account-row update icon', () => {
+    renderSidebar({}, undefined, {
+      availableUpdate: { currentVersion: '0.1.0', version: '0.1.1' },
+      status: 'installing',
+      downloadProgress: { downloadedBytes: 40, totalBytes: 100 },
+    })
+
+    const progress = screen.getByTestId('sidebar-app-update-download-progress')
+    expect(progress).toHaveAttribute('aria-valuenow', '40')
+    expect(screen.getByTestId('sidebar-app-update-button')).toHaveAttribute(
+      'title',
+      '正在下载更新 40%'
+    )
   })
 
   test('keeps the resize handle hit area on the sidebar edge', () => {

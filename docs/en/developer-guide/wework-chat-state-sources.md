@@ -44,6 +44,14 @@ This document records the state sources for the Wework chat path. The goal is to
 7. `chat:done`, `chat:error`, and cancellation events settle the assistant message through the reducer and refresh the work list.
 8. If runtime work and message state disagree, do not settle it with fallback logic; fix the missing stream event, transcript data, or reducer action.
 
+## Goal and Task Execution State
+
+The goal bar's running presentation must be constrained by the current runtime task execution snapshot. When App Server explicitly reports `running: false` for the current task, an otherwise `active` goal must be derived as `paused` in the UI and its displayed elapsed time must stop. This prevents an interrupted task from showing an active, ticking goal when it is reopened.
+
+- Task execution is known only when `running` is an explicit boolean. A missing field means the state is unknown and must not pause the goal.
+- This derivation affects only Wework presentation and elapsed-time calculation; it does not automatically call the goal pause API. Persisting `paused` remains an explicit user action through **Pause goal**.
+- When the task reports `running: true` again, the goal uses the original status returned by the runtime goal API.
+
 ## Long Output Memory Boundary
 
 The Wework chat UI must not keep complete long-running output in React state. `WorkbenchMessage.content`, thinking/text/plan block `content`, and tool block `toolOutput` must enter `messages` through the shared preview-window path:

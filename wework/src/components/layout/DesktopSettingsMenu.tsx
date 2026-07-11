@@ -18,6 +18,29 @@ function formatVersionTemplate(template: string, version: string): string {
   return template.replace('{{version}}', version)
 }
 
+function calculateDownloadPercent(
+  downloadedBytes: number,
+  totalBytes: number | null
+): number | null {
+  if (!totalBytes || totalBytes <= 0) return null
+  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
+}
+
+function UpdateDownloadProgressIcon({ progress }: { progress: number }) {
+  return (
+    <span
+      data-testid="app-update-download-icon-progress"
+      aria-label={`${progress}%`}
+      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
+      style={{
+        background: `conic-gradient(rgb(var(--color-primary)) ${progress}%, rgb(var(--color-border)) 0)`,
+      }}
+    >
+      <span className="h-2 w-2 rounded-full bg-popover" />
+    </span>
+  )
+}
+
 interface DesktopSettingsMenuProps {
   user: UserProfile | null
   onOpenSettings: () => void
@@ -34,6 +57,7 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const updateStatus = appUpdate?.status ?? 'idle'
+  const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
   const checkNow = appUpdate?.checkNow
   const installUpdate = appUpdate?.installUpdate
@@ -85,18 +109,33 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
       )
     : t('workbench.app_update_check', { defaultValue: '检查更新' })
   const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
-  const updateMessage = availableUpdate
-    ? formatVersionTemplate(
-        t('workbench.app_update_available', {
-          defaultValue: '发现新版本 {{version}}',
-          version: availableUpdate.version,
-        }),
-        availableUpdate.version
-      )
-    : updateStatus === 'upToDate'
-      ? t('workbench.app_update_up_to_date', {
-          defaultValue: '已是最新版本',
-        })
+  const downloadPercent = downloadProgress
+    ? calculateDownloadPercent(downloadProgress.downloadedBytes, downloadProgress.totalBytes)
+    : null
+  const updateMessage =
+    updateStatus === 'installing'
+      ? null
+      : availableUpdate
+        ? formatVersionTemplate(
+            t('workbench.app_update_available', {
+              defaultValue: '发现新版本 {{version}}',
+              version: availableUpdate.version,
+            }),
+            availableUpdate.version
+          )
+        : updateStatus === 'upToDate'
+          ? t('workbench.app_update_up_to_date', {
+              defaultValue: '已是最新版本',
+            })
+          : null
+  const downloadMessage =
+    updateStatus === 'installing'
+      ? downloadPercent === null
+        ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
+        : t('workbench.app_update_downloading_progress', {
+            defaultValue: '正在下载更新 {{progress}}%',
+            progress: downloadPercent,
+          }).replace('{{progress}}', String(downloadPercent))
       : null
 
   return (
@@ -114,7 +153,9 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
       <SettingsMenuItem
         testId="check-app-update-button"
         icon={
-          isUpdateBusy ? (
+          updateStatus === 'installing' && downloadPercent !== null ? (
+            <UpdateDownloadProgressIcon progress={downloadPercent} />
+          ) : isUpdateBusy ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-secondary" />
           ) : (
             <Download className="h-4 w-4 shrink-0 text-text-secondary" />
@@ -125,6 +166,24 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
         disabled={isUpdateBusy}
         active={Boolean(updateError)}
       />
+      {downloadMessage ? (
+        <div
+          data-testid="app-update-download-progress"
+          className="space-y-1.5 px-4 pb-2 pl-[44px] pr-5 text-xs font-medium leading-[18px] text-text-secondary"
+        >
+          <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div
+              className={
+                downloadPercent === null
+                  ? 'h-full w-1/3 animate-pulse rounded-full bg-primary'
+                  : 'h-full rounded-full bg-primary transition-[width] duration-200'
+              }
+              style={downloadPercent === null ? undefined : { width: `${downloadPercent}%` }}
+            />
+          </div>
+          <span>{downloadMessage}</span>
+        </div>
+      ) : null}
       {updateMessage || updateError ? (
         <div
           data-testid="app-update-status"

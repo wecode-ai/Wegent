@@ -49,6 +49,7 @@ POST /api/v1/responses
 | `input` | string \| array | Yes | User input prompt or conversation history |
 | `stream` | boolean | No | Enable streaming output (default: `false`) |
 | `previous_response_id` | string | No | Previous response ID for follow-up conversations |
+| `reasoning` | object | No | Model reasoning configuration with `effort` and optional `summary` fields |
 | `tools` | array | No | Wegent custom tools configuration |
 
 #### Model Format
@@ -81,6 +82,21 @@ The `input` field supports two formats:
     {"type": "message", "role": "assistant", "content": "2+2 equals 4."},
     {"type": "message", "role": "user", "content": "What about 3+3?"}
   ]
+}
+```
+
+#### Reasoning Configuration
+
+`reasoning.effort` accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, and `ultra`. Availability depends on the selected model; clients should use the capability list returned by the model runtime instead of constructing unsupported levels.
+
+`reasoning.summary` accepts `auto`, `concise`, or `detailed`.
+
+```json
+{
+  "reasoning": {
+    "effort": "ultra",
+    "summary": "auto"
+  }
 }
 ```
 

@@ -14,6 +14,7 @@ if _get_otel_config_early("wegent-backend").enabled:
         pass
 
 import asyncio
+import json
 import logging
 import signal
 import sys
@@ -61,7 +62,6 @@ FORWARDED_LOG_HEADER_NAMES = (
     "forwarded",
 )
 MAX_LOGGED_HEADER_VALUE_LENGTH = 512
-
 
 # Initialize logging at module level for use in lifespan
 setup_logging()

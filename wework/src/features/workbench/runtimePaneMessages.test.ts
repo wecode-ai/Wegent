@@ -40,6 +40,38 @@ describe('createRuntimeTaskStreamHandlers', () => {
     expect('messageId' in actions[0]).toBe(false)
   })
 
+  test('forwards structured task-plan updates for the active runtime task', () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'device-1',
+      taskId: 'runtime-task-1',
+    }
+    const onRuntimePlanUpdated = vi.fn()
+    const handlers = createRuntimeTaskStreamHandlers(address, {
+      onMessageAction: vi.fn(),
+      onRuntimePlanUpdated,
+    })
+
+    handlers.onRuntimePlanUpdated?.({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      explanation: 'Implement the requested change.',
+      plan: [{ step: 'Implement', status: 'inProgress' }],
+    })
+
+    expect(onRuntimePlanUpdated).toHaveBeenCalledWith({
+      taskId: 'runtime-task-1',
+      subtaskId: 'subtask-9',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      explanation: 'Implement the requested change.',
+      plan: [{ step: 'Implement', status: 'inProgress' }],
+    })
+  })
+
   test('streams camelCase reasoning chunks into assistant messages', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const address: RuntimeTaskAddress = {
@@ -580,6 +612,41 @@ describe('runtimeMessagesToWorkbenchMessages', () => {
     expect(messages[0].content).toBe(
       ['完成了。', '', '```text', '::git-stage{cwd="/workspace/project"}', '```'].join('\n')
     )
+  })
+
+  test('ignores invalid short-content truncation markers from a runtime transcript', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '这是一段完整的短回复。',
+        content_truncated: true,
+        content_original_chars: 11,
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      content: '这是一段完整的短回复。',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+    })
+  })
+
+  test('keeps valid runtime content truncation markers so full content can be loaded', () => {
+    const messages = runtimeMessagesToWorkbenchMessages([
+      {
+        id: 'assistant-1',
+        role: 'assistant',
+        content: '回复末尾预览',
+        contentTruncated: true,
+        contentOriginalChars: 200_001,
+      },
+    ])
+
+    expect(messages[0]).toMatchObject({
+      contentTruncated: true,
+      contentOriginalChars: 200_001,
+    })
   })
 
   test('keeps user-authored Codex directive text unchanged', () => {

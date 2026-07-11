@@ -39,6 +39,27 @@ describe('reduceWorkbenchMessages', () => {
     expect(done[0].contentTruncated).toBe(true)
   })
 
+  test('clears stale stream truncation metadata when done supplies short content', () => {
+    const streamed = reduceWorkbenchMessages([], {
+      type: 'assistant_chunk',
+      subtaskId: 'short-final-content',
+      content: 'partial response',
+      offset: 20_000
+    })
+    const done = reduceWorkbenchMessages(streamed, {
+      type: 'assistant_done',
+      subtaskId: 'short-final-content',
+      content: 'final response'
+    })
+
+    expect(done[0]).toMatchObject({
+      content: 'final response',
+      contentTruncated: undefined,
+      contentOriginalChars: undefined,
+      contentLoadRef: undefined
+    })
+  })
+
   test('keeps growing assistant original length after content is unloaded', () => {
     const truncated = reduceWorkbenchMessages([], {
       type: 'assistant_chunk',

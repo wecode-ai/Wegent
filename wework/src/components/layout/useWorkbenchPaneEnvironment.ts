@@ -5,6 +5,7 @@ import type { ProjectWithTasks } from '@/types/api'
 import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
+import { isGitWorkspaceProject } from '@/lib/projectClassification'
 import {
   resolveProjectRuntimeWorkspaceTarget,
   resolveRuntimeWorkspaceContext,
@@ -116,6 +117,14 @@ export function useWorkbenchPaneEnvironment({
     ? runtimeWorkspaceTarget
     : (projectRuntimeWorkspaceTarget ?? workspaceTarget)
   const activeWorkspaceTargetKey = workspaceTargetKey(activeWorkspaceTarget)
+  const environmentMatchesActiveWorkspace = Boolean(
+    activeWorkspaceTarget &&
+    environmentInfo.workspacePath === activeWorkspaceTarget.path &&
+    environmentInfo.deviceId === activeWorkspaceTarget.deviceId
+  )
+  const isGitProject = environmentMatchesActiveWorkspace
+    ? !environmentInfo.error && environmentInfo.branchName !== undefined
+    : Boolean(workspaceProject && isGitWorkspaceProject(workspaceProject))
   const workspaceProjectKey = workspaceProject ? String(workspaceProject.id) : ''
   const activeConversationProjectKey = activeConversationProject
     ? String(activeConversationProject.id)
@@ -334,6 +343,7 @@ export function useWorkbenchPaneEnvironment({
     environmentInfo,
     projectWork: {
       ...projectWork,
+      isGitProject,
       branchName: environmentInfo.branchName,
       branchLoading: environmentInfo.loading,
       onRefreshBranch: undefined,

@@ -295,7 +295,6 @@ function mergeBulkResponses(
 export function createHybridWorkbenchServices(
   options: HybridWorkbenchServicesOptions
 ): WorkbenchServices {
-  const localServices = createLocalAppServices()
   const cloudServices = createBackendWorkbenchServices({
     apiBaseUrl: options.apiBaseUrl,
     socketBaseUrl: options.socketBaseUrl,
@@ -303,6 +302,19 @@ export function createHybridWorkbenchServices(
     getToken: () => options.token,
     redirectOnUnauthorized: false,
     transportKind: 'backend-relay',
+  })
+  const localServices = createLocalAppServices({
+    resolveCloudModelConfig: async (modelId, modelType, modelOptions) => {
+      if (!cloudServices.runtimeWorkApi) {
+        throw new Error('Cloud runtime work API is unavailable')
+      }
+      const response = await cloudServices.runtimeWorkApi.resolveModelConfig({
+        modelId,
+        modelType,
+        modelOptions,
+      })
+      return response.modelConfig
+    },
   })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
@@ -642,6 +654,12 @@ export function createHybridWorkbenchServices(
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest) {
       return runtimeApi(data.target.deviceId).forkRuntimeTask(data)
+    },
+    resolveModelConfig(data) {
+      if (!cloudServices.runtimeWorkApi) {
+        throw new Error('Cloud runtime work API is unavailable')
+      }
+      return cloudServices.runtimeWorkApi.resolveModelConfig(data)
     },
   }
 

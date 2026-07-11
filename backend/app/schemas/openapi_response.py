@@ -182,9 +182,11 @@ class ReasoningConfig(BaseModel):
         {"effort": "medium", "summary": "concise"}
     """
 
-    effort: Literal["none", "minimal", "low", "medium", "high", "xhigh"] = Field(
+    effort: Literal[
+        "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"
+    ] = Field(
         default="medium",
-        description="Constrains effort on reasoning. Supported values: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'. "
+        description="Constrains effort on reasoning. Supported values: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'. "
         "Reducing reasoning effort can result in faster responses and fewer tokens used on reasoning. "
         "gpt-5.1 defaults to 'none'. Models before gpt-5.1 default to 'medium'.",
     )

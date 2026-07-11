@@ -10,6 +10,8 @@ import type {
   ChatBlockUpdatedPayload,
   RuntimeContextUsage,
   RuntimeGoalEventPayload,
+  RuntimeGoalContinuationPayload,
+  RuntimePlanEventPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimeSubagentActivityPayload,
   NormalizedRuntimeMessage,
@@ -32,6 +34,8 @@ export interface RuntimeTaskStreamHandlers {
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
+  onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
 }
 
@@ -247,6 +251,28 @@ export function createRuntimeTaskStreamHandlers(
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       handlers.onRuntimeGoalCleared?.(payload)
     },
+    onRuntimeGoalContinuation: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onRuntimeGoalContinuation?.(payload)
+    },
+    onRuntimePlanUpdated: payload => {
+      const matched = isRuntimeTaskStreamPayload(address, payload)
+      debugRuntimeStreamEvent('plan:updated', address, payload, matched, {
+        threadId: payload.threadId ?? null,
+        turnId: payload.turnId ?? null,
+        stepCount: payload.plan.length,
+      })
+      if (import.meta.env.DEV) {
+        console.info('[Wework] Runtime task plan scoped', {
+          matched,
+          currentTaskId: address.taskId,
+          eventTaskId: payload.taskId ?? null,
+          stepCount: payload.plan.length,
+        })
+      }
+      if (!matched) return
+      handlers.onRuntimePlanUpdated?.(payload)
+    },
     onGuidanceApplied: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       handlers.onGuidanceApplied?.(payload)
@@ -390,19 +416,14 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     typeof subtaskId === 'string'
       ? normalizeProcessingBlocks(subtaskId, message.blocks, messageCreatedAtMs)
       : []
+  const contentTruncated = hasTruncatedRuntimeContent(message)
   return {
     id: message.id,
     role,
     subtaskId,
     content: role === 'assistant' ? stripCodexUiDirectives(message.content) : message.content,
-    contentTruncated:
-      message.contentTruncated === true || message.content_truncated === true ? true : undefined,
-    contentOriginalChars:
-      typeof message.contentOriginalChars === 'number'
-        ? message.contentOriginalChars
-        : typeof message.content_original_chars === 'number'
-          ? message.content_original_chars
-          : undefined,
+    contentTruncated: contentTruncated || undefined,
+    contentOriginalChars: contentTruncated ? runtimeMessageOriginalChars(message) : undefined,
     runtimeMessageIndex,
     status,
     runtimeStatus,
@@ -417,6 +438,32 @@ function runtimeMessageToWorkbenchMessage(message: NormalizedRuntimeMessage): Wo
     completedAt,
     stoppedNotice,
   }
+}
+
+function hasTruncatedRuntimeContent(message: NormalizedRuntimeMessage): boolean {
+  if (message.contentTruncated !== true && message.content_truncated !== true) return false
+
+  const originalChars = runtimeMessageOriginalChars(message)
+  return (
+    originalChars !== undefined && originalChars > runtimeContentCharacterCount(message.content)
+  )
+}
+
+function runtimeMessageOriginalChars(message: NormalizedRuntimeMessage): number | undefined {
+  const originalChars =
+    typeof message.contentOriginalChars === 'number'
+      ? message.contentOriginalChars
+      : typeof message.content_original_chars === 'number'
+        ? message.content_original_chars
+        : undefined
+
+  return originalChars !== undefined && Number.isFinite(originalChars) && originalChars >= 0
+    ? originalChars
+    : undefined
+}
+
+function runtimeContentCharacterCount(content: string): number {
+  return Array.from(content).length
 }
 
 function warnAndDropRuntimeStreamEvent(

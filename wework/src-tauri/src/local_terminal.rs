@@ -77,6 +77,20 @@ fn normalized_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
     Ok(Some(cwd.to_string()))
 }
 
+fn normalized_extra_env(env: Option<HashMap<String, String>>) -> HashMap<String, String> {
+    env.unwrap_or_default()
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let key = key.trim();
+            if key.is_empty() || key.contains('=') || key.contains('\0') || value.contains('\0') {
+                return None;
+            }
+
+            Some((key.to_string(), value))
+        })
+        .collect()
+}
+
 fn decode_pty_output_chunk(pending: &mut Vec<u8>, chunk: &[u8]) -> String {
     let mut bytes = std::mem::take(pending);
     bytes.extend_from_slice(chunk);
@@ -143,6 +157,15 @@ fn configure_terminal_environment(command: &mut CommandBuilder) {
     );
 }
 
+fn configure_terminal_extra_environment(
+    command: &mut CommandBuilder,
+    env: HashMap<String, String>,
+) {
+    for (key, value) in env {
+        command.env(key, value);
+    }
+}
+
 #[tauri::command]
 pub fn start_local_terminal(
     app: tauri::AppHandle,
@@ -150,6 +173,7 @@ pub fn start_local_terminal(
     cwd: Option<String>,
     rows: Option<u16>,
     cols: Option<u16>,
+    env: Option<HashMap<String, String>>,
 ) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
@@ -175,6 +199,7 @@ pub fn start_local_terminal(
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
         let mut command = CommandBuilder::new(shell);
         configure_terminal_environment(&mut command);
+        configure_terminal_extra_environment(&mut command, normalized_extra_env(env));
         if let Some(cwd) = cwd {
             command.cwd(cwd);
         }
@@ -240,6 +265,7 @@ pub fn start_local_terminal(
         let _ = cwd;
         let _ = rows;
         let _ = cols;
+        let _ = env;
         Err("Local terminal is supported only on macOS".to_string())
     }
 }

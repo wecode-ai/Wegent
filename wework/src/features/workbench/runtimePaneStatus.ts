@@ -32,9 +32,10 @@ export function getRuntimePaneTaskExecution(
     return { known: false, running: false, status: null }
   }
 
+  const running = typeof task.running === 'boolean' ? task.running : null
   return {
-    known: true,
-    running: task.running === true,
+    known: running !== null,
+    running: running === true,
     status: normalizeTaskStatus(task),
   }
 }

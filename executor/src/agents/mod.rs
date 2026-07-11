@@ -37,9 +37,10 @@ pub use claude_options::{extract_claude_options, ClaudeOptions};
 pub(crate) use codex::{combined_codex_developer_instructions, strip_wework_browser_instructions};
 pub use codex::{
     run_codex_app_server_turn, run_codex_app_server_turn_with_cancel, CodexActiveTurnCallback,
-    CodexAppServerClient, CodexAppServerEngine, CodexAppServerTurn, CodexAppServerTurnOptions,
-    CodexCancellationState, CodexNotificationSender, CodexRequestUserInputReceiver,
-    CodexThreadStartedCallback, CodexTurnInterrupter, CODEX_APP_SERVER_TURN_CANCELLED,
+    CodexActiveTurnFinishedCallback, CodexAppServerClient, CodexAppServerEngine,
+    CodexAppServerTurn, CodexAppServerTurnOptions, CodexCancellationState, CodexNotificationSender,
+    CodexRequestUserInputReceiver, CodexThreadStartedCallback, CodexTurnInterrupter,
+    CODEX_APP_SERVER_TURN_CANCELLED,
 };
 pub use dify::{build_dify_config, saved_dify_task_id, DifyEngine};
 pub use image_validator::ImageValidatorEngine;
@@ -49,6 +50,7 @@ const MACOS_CODEX_APP_BINARIES: [&str; 2] = [
     "/Applications/ChatGPT.app/Contents/Resources/codex",
     "/Applications/Codex.app/Contents/Resources/codex",
 ];
+const CLAUDE_USER_BINARY_SUFFIX: &str = ".local/bin/claude";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCommandPlanner {
@@ -130,7 +132,48 @@ pub fn build_codex_app_server_command(binary: &str) -> CommandSpec {
 }
 
 fn resolve_claude_binary() -> String {
-    read_binary("CLAUDE_BINARY_PATH", "CLAUDE_BIN", "claude")
+    let binary = read_binary("CLAUDE_BINARY_PATH", "CLAUDE_BIN", "claude");
+    resolve_claude_binary_path(&binary)
+}
+
+/// Resolve a Claude Code binary name/path to an executable path.
+///
+/// GUI-launched local executors may not inherit a user's shell PATH.
+/// `~/.local/bin` is a common user-level Claude Code installation location,
+/// so check it before falling back to PATH lookup.
+pub fn resolve_claude_binary_path(value: &str) -> String {
+    let user_binary = env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(CLAUDE_USER_BINARY_SUFFIX));
+    let search_paths = env::var_os("PATH")
+        .map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    resolve_claude_binary_path_from_candidates(value, user_binary.as_ref(), &search_paths)
+}
+
+fn resolve_claude_binary_path_from_candidates(
+    value: &str,
+    user_binary: Option<&PathBuf>,
+    search_paths: &[PathBuf],
+) -> String {
+    let trimmed = value.trim();
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return trimmed.to_owned();
+    }
+
+    if trimmed == "claude" {
+        if let Some(path) = user_binary.filter(|path| path.is_file()) {
+            return path.display().to_string();
+        }
+    }
+
+    search_paths
+        .iter()
+        .map(|path| path.join(trimmed))
+        .find(|path| path.is_file())
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| trimmed.to_owned())
 }
 
 fn read_binary(primary: &str, secondary: &str, default: &str) -> String {
@@ -417,6 +460,25 @@ mod tests {
         let resolved = resolve_codex_binary_path_from_candidates("codex", &app_candidates, &[]);
 
         assert_eq!(resolved, available_binary.display().to_string());
+    }
+
+    #[test]
+    fn claude_binary_resolver_prefers_available_user_binary() {
+        let available_binary = std::env::current_exe().expect("current test binary should exist");
+
+        let resolved =
+            resolve_claude_binary_path_from_candidates("claude", Some(&available_binary), &[]);
+
+        assert_eq!(resolved, available_binary.display().to_string());
+    }
+
+    #[test]
+    fn claude_binary_resolver_keeps_explicit_path() {
+        let explicit_path = "/custom/bin/claude";
+
+        let resolved = resolve_claude_binary_path_from_candidates(explicit_path, None, &[]);
+
+        assert_eq!(resolved, explicit_path);
     }
 
     #[test]

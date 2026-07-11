@@ -43,6 +43,43 @@ describe('createLocalChatStream', () => {
     })
   })
 
+  test('forwards task-plan events outside a subscription scope for task-level caching', async () => {
+    let listener!: (event: LocalExecutorEvent) => void
+    subscribe.mockImplementation(async handler => {
+      listener = handler
+      return vi.fn()
+    })
+    const onRuntimePlanUpdated = vi.fn()
+    const stream = createLocalChatStream({ subscribe, request })
+
+    stream.subscribe({
+      scope: { deviceId: 'local-device', taskId: 'previous-task' },
+      onRuntimePlanUpdated,
+    })
+    await Promise.resolve()
+    listener({
+      event: 'runtime.plan.updated',
+      payload: {
+        taskId: 'new-task',
+        subtaskId: '1001',
+        deviceId: 'local-device',
+        data: {
+          plan: [{ step: 'Inspect', status: 'inProgress' }],
+        },
+      },
+    })
+
+    expect(onRuntimePlanUpdated).toHaveBeenCalledWith({
+      taskId: 'new-task',
+      subtaskId: '1001',
+      deviceId: 'local-device',
+      threadId: undefined,
+      turnId: undefined,
+      explanation: undefined,
+      plan: [{ step: 'Inspect', status: 'inProgress' }],
+    })
+  })
+
   test('does not log every text delta event', async () => {
     let listener!: (event: LocalExecutorEvent) => void
     subscribe.mockImplementation(async handler => {

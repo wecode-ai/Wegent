@@ -11,6 +11,7 @@ import {
   OPEN_TERMINAL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
   TOGGLE_SIDE_PANEL_COMMAND,
+  TOGGLE_MODEL_SELECTOR_COMMAND,
   keybindingFromKeyboardEvent,
   mergeKeybindings,
   normalizeKeybinding,
@@ -43,6 +44,10 @@ const COMMAND_LABELS: Record<string, { label: string; description: string }> = {
     label: 'keyboard_shortcuts_toggle_side_panel',
     description: 'keyboard_shortcuts_toggle_side_panel_description',
   },
+  [TOGGLE_MODEL_SELECTOR_COMMAND]: {
+    label: 'keyboard_shortcuts_toggle_model_selector',
+    description: 'keyboard_shortcuts_toggle_model_selector_description',
+  },
 }
 
 function commandFallback(command: string): string {
@@ -51,6 +56,7 @@ function commandFallback(command: string): string {
   if (command === GO_FORWARD_COMMAND) return '前进'
   if (command === TOGGLE_SIDEBAR_COMMAND) return '切换边栏'
   if (command === TOGGLE_SIDE_PANEL_COMMAND) return '切换侧边面板'
+  if (command === TOGGLE_MODEL_SELECTOR_COMMAND) return '选择模型'
   return command === OPEN_TERMINAL_COMMAND ? '切换底部面板' : command
 }
 
@@ -60,6 +66,7 @@ function commandDescriptionFallback(command: string): string {
   if (command === GO_FORWARD_COMMAND) return '前进导航历史'
   if (command === TOGGLE_SIDEBAR_COMMAND) return '显示或隐藏边栏'
   if (command === TOGGLE_SIDE_PANEL_COMMAND) return '显示或隐藏侧边面板'
+  if (command === TOGGLE_MODEL_SELECTOR_COMMAND) return '打开或关闭当前输入区的模型选择器'
   return command === OPEN_TERMINAL_COMMAND ? '显示或隐藏底部面板' : ''
 }
 
@@ -120,7 +127,10 @@ export function KeyboardShortcutsSettingsPage() {
         { command, key },
       ].filter(
         item =>
-          item.key !== DEFAULT_KEYBINDINGS.find(base => base.command === item.command)?.defaultKey
+          normalizeKeybinding(item.key ?? '') !==
+          normalizeKeybinding(
+            DEFAULT_KEYBINDINGS.find(base => base.command === item.command)?.defaultKey ?? ''
+          )
       )
 
       setSavingCommand(command)

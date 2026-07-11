@@ -1768,7 +1768,36 @@ export interface RuntimeGoalEventPayload {
   subtaskId?: string
   deviceId?: string
   threadId?: string
+  turnId?: string
   goal?: RuntimeGoal | null
+}
+
+export type RuntimeGoalContinuationStatus = 'started' | 'settled'
+
+export interface RuntimeGoalContinuationPayload {
+  taskId?: string
+  subtaskId?: string
+  deviceId?: string
+  threadId?: string
+  turnId?: string
+  status: RuntimeGoalContinuationStatus
+}
+
+export type RuntimePlanStepStatus = 'pending' | 'inProgress' | 'completed'
+
+export interface RuntimePlanStep {
+  step: string
+  status: RuntimePlanStepStatus
+}
+
+export interface RuntimePlanEventPayload {
+  taskId?: string
+  subtaskId?: string
+  deviceId?: string
+  threadId?: string
+  turnId?: string
+  explanation?: string
+  plan: RuntimePlanStep[]
 }
 
 export interface RuntimeGuidanceAppliedPayload {

@@ -57,10 +57,14 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - English version: [`docs/en/developer-guide/wework-performance-diagnostics.md`](docs/en/developer-guide/wework-performance-diagnostics.md)
 - Wework E2E automation: [`docs/zh/developer-guide/wework-e2e-automation.md`](docs/zh/developer-guide/wework-e2e-automation.md)
 - English version: [`docs/en/developer-guide/wework-e2e-automation.md`](docs/en/developer-guide/wework-e2e-automation.md)
+- Wework debug instance labels: [`docs/zh/developer-guide/wework-debug-instance-context.md`](docs/zh/developer-guide/wework-debug-instance-context.md)
+- English version: [`docs/en/developer-guide/wework-debug-instance-context.md`](docs/en/developer-guide/wework-debug-instance-context.md)
 - Wework chat state sources: [`docs/zh/developer-guide/wework-chat-state-sources.md`](docs/zh/developer-guide/wework-chat-state-sources.md)
 - English version: [`docs/en/developer-guide/wework-chat-state-sources.md`](docs/en/developer-guide/wework-chat-state-sources.md)
 - Wework Codex plugin runtime: [`docs/zh/developer-guide/wework-codex-plugins.md`](docs/zh/developer-guide/wework-codex-plugins.md)
 - English version: [`docs/en/developer-guide/wework-codex-plugins.md`](docs/en/developer-guide/wework-codex-plugins.md)
+- Wework cloud model proxy gateway: [`docs/zh/developer-guide/wework-cloud-model-proxy.md`](docs/zh/developer-guide/wework-cloud-model-proxy.md)
+- English version: [`docs/en/developer-guide/wework-cloud-model-proxy.md`](docs/en/developer-guide/wework-cloud-model-proxy.md)
 
 **📚 Documentation Writing Rules:**
 - All documentation files MUST include frontmatter with `sidebar_position` for ordering:

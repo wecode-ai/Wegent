@@ -18,11 +18,11 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCloudDevice, isOnlineDevice, sortStandaloneDevices } from '@/lib/device-selection'
 import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
+import { isGitWorkspaceProject } from '@/lib/projectClassification'
 import {
   buildProjectWorkspaceOptions,
   isSelectableProjectWorkspace,
 } from '@/lib/project-workspace-selection'
-import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeProjectToProject } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
@@ -33,159 +33,24 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { ProjectCreateMode } from '../ChatInput'
+import {
+  getMenuVisibleBounds,
+  getProjectDeviceId,
+  getProjectMenuDeviceLabel,
+  getProjectMenuFitHeight,
+  isLocalProjectWorkspaceDevice,
+  isLocalStandaloneDevice,
+  resolveProjectExecutionUi,
+} from './project-work-bar-utils'
 import { useOutsideClick } from './useOutsideClick'
 import { WorktreeBranchSelector } from './WorktreeBranchSelector'
 
-const PROJECT_MENU_VIEWPORT_MARGIN = 16
 const PROJECT_MENU_MAX_HEIGHT = 480
-const PROJECT_MENU_VERTICAL_PADDING = 12
-const PROJECT_MENU_SEARCH_BLOCK_HEIGHT = 42
-const PROJECT_MENU_ROW_HEIGHT = 36
-const PROJECT_MENU_ROW_GAP = 2
-const PROJECT_MENU_VISIBLE_PROJECT_ROWS = 4
-const PROJECT_MENU_LIST_MAX_HEIGHT =
-  PROJECT_MENU_VISIBLE_PROJECT_ROWS * PROJECT_MENU_ROW_HEIGHT +
-  (PROJECT_MENU_VISIBLE_PROJECT_ROWS - 1) * PROJECT_MENU_ROW_GAP
-const PROJECT_MENU_EMPTY_STATE_HEIGHT = 42
-const PROJECT_MENU_DIVIDER_BLOCK_HEIGHT = 13
-const PROJECT_MENU_ACTION_HEIGHT = 32
-const PROJECT_MENU_ACTION_GAP = 2
+const PROJECT_MENU_LIST_MAX_HEIGHT = 150
+const PROJECT_MENU_WIDTH = 320
+const PROJECT_MENU_ANCHOR_GAP = 8
+const PROJECT_MENU_VIEWPORT_MARGIN = 16
 const EXECUTION_MODE_MENU_HEIGHT = 126
-
-const CLIPPING_OVERFLOW_RE = /(auto|hidden|scroll|clip)/
-
-function getMenuVisibleBounds(element: HTMLElement | null) {
-  let top = PROJECT_MENU_VIEWPORT_MARGIN
-  let bottom = window.innerHeight - PROJECT_MENU_VIEWPORT_MARGIN
-  let current = element?.parentElement ?? null
-
-  while (current && current !== document.body) {
-    const style = window.getComputedStyle(current)
-    const clipsVertically =
-      CLIPPING_OVERFLOW_RE.test(style.overflowY) || CLIPPING_OVERFLOW_RE.test(style.overflow)
-
-    if (clipsVertically) {
-      const rect = current.getBoundingClientRect()
-      if (rect.height > 0) {
-        top = Math.max(top, rect.top + PROJECT_MENU_VIEWPORT_MARGIN)
-        bottom = Math.min(bottom, rect.bottom - PROJECT_MENU_VIEWPORT_MARGIN)
-      }
-    }
-
-    current = current.parentElement
-  }
-
-  return { top, bottom }
-}
-
-function getStackHeight(itemCount: number, itemHeight: number, gap: number) {
-  if (itemCount <= 0) return 0
-  return itemCount * itemHeight + (itemCount - 1) * gap
-}
-
-function getProjectMenuFitHeight(projectCount: number, hasCreateProjectOption: boolean) {
-  const visibleProjectCount = Math.min(projectCount, PROJECT_MENU_VISIBLE_PROJECT_ROWS)
-  const projectListHeight =
-    visibleProjectCount > 0
-      ? getStackHeight(visibleProjectCount, PROJECT_MENU_ROW_HEIGHT, PROJECT_MENU_ROW_GAP)
-      : PROJECT_MENU_EMPTY_STATE_HEIGHT
-  const actionCount = hasCreateProjectOption ? 3 : 1
-  const actionHeight = getStackHeight(
-    actionCount,
-    PROJECT_MENU_ACTION_HEIGHT,
-    PROJECT_MENU_ACTION_GAP
-  )
-
-  return (
-    PROJECT_MENU_VERTICAL_PADDING +
-    PROJECT_MENU_SEARCH_BLOCK_HEIGHT +
-    projectListHeight +
-    PROJECT_MENU_DIVIDER_BLOCK_HEIGHT +
-    actionHeight
-  )
-}
-
-function getProjectDeviceId(project: ProjectWithTasks): string | undefined {
-  return project.config?.execution?.deviceId ?? project.config?.device_id
-}
-
-function isLocalStandaloneDevice(device: DeviceInfo): boolean {
-  return device.device_type !== 'cloud' && device.device_type !== 'remote'
-}
-
-function isLocalProjectWorkspaceDevice(device: DeviceInfo | undefined): boolean {
-  return Boolean(device && isLocalStandaloneDevice(device))
-}
-
-function extractNetworkHost(value?: string | null): string | null {
-  if (!value) return null
-  const trimmedValue = value.trim()
-  if (!trimmedValue) return null
-
-  const bracketMatch = trimmedValue.match(/^\[([^\]]+)\](?::\d+)?$/)
-  if (bracketMatch?.[1]) return bracketMatch[1]
-
-  const colonParts = trimmedValue.split(':')
-  if (colonParts.length === 2 && /^\d+$/.test(colonParts[1])) {
-    return colonParts[0]
-  }
-
-  return trimmedValue
-}
-
-function isLoopbackNetworkHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase()
-  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.')
-}
-
-function getDisplayableNetworkHost(value?: string | null): string | null {
-  const host = extractNetworkHost(value)
-  if (!host || isLoopbackNetworkHost(host)) return null
-  return host
-}
-
-function getDisplayableIp(value?: string | null): string | null {
-  const host = getDisplayableNetworkHost(value)
-  if (!host) return null
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':')) return host
-  return null
-}
-
-function getProjectMenuDeviceLabel(
-  device: DeviceInfo | undefined,
-  workspace: RuntimeDeviceWorkspace | null
-): string | null {
-  if (isLocalProjectWorkspaceDevice(device)) return null
-
-  return (
-    getDisplayableIp(device?.runtime_transfer_host) ??
-    getDisplayableIp(device?.client_ip) ??
-    getDisplayableIp(workspace?.deviceName) ??
-    getDisplayableIp(workspace?.deviceId)
-  )
-}
-
-function resolveProjectExecutionUi({
-  project,
-  executionMode,
-  executionModeLocked,
-  selectedWorkspaceIsRemote,
-}: {
-  project: ProjectWithTasks | null | undefined
-  executionMode: ProjectExecutionMode
-  executionModeLocked: boolean
-  selectedWorkspaceIsRemote: boolean
-}) {
-  const supportsWorktree = Boolean(project && supportsGitWorktreeExecution(project))
-  const displayedMode: ProjectExecutionMode =
-    supportsWorktree && executionMode === 'git_worktree' ? 'git_worktree' : 'current_workspace'
-
-  return {
-    displayedMode,
-    canShowModeControl: Boolean(project),
-    canOpenModeMenu: supportsWorktree && !selectedWorkspaceIsRemote && !executionModeLocked,
-  }
-}
 
 interface ProjectWorkBarProps {
   projects: ProjectWithTasks[]
@@ -198,6 +63,7 @@ interface ProjectWorkBarProps {
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
+  isGitProject?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
   onSelectProjectWorkspace?: (projectId: number, deviceWorkspaceId: number | null) => void
@@ -216,6 +82,8 @@ interface ProjectWorkBarProps {
   buttonClassName?: string
   menuClassName?: string
   emptyLabel?: string
+  projectMenuOpenSignal?: number
+  projectMenuAnchorElement?: HTMLElement | null
 }
 
 export function ProjectWorkBar({
@@ -227,6 +95,7 @@ export function ProjectWorkBar({
   pendingProjectWorkspaceProjectId = null,
   executionMode,
   executionModeLocked = false,
+  isGitProject,
   onSelectProject,
   onSelectStandaloneDevice,
   onSelectProjectWorkspace,
@@ -245,6 +114,8 @@ export function ProjectWorkBar({
   buttonClassName,
   menuClassName,
   emptyLabel,
+  projectMenuOpenSignal,
+  projectMenuAnchorElement = null,
 }: ProjectWorkBarProps) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -252,21 +123,28 @@ export function ProjectWorkBar({
   const executionModeContainerRef = useRef<HTMLDivElement>(null)
   const triggerButtonRef = useRef<HTMLButtonElement>(null)
   const executionModeButtonRef = useRef<HTMLButtonElement>(null)
+  const handledProjectMenuOpenSignalRef = useRef<number | undefined>(undefined)
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [localProjectSubmenuOpen, setLocalProjectSubmenuOpen] = useState(false)
   const [executionModeOpenProjectId, setExecutionModeOpenProjectId] = useState<number | null>(null)
   const [projectQuery, setProjectQuery] = useState('')
+  const [externalMenuAnchorElement, setExternalMenuAnchorElement] = useState<HTMLElement | null>(
+    null
+  )
   const [menuLayout, setMenuLayout] = useState<{
     placement: 'below' | 'above'
     maxHeight: number
+    fixedTop?: number
+    fixedLeft?: number
   }>({ placement: 'below', maxHeight: PROJECT_MENU_MAX_HEIGHT })
   const [executionModePlacement, setExecutionModePlacement] = useState<'below' | 'above'>('below')
   const closeMenu = useCallback(() => {
     setOpen(false)
     setProjectQuery('')
     setLocalProjectSubmenuOpen(false)
+    setExternalMenuAnchorElement(null)
   }, [])
   const closeExecutionModeMenu = useCallback(() => {
     setExecutionModeOpenProjectId(null)
@@ -335,11 +213,14 @@ export function ProjectWorkBar({
   const selectedWorkspaceDeviceIp = selectedWorkspaceIsRemote
     ? getProjectMenuDeviceLabel(selectedWorkspaceDevice, selectedDeviceWorkspace)
     : null
+  const desktopIsGitProject =
+    isGitProject ?? Boolean(currentProject && isGitWorkspaceProject(currentProject))
   const projectExecutionUi = resolveProjectExecutionUi({
     project: currentProject,
     executionMode,
     executionModeLocked,
     selectedWorkspaceIsRemote,
+    isGitProject: isMobile ? undefined : desktopIsGitProject,
   })
   const executionModeOpen =
     projectExecutionUi.canOpenModeMenu && executionModeOpenProjectId === currentProjectId
@@ -347,10 +228,17 @@ export function ProjectWorkBar({
   const updateMenuLayout = useCallback(() => {
     if (!open || typeof window === 'undefined') return
 
-    const triggerRect = triggerButtonRef.current?.getBoundingClientRect()
+    const triggerRect = (
+      externalMenuAnchorElement ?? triggerButtonRef.current
+    )?.getBoundingClientRect()
     if (!triggerRect) return
 
-    const visibleBounds = getMenuVisibleBounds(containerRef.current)
+    const visibleBounds = externalMenuAnchorElement
+      ? {
+          top: PROJECT_MENU_VIEWPORT_MARGIN,
+          bottom: window.innerHeight - PROJECT_MENU_VIEWPORT_MARGIN,
+        }
+      : getMenuVisibleBounds(containerRef.current)
     const spaceBelow = visibleBounds.bottom - triggerRect.bottom
     const spaceAbove = triggerRect.top - visibleBounds.top
     const targetHeight = getProjectMenuFitHeight(
@@ -358,16 +246,43 @@ export function ProjectWorkBar({
       Boolean(onCreateProjectMode)
     )
     const placement = spaceBelow >= targetHeight || spaceBelow >= spaceAbove ? 'below' : 'above'
-    const availableSpace = Math.max(placement === 'below' ? spaceBelow : spaceAbove, 0)
+    const availableSpace = Math.max(
+      (placement === 'below' ? spaceBelow : spaceAbove) -
+        (externalMenuAnchorElement ? PROJECT_MENU_ANCHOR_GAP : 0),
+      0
+    )
     const maxHeight = Math.min(PROJECT_MENU_MAX_HEIGHT, availableSpace)
+    const fixedTop = externalMenuAnchorElement
+      ? Math.round(
+          placement === 'below'
+            ? triggerRect.bottom + PROJECT_MENU_ANCHOR_GAP
+            : triggerRect.top - PROJECT_MENU_ANCHOR_GAP - maxHeight
+        )
+      : undefined
+    const fixedLeft = externalMenuAnchorElement
+      ? Math.round(
+          Math.max(
+            PROJECT_MENU_VIEWPORT_MARGIN,
+            Math.min(
+              triggerRect.left + (triggerRect.width - PROJECT_MENU_WIDTH) / 2,
+              window.innerWidth - PROJECT_MENU_VIEWPORT_MARGIN - PROJECT_MENU_WIDTH
+            )
+          )
+        )
+      : undefined
 
     setMenuLayout(current => {
-      if (current.placement === placement && current.maxHeight === maxHeight) {
+      if (
+        current.placement === placement &&
+        current.maxHeight === maxHeight &&
+        current.fixedTop === fixedTop &&
+        current.fixedLeft === fixedLeft
+      ) {
         return current
       }
-      return { placement, maxHeight }
+      return { placement, maxHeight, fixedTop, fixedLeft }
     })
-  }, [onCreateProjectMode, open, runtimeProjectChoices.length])
+  }, [externalMenuAnchorElement, onCreateProjectMode, open, runtimeProjectChoices.length])
 
   const updateExecutionModeLayout = useCallback(() => {
     if (!executionModeOpen || typeof window === 'undefined') return
@@ -466,7 +381,11 @@ export function ProjectWorkBar({
         )?.device_id ?? null,
     [standaloneDevices]
   )
-  const projectWorkTriggerLabel = emptyLabel ?? t('workbench.enter_project_work', '进入项目工作')
+  const projectWorkTriggerLabel =
+    emptyLabel ??
+    (isMobile
+      ? t('workbench.enter_project_work', '进入项目工作')
+      : t('workbench.project_select_placeholder', '请选择项目'))
   const pendingWorkspaceSelection =
     currentProject &&
     pendingProjectWorkspaceProjectId === currentProject.id &&
@@ -475,6 +394,16 @@ export function ProjectWorkBar({
 
   useOutsideClick(containerRef, open, closeMenu)
   useOutsideClick(executionModeContainerRef, executionModeOpen, closeExecutionModeMenu)
+
+  useEffect(() => {
+    if (!projectMenuOpenSignal) return
+    if (handledProjectMenuOpenSignalRef.current === projectMenuOpenSignal) return
+
+    handledProjectMenuOpenSignalRef.current = projectMenuOpenSignal
+    closeExecutionModeMenu()
+    setExternalMenuAnchorElement(isMobile ? null : projectMenuAnchorElement)
+    setOpen(true)
+  }, [closeExecutionModeMenu, isMobile, projectMenuAnchorElement, projectMenuOpenSignal])
 
   const handleSelectProject = (projectId: number) => {
     const option = projectWorkspaceOptionByProjectId.get(projectId)
@@ -520,6 +449,7 @@ export function ProjectWorkBar({
       return
     }
     closeExecutionModeMenu()
+    setExternalMenuAnchorElement(null)
     setOpen(true)
   }
 
@@ -607,11 +537,23 @@ export function ProjectWorkBar({
             className={cn(
               isMobile
                 ? 'fixed inset-x-0 bottom-0 z-modal flex max-h-[45dvh] flex-col rounded-t-[28px] border border-border bg-background shadow-[0_-18px_48px_rgba(0,0,0,0.18)]'
-                : 'absolute left-0 z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
-              !isMobile && (menuLayout.placement === 'below' ? 'top-9' : 'bottom-9'),
+                : cn(
+                    'z-popover flex w-80 flex-col rounded-2xl border border-border bg-background p-1.5 shadow-[0_16px_44px_rgba(0,0,0,0.16)]',
+                    externalMenuAnchorElement
+                      ? 'fixed'
+                      : `absolute left-0 ${menuLayout.placement === 'below' ? 'top-9' : 'bottom-9'}`
+                  ),
               !isMobile && menuClassName
             )}
-            style={isMobile ? undefined : { maxHeight: menuLayout.maxHeight }}
+            style={
+              isMobile
+                ? undefined
+                : {
+                    maxHeight: menuLayout.maxHeight,
+                    top: menuLayout.fixedTop,
+                    left: menuLayout.fixedLeft,
+                  }
+            }
           >
             {isMobile &&
               renderMobileSheetHeader(
@@ -888,22 +830,60 @@ export function ProjectWorkBar({
             </div>
           </div>
         )}
-        <button
-          ref={triggerButtonRef}
-          type="button"
-          data-testid="project-work-button"
-          onClick={handleToggleMenu}
-          className={cn(
-            'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[14px] font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
-            open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
-            buttonClassName
-          )}
-          aria-expanded={open}
-          aria-label={projectWorkTriggerAriaLabel}
-        >
-          {currentProject ? (
-            <>
-              <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
+        {isMobile ? (
+          <button
+            ref={triggerButtonRef}
+            type="button"
+            data-testid="project-work-button"
+            onClick={handleToggleMenu}
+            className={cn(
+              'flex h-9 min-w-[44px] items-center gap-2 rounded-full px-2 text-[14px] font-medium leading-5 text-text-secondary transition-[background-color,color,box-shadow] hover:bg-background/70 hover:text-text-primary hover:shadow-[0_8px_22px_rgba(0,0,0,0.10)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              open && 'bg-background/70 text-text-primary shadow-[0_8px_22px_rgba(0,0,0,0.10)]',
+              buttonClassName
+            )}
+            aria-expanded={open}
+            aria-label={projectWorkTriggerAriaLabel}
+          >
+            {currentProject ? (
+              <>
+                <ProjectFolderIcon project={currentProject} className="h-4 w-4" />
+                <span className="max-w-[12rem] truncate">{currentProject.name}</span>
+              </>
+            ) : (
+              <>
+                <FolderPlus className="h-5 w-5" />
+                <span className="shrink-0">{projectWorkTriggerLabel}</span>
+              </>
+            )}
+            <ChevronDown className="h-4 w-4" />
+          </button>
+        ) : currentProject ? (
+          <div className="flex h-8 min-w-0 items-center rounded-lg text-[13px] font-medium leading-[18px] text-text-secondary">
+            <button
+              type="button"
+              data-testid="clear-project-button"
+              onClick={() => handleSelectStandaloneDevice(selectedLocalStandaloneDeviceId)}
+              title={t('workbench.no_project', '不使用项目')}
+              aria-label={t('workbench.no_project', '不使用项目')}
+              className="group flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+            >
+              <ProjectFolderIcon project={currentProject} className="h-4 w-4 group-hover:hidden" />
+              <X className="hidden h-4 w-4 group-hover:block" />
+            </button>
+            <button
+              ref={triggerButtonRef}
+              type="button"
+              data-testid="project-work-button"
+              onClick={handleToggleMenu}
+              title={t('workbench.change_project', '更改项目')}
+              className={cn(
+                'flex h-8 min-w-0 items-center gap-1.5 rounded-lg px-1.5 transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                open && 'bg-background/70 text-text-primary',
+                buttonClassName
+              )}
+              aria-expanded={open}
+              aria-label={projectWorkTriggerAriaLabel}
+            >
               <span className="max-w-[12rem] truncate">{currentProject.name}</span>
               {pendingWorkspaceSelection ? (
                 <>
@@ -913,15 +893,26 @@ export function ProjectWorkBar({
                   </span>
                 </>
               ) : null}
-            </>
-          ) : (
-            <>
-              <FolderPlus className="h-5 w-5" />
-              <span className="shrink-0">{projectWorkTriggerLabel}</span>
-            </>
-          )}
-          <ChevronDown className="h-4 w-4" />
-        </button>
+            </button>
+          </div>
+        ) : (
+          <button
+            ref={triggerButtonRef}
+            type="button"
+            data-testid="project-work-button"
+            onClick={handleToggleMenu}
+            className={cn(
+              'flex h-8 min-w-[44px] items-center gap-1.5 rounded-lg px-2 text-[13px] font-medium leading-[18px] text-text-secondary transition-colors hover:bg-background/70 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+              open && 'bg-background/70 text-text-primary',
+              buttonClassName
+            )}
+            aria-expanded={open}
+            aria-label={projectWorkTriggerAriaLabel}
+          >
+            <FolderPlus className="h-4 w-4" />
+            <span className="shrink-0">{projectWorkTriggerLabel}</span>
+          </button>
+        )}
       </div>
       {projectExecutionUi.canShowModeControl && (
         <div ref={executionModeContainerRef} className="relative">
@@ -1011,6 +1002,7 @@ export function ProjectWorkBar({
         </div>
       )}
       {currentProject &&
+        projectExecutionUi.supportsWorktree &&
         projectExecutionUi.displayedMode === 'current_workspace' &&
         !selectedWorkspaceIsRemote &&
         !executionModeLocked &&
@@ -1028,6 +1020,7 @@ export function ProjectWorkBar({
           />
         )}
       {currentProject &&
+        projectExecutionUi.supportsWorktree &&
         projectExecutionUi.displayedMode === 'git_worktree' &&
         !executionModeLocked &&
         onListBranches &&
