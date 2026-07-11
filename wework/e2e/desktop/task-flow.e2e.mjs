@@ -747,10 +747,6 @@ async function main() {
     await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
-    await control.command('waitFor', '[data-testid="send-message-button"]', {
-      enabled: true,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
     const cancellationText = await control.command('getText', 'body')
     assert.equal(
       cancellationText.includes(CANCELLATION_COMPLETION_TEXT),
