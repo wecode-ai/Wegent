@@ -8,7 +8,7 @@
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -86,21 +86,64 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
-async function stopProcessGroup(child) {
-  if (!child?.pid) return
+function execFileText(file, args) {
+  return new Promise((resolvePromise, reject) => {
+    execFile(file, args, { encoding: 'utf8' }, (error, stdout) => {
+      if (error) reject(error)
+      else resolvePromise(stdout)
+    })
+  })
+}
 
-  const signalGroup = signal => {
-    try {
-      process.kill(-child.pid, signal)
-      return true
-    } catch {
-      return false
-    }
+async function ownedSessionProcessIds(session) {
+  if (!Number.isInteger(session.launcherPid) || !session.socketPath) return []
+  const table = await execFileText('ps', ['-axo', 'pid=,ppid='])
+  const children = new Map()
+  for (const line of table.split('\n')) {
+    const [pidText, parentText] = line.trim().split(/\s+/)
+    const pid = Number(pidText)
+    const parentPid = Number(parentText)
+    if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) continue
+    const values = children.get(parentPid) ?? []
+    values.push(pid)
+    children.set(parentPid, values)
   }
 
-  signalGroup('SIGTERM')
+  const candidates = []
+  const pending = [session.launcherPid]
+  while (pending.length > 0) {
+    const pid = pending.pop()
+    if (!pid || candidates.includes(pid)) continue
+    candidates.push(pid)
+    pending.push(...(children.get(pid) ?? []))
+  }
+
+  const owned = []
+  for (const pid of candidates) {
+    try {
+      const command = await execFileText('ps', ['eww', '-p', String(pid), '-o', 'command='])
+      if (command.includes(session.socketPath)) owned.push(pid)
+    } catch {
+      // The process may exit while the session is being stopped.
+    }
+  }
+  return owned
+}
+
+function signalProcesses(processIds, signal) {
+  for (const pid of processIds) {
+    try {
+      process.kill(pid, signal)
+    } catch {
+      // The process may have exited between discovery and signalling.
+    }
+  }
+}
+
+async function stopOwnedSessionProcesses(session) {
+  signalProcesses((await ownedSessionProcessIds(session)).reverse(), 'SIGTERM')
   await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
-  if (signalGroup(0)) signalGroup('SIGKILL')
+  signalProcesses(await ownedSessionProcessIds(session), 'SIGKILL')
 }
 
 async function runServer(sessionPath, token) {
@@ -170,9 +213,10 @@ async function runServer(sessionPath, token) {
         }
       }
       if (request.method === 'POST' && url.pathname === '/shutdown') {
+        response.once('finish', () => {
+          void stopOwnedSessionProcesses(updated).finally(() => server.close(() => process.exit(0)))
+        })
         json(response, 200, { ok: true })
-        await stopProcessGroup(app)
-        server.close(() => process.exit(0))
         return
       }
       json(response, 404, { error: 'Not found' })
@@ -183,7 +227,12 @@ async function runServer(sessionPath, token) {
   )
   const address = server.address()
   const controlUrl = `http://127.0.0.1:${address.port}`
-  const updated = { ...session, controlUrl, status: 'starting' }
+  const updated = {
+    ...session,
+    controlUrl,
+    socketPath: join(session.directory, 'app-ipc.sock'),
+    status: 'starting',
+  }
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
   const log = join(session.directory, 'app.log')
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
@@ -196,12 +245,13 @@ async function runServer(sessionPath, token) {
       VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: token,
       CODEX_HOME: join(session.directory, 'executor-home', 'codex'),
       DEVICE_ID: session.deviceId,
-      WEGENT_EXECUTOR_APP_IPC_SOCKET: join(session.directory, 'app-ipc.sock'),
+      WEGENT_EXECUTOR_APP_IPC_SOCKET: updated.socketPath,
       WEGENT_EXECUTOR_HOME: join(session.directory, 'executor-home'),
       WEGENT_EXECUTOR_LOG_DIR: session.directory,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+  await writeFile(sessionPath, `${JSON.stringify({ ...updated, launcherPid: app.pid }, null, 2)}\n`)
   for (const stream of [app.stdout, app.stderr])
     stream?.on(
       'data',
