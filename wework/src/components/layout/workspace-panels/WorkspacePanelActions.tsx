@@ -170,6 +170,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           info={environmentInfo}
           popoverContainer={environmentInfoPopoverContainer}
           docked={environmentInfoDocked}
+          defaultOpen={Boolean(currentProject)}
           floatingFooter={environmentInfoFloatingFooter}
           devices={devices}
           onRefresh={onRefreshEnvironmentInfo}

@@ -343,6 +343,41 @@ describe('loadProjectEnvironment', () => {
     })
   })
 
+  test('does not surface an error when the workspace is not a git repository', async () => {
+    const executeCommand = vi.fn().mockResolvedValue({
+      success: false,
+      stdout: '',
+      stderr: 'fatal: not a git repository (or any of the parent directories): .git',
+    })
+
+    const info = await loadProjectEnvironment(
+      { executeCommand },
+      {
+        id: 3,
+        name: 'plain-workspace',
+        config: {
+          mode: 'workspace',
+          execution: {
+            targetType: 'local',
+            deviceId: 'device-123',
+          },
+          workspace: {
+            source: 'local_path',
+            localPath: '/workspace/plain-workspace',
+          },
+        },
+      }
+    )
+
+    expect(info).toEqual({
+      additions: '+0',
+      deletions: '-0',
+      executionTarget: 'local',
+      deviceId: 'device-123',
+      workspacePath: '/workspace/plain-workspace',
+    })
+  })
+
   test('deduplicates repeated environment loads for the same project briefly', async () => {
     const executeCommand = vi
       .fn()
