@@ -5764,10 +5764,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
-  test('preserves a paused runtime goal status when editing its objective', async () => {
+  test('resumes a paused runtime goal when editing and sending its objective', async () => {
     const setRuntimeGoal = vi.fn().mockResolvedValue({
       accepted: true,
-      goal: createRuntimeGoal({ objective: '更新后的目标', status: 'paused' }),
+      goal: createRuntimeGoal({ objective: '更新后的目标', status: 'active' }),
     })
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -5830,8 +5830,10 @@ describe('WorkbenchProvider runtime tasks', () => {
           taskId: 'runtime-a',
         },
         objective: '更新后的目标',
+        status: 'active',
       })
     )
+    expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
   test('accepts current runtime stream blocks when device id is omitted', async () => {
