@@ -565,6 +565,7 @@
     "goal_status_complete": "Completed goal",
     "goal_status_usage_limited": "Usage-limited goal",
     "goal_status_budget_limited": "Budget-limited goal",
+    "goal_status_continuing": "Goal continuing",
     "goal_edit": "Edit goal",
     "goal_pause": "Pause goal",
     "goal_resume": "Resume goal",

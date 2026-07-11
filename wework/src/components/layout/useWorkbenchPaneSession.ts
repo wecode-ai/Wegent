@@ -39,6 +39,7 @@ import type {
   RuntimeGoal,
   RuntimeGoalCreateInput,
   RuntimePlanEventPayload,
+  RuntimeGoalContinuationPayload,
   RuntimeRollbackRequest,
   RuntimeSubagentActivityPayload,
   RuntimeSendRequest,
@@ -159,6 +160,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   const [turnNavigation, setTurnNavigation] = useState<RuntimeTurnNavigationItem[]>([])
   const [subagentStatuses, setSubagentStatuses] = useState<RuntimeSubagentStatus[]>([])
   const [threadGoal, setThreadGoal] = useState<RuntimeGoal | null>(null)
+  const [goalContinuation, setGoalContinuation] = useState<RuntimeGoalContinuationPayload | null>(
+    null
+  )
   const [taskPlan, setTaskPlan] = useState<RuntimePlanEventPayload | null>(null)
   const [pendingGoalState, setPendingGoalState] = useState<PendingRuntimeGoalState | null>(null)
   const [goalDraftActive, setGoalDraftActive] = useState(false)
@@ -394,6 +398,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   useEffect(() => {
     if (!runtimeTaskLoadTarget) {
       commitThreadGoal(null)
+      setGoalContinuation(null)
       return
     }
 
@@ -408,6 +413,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 
     let cancelled = false
     commitThreadGoal(null)
+    setGoalContinuation(null)
     const requestedGoalRevision = goalRevisionRef.current
     void getRuntimeGoal(runtimeTaskLoadTarget.address)
       .then(response => {
@@ -540,7 +546,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     const { address } = target
     const unsubscribe = subscribeRuntimeTaskStreamRef.current(address, {
       onMessageAction: dispatchMessages,
-      onAssistantStart: () => setSendPhase('idle'),
+      onAssistantStart: () => {
+        setSendPhase('idle')
+        setGoalContinuation(null)
+      },
       onAssistantSettled: () => {
         setSendPhase('idle')
         setSubagentStatuses(markRuntimeSubagentsSettled)
@@ -577,6 +586,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       onRuntimeGoalUpdated: payload => {
         const loadedGoal = payload.goal ?? null
         commitThreadGoal(loadedGoal)
+        if (loadedGoal?.status !== 'active') setGoalContinuation(null)
         clearRuntimePaneGoalSeed(address)
         const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
         setPendingGoalState(current =>
@@ -585,11 +595,15 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       },
       onRuntimeGoalCleared: () => {
         commitThreadGoal(null)
+        setGoalContinuation(null)
         clearRuntimePaneGoalSeed(address)
         const latestAddress = runtimeTaskLoadTargetRef.current?.address ?? address
         setPendingGoalState(current =>
           current && isPendingGoalVisibleForRuntimeTarget(current, latestAddress) ? null : current
         )
+      },
+      onRuntimeGoalContinuation: payload => {
+        setGoalContinuation(payload.status === 'started' ? payload : null)
       },
       onRuntimePlanUpdated: payload => {
         if (import.meta.env.DEV) {
@@ -1721,6 +1735,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   }, [clearRuntimeGoal, currentRuntimeTask, goal])
 
   const cancelGuidanceMessage = useCallback(() => undefined, [])
+  const goalContinuing = goal?.status === 'active' && goalContinuation?.status === 'started'
 
   useEffect(() => {
     if (!paneActive) return
@@ -1792,6 +1807,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     turnNavigation,
     subagentStatuses,
     goal,
+    goalContinuing,
     taskPlan,
     goalDraftActive,
     loadMoreTranscriptBefore,

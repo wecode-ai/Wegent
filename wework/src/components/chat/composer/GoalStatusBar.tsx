@@ -5,6 +5,7 @@ import type { RuntimeGoal, RuntimeGoalStatus } from '@/types/api'
 
 interface GoalStatusBarProps {
   goal: RuntimeGoal
+  continuing?: boolean
   onEditGoal?: () => void
   onPauseGoal?: () => void
   onResumeGoal?: () => void
@@ -22,13 +23,16 @@ const goalStatusLabelKeys: Record<RuntimeGoalStatus, { key: string; fallback: st
 
 export function GoalStatusBar({
   goal,
+  continuing = false,
   onEditGoal,
   onPauseGoal,
   onResumeGoal,
   onClearGoal,
 }: GoalStatusBarProps) {
   const { t } = useTranslation('common')
-  const statusLabel = goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active
+  const statusLabel = continuing
+    ? { key: 'workbench.goal_status_continuing', fallback: '目标继续执行中' }
+    : (goalStatusLabelKeys[goal.status] ?? goalStatusLabelKeys.active)
   const timerKey = goalTimerKey(goal)
   const [timerState, setTimerState] = useState(() => createTimerState(timerKey, Date.now()))
   const elapsedSeconds = useMemo(

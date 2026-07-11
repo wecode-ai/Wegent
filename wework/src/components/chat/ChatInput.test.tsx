@@ -1673,6 +1673,32 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('0s')
   })
 
+  test('shows an active goal as continuing only while a new goal turn is running', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goalContinuing
+        goal={{
+          threadId: 'thread-1',
+          objective: '继续完成测试',
+          status: 'active',
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1780000000000,
+          updatedAt: 1780000000000,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('目标继续执行中')
+    expect(screen.getByTestId('pause-goal-button')).toBeInTheDocument()
+  })
+
   test.each(['blocked', 'usageLimited', 'budgetLimited'] as const)(
     'does not offer the pause action for a %s goal',
     status => {

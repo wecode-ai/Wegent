@@ -35,6 +35,42 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('maps root goal turn lifecycle events', () => {
+    const onRuntimeGoalContinuation = vi.fn()
+    const state = createResponseApiStreamState()
+
+    for (const status of ['started', 'settled'] as const) {
+      emitResponseApiEvent(
+        { onRuntimeGoalContinuation },
+        'runtime.goal.continuation',
+        {
+          taskId: 'task-1',
+          subtaskId: '2',
+          deviceId: 'device-1',
+          data: { thread_id: 'thread-1', turn_id: 'turn-2', status },
+        },
+        state
+      )
+    }
+
+    expect(onRuntimeGoalContinuation).toHaveBeenNthCalledWith(1, {
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-2',
+      status: 'started',
+    })
+    expect(onRuntimeGoalContinuation).toHaveBeenNthCalledWith(2, {
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-2',
+      status: 'settled',
+    })
+  })
+
   test('maps structured Codex task-plan updates without treating them as plan text', () => {
     const onRuntimePlanUpdated = vi.fn()
 

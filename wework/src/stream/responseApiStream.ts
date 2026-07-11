@@ -2,6 +2,7 @@ import type {
   ChatBlock,
   RuntimeContextUsage,
   RuntimeGoal,
+  RuntimeGoalContinuationPayload,
   RuntimePlanEventPayload,
   RuntimeTokenUsageBreakdown,
 } from '@/types/api'
@@ -47,6 +48,7 @@ export const RESPONSE_API_STREAM_EVENTS = [
   'response.guidance.applied',
   'runtime.goal.updated',
   'runtime.goal.cleared',
+  'runtime.goal.continuation',
   'runtime.plan.updated',
   'thread/tokenUsage/updated',
   'thread.tokenUsage.updated',
@@ -704,6 +706,18 @@ export function emitResponseApiEvent(
       threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
       goal: null,
     })
+    return
+  }
+
+  if (eventName === 'runtime.goal.continuation') {
+    const status = stringField(data, 'status')
+    if (status !== 'started' && status !== 'settled') return
+    handlers.onRuntimeGoalContinuation?.({
+      ...base,
+      threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
+      turnId: stringField(data, 'turn_id') ?? stringField(data, 'turnId'),
+      status,
+    } as RuntimeGoalContinuationPayload)
     return
   }
 
