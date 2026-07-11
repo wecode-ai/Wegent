@@ -96,6 +96,7 @@ export interface RuntimePaneGuidanceResult {
 }
 
 export interface WorkbenchContextValue {
+  services: WorkbenchServices
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi

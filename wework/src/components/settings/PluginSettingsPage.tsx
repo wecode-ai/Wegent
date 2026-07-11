@@ -2,6 +2,7 @@ import { AlertCircle, Loader2, Package } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createLocalCodexPluginApi, type LocalCodexLocalConfig } from '@/api/local/codexPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SettingsPage, SettingsPageHeader, SettingsSwitch } from './settings-ui'
 
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback
@@ -50,17 +51,13 @@ export function PluginSettingsPage() {
   }
 
   return (
-    <div data-testid="plugin-settings-page" className="mx-auto w-full max-w-[820px]">
-      <div>
-        <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-          {t('workbench.plugin_settings_title', '插件')}
-        </h1>
-        <p className="mt-2 text-sm text-text-secondary">
-          {t('workbench.plugin_settings_subtitle', '管理 Codex 插件运行配置')}
-        </p>
-      </div>
+    <SettingsPage data-testid="plugin-settings-page">
+      <SettingsPageHeader
+        title={t('workbench.plugin_settings_title', '插件')}
+        description={t('workbench.plugin_settings_subtitle', '管理 Codex 插件运行配置')}
+      />
 
-      <section className="mt-8 rounded-lg border border-border bg-background p-5">
+      <section className="rounded-lg border border-border bg-background p-5">
         <div className="flex min-w-0 items-start gap-3">
           <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <Package className="h-4 w-4" />
@@ -90,18 +87,13 @@ export function PluginSettingsPage() {
                 </span>
               )}
             </span>
-            <span className="relative mt-0.5 inline-flex h-5 w-9 shrink-0 items-center">
-              <input
-                type="checkbox"
-                data-testid="codex-plugin-remote-apps-toggle"
-                className="peer sr-only"
-                checked={codexConfig?.remoteAppsEnabled ?? false}
-                onChange={event => void updateRemoteAppsEnabled(event.currentTarget.checked)}
-                disabled={codexConfigLoading || codexConfigSaving}
-              />
-              <span className="absolute inset-0 rounded-full bg-border transition-colors peer-checked:bg-primary peer-disabled:opacity-60" />
-              <span className="absolute left-0.5 h-4 w-4 rounded-full bg-background shadow-sm transition-transform peer-checked:translate-x-4" />
-            </span>
+            <SettingsSwitch
+              data-testid="codex-plugin-remote-apps-toggle"
+              checked={codexConfig?.remoteAppsEnabled ?? false}
+              onCheckedChange={checked => void updateRemoteAppsEnabled(checked)}
+              disabled={codexConfigLoading || codexConfigSaving}
+              aria-label={t('workbench.codex_plugin_remote_apps_title')}
+            />
           </label>
           {(codexConfigLoading || codexConfigSaving) && (
             <div className="mt-3 flex items-center gap-2 text-xs text-text-muted">
@@ -120,6 +112,6 @@ export function PluginSettingsPage() {
           )}
         </div>
       </section>
-    </div>
+    </SettingsPage>
   )
 }

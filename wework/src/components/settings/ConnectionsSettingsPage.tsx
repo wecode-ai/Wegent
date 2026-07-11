@@ -8,6 +8,7 @@ import {
   Code2,
   Copy,
   ExternalLink,
+  FolderGit2,
   Globe2,
   Info,
   Keyboard,
@@ -33,6 +34,7 @@ import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
 import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -54,7 +56,8 @@ import {
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
-import type { UnifiedModel } from '@/types/api'
+import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
@@ -62,6 +65,7 @@ import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
 import { PluginSettingsPage } from './PluginSettingsPage'
+import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -76,6 +80,10 @@ import {
 interface ConnectionsSettingsPageProps {
   onBack: () => void
   autoOpenAddCloudDeviceDialog?: boolean
+  services?: WorkbenchServices
+  devices?: RuntimeDeviceInfo[]
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onRefreshWorkLists?: () => Promise<void>
 }
 
 type SettingsCategory = 'personal' | 'integrations' | 'archived'
@@ -150,6 +158,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Package,
     label: 'settings_nav_plugins',
     fallback: '插件',
+    category: 'integrations',
+  },
+  {
+    key: 'worktrees',
+    icon: FolderGit2,
+    label: 'settings_nav_worktrees',
+    fallback: '工作树',
     category: 'integrations',
   },
   {
@@ -1185,12 +1200,10 @@ function ConnectionsDeviceSettingsPage({
   if (!cloudConnection.isConnected) {
     return (
       <>
-        <div className="mx-auto w-full max-w-[760px]">
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.connections_title', '云端连接')}
-          </h1>
+        <SettingsPage>
+          <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
 
-          <section className="mt-6 rounded-lg border border-border bg-background p-5">
+          <section className="rounded-lg border border-border bg-background p-5">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-primary">
@@ -1232,7 +1245,7 @@ function ConnectionsDeviceSettingsPage({
               </button>
             </div>
           </section>
-        </div>
+        </SettingsPage>
 
         {connectDialogOpen && (
           <CloudConnectionDialog
@@ -1248,14 +1261,12 @@ function ConnectionsDeviceSettingsPage({
 
   return (
     <>
-      <div className="mx-auto w-full max-w-[760px]">
-        <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-          {t('workbench.connections_title', '云端连接')}
-        </h1>
+      <SettingsPage>
+        <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
 
         <section
           data-testid="cloud-connection-status-card"
-          className="mt-6 rounded-lg border border-border bg-background p-5"
+          className="rounded-lg border border-border bg-background p-5"
         >
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
@@ -1368,7 +1379,7 @@ function ConnectionsDeviceSettingsPage({
             </div>
           </div>
         </section>
-      </div>
+      </SettingsPage>
 
       <AddCloudDeviceDialog
         open={addDialogOpen}
@@ -1385,6 +1396,10 @@ function ConnectionsDeviceSettingsPage({
 export function ConnectionsSettingsPage({
   onBack,
   autoOpenAddCloudDeviceDialog = false,
+  services,
+  devices = [],
+  onOpenRuntimeTask,
+  onRefreshWorkLists,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
@@ -1491,7 +1506,11 @@ export function ConnectionsSettingsPage({
         </div>
       )}
 
-      <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
+      <main
+        className={`min-w-0 flex-1 overflow-auto bg-background px-8 pb-8 ${
+          usesOverlayTitlebar ? 'pt-16' : 'pt-8'
+        }`}
+      >
         {activeNav === 'general' ? (
           <GeneralSettingsPage />
         ) : activeNav === 'appearance' ? (
@@ -1508,8 +1527,21 @@ export function ConnectionsSettingsPage({
           <KeyboardShortcutsSettingsPage />
         ) : activeNav === 'plugins' ? (
           <PluginSettingsPage />
+        ) : activeNav === 'worktrees' ? (
+          <WorktreesSettingsPage
+            api={services?.runtimeWorkApi}
+            devices={devices}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
+            onLeaveSettings={onBack}
+          />
         ) : activeNav === 'archived-conversations' ? (
-          <ArchivedConversationsSettingsPage />
+          <ArchivedConversationsSettingsPage
+            api={services?.runtimeWorkApi}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
+            onLeaveSettings={onBack}
+          />
         ) : (
           <ConnectionsDeviceSettingsPage
             autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}

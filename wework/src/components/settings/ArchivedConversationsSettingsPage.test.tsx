@@ -6,6 +6,7 @@ import { resetArchivedConversationsSettingsStateForTest } from './archivedConver
 import { createLocalAppServices } from '@/api/local/localServices'
 import '@/i18n'
 import type { ArchivedConversationItem } from '@/types/api'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 
 vi.mock('@/api/local/localServices', () => ({
   createLocalAppServices: vi.fn(),
@@ -45,6 +46,7 @@ describe('ArchivedConversationsSettingsPage', () => {
   const unarchiveConversation = vi.fn()
 
   beforeEach(() => {
+    createLocalAppServicesMock.mockClear()
     resetArchivedConversationsSettingsStateForTest()
     listArchivedConversations.mockResolvedValue({
       items: [archivedItem],
@@ -121,6 +123,47 @@ describe('ArchivedConversationsSettingsPage', () => {
     expect(listArchivedConversations).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('Greet user')).not.toBeInTheDocument()
     expect(createLocalAppServices).toHaveBeenCalledTimes(1)
+  })
+
+  test('uses the injected hybrid API and offers View now after unarchiving', async () => {
+    const onRefreshWorkLists = vi.fn().mockResolvedValue(undefined)
+    const onOpenRuntimeTask = vi.fn().mockResolvedValue(undefined)
+    const onLeaveSettings = vi.fn()
+    const api = {
+      listArchivedConversations,
+      deleteArchivedConversation,
+      deleteArchivedConversationsBulk,
+      previewArchivedConversationCleanup,
+      cleanupArchivedConversations,
+      unarchiveConversation,
+    } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
+
+    render(
+      <ArchivedConversationsSettingsPage
+        api={api}
+        onRefreshWorkLists={onRefreshWorkLists}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+        onLeaveSettings={onLeaveSettings}
+      />
+    )
+
+    await screen.findByText('Greet user')
+    await userEvent.click(screen.getByTestId('archived-unarchive-button-device-1-codex-1'))
+
+    await waitFor(() => {
+      expect(unarchiveConversation).toHaveBeenCalledWith({
+        deviceId: 'device-1',
+        workspacePath: '/Users/crystal/dev/git/weekly-report',
+        taskId: 'codex-1',
+      })
+    })
+    expect(createLocalAppServices).not.toHaveBeenCalled()
+    expect(await screen.findByTestId('archived-view-now-button')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('archived-view-now-button'))
+    await waitFor(() => expect(onOpenRuntimeTask).toHaveBeenCalled())
+    expect(onRefreshWorkLists).toHaveBeenCalled()
+    expect(onLeaveSettings).toHaveBeenCalled()
   })
 
   test('scans and cleans archived conversation leftover files manually', async () => {

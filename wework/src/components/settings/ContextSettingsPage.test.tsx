@@ -72,7 +72,7 @@ describe('ContextSettingsPage', () => {
     render(<ContextSettingsPage />)
 
     const toggle = await screen.findByTestId('context-terminal-injection-toggle')
-    expect(toggle).toBeChecked()
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
 
     await userEvent.click(toggle)
 
@@ -81,7 +81,7 @@ describe('ContextSettingsPage', () => {
         terminalContextInjectionEnabled: false,
       })
     })
-    expect(toggle).not.toBeChecked()
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
   })
 
   test('loads and saves Wework custom instructions', async () => {

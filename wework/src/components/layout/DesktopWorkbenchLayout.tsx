@@ -108,6 +108,8 @@ export function DesktopWorkbenchLayout() {
     subscribeRuntimeTaskNotifications: onSubscribeRuntimeTaskNotifications,
     unsubscribeRuntimeTaskNotifications: onUnsubscribeRuntimeTaskNotifications,
     runtimeTaskReminders,
+    services,
+    refreshWorkLists,
   } = useWorkbench()
   const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
@@ -605,6 +607,10 @@ export function DesktopWorkbenchLayout() {
       {settingsOpen && (
         <ConnectionsSettingsPage
           autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}
+          services={services}
+          devices={state.devices}
+          onOpenRuntimeTask={onOpenRuntimeTask}
+          onRefreshWorkLists={refreshWorkLists}
           onBack={() => {
             setSettingsOpen(false)
             setAutoOpenAddCloudDeviceDialog(false)

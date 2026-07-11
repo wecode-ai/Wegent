@@ -11,6 +11,7 @@ import {
 } from '@/features/model-settings/localProxySettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
 const RESTART_CODEX_APP_SERVER_METHOD = 'runtime.codex.app_server.restart'
 
@@ -266,14 +267,12 @@ export function ProxySettingsPage() {
 
   if (!cloudConnection.isConnected) {
     return (
-      <div data-testid="proxy-settings-page" className="mx-auto w-full max-w-[820px]">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.proxy_config_title')}
-          </h1>
-          <p className="mt-2 text-sm text-text-secondary">{t('workbench.proxy_config_subtitle')}</p>
-        </div>
-        <div className="mt-8 space-y-4">
+      <SettingsPage data-testid="proxy-settings-page">
+        <SettingsPageHeader
+          title={t('workbench.proxy_config_title')}
+          description={t('workbench.proxy_config_subtitle')}
+        />
+        <div className="space-y-4">
           {renderLocalProxySection()}
           <section
             data-testid="proxy-config-cloud-required"
@@ -292,37 +291,35 @@ export function ProxySettingsPage() {
             </div>
           </section>
         </div>
-      </div>
+      </SettingsPage>
     )
   }
 
   return (
-    <div data-testid="proxy-settings-page" className="mx-auto w-full max-w-[820px]">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.proxy_config_title')}
-          </h1>
-          <p className="mt-2 text-sm text-text-secondary">{t('workbench.proxy_config_subtitle')}</p>
-        </div>
-        <button
-          type="button"
-          data-testid="proxy-config-refresh-button"
-          onClick={() => void loadProxyConfig(true)}
-          disabled={loading || refreshing}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-          aria-label={t('workbench.proxy_config_refresh')}
-          title={t('workbench.proxy_config_refresh')}
-        >
-          {refreshing ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-        </button>
-      </div>
+    <SettingsPage data-testid="proxy-settings-page">
+      <SettingsPageHeader
+        title={t('workbench.proxy_config_title')}
+        description={t('workbench.proxy_config_subtitle')}
+        actions={
+          <button
+            type="button"
+            data-testid="proxy-config-refresh-button"
+            onClick={() => void loadProxyConfig(true)}
+            disabled={loading || refreshing}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label={t('workbench.proxy_config_refresh')}
+            title={t('workbench.proxy_config_refresh')}
+          >
+            {refreshing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </button>
+        }
+      />
 
-      <div className="mt-8">
+      <div>
         {loading ? (
           <div className="py-8 text-center text-sm text-text-secondary">
             {t('common.loading', '加载中...')}
@@ -422,6 +419,6 @@ export function ProxySettingsPage() {
           </div>
         )}
       </div>
-    </div>
+    </SettingsPage>
   )
 }

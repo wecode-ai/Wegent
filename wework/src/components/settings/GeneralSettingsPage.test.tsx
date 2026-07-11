@@ -90,7 +90,9 @@ describe('GeneralSettingsPage', () => {
   test('saves and applies the selected language', async () => {
     render(<GeneralSettingsPage />)
 
-    fireEvent.click(await screen.findByTestId('general-language-en-button'))
+    const englishButton = await screen.findByTestId('general-language-en-button')
+    await waitFor(() => expect(englishButton).toBeEnabled())
+    fireEvent.click(englishButton)
 
     await waitFor(() => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({ language: 'en' })
@@ -105,7 +107,9 @@ describe('GeneralSettingsPage', () => {
     render(<GeneralSettingsPage />)
 
     const zhButton = await screen.findByTestId('general-language-zh-CN-button')
-    fireEvent.click(screen.getByTestId('general-language-en-button'))
+    const englishButton = screen.getByTestId('general-language-en-button')
+    await waitFor(() => expect(englishButton).toBeEnabled())
+    fireEvent.click(englishButton)
 
     await waitFor(() => {
       expect(screen.getByTestId('general-settings-status')).toHaveTextContent(
@@ -123,7 +127,9 @@ describe('GeneralSettingsPage', () => {
     expect(
       await screen.findByText('workbench.general_settings_system_tray_title')
     ).toBeInTheDocument()
-    expect(screen.getByTestId('general-task-completion-notifications-toggle')).not.toBeChecked()
+    const notificationToggle = screen.getByTestId('general-task-completion-notifications-toggle')
+    await waitFor(() => expect(notificationToggle).toBeEnabled())
+    expect(notificationToggle).toHaveAttribute('aria-checked', 'false')
     expect(screen.getByTestId('general-tray-unread-toggle')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('general-tray-running-toggle')).toHaveAttribute(
       'aria-pressed',
@@ -131,7 +137,7 @@ describe('GeneralSettingsPage', () => {
     )
     expect(screen.getByTestId('general-tray-usage-toggle')).toHaveAttribute('aria-pressed', 'true')
 
-    await userEvent.click(screen.getByTestId('general-task-completion-notifications-toggle'))
+    await userEvent.click(notificationToggle)
     await userEvent.click(screen.getByTestId('general-tray-unread-toggle'))
     await userEvent.click(screen.getByTestId('general-tray-running-toggle'))
     await userEvent.click(screen.getByTestId('general-tray-usage-toggle'))

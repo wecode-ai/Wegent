@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Activity, Bell, Check, CircleDot, Gauge, Loader2, type LucideIcon } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
 import { applyLanguagePreference, languagePreferenceOptions } from '@/i18n/languagePreference'
 import {
   defaultAppPreferences,
@@ -89,28 +90,22 @@ export function GeneralSettingsPage() {
     description,
     compact = false,
   }: SwitchRowProps) => (
-    <div className="flex items-center justify-between gap-4 px-4 py-3">
-      <div className="min-w-0">
-        <div className="text-sm font-medium text-text-primary">{label}</div>
-        <p className={`${compact ? 'mt-0.5' : 'mt-1'} text-xs leading-5 text-text-secondary`}>
-          {description}
-        </p>
-      </div>
-      <label className="relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center">
-        <input
+    <SettingsRow
+      label={label}
+      description={description}
+      className={compact ? 'py-2' : undefined}
+      control={
+        <SettingsSwitch
           data-testid={testId}
-          type="checkbox"
           checked={Boolean(preferences[preferenceKey])}
           disabled={loading || saving}
-          onChange={event => {
-            void handlePreferenceChange(preferenceKey, event.target.checked)
+          onCheckedChange={checked => {
+            void handlePreferenceChange(preferenceKey, checked)
           }}
-          className="peer sr-only"
+          aria-label={label}
         />
-        <span className="absolute inset-0 rounded-full bg-muted transition peer-checked:bg-text-primary peer-disabled:opacity-50" />
-        <span className="absolute left-1 h-5 w-5 rounded-full bg-background shadow transition peer-checked:translate-x-5 peer-disabled:opacity-70" />
-      </label>
-    </div>
+      }
+    />
   )
 
   const trayDisplayOptions: TrayDisplayOption[] = [
@@ -160,17 +155,13 @@ export function GeneralSettingsPage() {
   }
 
   return (
-    <div data-testid="general-settings-page" className="mx-auto w-full max-w-[760px] pb-10">
-      <div>
-        <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-          {t('workbench.general_settings_title')}
-        </h1>
-        <p className="mt-2 text-sm text-text-secondary">
-          {t('workbench.general_settings_subtitle')}
-        </p>
-      </div>
+    <SettingsPage data-testid="general-settings-page">
+      <SettingsPageHeader
+        title={t('workbench.general_settings_title')}
+        description={t('workbench.general_settings_subtitle')}
+      />
 
-      <section className="mt-6 overflow-hidden rounded-lg border border-border bg-background">
+      <section className="overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-2.5">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.general_settings_language_title')}
@@ -327,6 +318,6 @@ export function GeneralSettingsPage() {
           </span>
         </div>
       )}
-    </div>
+    </SettingsPage>
   )
 }

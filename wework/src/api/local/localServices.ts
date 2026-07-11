@@ -45,6 +45,12 @@ import type {
   RuntimeWorkListResponse,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
+  RuntimeWorktreeDeleteRequest,
+  RuntimeWorktreeListResponse,
+  RuntimeWorktreeMutationResponse,
+  RuntimeWorktreePrepareRequest,
+  RuntimeWorktreeSettings,
+  RuntimeWorktreeSettingsPatch,
   Team,
   UnifiedModel,
   User,
@@ -62,7 +68,6 @@ import {
   type LocalExecutorEvent,
   type LocalExecutorStatus,
 } from '@/tauri/localExecutor'
-import { buildManagedWorktreePath } from '@/lib/device-workspace-path'
 import { WEWORK_MIN_EXECUTOR_VERSION } from '@/lib/device-capabilities'
 import { normalizeModelOptionAliases, normalizeModelOptionValue } from '@/lib/model-ui'
 import { requestLocalCodexOfficialModels } from './codexOfficialModels'
@@ -1080,35 +1085,19 @@ async function prepareLocalRuntimeWorkspace(
     throw new Error('Project directory is not a Git repository')
   }
 
-  const projectWorkspaceRootResponse = await executeLocalDeviceCommand(
-    requestWithLocalDevice,
-    {
-      command_key: 'project_workspace_root',
-      timeout_seconds: 15,
-    },
-    'Failed to resolve project workspace root'
-  )
   const [taskId] = createRuntimeExecutionIds(data)
-  const worktreePath = buildManagedWorktreePath({
-    projectWorkspaceRoot: commandText(projectWorkspaceRootResponse),
-    sourceWorkspacePath,
+  const response = await requestWithLocalDevice<
+    RuntimeWorktreeMutationResponse,
+    RuntimeWorktreePrepareRequest
+  >('runtime.worktrees.prepare', {
+    deviceId: data.deviceId ?? LOCAL_DEVICE_ID,
+    sourcePath: sourceWorkspacePath,
     worktreeId: taskId,
+    ...(branch ? { ref: branch } : {}),
   })
-  await executeLocalDeviceCommand(
-    requestWithLocalDevice,
-    {
-      command_key: 'git_worktree_add',
-      args: branch
-        ? [sourceWorkspacePath, worktreePath, branch]
-        : [sourceWorkspacePath, worktreePath],
-      timeout_seconds: 120,
-      max_output_bytes: 1024 * 1024,
-    },
-    'Failed to create Git worktree'
-  )
 
   return {
-    workspacePath: worktreePath,
+    workspacePath: response.path ?? response.worktree.path,
     workspaceSource: 'git_worktree',
     branch,
   }
@@ -1687,6 +1676,24 @@ export function createRuntimeWorkApiFromIpc(
       data: RuntimeWorkspaceRemoveRequest
     ): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.remove', data)
+    },
+    getWorktreeSettings(data: { deviceId: string }): Promise<RuntimeWorktreeSettings> {
+      return requestWithLocalDevice('runtime.worktrees.settings.get', data)
+    },
+    updateWorktreeSettings(data: RuntimeWorktreeSettingsPatch): Promise<RuntimeWorktreeSettings> {
+      return requestWithLocalDevice('runtime.worktrees.settings.update', data)
+    },
+    listWorktrees(data: { deviceId: string }): Promise<RuntimeWorktreeListResponse> {
+      return requestWithLocalDevice('runtime.worktrees.list', data)
+    },
+    prepareWorktree(data: RuntimeWorktreePrepareRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return requestWithLocalDevice('runtime.worktrees.prepare', data)
+    },
+    deleteWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return requestWithLocalDevice('runtime.worktrees.delete', data)
+    },
+    restoreWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return requestWithLocalDevice('runtime.worktrees.restore', data)
     },
     bindRuntimeTaskImSessions() {
       return cloudConnectionRequired('bindRuntimeTaskImSessions')

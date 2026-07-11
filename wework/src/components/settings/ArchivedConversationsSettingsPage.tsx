@@ -2,6 +2,7 @@ import { Loader2, RotateCw, Search, Trash2, Undo2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createLocalAppServices } from '@/api/local/localServices'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   getArchivedBulkDeleteProgress,
@@ -12,6 +13,7 @@ import {
   subscribeArchivedBulkDeleteProgress,
   type ArchivedBulkDeleteProgress,
 } from './archivedConversationsSettingsState'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import type {
   ArchivedConversationItem,
   ArchivedConversationsListRequest,
@@ -23,6 +25,15 @@ type SortFilter = NonNullable<ArchivedConversationsListRequest['sort']>
 type PendingDelete =
   | { type: 'single'; item: ArchivedConversationItem }
   | { type: 'bulk'; items: ArchivedConversationItem[] }
+
+type RuntimeWorkApi = NonNullable<WorkbenchServices['runtimeWorkApi']>
+
+interface ArchivedConversationsSettingsPageProps {
+  api?: RuntimeWorkApi
+  onOpenRuntimeTask?: (address: ReturnType<typeof archivedConversationAddress>) => Promise<void>
+  onRefreshWorkLists?: () => Promise<void>
+  onLeaveSettings?: () => void
+}
 
 const ARCHIVED_DELETE_BATCH_SIZE = 5
 const ARCHIVED_DELETE_MAX_VERIFY_ROUNDS = 5
@@ -265,7 +276,12 @@ function DeleteArchivedConversationDialog({
   )
 }
 
-export function ArchivedConversationsSettingsPage() {
+export function ArchivedConversationsSettingsPage({
+  api: injectedApi,
+  onOpenRuntimeTask,
+  onRefreshWorkLists,
+  onLeaveSettings,
+}: ArchivedConversationsSettingsPageProps = {}) {
   const { t } = useTranslation('common')
   const [items, setItems] = useState<ArchivedConversationItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -282,8 +298,9 @@ export function ArchivedConversationsSettingsPage() {
   const [bulkDeleteProgress, setBulkDeleteProgress] = useState<ArchivedBulkDeleteProgress | null>(
     getArchivedBulkDeleteProgress()
   )
+  const [lastUnarchived, setLastUnarchived] = useState<ArchivedConversationItem | null>(null)
 
-  const api = useMemo(() => createSettingsRuntimeWorkApi(), [])
+  const api = useMemo(() => injectedApi ?? createSettingsRuntimeWorkApi(), [injectedApi])
 
   const loadArchivedConversations = useCallback(async () => {
     setLoading(true)
@@ -372,13 +389,39 @@ export function ArchivedConversationsSettingsPage() {
   const handleUnarchive = async (item: ArchivedConversationItem) => {
     const key = `unarchive:${item.id}`
     setBusyKey(key)
+    setError(null)
     try {
-      await api.unarchiveConversation({
-        deviceId: item.deviceId,
-        workspacePath: item.workspacePath,
-        taskId: item.taskId,
-      })
+      await api.unarchiveConversation(archivedConversationAddress(item))
+      await onRefreshWorkLists?.()
+      setLastUnarchived(item)
       await loadArchivedConversations()
+    } catch (unarchiveError) {
+      const message = unarchiveError instanceof Error ? unarchiveError.message : ''
+      setError(
+        message
+          ? t('workbench.archived_unarchive_failed_detail', { message })
+          : t('workbench.archived_unarchive_failed')
+      )
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  const openLastUnarchived = async () => {
+    if (!lastUnarchived || !onOpenRuntimeTask) return
+    setBusyKey(`open:${lastUnarchived.id}`)
+    setError(null)
+    try {
+      await onRefreshWorkLists?.()
+      await onOpenRuntimeTask(archivedConversationAddress(lastUnarchived))
+      onLeaveSettings?.()
+    } catch (openError) {
+      const message = openError instanceof Error ? openError.message : ''
+      setError(
+        message
+          ? t('workbench.archived_open_failed_detail', { message })
+          : t('workbench.archived_open_failed')
+      )
     } finally {
       setBusyKey(null)
     }
@@ -536,64 +579,79 @@ export function ArchivedConversationsSettingsPage() {
   }
 
   return (
-    <div
-      data-testid="archived-conversations-settings-page"
-      className="mx-auto w-full max-w-[920px]"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.archived_conversations_title', '已归档对话')}
-          </h1>
-          {hasArchivedItems && (
-            <p className="mt-1 text-sm text-text-secondary">
-              {t('workbench.archived_conversations_desc', '管理此设备上的归档 Codex 对话。')}
-            </p>
+    <SettingsPage data-testid="archived-conversations-settings-page">
+      <SettingsPageHeader
+        title={t('workbench.archived_conversations_title', '已归档任务')}
+        description={
+          hasArchivedItems
+            ? t('workbench.archived_conversations_desc', '管理此设备上的归档 Wework 任务。')
+            : undefined
+        }
+        actions={
+          hasArchivedItems ? (
+            <>
+              <button
+                type="button"
+                data-testid="archived-cleanup-preview-button"
+                onClick={() => void handlePreviewCleanup()}
+                disabled={loading || busyKey === 'cleanup-preview' || busyKey === 'cleanup'}
+                className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[13px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {busyKey === 'cleanup-preview' ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                {t('workbench.archived_cleanup_scan', '扫描残留文件')}
+              </button>
+              <button
+                type="button"
+                data-testid="archived-refresh-button"
+                onClick={() => void loadArchivedConversations()}
+                disabled={loading}
+                className="flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[13px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RotateCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+                {t('workbench.refresh_worklists', '刷新')}
+              </button>
+              <button
+                type="button"
+                data-testid="archived-bulk-delete-button"
+                onClick={() => void handleBulkDelete()}
+                disabled={items.length === 0 || bulkDeleteRunning}
+                className="flex h-8 items-center gap-1.5 rounded-md border border-red-200 px-2.5 text-[13px] text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {bulkDeleteRunning ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                {t('workbench.archived_bulk_delete', '删除全部')}
+              </button>
+            </>
+          ) : undefined
+        }
+      />
+
+      {lastUnarchived && (
+        <div
+          data-testid="archived-unarchive-success"
+          className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/10 px-4 py-3 text-sm text-text-primary"
+        >
+          <span>{t('workbench.archived_unarchive_success', { title: lastUnarchived.title })}</span>
+          {onOpenRuntimeTask && (
+            <button
+              type="button"
+              data-testid="archived-view-now-button"
+              onClick={() => void openLastUnarchived()}
+              disabled={busyKey === `open:${lastUnarchived.id}`}
+              className="h-8 shrink-0 rounded-md px-3 text-[13px] font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
+            >
+              {t('workbench.archived_view_now')}
+            </button>
           )}
         </div>
-        {hasArchivedItems && (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              data-testid="archived-cleanup-preview-button"
-              onClick={() => void handlePreviewCleanup()}
-              disabled={loading || busyKey === 'cleanup-preview' || busyKey === 'cleanup'}
-              className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {busyKey === 'cleanup-preview' ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              {t('workbench.archived_cleanup_scan', '扫描残留文件')}
-            </button>
-            <button
-              type="button"
-              data-testid="archived-refresh-button"
-              onClick={() => void loadArchivedConversations()}
-              disabled={loading}
-              className="flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <RotateCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-              {t('workbench.refresh_worklists', '刷新')}
-            </button>
-            <button
-              type="button"
-              data-testid="archived-bulk-delete-button"
-              onClick={() => void handleBulkDelete()}
-              disabled={items.length === 0 || bulkDeleteRunning}
-              className="flex h-9 items-center gap-2 rounded-md border border-red-200 px-3 text-sm text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {bulkDeleteRunning ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
-              {t('workbench.archived_bulk_delete', '删除全部')}
-            </button>
-          </div>
-        )}
-      </div>
+      )}
 
       {bulkDeleteProgress && (
         <div
@@ -834,6 +892,6 @@ export function ArchivedConversationsSettingsPage() {
           onConfirm={() => void confirmDelete()}
         />
       )}
-    </div>
+    </SettingsPage>
   )
 }
