@@ -66,7 +66,7 @@ class SQLiteHistoryStore(HistoryStoreInterface):
         session_id: str,
         limit: Optional[int] = None,
         before_message_id: Optional[str] = None,
-        supports_image: bool | None = None,
+        supports_image: bool = False,
         supports_video: bool = False,
     ) -> list[Message]:
         """Get chat history for a session.

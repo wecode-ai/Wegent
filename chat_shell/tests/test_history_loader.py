@@ -357,7 +357,10 @@ class TestPackageModeVideoHistory:
         assert content[1]["image_url"]["url"] == "data:image/png;base64,aW1hZ2U="
         assert "Image Attachment: photo.png" in content[2]["text"]
 
-    def test_builds_image_blocks_when_model_image_capability_unset(self):
+    @pytest.mark.parametrize("supports_image", [False, None])
+    def test_uses_image_metadata_when_model_image_capability_is_unsupported(
+        self, supports_image
+    ):
         subtask = SimpleNamespace(
             id=10,
             task_id=20,
@@ -384,11 +387,14 @@ class TestPackageModeVideoHistory:
             subtask,
             sender_username=None,
             is_group_chat=False,
+            supports_image=supports_image,
         )
 
         content = messages[0]["content"]
-        assert content[1]["type"] == "image_url"
-        assert content[1]["image_url"]["url"] == "data:image/png;base64,aW1hZ2U="
+        assert content[0] == {"type": "text", "text": "describe the image"}
+        assert len(content) == 2
+        assert "image_url" not in str(content)
+        assert "Image Attachment: photo.png" in content[1]["text"]
 
     def test_builds_video_blocks_when_model_supports_video(self, monkeypatch):
         subtask = SimpleNamespace(

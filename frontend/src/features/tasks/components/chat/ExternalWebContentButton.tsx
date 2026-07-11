@@ -53,7 +53,7 @@ function getExternalWebContentErrorKey(error: unknown): string {
     if (error.message.includes('No supported media')) {
       return 'externalWebContent.errors.noSupportedMedia'
     }
-    if (error.message.includes('No video_url_s3')) {
+    if (error.message.includes('No video_url')) {
       return 'externalWebContent.errors.noSupportedMedia'
     }
     if (error.message.includes('absolute HTTP')) {
