@@ -3048,11 +3048,14 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
 
+    const focusRequest = vi.fn()
+    window.addEventListener('wework:focus-new-chat-composer', focusRequest, { once: true })
     await userEvent.click(screen.getByText('start new project task'))
 
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-address')).toHaveTextContent('none')
     )
+    await waitFor(() => expect(focusRequest).toHaveBeenCalledTimes(1))
     expect(screen.getByTestId('active-pane-key')).toHaveTextContent('project:7')
     expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('')
     expect(screen.getByTestId('pane-goal-draft-active')).toHaveTextContent('inactive')

@@ -6,6 +6,7 @@ import { navigateTo } from '@/lib/navigation'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import type {
@@ -624,6 +625,7 @@ export function WorkbenchProvider({
       standaloneWorkspacePath: null,
     })
     navigateTo('/')
+    requestNewChatComposerFocus()
   }, [state.devices, state.standaloneDeviceId, user])
 
   const startStandaloneChat = useCallback(() => {
@@ -644,6 +646,7 @@ export function WorkbenchProvider({
     (projectId: number) => {
       const deviceWorkspaceId = getSingleProjectDeviceWorkspaceId(state.runtimeWork, projectId)
       selectProjectWorkspace(projectId, deviceWorkspaceId)
+      requestNewChatComposerFocus()
     },
     [selectProjectWorkspace, state.runtimeWork]
   )

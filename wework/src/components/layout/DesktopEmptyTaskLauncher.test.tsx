@@ -30,6 +30,21 @@ function LauncherHarness({
 }
 
 describe('DesktopEmptyTaskLauncher', () => {
+  test('focuses the composer when the new chat view opens', async () => {
+    render(<LauncherHarness />)
+
+    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+  })
+
+  test('focuses the composer when a new chat is requested', async () => {
+    render(<LauncherHarness />)
+    screen.getByTestId('empty-project-title-button').focus()
+
+    window.dispatchEvent(new Event('wework:focus-new-chat-composer'))
+
+    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+  })
+
   test('renders the project-aware heading and ordered suggestion categories', () => {
     render(<LauncherHarness />)
 
