@@ -19,13 +19,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.mcp_server.auth import TaskTokenInfo
 from app.models.kind import Kind
-from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+from app.models.subtask_context import SubtaskContext
 from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.context.context_service import (
     VideoAttachmentResolutionError,
     context_service,
 )
-from app.stores.tasks import subtask_store, task_access_store
+from app.services.media.attachment_access import find_accessible_attachment_context
 from shared.models.execution import ExecutionRequest
 
 logger = logging.getLogger(__name__)
@@ -547,32 +547,16 @@ class MediaUnderstandingService:
         token_info: TaskTokenInfo,
         context_id: int,
     ) -> SubtaskContext:
-        context = (
-            db.query(SubtaskContext)
-            .filter(
-                SubtaskContext.id == context_id,
-                SubtaskContext.context_type == ContextType.ATTACHMENT.value,
-                SubtaskContext.status == ContextStatus.READY.value,
-            )
-            .first()
+        context = find_accessible_attachment_context(
+            db,
+            context_id=context_id,
+            user_id=token_info.user_id,
         )
         if not context:
             raise MediaUnderstandingError(
                 "context_not_found", f"Context {context_id} was not found"
             )
-        if context.user_id == token_info.user_id:
-            return context
-        if context.subtask_id > 0:
-            subtask = subtask_store.get_by_id(db, subtask_id=context.subtask_id)
-            if subtask and task_access_store.is_member(
-                db,
-                task_id=subtask.task_id,
-                user_id=token_info.user_id,
-            ):
-                return context
-        raise MediaUnderstandingError(
-            "context_not_found", f"Context {context_id} was not found"
-        )
+        return context
 
 
 def _build_system_prompt() -> str:

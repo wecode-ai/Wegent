@@ -24,7 +24,14 @@ from app.models.subtask_context import ContextStatus, ContextType, SubtaskContex
 from app.models.user import User
 from app.services.attachment.parser import DocumentParser
 from app.services.context import context_service
-from app.services.media.weibo_media_service import weibo_media_service
+from app.services.media.weibo_image_upload import (
+    WeiboImageUploadError,
+    weibo_image_upload_service,
+)
+from app.services.media.weibo_media_service import (
+    resolve_weibo_media_uid,
+    weibo_media_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +100,35 @@ class WebContentService:
         asset_contexts: list[SubtaskContext] = []
         try:
             videos = preview.type_data.get("videos") or []
+            images = preview.type_data.get("images") or []
             comments = preview.type_data.get("comments") or []
+
+            uid = resolve_weibo_media_uid(user)
+            db.commit()
+            for image in images:
+                if not isinstance(image, dict) or not image.get("url"):
+                    continue
+                try:
+                    image["pid"] = await weibo_image_upload_service.upload_url(
+                        image["url"], uid=uid
+                    )
+                    image["pid_status"] = "ready"
+                except WeiboImageUploadError as exc:
+                    image["pid_status"] = "failed"
+                    image["pid_error"] = exc.code
+                    logger.warning(
+                        "[WEB_CONTENT_IMAGE] PID generation skipped url=%s error=%s",
+                        image["url"],
+                        exc,
+                    )
+                except Exception as exc:
+                    image["pid_status"] = "failed"
+                    image["pid_error"] = "upload_failed"
+                    logger.warning(
+                        "[WEB_CONTENT_IMAGE] PID generation failed url=%s error=%s",
+                        image["url"],
+                        exc,
+                    )
 
             for index, video in enumerate(videos, start=1):
                 if not isinstance(video, dict):

@@ -402,6 +402,10 @@ async def test_create_context_stores_image_urls_and_creates_comment_attachment(
     )
     uploaded: list[dict] = []
 
+    async def fake_upload_url(url, *, uid):
+        assert url == "https://public.example.com/a.jpg"
+        return "image-pid-1"
+
     def fake_upload_attachment(**kwargs):
         uploaded.append(kwargs)
         filename = kwargs["filename"]
@@ -432,6 +436,10 @@ async def test_create_context_stores_image_urls_and_creates_comment_attachment(
         "app.services.web_content.context_service.upload_attachment",
         fake_upload_attachment,
     )
+    monkeypatch.setattr(
+        "app.services.web_content.weibo_image_upload_service.upload_url",
+        fake_upload_url,
+    )
 
     user = User(id=7)
     contexts = await service.create_context(test_db, user=user, preview=preview)
@@ -449,8 +457,11 @@ async def test_create_context_stores_image_urls_and_creates_comment_attachment(
             "url": "https://public.example.com/a.jpg",
             "source_item_id": "item-1",
             "source_index": 0,
+            "pid": "image-pid-1",
+            "pid_status": "ready",
         }
     ]
+    assert "image_pids" not in aggregate_context.type_data
     assert asset_ids == {"videos": [], "comments": [comments_context.id]}
     assert aggregate_context.type_data["comment_count"] == 14
     assert aggregate_context.type_data["fetched_comment_count"] == 1
