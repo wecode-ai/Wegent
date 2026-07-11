@@ -121,6 +121,74 @@ button:disabled {
   cursor: not-allowed;
 }
 
+@layer components {
+  .composer-mention-node {
+    display: inline-flex;
+    align-items: baseline;
+    max-width: 100%;
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: inherit;
+    vertical-align: baseline;
+    white-space: nowrap;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  .composer-mention-link {
+    color: rgb(37 99 235);
+  }
+
+  .composer-mention-icon-slot {
+    position: relative;
+    display: inline-block;
+    flex: none;
+    order: -1;
+    align-self: center;
+    width: 1em;
+    height: 1em;
+    margin-right: 0.25em;
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: none;
+  }
+
+  .composer-mention-icon {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 1em;
+    height: 1em;
+    transform: translateY(-50%);
+    user-select: none;
+    -webkit-user-select: none;
+    pointer-events: none;
+  }
+
+  .composer-mention-icon-slot::selection,
+  .composer-mention-icon::selection {
+    color: inherit;
+    background: transparent;
+  }
+
+  [data-theme='dark'] .composer-mention-link {
+    color: rgb(147 197 253);
+  }
+
+  .composer-mention-node[data-composer-skill-path] {
+    cursor: pointer;
+  }
+
+  .composer-mention-label {
+    font: inherit;
+  }
+
+  .composer-mention-separator::selection {
+    color: inherit;
+    background: transparent;
+  }
+}
+
 @layer utilities {
   .context-usage-compact-trigger {
     position: relative;

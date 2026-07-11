@@ -45,6 +45,7 @@ interface ProjectChatComposerProps {
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
+  onOpenSkillFile?: (path: string) => void
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -164,6 +165,7 @@ export function ProjectChatComposer({
   onSelectModelOption,
   onBlockedModelSelect,
   onFileSelect,
+  onOpenSkillFile,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -328,7 +330,8 @@ export function ProjectChatComposer({
           placeholder={placeholder}
           rows={2}
           onPasteFiles={onFileSelect}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-6 text-text-secondary outline-none placeholder:text-text-muted/55"
+          onOpenSkillFile={onOpenSkillFile}
+          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-[18px] text-text-secondary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
           onListLocalApps={onListLocalApps}

@@ -1568,6 +1568,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       [
         appendLocalUserMessage,
         codeCommentContexts,
+        commitThreadGoal,
         compactRuntimePaneTask,
         currentRuntimeTask,
         dispatchMessages,
@@ -1747,7 +1748,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         return false
       }
     },
-    [currentRuntimeTask, goal, refreshWorkLists, setRuntimeGoal]
+    [commitThreadGoal, currentRuntimeTask, goal, refreshWorkLists, setRuntimeGoal]
   )
 
   const pauseCurrentGoal = useCallback(
@@ -1811,7 +1812,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       })
       return false
     }
-  }, [clearRuntimeGoal, currentRuntimeTask, goal, refreshWorkLists])
+  }, [clearRuntimeGoal, commitThreadGoal, currentRuntimeTask, goal, refreshWorkLists])
 
   const cancelGuidanceMessage = useCallback(() => undefined, [])
   const goalContinuing = goal?.status === 'active' && goalContinuation?.status === 'started'

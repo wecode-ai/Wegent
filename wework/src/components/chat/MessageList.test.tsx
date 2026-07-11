@@ -4004,6 +4004,7 @@ describe('MessageList', () => {
   })
 
   test('renders local skill markdown links in user messages', () => {
+    const onOpenLocalSkillFile = vi.fn()
     render(
       <MessageList
         messages={[
@@ -4011,19 +4012,21 @@ describe('MessageList', () => {
             id: '1',
             role: 'user',
             content:
-              'hello [$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) context',
+              'hello [$env-context](/Users/crystal/.codex/skills/env-context/SKILL.md) context',
             status: 'done',
             createdAt: '2026-05-25T00:00:00.000Z',
           },
         ]}
+        onOpenLocalSkillFile={onOpenLocalSkillFile}
       />
     )
 
     const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
 
-    expect(skillLink).toHaveAttribute(
-      'href',
-      'skill:///Users/crystal/.codex/skills/env-context/SKILL.md'
+    expect(skillLink).toHaveAttribute('href', '/Users/crystal/.codex/skills/env-context/SKILL.md')
+    fireEvent.click(skillLink)
+    expect(onOpenLocalSkillFile).toHaveBeenCalledWith(
+      '/Users/crystal/.codex/skills/env-context/SKILL.md'
     )
     expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
   })

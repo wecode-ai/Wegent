@@ -53,6 +53,7 @@ import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
+import { composerSkillFilePath } from './composer/composerMentions'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
@@ -82,6 +83,7 @@ interface MessageListProps {
   }) => void
   fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenLocalSkillFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
@@ -136,6 +138,7 @@ export const MessageList = memo(function MessageList({
   onOpenFileChangesReview,
   fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
+  onOpenLocalSkillFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
@@ -291,6 +294,7 @@ export const MessageList = memo(function MessageList({
                 <UserMessage
                   message={message}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  onOpenLocalSkillFile={onOpenLocalSkillFile}
                   editable={message.id === editableLastUserMessageId}
                   editing={message.id === activeEditingMessageId}
                   editSubmitting={message.id === activeSubmittingEditMessageId}
@@ -387,6 +391,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'fileChangesDiffPreviewDisabledSubtaskId'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
+    previous.onOpenLocalSkillFile !== next.onOpenLocalSkillFile ? 'onOpenLocalSkillFile' : null,
     previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
       ? 'onRequestUserInputSubmit'
       : null,
@@ -585,6 +590,7 @@ async function copyText(text: string) {
 function UserMessage({
   message,
   onOpenWorkspaceFile,
+  onOpenLocalSkillFile,
   editable = false,
   editing = false,
   editSubmitting = false,
@@ -594,6 +600,7 @@ function UserMessage({
 }: {
   message: WorkbenchMessage
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
   editing?: boolean
   editSubmitting?: boolean
@@ -753,7 +760,7 @@ function UserMessage({
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
-              {renderUserContent(displayContent)}
+              {renderUserContent(displayContent, onOpenLocalSkillFile)}
               {showGoalRequestBadge && (
                 <div className="mt-1.5 flex">
                   <span
@@ -1312,7 +1319,7 @@ function MessageHoverActions({
 }
 
 const CODEX_MENTION_LINK_PATTERN =
-  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+))\)/g
+  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+))\)/g
 
 function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
@@ -1332,7 +1339,7 @@ function codexMentionKind(href: string): 'skill' | 'app' | 'plugin' {
   return 'skill'
 }
 
-function renderUserContent(content: string) {
+function renderUserContent(content: string, onOpenLocalSkillFile?: (path: string) => void) {
   const parts: ReactNode[] = []
   let offset = 0
 
@@ -1345,6 +1352,7 @@ function renderUserContent(content: string) {
 
     const mentionName = match[2]
     const href = match[3]
+    const skillFilePath = composerSkillFilePath(match[0])
     const mentionKind = codexMentionKind(href)
     const tokenTestId = codexMentionTokenTestId(mentionName)
     const testId =
@@ -1361,7 +1369,10 @@ function renderUserContent(content: string) {
         href={href}
         data-testid={testId}
         className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-[13px] font-medium leading-none text-blue-600 no-underline"
-        onClick={event => event.preventDefault()}
+        onClick={event => {
+          event.preventDefault()
+          if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
+        }}
       >
         <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
         <span className="min-w-0 truncate">{displayCodexMentionName(mentionName)}</span>

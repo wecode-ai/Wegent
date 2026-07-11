@@ -7,10 +7,15 @@ if (typeof window.ClipboardEvent === 'undefined') {
 
 const textPrototype = Text.prototype as Text & {
   getBoundingClientRect?: () => DOMRect
+  getClientRects?: () => DOMRectList
 }
 
 if (typeof textPrototype.getBoundingClientRect === 'undefined') {
   textPrototype.getBoundingClientRect = () => new DOMRect()
+}
+
+if (typeof textPrototype.getClientRects === 'undefined') {
+  textPrototype.getClientRects = () => [] as unknown as DOMRectList
 }
 
 const nodePrototype = Node.prototype as Node & {
@@ -23,6 +28,14 @@ if (typeof nodePrototype.getBoundingClientRect === 'undefined') {
 
 if (typeof Range.prototype.getBoundingClientRect === 'undefined') {
   Range.prototype.getBoundingClientRect = () => new DOMRect()
+}
+
+if (typeof Range.prototype.getClientRects === 'undefined') {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList
+}
+
+if (typeof document.elementFromPoint === 'undefined') {
+  document.elementFromPoint = () => null
 }
 
 beforeEach(() => {

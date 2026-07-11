@@ -56,6 +56,7 @@ export interface WorkspaceFileOpenOptions {
 export interface WorkspaceFileOpenRequest extends WorkspaceFileOpenOptions {
   id: number
   path: string
+  target?: WorkspaceTarget
 }
 
 export interface CodeCommentContext {

@@ -1072,6 +1072,19 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
+  function createLocalSkillDevice() {
+    return {
+      id: 13,
+      device_id: 'device-local-real',
+      name: 'Local Mac',
+      status: 'online' as const,
+      is_default: true,
+      device_type: 'local' as const,
+      bind_shell: 'claudecode',
+      executor_version: '1.8.5',
+    }
+  }
+
   function renderWorkspacePanelLayout({ mainWidth }: { mainWidth?: number } = {}) {
     if (mainWidth) {
       mockDesktopWorkbenchMainWidth(mainWidth)
@@ -4646,6 +4659,110 @@ describe('DesktopWorkbenchLayout', () => {
     expect(readWorkspaceTextFile).toHaveBeenCalledWith(
       'workspace-cloud-device',
       '/workspace/project/README.md'
+    )
+  })
+
+  test('opens a skill from the empty composer on the real local device', async () => {
+    const user = userEvent.setup()
+    const localDevice = createLocalSkillDevice()
+    const skillPath = '/Users/me/.agents/skills/gmail/SKILL.md'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/Users/me/.agents/skills/gmail',
+      entries: [],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: skillPath,
+      name: 'SKILL.md',
+      content: '# Gmail',
+      truncated: false,
+      size: 7,
+      modifiedAt: null,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        state={{
+          ...baseProps.state,
+          devices: [localDevice],
+          input: `[$gmail](${skillPath}) `,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          devices: [localDevice],
+        }}
+      />
+    )
+
+    await user.click(await screen.findByTestId('local-skill-chip-gmail'))
+
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(listWorkspaceEntries).toHaveBeenCalledWith(
+      localDevice.device_id,
+      '/Users/me/.agents/skills/gmail'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(localDevice.device_id, skillPath)
+  })
+
+  test('opens a sent skill on the local device while the project workspace is remote', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const localDevice = createLocalSkillDevice()
+    const skillPath = '/Users/me/.agents/skills/gmail/SKILL.md'
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/Users/me/.agents/skills/gmail',
+      entries: [],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: skillPath,
+      name: 'SKILL.md',
+      content: '# Gmail',
+      truncated: false,
+      size: 7,
+      modifiedAt: null,
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          devices: [...workspacePanelState.devices, localDevice],
+        }}
+        messages={[
+          {
+            id: 'user-skill-link',
+            role: 'user',
+            content: `[$gmail](${skillPath})`,
+            status: 'completed',
+            createdAt: '2026-07-11T00:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: [...workspacePanelState.devices, localDevice],
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(await screen.findByTestId('sent-local-skill-token-gmail'))
+
+    expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(listWorkspaceEntries).toHaveBeenCalledWith(
+      localDevice.device_id,
+      '/Users/me/.agents/skills/gmail'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(localDevice.device_id, skillPath)
+    expect(readWorkspaceTextFile).not.toHaveBeenCalledWith(
+      workspacePanelState.devices[0].device_id,
+      skillPath
     )
   })
 

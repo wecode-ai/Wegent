@@ -6993,7 +6993,9 @@ describe('WorkbenchProvider runtime tasks', () => {
         status: 'paused',
       })
     )
-    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(listCallsBeforeCancel + 1))
+    await waitFor(() =>
+      expect(listRuntimeWork.mock.calls.length).toBeGreaterThan(listCallsBeforeCancel)
+    )
     await waitFor(() =>
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
     )

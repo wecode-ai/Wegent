@@ -62,7 +62,7 @@ export function pluginTrialInput(plugin: InstalledPlugin): string | null {
     pluginPath && pluginName
       ? `[$${pluginName}](${pluginPath})`
       : skill
-        ? `[$${skill.name}](skill://${skillFilePath(skill.path)})`
+        ? `[$${skill.name}](${skillFilePath(skill.path)})`
         : null
   if (!reference) return null
   const defaultPrompt = firstDefaultPrompt(plugin.spec.interface?.defaultPrompt)
