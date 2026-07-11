@@ -100,6 +100,10 @@ function cloneEnvironmentInfo(info: EnvironmentInfo): EnvironmentInfo {
   return { ...info }
 }
 
+function isNotGitRepositoryError(error: unknown): boolean {
+  return error instanceof Error && /not a git repository/i.test(error.message)
+}
+
 function getEnvironmentInfoCache(api: DeviceCommandApi): Map<string, EnvironmentInfoCacheEntry> {
   let cache = environmentInfoCaches.get(api)
   if (!cache) {
@@ -453,6 +457,10 @@ async function loadProjectEnvironmentUncached(
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
     }
   } catch (error) {
+    if (isNotGitRepositoryError(error)) {
+      return environmentWorkspaceInfo
+    }
+
     return {
       ...environmentWorkspaceInfo,
       error: error instanceof Error ? error.message : 'Failed to load environment info',

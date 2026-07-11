@@ -37,6 +37,7 @@ interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
   popoverContainer: HTMLElement | null
   docked?: boolean
+  defaultOpen?: boolean
   floatingFooter?: ReactNode
   devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
@@ -59,6 +60,7 @@ export function EnvironmentInfoPopover({
   info,
   popoverContainer,
   docked = true,
+  defaultOpen = false,
   floatingFooter,
   devices = [],
   onRefresh,
@@ -71,7 +73,7 @@ export function EnvironmentInfoPopover({
   onOpenChangesReview,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [open, setOpen] = useState(docked)
+  const [open, setOpen] = useState(docked && defaultOpen)
   const [workspacePathCopied, setWorkspacePathCopied] = useState(false)
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
