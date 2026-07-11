@@ -2287,6 +2287,17 @@ impl RuntimeWorkRpcHandler {
                 .await;
 
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                emit_response_event(
+                    &handler.event_tx,
+                    &handler.device_id,
+                    "response.incomplete",
+                    &turn_local_task_id,
+                    &request,
+                    json!({
+                        "type": "cancelled",
+                        "error": {"message": "cancelled"},
+                    }),
+                );
                 let _ = mapper_handle.await;
                 handler.clear_active_turn_cancellation(&turn_local_task_id);
                 handler.clear_active_codex_turn(&turn_local_task_id);

@@ -1222,18 +1222,20 @@ async fn read_shared_turn_notifications(
     state: &mut CodexRunState,
     mut options: SharedTurnNotificationOptions,
 ) -> Result<ExecutionOutcome, String> {
-    let mut cancel_requested = false;
     let mut last_outcome: Option<ExecutionOutcome> = None;
     loop {
         let notification = if let Some(cancel_rx) = options.cancellation.as_mut() {
             tokio::select! {
                 _ = cancel_rx => {
                     options.cancellation = None;
-                    cancel_requested = true;
                     if let Some(turn_id) = options.active_turn_id.as_deref() {
-                        interrupt_shared_turn(client, thread_id, turn_id).await?;
+                        interrupt_shared_turn_detached(
+                            client.clone(),
+                            thread_id.to_owned(),
+                            turn_id.to_owned(),
+                        );
                     }
-                    continue;
+                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
                 }
                 message = notification_rx.recv() => shared_notification_result(message, last_outcome.clone())?,
             }
@@ -1268,11 +1270,6 @@ async fn read_shared_turn_notifications(
                 }
             }
             options.active_turn_id = Some(turn_id);
-            if cancel_requested {
-                if let Some(turn_id) = options.active_turn_id.as_deref() {
-                    interrupt_shared_turn(client, thread_id, turn_id).await?;
-                }
-            }
         }
 
         if let Some(sender) = &options.notifications {
@@ -1347,6 +1344,25 @@ async fn interrupt_shared_turn(
         )
         .await
         .map(|_| ())
+}
+
+fn interrupt_shared_turn_detached(
+    client: CodexAppServerClient,
+    thread_id: String,
+    turn_id: String,
+) {
+    tokio::spawn(async move {
+        if let Err(error) = interrupt_shared_turn(&client, &thread_id, &turn_id).await {
+            log_executor_event(
+                "codex shared turn interrupt failed",
+                &[
+                    ("thread_id", thread_id),
+                    ("turn_id", turn_id),
+                    ("error", error),
+                ],
+            );
+        }
+    });
 }
 
 async fn answer_shared_request_user_input(
