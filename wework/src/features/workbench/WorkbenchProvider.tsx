@@ -953,6 +953,7 @@ export function WorkbenchProvider({
     () => ({
       listWorkspaceEntries: executorClient.files.listWorkspaceEntries,
       readWorkspaceTextFile: executorClient.files.readWorkspaceTextFile,
+      readWorkspaceFileChunk: executorClient.files.readWorkspaceFileChunk,
     }),
     [executorClient]
   )

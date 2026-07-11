@@ -35,7 +35,7 @@ export function useWorkbenchDeviceUpgrades({
   refreshDevices,
 }: UseWorkbenchDeviceUpgradesOptions) {
   const [upgradingDevices, setUpgradingDevices] = useState<Record<string, DeviceUpgradeState>>({})
-  const upgradeClearTimersRef = useRef<Record<string, ReturnType<typeof window.setTimeout>>>({})
+  const upgradeClearTimersRef = useRef<Record<string, number>>({})
 
   const clearUpgradeStateTimer = useCallback((deviceId: string) => {
     const timer = upgradeClearTimersRef.current[deviceId]

@@ -1,9 +1,14 @@
 import type { CodeViewItem } from '@pierre/diffs'
 import { CodeView, type CodeViewHandle } from '@pierre/diffs/react'
+import FileViewer from '@file-viewer/react'
+import engineeringRenderers from '@file-viewer/preset-engineering'
+import officeRenderers from '@file-viewer/preset-office'
+import liteRenderers from '@file-viewer/preset-lite'
 import { MessageSquare } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
+import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -72,12 +77,80 @@ const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
 
 interface WorkspaceFilePreviewProps {
   file: WorkspaceTextFileResponse | null
+  binaryFile?: {
+    path: string
+    name: string
+    size: number
+    file: File
+  } | null
   loading: boolean
+  loadingProgress?: { loadedBytes: number; totalBytes: number | null } | null
   error?: string | null
   onRetry: () => void
   targetLineStart?: number
   targetLineEnd?: number
   onAddCodeComment: (context: CodeCommentContext) => void
+}
+
+const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
+  'application/epub+zip': 'epub',
+  'application/msword': 'doc',
+  'application/pdf': 'pdf',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.oasis.opendocument.presentation': 'odp',
+  'application/vnd.oasis.opendocument.spreadsheet': 'ods',
+  'application/vnd.oasis.opendocument.text': 'odt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/zip': 'zip',
+  'image/avif': 'avif',
+  'image/bmp': 'bmp',
+  'image/gif': 'gif',
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/svg+xml': 'svg',
+  'image/tiff': 'tiff',
+  'image/webp': 'webp',
+  'text/csv': 'csv',
+}
+
+function fileViewerTypeFromMime(mimeType: string): string | undefined {
+  return FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
+}
+
+function WorkspaceBinaryFilePreview({
+  file,
+}: {
+  file: NonNullable<WorkspaceFilePreviewProps['binaryFile']>
+}) {
+  if (/\.xmind$/i.test(file.name)) {
+    return (
+      <WorkspaceXMindPreview key={`${file.path}:${file.size}`} file={file.file} name={file.name} />
+    )
+  }
+
+  return (
+    <section
+      data-testid="workspace-binary-file-preview"
+      className="min-w-0 flex-1 overflow-hidden bg-background"
+    >
+      <FileViewer
+        key={`${file.path}:${file.size}`}
+        file={file.file}
+        filename={file.name}
+        type={fileViewerTypeFromMime(file.file.type)}
+        size={file.size}
+        className="h-full w-full"
+        options={{
+          preset: [officeRenderers, liteRenderers, engineeringRenderers],
+          spreadsheet: { worker: false },
+          theme: 'light',
+        }}
+      />
+    </section>
+  )
 }
 
 interface SelectionState {
@@ -106,6 +179,26 @@ interface WorkspaceFilePreviewContentProps {
   targetLineStart?: number
   targetLineEnd?: number
   onAddCodeComment: (context: CodeCommentContext) => void
+}
+
+function isHtmlFile(file: WorkspaceTextFileResponse) {
+  return /\.(?:html?|xhtml)$/i.test(file.name)
+}
+
+function WorkspaceHtmlPreview({ file }: { file: WorkspaceTextFileResponse }) {
+  return (
+    <section
+      data-testid="workspace-html-file-preview"
+      className="min-w-0 flex-1 overflow-hidden bg-background"
+    >
+      <iframe
+        title={file.name}
+        srcDoc={file.content}
+        sandbox="allow-forms allow-popups allow-scripts"
+        className="h-full w-full border-0 bg-white"
+      />
+    </section>
+  )
 }
 
 function normalizeTargetLineRange(
@@ -312,7 +405,9 @@ function WorkspaceFilePreviewContent({
 
 export function WorkspaceFilePreview({
   file,
+  binaryFile,
   loading,
+  loadingProgress,
   error,
   onRetry,
   targetLineStart,
@@ -322,9 +417,31 @@ export function WorkspaceFilePreview({
   const { t } = useTranslation('common')
 
   if (loading) {
+    const progress =
+      loadingProgress?.totalBytes && loadingProgress.totalBytes > 0
+        ? Math.min(
+            100,
+            Math.round((loadingProgress.loadedBytes / loadingProgress.totalBytes) * 100)
+          )
+        : null
     return (
-      <section className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-secondary">
-        {t('workbench.workspace_file_preview_loading', '正在加载文件...')}
+      <section className="flex min-w-0 flex-1 items-center justify-center px-6 text-sm text-text-secondary">
+        <div className="w-full max-w-xs space-y-2 text-center">
+          <p>
+            {progress === null
+              ? t('workbench.workspace_file_preview_loading', '正在加载文件...')
+              : t('workbench.workspace_file_preview_loading_progress', { progress })}
+          </p>
+          <div
+            data-testid="workspace-file-preview-progress"
+            className="h-1.5 overflow-hidden rounded-full bg-muted"
+          >
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
+              style={{ width: `${progress ?? 35}%` }}
+            />
+          </div>
+        </div>
       </section>
     )
   }
@@ -346,11 +463,18 @@ export function WorkspaceFilePreview({
   }
 
   if (!file) {
+    if (binaryFile) {
+      return <WorkspaceBinaryFilePreview file={binaryFile} />
+    }
     return (
       <section className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-muted">
         {t('workbench.workspace_file_preview_empty', '选择文件查看内容')}
       </section>
     )
+  }
+
+  if (isHtmlFile(file)) {
+    return <WorkspaceHtmlPreview file={file} />
   }
 
   return (

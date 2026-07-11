@@ -54,6 +54,7 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - Wework cloud sync development plan: [`docs/zh/developer-guide/wework-cloud-sync-development.md`](docs/zh/developer-guide/wework-cloud-sync-development.md)
 - English version: [`docs/en/developer-guide/wework-cloud-sync-development.md`](docs/en/developer-guide/wework-cloud-sync-development.md)
 - Wework performance diagnostics: [`docs/zh/developer-guide/wework-performance-diagnostics.md`](docs/zh/developer-guide/wework-performance-diagnostics.md)
+- Wework workspace file preview: [`docs/zh/developer-guide/wework-file-preview.md`](docs/zh/developer-guide/wework-file-preview.md)
 - English version: [`docs/en/developer-guide/wework-performance-diagnostics.md`](docs/en/developer-guide/wework-performance-diagnostics.md)
 - Wework E2E automation: [`docs/zh/developer-guide/wework-e2e-automation.md`](docs/zh/developer-guide/wework-e2e-automation.md)
 - English version: [`docs/en/developer-guide/wework-e2e-automation.md`](docs/en/developer-guide/wework-e2e-automation.md)

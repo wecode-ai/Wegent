@@ -201,6 +201,61 @@ print(
     "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
 ).strip()
 
+WORKSPACE_READ_FILE_CHUNK_SCRIPT = """
+import base64
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+MAX_BYTES = 1024 * 1024
+
+
+__WORKSPACE_ROOT_GUARD_SCRIPT__
+
+
+if len(sys.argv) != 3:
+    fail("file name and offset are required")
+
+try:
+    offset = int(sys.argv[2])
+except ValueError:
+    fail("file offset must be a non-negative integer")
+if offset < 0:
+    fail("file offset must be a non-negative integer")
+
+root = Path.cwd().resolve()
+workspace_root = require_workspace_root(root)
+target = (root / sys.argv[1]).resolve()
+if not is_relative_to(target, workspace_root):
+    fail("file path is outside workspace root")
+if not is_relative_to(target, root):
+    fail("file path is outside workspace")
+if not target.is_file():
+    fail("file does not exist")
+
+with target.open("rb") as target_file:
+    target_file.seek(offset)
+    data = target_file.read(MAX_BYTES)
+stat = target.stat()
+print(
+    json.dumps(
+        {
+            "path": str(target),
+            "name": target.name,
+            "content_base64": base64.b64encode(data).decode("ascii"),
+            "offset": offset,
+            "eof": offset + len(data) >= stat.st_size,
+            "size": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        },
+        ensure_ascii=False,
+    )
+)
+""".replace(
+    "__WORKSPACE_ROOT_GUARD_SCRIPT__", WORKSPACE_ROOT_GUARD_SCRIPT
+).strip()
+
 PROJECT_FOLDER_STATUS_SCRIPT = """
 import json
 import subprocess
@@ -1373,6 +1428,10 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
     ),
     "workspace_read_text_file": LocalDeviceCommandDefinition(
         command=f"python3 -c {shlex.quote(WORKSPACE_READ_TEXT_FILE_SCRIPT)}",
+        post_processor="json",
+    ),
+    "workspace_read_file_chunk": LocalDeviceCommandDefinition(
+        command=f"python3 -c {shlex.quote(WORKSPACE_READ_FILE_CHUNK_SCRIPT)}",
         post_processor="json",
     ),
     "project_folder_status": LocalDeviceCommandDefinition(

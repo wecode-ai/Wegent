@@ -10,3 +10,4 @@ pub mod git_commit_message;
 pub mod local_skills;
 pub mod pty;
 pub mod session;
+pub mod workspace_files;

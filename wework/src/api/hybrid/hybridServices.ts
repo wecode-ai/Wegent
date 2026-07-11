@@ -449,6 +449,9 @@ export function createHybridWorkbenchServices(
     readWorkspaceTextFile(deviceId, filePath) {
       return deviceApi(deviceId).readWorkspaceTextFile(deviceId, filePath)
     },
+    readWorkspaceFileChunk(deviceId, filePath, offset) {
+      return deviceApi(deviceId).readWorkspaceFileChunk(deviceId, filePath, offset)
+    },
     createDockerRemoteDeviceCommand(data) {
       if (!cloudServices.deviceApi.createDockerRemoteDeviceCommand) {
         throw new Error('Remote device startup command is unavailable')

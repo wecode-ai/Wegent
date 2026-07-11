@@ -2,6 +2,7 @@ import path from 'path'
 import fs from 'fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
 
 const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:8000'
@@ -22,7 +23,15 @@ const extensionsDir = fs.existsSync(path.join(internalExtensionsDir, 'apps.tsx')
 
 export default defineConfig({
   base: appBasePath,
-  plugins: [react()],
+  plugins: [
+    react(),
+    fileViewerRenderers({
+      preset: 'auto',
+      autoPresets: ['office', 'lite', 'engineering'],
+      copyAssets: true,
+      chunkStrategy: 'renderer',
+    }),
+  ],
   define: {
     __WEWORK_APP_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),
   },
@@ -54,6 +63,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@xmldom/xmldom': path.resolve(__dirname, './src/lib/browser-dom-parser.ts'),
       '@': path.resolve(__dirname, './src'),
       '@wecode': path.resolve(__dirname, './wecode'),
       '@extensions': extensionsDir,
