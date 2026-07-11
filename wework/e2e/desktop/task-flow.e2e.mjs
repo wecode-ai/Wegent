@@ -729,11 +729,28 @@ async function main() {
     phase = 'follow-up'
     control.setScenario('follow_up')
     await sendPrompt(control, composerSelector, FOLLOW_UP_PROMPT)
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: FOLLOW_UP_COMPLETION_TEXT,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const followUpRequest = await withTimeout(
+      control.awaitScenarioRequest('follow_up'),
+      UI_TIMEOUT_MS,
+      'The model service did not receive the follow-up request'
+    )
+    assert.ok(
+      JSON.stringify(followUpRequest.body).includes(FOLLOW_UP_PROMPT),
+      'The follow-up request did not preserve the user prompt'
+    )
 
     phase = 'cancellation'
     control.setScenario('cancellation')
     await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
+    await withTimeout(
+      control.awaitScenarioRequest('cancellation'),
+      UI_TIMEOUT_MS,
+      'The model service did not receive the cancellation request'
+    )
     await control.command('waitFor', '[data-testid="pause-response-button"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
