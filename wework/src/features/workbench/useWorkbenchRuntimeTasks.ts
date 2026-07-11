@@ -290,9 +290,7 @@ export function useWorkbenchRuntimeTasks({
         return { status: 'failed' }
       }
       await removeArchivedWorktrees(worktreeTargets)
-      if (isSameRuntimeTaskAddress(state.currentRuntimeTask, address)) {
-        clearCurrentRuntimeTaskView()
-      }
+      clearCurrentRuntimeTaskIfArchived([address])
       await refreshWorkLists()
       console.debug('[Wework] Runtime archive task finished', {
         address: runtimeAddressDebug(address),
@@ -300,13 +298,12 @@ export function useWorkbenchRuntimeTasks({
       return { status: 'archived' }
     },
     [
-      clearCurrentRuntimeTaskView,
+      clearCurrentRuntimeTaskIfArchived,
       dispatch,
       executorClient,
       prepareWorktreeArchive,
       refreshWorkLists,
       removeArchivedWorktrees,
-      state.currentRuntimeTask,
       state.runtimeWork,
     ]
   )

@@ -1037,12 +1037,12 @@ describe('DesktopSidebar', () => {
     ).not.toBeInTheDocument()
   })
 
-  test('shows hover actions and an undo notice before archiving project runtime tasks', async () => {
+  test('optimistically archives project runtime tasks with an undo notice', async () => {
     const user = userEvent.setup()
     const onArchiveRuntimeTask = vi.fn().mockResolvedValue(undefined)
     const originalSetTimeout = window.setTimeout
     const originalClearTimeout = window.clearTimeout
-    const archiveTimerId = 2200
+    const archiveTimerId = 3000
     let archiveTimerCallback: (() => void) | null = null
     const setTimeoutSpy = vi
       .spyOn(window, 'setTimeout')
@@ -1129,6 +1129,7 @@ describe('DesktopSidebar', () => {
       await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
 
       expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
+      expect(taskRow).toHaveClass('hidden')
       expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
         '撤销'
       )
@@ -1136,15 +1137,10 @@ describe('DesktopSidebar', () => {
       await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
 
       expect(onArchiveRuntimeTask).not.toHaveBeenCalled()
+      expect(taskRow).not.toHaveClass('hidden')
       expect(archiveTimerCallback).toBeNull()
-      expect(
-        screen.queryByTestId('runtime-local-task-archive-toast-codex-1')
-      ).not.toBeInTheDocument()
 
       await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
-      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toBeInTheDocument()
-      expect(archiveTimerCallback).toBeTypeOf('function')
-
       const runArchiveTimer = archiveTimerCallback
       await act(async () => {
         runArchiveTimer?.()
@@ -1158,9 +1154,6 @@ describe('DesktopSidebar', () => {
           taskId: 'codex-1',
         })
       )
-      expect(
-        screen.queryByTestId('runtime-local-task-archive-toast-codex-1')
-      ).not.toBeInTheDocument()
     } finally {
       setTimeoutSpy.mockRestore()
       clearTimeoutSpy.mockRestore()
@@ -1174,8 +1167,7 @@ describe('DesktopSidebar', () => {
       .mockResolvedValueOnce({ status: 'dirty_worktree' })
       .mockResolvedValueOnce({ status: 'archived' })
     const originalSetTimeout = window.setTimeout
-    const originalClearTimeout = window.clearTimeout
-    const archiveTimerId = 2200
+    const archiveTimerId = 3000
     let archiveTimerCallback: (() => void) | null = null
     const setTimeoutSpy = vi
       .spyOn(window, 'setTimeout')
@@ -1186,13 +1178,6 @@ describe('DesktopSidebar', () => {
         }
         return originalSetTimeout(handler, timeout)
       })
-    const clearTimeoutSpy = vi.spyOn(window, 'clearTimeout').mockImplementation((id?: number) => {
-      if (id === archiveTimerId) {
-        archiveTimerCallback = null
-        return
-      }
-      originalClearTimeout(id)
-    })
 
     try {
       renderSidebar({
@@ -1235,7 +1220,6 @@ describe('DesktopSidebar', () => {
       await user.click(screen.getByTestId('project-item-button'))
       await user.click(screen.getByTestId('runtime-local-task-archive-codex-1'))
       const runArchiveTimer = archiveTimerCallback
-
       await act(async () => {
         runArchiveTimer?.()
         await Promise.resolve()
@@ -1270,7 +1254,6 @@ describe('DesktopSidebar', () => {
       ).not.toBeInTheDocument()
     } finally {
       setTimeoutSpy.mockRestore()
-      clearTimeoutSpy.mockRestore()
     }
   })
 
