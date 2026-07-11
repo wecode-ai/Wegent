@@ -1768,6 +1768,7 @@ export interface RuntimeGoalEventPayload {
   subtaskId?: string
   deviceId?: string
   threadId?: string
+  turnId?: string
   goal?: RuntimeGoal | null
 }
 

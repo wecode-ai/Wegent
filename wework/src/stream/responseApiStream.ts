@@ -692,6 +692,7 @@ export function emitResponseApiEvent(
     handlers.onRuntimeGoalUpdated?.({
       ...base,
       threadId: stringField(data, 'thread_id') ?? stringField(data, 'threadId'),
+      turnId: stringField(data, 'turn_id') ?? stringField(data, 'turnId'),
       goal: (data.goal ?? null) as RuntimeGoal | null,
     })
     return

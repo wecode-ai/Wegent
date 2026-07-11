@@ -1673,6 +1673,34 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('0s')
   })
 
+  test.each(['blocked', 'usageLimited', 'budgetLimited'] as const)(
+    'does not offer the pause action for a %s goal',
+    status => {
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          goal={{
+            threadId: 'thread-1',
+            objective: 'Resolve the issue',
+            status,
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt: 1780000000000,
+            updatedAt: 1780000000000,
+          }}
+        />
+      )
+
+      expect(screen.queryByTestId('pause-goal-button')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('resume-goal-button')).not.toBeInTheDocument()
+    }
+  )
+
   test('does not render the goal status bar after the goal is complete', () => {
     const goal: RuntimeGoal = {
       threadId: 'thread-1',

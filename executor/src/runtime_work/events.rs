@@ -320,6 +320,8 @@ impl CodexNotificationEventMapper {
                     json!({
                         "thread_id": string_field(notification.params, "threadId")
                             .or_else(|| string_field(notification.params, "thread_id")),
+                        "turn_id": string_field(notification.params, "turnId")
+                            .or_else(|| string_field(notification.params, "turn_id")),
                         "goal": notification.params.get("goal").cloned().unwrap_or(Value::Null),
                     }),
                 );
