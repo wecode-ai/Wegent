@@ -153,14 +153,14 @@ function createSse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
 }
 
-function isCompactionRequest(body) {
+function codexRequestKind(body) {
   const metadata = body.client_metadata?.['x-codex-turn-metadata']
-  if (typeof metadata !== 'string') return false
+  if (typeof metadata !== 'string') return null
 
   try {
-    return JSON.parse(metadata).request_kind === 'compaction'
+    return JSON.parse(metadata).request_kind ?? null
   } catch {
-    return false
+    return null
   }
 }
 
@@ -425,12 +425,18 @@ class DesktopE2EServer {
     }
 
     const responseId = `wework-e2e-response-${this.modelRequests.length}`
-    if (isCompactionRequest(body)) {
+    const requestKind = codexRequestKind(body)
+    if (requestKind === 'compaction') {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage('Desktop E2E context compaction completed.'),
         responseCompleted(responseId),
       ])
+      return
+    }
+
+    if (requestKind === 'prewarm') {
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
       return
     }
 
