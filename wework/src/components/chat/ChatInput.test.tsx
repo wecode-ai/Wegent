@@ -297,8 +297,10 @@ describe('ChatInput', () => {
     expect(pill).toHaveClass('h-7')
     expect(pill).toHaveClass('rounded-xl')
     expect(pill).toHaveClass('bg-muted')
-    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('w-0')
-    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('group-hover:w-5')
+    expect(screen.getByTestId('plan-mode-pill-icon')).toHaveClass('h-4')
+    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('absolute')
+    expect(screen.getByTestId('cancel-plan-mode-button')).toHaveClass('left-2')
+    expect(screen.getByTestId('plan-mode-pill-icon')).toHaveClass('group-hover:opacity-0')
 
     await userEvent.click(screen.getByTestId('cancel-plan-mode-button'))
 
@@ -2270,12 +2272,11 @@ describe('ChatInput', () => {
     expect(pill).toHaveClass('justify-center')
     expect(pill).toHaveClass('border')
     expect(pill).toHaveClass('bg-muted')
+    expect(screen.getByTestId('goal-draft-pill-icon')).toHaveClass('h-4')
     expect(cancelButton).toHaveClass('opacity-0')
-    expect(cancelButton).toHaveClass('w-0')
-    expect(cancelButton).toHaveClass('group-hover:w-5')
-    expect(cancelButton).toHaveClass('group-hover:mr-1.5')
+    expect(cancelButton).toHaveClass('absolute')
+    expect(cancelButton).toHaveClass('left-2')
     expect(cancelButton).toHaveClass('group-hover:opacity-100')
-    expect(cancelButton).toHaveClass('group-hover:bg-text-muted/15')
     expect(cancelButton).toHaveClass('hover:bg-text-muted/30')
 
     fireEvent.click(cancelButton)

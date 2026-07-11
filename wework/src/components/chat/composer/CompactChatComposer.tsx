@@ -179,6 +179,7 @@ export function CompactChatComposer({
       ) : planModeActive ? (
         <ComposerModePill
           label={t('workbench.plan_mode', '计划模式')}
+          icon={ClipboardList}
           testId="plan-mode-pill"
           cancelTestId="cancel-plan-mode-button"
           cancelLabel={t('workbench.disable_plan_mode', '关闭计划模式')}

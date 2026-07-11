@@ -52,6 +52,12 @@ The goal bar's running presentation must be constrained by the current runtime t
 - This derivation affects only Wework presentation and elapsed-time calculation; it does not automatically call the goal pause API. Persisting `paused` remains an explicit user action through **Pause goal**.
 - When the task reports `running: true` again, the goal uses the original status returned by the runtime goal API.
 
+## Composer Mode Indicators
+
+When the composer is in plan mode or goal-draft mode, its bottom mode pill must show a semantic icon to the left of its label: a checklist for plan mode and a target for goal draft. Desktop and compact layouts must reuse the same mode-pill implementation so the state is expressed consistently.
+
+The mode pill's cancel button appears only on hover and is absolutely positioned over the left icon while that icon fades out. Do not expand the cancel button or add spacing that changes the pill width, because that causes the label to shift horizontally.
+
 ## Long Output Memory Boundary
 
 The Wework chat UI must not keep complete long-running output in React state. `WorkbenchMessage.content`, thinking/text/plan block `content`, and tool block `toolOutput` must enter `messages` through the shared preview-window path:
