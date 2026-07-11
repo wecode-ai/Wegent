@@ -12,7 +12,7 @@ const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRC
 const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
 const DESKTOP_CONTROL_IDLE_POLL_DELAY_MS = 50
 
-type DesktopControlAction = 'click' | 'fill' | 'getText' | 'snapshot' | 'waitFor'
+type DesktopControlAction = 'click' | 'fill' | 'getText' | 'snapshot' | 'waitFor' | 'press'
 
 interface DesktopControlCommand {
   id: string
@@ -22,6 +22,7 @@ interface DesktopControlCommand {
   text?: string
   timeoutMs?: number
   enabled?: boolean
+  key?: string
 }
 
 interface DesktopControlResult {
@@ -64,6 +65,11 @@ function isAutomationEnabled(): boolean {
 function desktopControlUrl(): string | null {
   const value = import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
   return value ? value.replace(/\/+$/, '') : null
+}
+
+function desktopControlHeaders(): HeadersInit | undefined {
+  const token = import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN?.trim()
+  return token ? { Authorization: `Bearer ${token}` } : undefined
 }
 
 function normalizeAppPath(path: string): string {
@@ -278,13 +284,23 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       fillDesktopControlElement(element, command.value ?? '')
       return element.textContent?.trim() ?? ''
     }
+    case 'press': {
+      const element = findDesktopControlElements(command.selector)[0]
+      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+      element.focus()
+      const key = command.key ?? ''
+      for (const type of ['keydown', 'keyup']) {
+        element.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }))
+      }
+      return element.textContent?.trim() ?? ''
+    }
   }
 }
 
 async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
   const response = await fetch(`${url}/results`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify(result),
   })
   if (!response.ok) {
@@ -295,13 +311,13 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
 async function runDesktopControlClient(url: string): Promise<void> {
   await fetch(`${url}/ready`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
     body: JSON.stringify({ location: window.location.href }),
   })
 
   while (true) {
     try {
-      const response = await fetch(`${url}/commands`)
+      const response = await fetch(`${url}/commands`, { headers: desktopControlHeaders() })
       if (response.status === 204) {
         await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_IDLE_POLL_DELAY_MS))
         continue
