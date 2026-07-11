@@ -368,7 +368,7 @@ def _process_attachment_context(
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
         model_capabilities = (model_config or {}).get("modelCapabilities") or {}
-        supports_image = model_capabilities.get("supportsImage")
+        supports_image = model_capabilities.get("supportsImage") is True
         # Build image attachment metadata
         attachment_id = context.id
         filename = context.original_filename
@@ -403,7 +403,7 @@ def _process_attachment_context(
         if image_pid:
             image_header += f"\n{json.dumps({'pid': image_pid})}"
 
-        if supports_image is False:
+        if not supports_image:
             text_contents.append(f"[Attachment {idx}]\n{image_header}")
             logger.info(
                 "Added metadata-only image context: id=%s supports_image=%s",
@@ -427,7 +427,7 @@ def _process_attachment_context(
         # Video attachment - use shared helper for video processing
         # Check model capabilities first
         model_capabilities = (model_config or {}).get("modelCapabilities") or {}
-        supports_video = model_capabilities.get("supportsVideo", False)
+        supports_video = model_capabilities.get("supportsVideo") is True
         logger.info(
             f"[VIDEO DEBUG] Processing video context: id={context.id}, "
             f"model_config_keys={list(model_config.keys()) if model_config else None}, "
@@ -1477,9 +1477,9 @@ async def prepare_contexts_for_chat(
         external_web_content_contexts
     )
     model_capabilities = (model_config or {}).get("modelCapabilities") or {}
-    supports_image = model_capabilities.get("supportsImage")
+    supports_image = model_capabilities.get("supportsImage") is True
     external_web_content_images = (
-        all_external_web_content_images if supports_image is not False else []
+        all_external_web_content_images if supports_image else []
     )
     # External web video/comment assets are only expanded for inline LLM paths.
     # Local executor runtimes such as ClaudeCode intentionally receive external

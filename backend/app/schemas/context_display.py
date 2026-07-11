@@ -80,29 +80,26 @@ def _build_external_web_content_fields(type_data: dict[str, Any]) -> dict[str, A
         return {
             "external_media_type": "text",
             "text_count": 1,
-            "site": type_data.get("site") or _first_raw_item(type_data).get("site"),
+            "site": type_data.get("site"),
             "source_url": type_data.get("external_source_url"),
-            "cover_url": _first_raw_item(type_data).get("cover_s3")
-            or _first_raw_item(type_data).get("cover"),
+            "cover_url": type_data.get("cover_url"),
         }
     if media_type == "comments":
         return {
             "external_media_type": "comments",
             "comment_count": type_data.get("comment_count"),
             "fetched_comment_count": type_data.get("fetched_comment_count"),
-            "site": type_data.get("site") or _first_raw_item(type_data).get("site"),
+            "site": type_data.get("site"),
             "source_url": type_data.get("external_source_url"),
-            "cover_url": _first_raw_item(type_data).get("cover_s3")
-            or _first_raw_item(type_data).get("cover"),
+            "cover_url": type_data.get("cover_url"),
         }
 
-    item = _find_external_web_video_item(type_data)
     return {
         "external_media_type": "video",
         "video_count": 1,
-        "site": item.get("site"),
+        "site": type_data.get("site"),
         "source_url": type_data.get("external_source_url"),
-        "cover_url": item.get("cover_s3") or item.get("cover"),
+        "cover_url": type_data.get("cover_url"),
     }
 
 
@@ -115,54 +112,7 @@ def _build_external_web_content_aggregate_fields(
         "image_count": type_data.get("image_count") or 0,
         "comment_count": type_data.get("comment_count"),
         "fetched_comment_count": type_data.get("fetched_comment_count"),
-        "site": type_data.get("site") or _first_raw_item(type_data).get("site"),
+        "site": type_data.get("site"),
         "source_url": type_data.get("external_source_url"),
-        "cover_url": type_data.get("cover_url")
-        or _first_raw_item(type_data).get("cover_s3")
-        or _first_raw_item(type_data).get("cover"),
+        "cover_url": type_data.get("cover_url"),
     }
-
-
-def _find_external_web_video_item(type_data: dict[str, Any]) -> dict[str, Any]:
-    video_index = type_data.get("external_video_index")
-    if not isinstance(video_index, int) or video_index < 0:
-        video_index = 0
-
-    seen_urls: set[str] = set()
-    videos: list[dict[str, Any]] = []
-    for item in _as_raw_items(type_data.get("raw_result")):
-        video_url = item.get("video_url_s3")
-        if not isinstance(video_url, str) or not video_url.strip():
-            continue
-        video_url = video_url.strip()
-        if video_url in seen_urls:
-            continue
-        seen_urls.add(video_url)
-        videos.append(item)
-
-    if video_index < len(videos):
-        return videos[video_index]
-    return videos[0] if videos else {}
-
-
-def _first_raw_item(type_data: dict[str, Any]) -> dict[str, Any]:
-    items = _as_raw_items(type_data.get("raw_result"))
-    return items[0] if items else {}
-
-
-def _string_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
-
-
-def _as_raw_items(raw_result: Any) -> list[dict[str, Any]]:
-    if isinstance(raw_result, list):
-        return [item for item in raw_result if isinstance(item, dict)]
-    if isinstance(raw_result, dict):
-        for key in ("items", "list", "videos", "data"):
-            nested = raw_result.get(key)
-            if isinstance(nested, list):
-                return [item for item in nested if isinstance(item, dict)]
-        return [raw_result]
-    return []

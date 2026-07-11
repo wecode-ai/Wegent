@@ -93,7 +93,7 @@ class RemoteHistoryStore(HistoryStoreInterface):
         limit: Optional[int] = None,
         before_message_id: Optional[str] = None,
         is_group_chat: bool = False,
-        supports_image: bool | None = None,
+        supports_image: bool = False,
         supports_video: bool = False,
     ) -> list[Message]:
         """Get chat history for a session.
@@ -122,8 +122,7 @@ class RemoteHistoryStore(HistoryStoreInterface):
         # Pass is_group_chat to API for proper username prefix handling
         params["is_group_chat"] = str(is_group_chat).lower()
         # Pass attachment capabilities to API for attachment history handling
-        if supports_image is not None:
-            params["supports_image"] = str(supports_image).lower()
+        params["supports_image"] = str(supports_image).lower()
         params["supports_video"] = str(supports_video).lower()
 
         url = f"/chat/history/{session_id}"

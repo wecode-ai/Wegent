@@ -43,14 +43,8 @@ class TestSubtaskContextBrief:
                 "file_size": 1024,
                 "mime_type": "video/mp4",
                 "external_source_url": "https://example.com/post/1",
-                "raw_result": [
-                    {
-                        "site": "example",
-                        "video_url_s3": "https://cdn.example.com/video.mp4",
-                        "cover_s3": "https://cdn.example.com/cover.jpg",
-                    }
-                ],
-                "external_video_index": 0,
+                "site": "example",
+                "cover_url": "https://cdn.example.com/cover.jpg",
             },
         )
 
@@ -266,15 +260,8 @@ class TestSubtaskContextBrief:
                 "storage_backend": "weibo",
                 "fid": 12345,
                 "external_source_url": "https://example.com/post/1",
-                "raw_result": [
-                    {
-                        "site": "example",
-                        "title": "External video",
-                        "video_url_s3": "https://cdn.example.com/video.mp4",
-                        "cover_s3": "https://cdn.example.com/cover.jpg",
-                    }
-                ],
-                "external_video_index": 0,
+                "site": "example",
+                "cover_url": "https://cdn.example.com/cover.jpg",
             },
         )
         context.id = 777

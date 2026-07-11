@@ -459,7 +459,16 @@ class TestProcessAttachmentContext:
         assert image_contents[0]["id"] == 41
         assert image_contents[0]["image_header_in_text"] is True
 
-    def test_image_context_adds_image_block_when_capability_unset(self):
+    @pytest.mark.parametrize(
+        "model_config",
+        [
+            {"modelCapabilities": {}},
+            {"modelCapabilities": {"supportsImage": None}},
+        ],
+    )
+    def test_image_context_is_metadata_only_when_capability_is_unknown(
+        self, model_config
+    ):
         context = SimpleNamespace(
             id=41,
             user_id=7,
@@ -484,14 +493,13 @@ class TestProcessAttachmentContext:
             video_contents=video_contents,
             task_id=10,
             subtask_id=20,
-            model_config={"modelCapabilities": {}},
+            model_config=model_config,
         )
 
         assert len(text_contents) == 1
         assert video_contents == []
-        assert image_contents[0]["image_base64"] == "aW1hZ2U="
-        assert image_contents[0]["id"] == 41
-        assert image_contents[0]["image_header_in_text"] is True
+        assert image_contents == []
+        assert "[Image Attachment: photo.png" in text_contents[0]
 
     @pytest.mark.asyncio
     async def test_external_web_text_metadata_order_is_text_video_comments(self):
@@ -574,8 +582,16 @@ class TestProcessAttachmentContext:
         assert result[-1] == {"type": "input_text", "text": "Summarize it"}
 
     @pytest.mark.asyncio
-    async def test_external_web_image_url_is_metadata_only_when_model_disables_image(
-        self, monkeypatch
+    @pytest.mark.parametrize(
+        "model_config",
+        [
+            {"modelCapabilities": {"supportsImage": False}},
+            {"modelCapabilities": {}},
+            {"modelCapabilities": {"supportsImage": None}},
+        ],
+    )
+    async def test_external_web_image_url_is_metadata_only_when_image_unsupported(
+        self, monkeypatch, model_config
     ):
         from app.models.subtask_context import (
             ContextStatus,
@@ -613,7 +629,7 @@ class TestProcessAttachmentContext:
             user_id=7,
             message="Analyze the image",
             base_system_prompt="",
-            model_config={"modelCapabilities": {"supportsImage": False}},
+            model_config=model_config,
         )
 
         assert [block["type"] for block in result.final_message] == [
@@ -643,6 +659,7 @@ class TestProcessAttachmentContext:
             message="Describe it",
             task_id=6031188,
             subtask_id=7632151,
+            model_config={"modelCapabilities": {"supportsImage": True}},
         )
 
         assert result[0]["type"] == "input_text"
@@ -674,6 +691,7 @@ class TestProcessAttachmentContext:
             message="Compare them",
             task_id=6031188,
             subtask_id=7632151,
+            model_config={"modelCapabilities": {"supportsImage": True}},
             initial_text_contents=[
                 "[External Web Content: External post]\nBody:\nPage body\n\n"
             ],
