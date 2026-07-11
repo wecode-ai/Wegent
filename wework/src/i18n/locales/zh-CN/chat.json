@@ -19,6 +19,15 @@
     "stopped": "已停止",
     "stopped_after": "你在 {{duration}} 后停止了"
   },
+  "queue": {
+    "paused": "队列已暂停",
+    "resume": "继续发送",
+    "send_with_paused_title": "恢复暂停的队列？",
+    "send_with_paused_description": "发送新消息前，请选择是否保留现有待发送消息。",
+    "send_with_paused_cancel": "取消",
+    "send_with_paused_clear": "清空队列",
+    "send_with_paused_preserve": "保留并继续"
+  },
   "request_user_input": {
     "asked_count": "已询问 {{count}} 个问题",
     "ignore": "取消",

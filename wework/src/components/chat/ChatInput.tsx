@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
@@ -102,6 +104,14 @@ export interface ChatInputProps {
   onCancelQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
+  onReorderQueuedMessages?: (sourceId: string, targetId: string) => void
+  queuePaused?: boolean
+  onResumeQueue?: () => void
+  onResumeQueueWithInput?: (
+    valueOverride?: string,
+    options?: ChatSubmitOptions
+  ) => void | Promise<void>
+  onClearQueue?: () => void
   onCancelGuidanceMessage?: (id: string) => void
   onClearCodeComments?: () => void
   isStreaming?: boolean
@@ -121,6 +131,11 @@ export interface ChatInputProps {
 
 export interface ChatSubmitOptions {
   guideWhenBusy?: boolean
+}
+
+interface PendingQueuedSend {
+  valueOverride?: string
+  options?: ChatSubmitOptions
 }
 
 function PluginTrialTemplateStrip({ templates }: { templates: PluginPathComponent[] }) {
@@ -190,6 +205,11 @@ export function ChatInput({
   onCancelQueuedMessage,
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
+  onReorderQueuedMessages,
+  queuePaused,
+  onResumeQueue,
+  onResumeQueueWithInput,
+  onClearQueue,
   onCancelGuidanceMessage,
   onClearCodeComments,
   isStreaming = false,
@@ -207,6 +227,8 @@ export function ChatInput({
   onClearGoal,
 }: ChatInputProps) {
   const { t } = useTranslation('common')
+  const { t: tChat } = useTranslation('chat')
+  const [pendingQueuedSend, setPendingQueuedSend] = useState<PendingQueuedSend | null>(null)
   const displayedGoal = visibleRuntimeGoal(goal)
   const inputPlaceholder = goalDraftActive
     ? t('workbench.goal_input_placeholder', 'WeWork 应该往哪个方向努力?')
@@ -253,10 +275,40 @@ export function ChatInput({
     void onSubmit('/compact')
   }
 
+  const handleSubmit = (valueOverride?: string, options?: ChatSubmitOptions) => {
+    const submittedValue = (valueOverride ?? value).trim()
+    if (queuePaused && queuedMessages.length > 0 && submittedValue) {
+      setPendingQueuedSend({ valueOverride, options })
+      return
+    }
+    if (options === undefined) {
+      void onSubmit(valueOverride)
+      return
+    }
+    void onSubmit(valueOverride, options)
+  }
+
+  const sendWithQueue = (clearQueue: boolean) => {
+    if (!pendingQueuedSend) return
+    const { valueOverride, options } = pendingQueuedSend
+    setPendingQueuedSend(null)
+    if (clearQueue) {
+      onClearQueue?.()
+      void onSubmit(valueOverride, options)
+      return
+    }
+    if (onResumeQueueWithInput) {
+      onChange('')
+      void onResumeQueueWithInput(valueOverride, options)
+      return
+    }
+    void Promise.resolve(onSubmit(valueOverride, options)).finally(() => onResumeQueue?.())
+  }
+
   const composerProps = {
     value,
     onChange,
-    onSubmit,
+    onSubmit: handleSubmit,
     disabled,
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
@@ -277,9 +329,20 @@ export function ChatInput({
       onCancelQueuedMessage={onCancelQueuedMessage}
       onSendQueuedAsGuidance={onSendQueuedAsGuidance}
       onEditQueuedMessage={onEditQueuedMessage}
+      onReorderQueuedMessages={onReorderQueuedMessages}
+      queuePaused={queuePaused}
+      onResumeQueue={onResumeQueue}
       onCancelGuidanceMessage={onCancelGuidanceMessage}
     />
   )
+  const queueResumeDialog = pendingQueuedSend ? (
+    <QueueResumeDialog
+      t={tChat}
+      onCancel={() => setPendingQueuedSend(null)}
+      onPreserve={() => sendWithQueue(false)}
+      onClear={() => sendWithQueue(true)}
+    />
+  ) : null
 
   if (variant === 'desktop') {
     return (
@@ -354,6 +417,7 @@ export function ChatInput({
           isStreaming={isStreaming}
           onPause={onPause}
         />
+        {queueResumeDialog}
       </div>
     )
   }
@@ -404,6 +468,76 @@ export function ChatInput({
         isStreaming={isStreaming}
         onPause={onPause}
       />
+      {queueResumeDialog}
+    </div>
+  )
+}
+
+function QueueResumeDialog({
+  t,
+  onCancel,
+  onPreserve,
+  onClear,
+}: {
+  t: (key: string) => string
+  onCancel: () => void
+  onPreserve: () => void
+  onClear: () => void
+}) {
+  return (
+    <div
+      data-testid="paused-queue-send-dialog-overlay"
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="paused-queue-send-dialog-title"
+        data-testid="paused-queue-send-dialog"
+        className="w-full max-w-[360px] rounded-lg border border-border bg-popover p-4 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+      >
+        <h2
+          id="paused-queue-send-dialog-title"
+          className="text-base font-semibold text-text-primary"
+        >
+          {t('queue.send_with_paused_title')}
+        </h2>
+        <p className="mt-1.5 text-sm leading-5 text-text-secondary">
+          {t('queue.send_with_paused_description')}
+        </p>
+        <div className="mt-4 flex justify-end gap-1.5">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="paused-queue-send-cancel-button"
+            onClick={onCancel}
+            className="h-8 rounded-md border-border bg-base px-3 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+          >
+            {t('queue.send_with_paused_cancel')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="paused-queue-send-clear-button"
+            onClick={onClear}
+            className="h-8 rounded-md border-red-200 bg-base px-3 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+          >
+            {t('queue.send_with_paused_clear')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="paused-queue-send-preserve-button"
+            onClick={onPreserve}
+            className="h-8 rounded-md border-text-primary bg-text-primary px-3 text-xs text-background hover:bg-text-primary/90 hover:text-background"
+          >
+            {t('queue.send_with_paused_preserve')}
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }

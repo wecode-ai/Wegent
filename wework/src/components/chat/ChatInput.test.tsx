@@ -407,6 +407,9 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('conversation-queue-panel')).toBeInTheDocument()
     expect(screen.getByText('继续检查 capability sync')).toBeInTheDocument()
     expect(screen.getByText('先跳过 device:sync_capabilities')).toBeInTheDocument()
+    expect(
+      screen.getAllByTestId(/^conversation-queue-row-/).map(row => row.getAttribute('data-testid'))
+    ).toEqual(['conversation-queue-row-guidance-1', 'conversation-queue-row-queued-1'])
 
     await userEvent.click(screen.getByTestId('queue-guidance-button-queued-1'))
     await userEvent.click(screen.getByTestId('queue-more-button-queued-1'))
@@ -416,6 +419,166 @@ describe('ChatInput', () => {
     expect(onSendQueuedAsGuidance).toHaveBeenCalledWith('queued-1')
     expect(onEditQueuedMessage).toHaveBeenCalledWith('queued-1')
     expect(onCancelQueuedMessage).toHaveBeenCalledWith('queued-1')
+  })
+
+  test('provides left-side drag handles to reorder multiple queued messages', () => {
+    const queuedMessages: QueuedWorkbenchMessage[] = [
+      {
+        id: 'queued-first',
+        content: '先执行检查',
+        status: 'queued',
+        createdAt: '2026-05-25T15:08:00.000+08:00',
+      },
+      {
+        id: 'queued-second',
+        content: '再执行修复',
+        status: 'queued',
+        createdAt: '2026-05-25T15:09:00.000+08:00',
+      },
+    ]
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={queuedMessages}
+        guidanceMessages={[]}
+      />
+    )
+
+    expect(screen.getByTestId('queue-drag-handle-queued-first')).toHaveAttribute(
+      'aria-label',
+      '拖拽调整消息顺序'
+    )
+    expect(screen.getByTestId('queue-drag-handle-queued-second')).toHaveAttribute(
+      'aria-label',
+      '拖拽调整消息顺序'
+    )
+  })
+
+  test('shows active queued guidance before messages waiting to send', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'queued-waiting',
+            content: '看磁盘',
+            status: 'queued',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+          {
+            id: 'queued-guidance',
+            content: '看 cpu',
+            status: 'sending',
+            notice: '正在引导当前对话',
+            createdAt: '2026-05-25T15:09:00.000+08:00',
+          },
+        ]}
+        guidanceMessages={[]}
+      />
+    )
+
+    expect(
+      screen.getAllByTestId(/^conversation-queue-row-/).map(row => row.getAttribute('data-testid'))
+    ).toEqual(['conversation-queue-row-queued-guidance', 'conversation-queue-row-queued-waiting'])
+  })
+
+  test('shows a control to resume a paused queue', async () => {
+    const onResumeQueue = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'queued-paused',
+            content: '等待发送',
+            status: 'queued',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+        guidanceMessages={[]}
+        queuePaused
+        onResumeQueue={onResumeQueue}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('resume-queue-button'))
+
+    expect(onResumeQueue).toHaveBeenCalledTimes(1)
+  })
+
+  test('asks whether to preserve a paused queue before sending a new message', async () => {
+    const onSubmit = vi.fn()
+    const onResumeQueue = vi.fn()
+    const onChange = vi.fn()
+    const onResumeQueueWithInput = vi.fn()
+
+    render(
+      <ChatInput
+        value="发送新消息"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        disabled={false}
+        queuedMessages={[
+          {
+            id: 'queued-paused-send',
+            content: '等待发送',
+            status: 'queued',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+        guidanceMessages={[]}
+        queuePaused
+        onResumeQueue={onResumeQueue}
+        onResumeQueueWithInput={onResumeQueueWithInput}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('send-message-button'))
+
+    expect(screen.getByTestId('paused-queue-send-dialog')).toBeInTheDocument()
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByTestId('paused-queue-send-preserve-button'))
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(onResumeQueueWithInput).toHaveBeenCalled()
+    expect(onChange).toHaveBeenCalledWith('')
+  })
+
+  test('hides drag handles when fewer than two messages are queued', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'queued-only',
+            content: '执行检查',
+            status: 'queued',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+        guidanceMessages={[]}
+      />
+    )
+
+    expect(screen.queryByTestId('queue-drag-handle-queued-only')).not.toBeInTheDocument()
   })
 
   test('keeps queued rows compact without generic queue notices', () => {
