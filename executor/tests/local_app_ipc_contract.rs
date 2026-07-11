@@ -245,7 +245,72 @@ async fn app_ipc_lists_and_reads_workspace_files_locally() {
     assert_eq!(file_response["result"]["success"], true);
     assert_eq!(file_response["result"]["stdout"]["content"], json!("hello"));
 
+    let chunk_response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-file-chunk",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "workspace_read_file_chunk",
+                    "path": workspace.display().to_string(),
+                    "args": ["README.md", "0"],
+                    "timeout_seconds": 10,
+                    "max_output_bytes": 2_097_152
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(chunk_response["ok"], true);
+    assert_eq!(chunk_response["result"]["success"], true);
+    assert_eq!(
+        chunk_response["result"]["stdout"]["content_base64"],
+        json!("aGVsbG8=")
+    );
+    assert_eq!(chunk_response["result"]["stdout"]["eof"], true);
+
     let _ = fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn app_ipc_rejects_workspace_files_outside_allowed_roots() {
+    let allowed_workspace = unique_dir("workspace-files-allowed");
+    fs::create_dir_all(&allowed_workspace).unwrap();
+    let allowed_workspace = fs::canonicalize(allowed_workspace).unwrap();
+    let blocked_workspace = unique_dir("workspace-files-blocked");
+    fs::create_dir_all(&blocked_workspace).unwrap();
+    let blocked_workspace = fs::canonicalize(blocked_workspace).unwrap();
+    let server = AppIpcServer::new();
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-blocked-tree",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "workspace_tree",
+                    "path": blocked_workspace.display().to_string(),
+                    "env": {"WEGENT_WORKSPACE_ROOTS": allowed_workspace.display().to_string()},
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], false);
+    assert_eq!(
+        response["result"]["error"],
+        json!("Workspace path is outside allowed workspace roots")
+    );
+
+    let _ = fs::remove_dir_all(allowed_workspace);
+    let _ = fs::remove_dir_all(blocked_workspace);
 }
 
 #[tokio::test]
@@ -253,6 +318,7 @@ async fn app_ipc_lists_codex_skills_from_runtime_directories() {
     let _lock = env_lock().await;
     let home = unique_dir("local-skills-home");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _codex_home = EnvGuard::set("CODEX_HOME", "");
     let agents_skill = home.join(".agents/skills/env-context");
     let claude_skill = home.join(".claude/skills/claude-review");
     let codex_skill = home.join(".codex/skills/codex-review");

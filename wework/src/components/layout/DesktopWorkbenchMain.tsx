@@ -460,11 +460,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? rightPanelShellWidth
     : COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
-    if (rightPanelView === 'launcher') return rightPanelTabs
-    return rightPanelTabs.includes(rightPanelView)
+    const permittedTabs = workspaceProject
       ? rightPanelTabs
-      : [...rightPanelTabs, rightPanelView]
-  }, [rightPanelTabs, rightPanelView])
+      : rightPanelTabs.filter(tab => tab !== 'files')
+    if (rightPanelView === 'launcher' || (!workspaceProject && rightPanelView === 'files')) {
+      return permittedTabs
+    }
+    return permittedTabs.includes(rightPanelView)
+      ? permittedTabs
+      : [...permittedTabs, rightPanelView]
+  }, [rightPanelTabs, rightPanelView, workspaceProject])
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
@@ -887,8 +892,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [openEnvironmentChangesReview, openRightPanelTab, reviewState.diff, reviewState.loading])
 
   const selectFilesView = useCallback(() => {
+    if (!workspaceProject) return
     openRightPanelTab('files')
-  }, [openRightPanelTab])
+  }, [openRightPanelTab, workspaceProject])
   const selectBrowserView = useCallback(() => {
     openRightPanelTab('browser')
   }, [openRightPanelTab])
@@ -1623,6 +1629,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}
+              canBrowseFiles={Boolean(workspaceProject)}
               currentRuntimeTask={currentRuntimeTask}
               devices={devices}
               workspaceTarget={effectiveWorkspaceTarget}

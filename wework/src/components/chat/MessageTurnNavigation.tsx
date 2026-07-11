@@ -60,7 +60,7 @@ export function MessageTurnNavigation({
   const [navigationScrollTop, setNavigationScrollTop] = useState(0)
   const markersRef = useRef<MessageTurnMarker[]>([])
   const rafRef = useRef<number | null>(null)
-  const timerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const timerRef = useRef<number | null>(null)
 
   const userTurns = useMemo(() => {
     return turnNavigation && turnNavigation.length > 0

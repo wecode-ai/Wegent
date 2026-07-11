@@ -27,6 +27,10 @@
   },
   "dependencies": {
     "@chenglou/pretext": "0.0.8",
+    "@file-viewer/preset-engineering": "2.1.26",
+    "@file-viewer/preset-lite": "2.1.26",
+    "@file-viewer/preset-office": "2.1.26",
+    "@file-viewer/react": "2.1.26",
     "@headless-tree/core": "^1.7.0",
     "@headless-tree/react": "^1.7.0",
     "@lexical/react": "^0.46.0",
@@ -51,6 +55,7 @@
     "clsx": "^2.1.1",
     "i18next": "^26.2.0",
     "i18next-browser-languagedetector": "^8.2.1",
+    "jszip": "3.10.1",
     "lexical": "^0.46.0",
     "lucide-react": "^1.16.0",
     "react": "^19.2.6",
@@ -64,6 +69,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@file-viewer/vite-plugin": "2.1.26",
     "@playwright/test": "^1.57.0",
     "@tauri-apps/cli": "^2.11.2",
     "@testing-library/jest-dom": "^6.9.1",

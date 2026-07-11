@@ -26,6 +26,7 @@ use crate::{
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
+    local::workspace_files::{execute_workspace_file_command, is_workspace_file_command},
     logging::{format_executor_log, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     version::get_version,
@@ -43,93 +44,6 @@ if [ -z "$branch" ]; then
   exit 64
 fi
 exec git push -u origin "$branch""#;
-const WORKSPACE_TREE_SCRIPT: &str = r#"
-import json
-import os
-import stat as stat_module
-from datetime import datetime, timezone
-from pathlib import Path
-
-
-def iso_mtime(path_stat):
-    return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
-
-
-root = Path.cwd().resolve()
-entries = []
-for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
-    if child.name in {'.', '..'}:
-        continue
-    try:
-        child_stat = child.lstat()
-    except OSError:
-        continue
-    is_directory = stat_module.S_ISDIR(child_stat.st_mode)
-    entries.append(
-        {
-            "name": child.name,
-            "path": str(child),
-            "is_directory": is_directory,
-            "size": 0 if is_directory else child_stat.st_size,
-            "modified_at": iso_mtime(child_stat),
-        }
-    )
-
-entries.sort(key=lambda item: (not item["is_directory"], item["name"].lower()))
-print(json.dumps({"path": str(root), "entries": entries}, ensure_ascii=False))
-"#;
-const WORKSPACE_READ_TEXT_FILE_SCRIPT: &str = r#"
-import json
-import sys
-from datetime import datetime, timezone
-from pathlib import Path
-
-MAX_BYTES = 262144
-
-
-def fail(message, code=64):
-    print(json.dumps({"success": False, "error": message}, ensure_ascii=False))
-    raise SystemExit(code)
-
-
-def is_relative_to(path, root):
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-
-if len(sys.argv) != 2:
-    fail("file name is required")
-
-root = Path.cwd().resolve()
-target = (root / sys.argv[1]).resolve()
-if not is_relative_to(target, root):
-    fail("file path is outside workspace")
-if not target.is_file():
-    fail("file does not exist")
-
-with target.open("rb") as target_file:
-    data = target_file.read(MAX_BYTES + 1)
-truncated = len(data) > MAX_BYTES
-content = data[:MAX_BYTES].decode("utf-8", errors="replace")
-stat = target.stat()
-print(
-    json.dumps(
-        {
-            "success": True,
-            "path": str(target),
-            "name": target.name,
-            "content": content,
-            "truncated": truncated,
-            "size": stat.st_size,
-            "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
-        },
-        ensure_ascii=False,
-    )
-)
-"#;
 const RUNTIME_AUTH_STATUS_SCRIPT: &str = r#"
 import hashlib
 import json
@@ -690,6 +604,21 @@ impl AppIpcServer {
                 .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
         }
 
+        let args = string_list(params.get("args"))?;
+        let env = string_env(params.get("env"))?;
+        if is_workspace_file_command(command_key) {
+            return serde_json::to_value(
+                execute_workspace_file_command(
+                    command_key,
+                    string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
+                    args,
+                    env,
+                )
+                .await,
+            )
+            .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
         let command = local_app_command(command_key).ok_or_else(|| {
             AppIpcError::new(
                 "unknown_command",
@@ -697,7 +626,6 @@ impl AppIpcServer {
             )
         })?;
 
-        let args = string_list(params.get("args"))?;
         let request = CommandRequest {
             command: command.command.to_owned(),
             argv: command
@@ -707,7 +635,7 @@ impl AppIpcServer {
                 .chain(args)
                 .collect(),
             cwd: string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
-            env: string_env(params.get("env"))?,
+            env,
             timeout_seconds: positive_number(
                 params.get("timeout_seconds"),
                 DEFAULT_TIMEOUT_SECONDS,
@@ -859,16 +787,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             "ls -a -p",
             &["ls", "-a", "-p"],
             Some(PostProcessor::DirectoryList),
-        )),
-        "workspace_tree" => Some(command_definition(
-            "python3 -c <workspace_tree>",
-            &["python3", "-c", WORKSPACE_TREE_SCRIPT],
-            Some(PostProcessor::Json),
-        )),
-        "workspace_read_text_file" => Some(command_definition(
-            "python3 -c <workspace_read_text_file>",
-            &["python3", "-c", WORKSPACE_READ_TEXT_FILE_SCRIPT],
-            Some(PostProcessor::Json),
         )),
         "runtime_auth_status" => Some(command_definition(
             "python3 -c <runtime_auth_status>",

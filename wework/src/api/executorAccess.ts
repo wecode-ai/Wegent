@@ -148,6 +148,7 @@ interface ExecutorAccessApis {
     | 'listSkills'
     | 'listWorkspaceEntries'
     | 'readWorkspaceTextFile'
+    | 'readWorkspaceFileChunk'
   >
   runtimeWorkApi: ExecutorRuntimeClient
   reviewApi?: ExecutorReviewClient
@@ -251,6 +252,9 @@ export function createExecutorClientFromApis({
     ): Promise<WorkspaceTextFileResponse> {
       await resolve(deviceId)
       return deviceApi.readWorkspaceTextFile(deviceId, filePath)
+    },
+    async readWorkspaceFileChunk(deviceId, filePath, offset) {
+      return deviceApi.readWorkspaceFileChunk(deviceId, filePath, offset)
     },
   }
 

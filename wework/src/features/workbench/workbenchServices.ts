@@ -45,6 +45,7 @@ export interface WorkbenchServices {
     | 'listSkills'
     | 'listWorkspaceEntries'
     | 'readWorkspaceTextFile'
+    | 'readWorkspaceFileChunk'
   > & {
     createDockerRemoteDeviceCommand?: ReturnType<
       typeof createDeviceApi

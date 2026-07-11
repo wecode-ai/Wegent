@@ -1270,7 +1270,7 @@ function RuntimeTaskRow({
   const [archiveNoticeOpen, setArchiveNoticeOpen] = useState(false)
   const [forceArchiveConfirmOpen, setForceArchiveConfirmOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
-  const archiveDelayRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const archiveDelayRef = useRef<number | null>(null)
   const worktreeTask = isRuntimeWorktreeTask(task)
   const workspaceTitle = getRuntimeTaskWorkspaceTitle(workspace)
   const deviceColor = getRuntimeWorkspaceDeviceColor(workspace)
