@@ -1266,7 +1266,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               const response = await setRuntimeGoal({
                 address: currentRuntimeTask,
                 objective: submittedInput,
-                status: 'active',
+                ...(goal ? {} : { status: 'active' }),
               })
               if (!response.accepted) {
                 setError(response.error || i18n.t('workbench.goal_set_failed'))
@@ -1556,6 +1556,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
         dispatchMessages,
         goalDraftActive,
         getRuntimeModelFields,
+        goal,
         input,
         pendingGoalState,
         paneStatus.isBusy,
