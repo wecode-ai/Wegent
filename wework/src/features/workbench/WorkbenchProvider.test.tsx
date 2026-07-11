@@ -1093,6 +1093,7 @@ function RuntimeOpenProbe() {
       </span>
       <span data-testid="runtime-open-error">{workbench.state.error ?? ''}</span>
       <span data-testid="runtime-goal-objective">{paneSession.goal?.objective ?? 'none'}</span>
+      <span data-testid="runtime-goal-status">{paneSession.goal?.status ?? 'none'}</span>
       <span data-testid="current-runtime-task-running">
         {workbench.currentRuntimeTaskRunning ? 'running' : 'idle'}
       </span>
@@ -1160,6 +1161,15 @@ function RuntimeOpenProbe() {
       </button>
       <button type="button" onClick={() => void paneSession.pauseCurrentResponse()}>
         stop current response
+      </button>
+      <button type="button" onClick={paneSession.editCurrentGoal}>
+        edit runtime goal
+      </button>
+      <button type="button" onClick={() => paneSession.setInput('更新后的目标')}>
+        set edited runtime goal
+      </button>
+      <button type="button" onClick={() => void paneSession.send()}>
+        send runtime goal
       </button>
       <MessageList
         messages={paneSession.messages}
@@ -5699,6 +5709,131 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('none')
     )
+  })
+
+  test('keeps an active runtime goal active while the task list is between automatic turns', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                      status: 'idle',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      getRuntimeGoal: vi.fn().mockResolvedValue({
+        accepted: true,
+        goal: createRuntimeGoal({ status: 'active' }),
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
+    )
+    expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
+  })
+
+  test('resumes a paused runtime goal when editing and sending its objective', async () => {
+    const setRuntimeGoal = vi.fn().mockResolvedValue({
+      accepted: true,
+      goal: createRuntimeGoal({ objective: '更新后的目标', status: 'active' }),
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      getRuntimeGoal: vi.fn().mockResolvedValue({
+        accepted: true,
+        goal: createRuntimeGoal({ status: 'paused' }),
+      }),
+      setRuntimeGoal,
+      sendRuntimeMessage: vi.fn().mockResolvedValue({ accepted: true, taskId: 'runtime-a' }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('paused')
+    )
+    await userEvent.click(screen.getByText('edit runtime goal'))
+    await userEvent.click(screen.getByText('set edited runtime goal'))
+    await userEvent.click(screen.getByText('send runtime goal'))
+
+    await waitFor(() =>
+      expect(setRuntimeGoal).toHaveBeenCalledWith({
+        address: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-a',
+        },
+        objective: '更新后的目标',
+        status: 'active',
+      })
+    )
+    expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
   test('accepts current runtime stream blocks when device id is omitted', async () => {

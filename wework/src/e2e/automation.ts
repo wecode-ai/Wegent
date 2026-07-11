@@ -10,6 +10,7 @@ import { isTauriRuntime } from '@/lib/runtime-environment'
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
 const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
+const DESKTOP_CONTROL_IDLE_POLL_DELAY_MS = 50
 
 type DesktopControlAction = 'click' | 'fill' | 'getText' | 'snapshot' | 'waitFor'
 
@@ -227,6 +228,12 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
     const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
     setter?.call(element, value)
   } else {
+    const valueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
+    if (valueSetter) {
+      valueSetter.call(element, value)
+      return
+    }
+
     const selection = window.getSelection()
     const range = document.createRange()
     range.selectNodeContents(element)
@@ -295,6 +302,10 @@ async function runDesktopControlClient(url: string): Promise<void> {
   while (true) {
     try {
       const response = await fetch(`${url}/commands`)
+      if (response.status === 204) {
+        await new Promise(resolve => window.setTimeout(resolve, DESKTOP_CONTROL_IDLE_POLL_DELAY_MS))
+        continue
+      }
       if (!response.ok) {
         throw new Error(`Desktop E2E control command failed with ${response.status}`)
       }

@@ -56,7 +56,7 @@ Tests do not mock backend APIs. When Backend is not running, the login-page smok
 3. Fills in a task and clicks send in the native WebView, then waits for the real conversation to render.
 4. Verifies the request issued by Codex to the model service, the workspace file written by a real Codex tool call, and the final UI response.
 5. Sends a follow-up in the same conversation and verifies its request and rendered response.
-6. Starts a streaming response, cancels it through the desktop UI, and verifies the stopped state and closed model stream.
+6. Starts a streaming response, cancels it through the desktop UI, verifies the stopped task state and rendered stop notice, then verifies the composer accepts a subsequent message.
 7. Forces one model failure, clicks retry in the rendered error card, and verifies the retried request and final response.
 
 The test does not simulate Wework, Executor, or Codex. To keep regression results deterministic and avoid requiring a real account, it starts only a loopback OpenAI Responses-compatible service as a custom Codex model provider. That service returns deterministic tool calls and final text; the tool call is still executed by real Codex in the isolated workspace.
@@ -102,6 +102,10 @@ Available methods:
 - `clearStorage()`: clears local auth state and browser storage.
 
 The desktop E2E build additionally injects `VITE_WEWORK_DESKTOP_E2E_CONTROL_URL`. Only when E2E mode and this URL are both present does the frontend poll a local loopback controller for `click`, `fill`, and wait assertions; normal development and production builds have no controller endpoint. The controller drives real WebView DOM events and does not replace task, model-selection, Executor, or Codex implementations.
+
+The controller uses short polling: the server returns `204` when no command is available, and the frontend waits briefly before polling again. This prevents a stale long-poll connection, left behind by a WebView reload, task switch, or stream completion, from consuming later commands. When `fill` targets a Lexical editor, the controller uses the editor's exposed `value` setter so the React/Lexical state is actually committed; do not replace it with raw DOM insertion. Failure diagnostics include delivered `commandHistory` in `scenario-state.json` to aid control-channel debugging.
+
+Switching models in the same conversation can cause Codex to issue an internal context-compaction request. The desktop task-flow E2E loopback Responses service identifies and responds to these requests through `client_metadata.x-codex-turn-metadata.request_kind === "compaction"`, so they are not mistaken for a user follow-up message.
 
 ## Test Helper
 

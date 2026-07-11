@@ -10,6 +10,7 @@ import type {
   ChatBlockUpdatedPayload,
   RuntimeContextUsage,
   RuntimeGoalEventPayload,
+  RuntimeGoalContinuationPayload,
   RuntimePlanEventPayload,
   RuntimeGuidanceAppliedPayload,
   RuntimeSubagentActivityPayload,
@@ -33,6 +34,7 @@ export interface RuntimeTaskStreamHandlers {
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeGoalUpdated?: (payload: RuntimeGoalEventPayload) => void
   onRuntimeGoalCleared?: (payload: RuntimeGoalEventPayload) => void
+  onRuntimeGoalContinuation?: (payload: RuntimeGoalContinuationPayload) => void
   onRuntimePlanUpdated?: (payload: RuntimePlanEventPayload) => void
   onGuidanceApplied?: (payload: RuntimeGuidanceAppliedPayload) => void
 }
@@ -248,6 +250,10 @@ export function createRuntimeTaskStreamHandlers(
     onRuntimeGoalCleared: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
       handlers.onRuntimeGoalCleared?.(payload)
+    },
+    onRuntimeGoalContinuation: payload => {
+      if (!isRuntimeTaskStreamPayload(address, payload)) return
+      handlers.onRuntimeGoalContinuation?.(payload)
     },
     onRuntimePlanUpdated: payload => {
       const matched = isRuntimeTaskStreamPayload(address, payload)

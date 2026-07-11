@@ -108,6 +108,7 @@ export interface ChatInputProps {
   onPause?: () => void
   onCompactContext?: () => void | Promise<void>
   goal?: RuntimeGoal | null
+  goalContinuing?: boolean
   taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
@@ -195,6 +196,7 @@ export function ChatInput({
   onPause,
   onCompactContext,
   goal,
+  goalContinuing = false,
   taskPlan,
   goalDraftActive = false,
   onSetGoal,
@@ -289,6 +291,7 @@ export function ChatInput({
         {displayedGoal && !goalDraftActive && (
           <GoalStatusBar
             goal={displayedGoal}
+            continuing={goalContinuing}
             onEditGoal={onEditGoal}
             onPauseGoal={onPauseGoal}
             onResumeGoal={onResumeGoal}
@@ -364,6 +367,7 @@ export function ChatInput({
       {displayedGoal && !goalDraftActive && (
         <GoalStatusBar
           goal={displayedGoal}
+          continuing={goalContinuing}
           onEditGoal={onEditGoal}
           onPauseGoal={onPauseGoal}
           onResumeGoal={onResumeGoal}

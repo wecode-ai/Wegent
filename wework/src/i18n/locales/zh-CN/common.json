@@ -619,6 +619,7 @@
     "goal_status_complete": "已完成的目标",
     "goal_status_usage_limited": "用量受限的目标",
     "goal_status_budget_limited": "预算受限的目标",
+    "goal_status_continuing": "目标继续执行中",
     "goal_edit": "编辑目标",
     "goal_pause": "暂停目标",
     "goal_resume": "继续目标",
