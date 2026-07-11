@@ -1332,14 +1332,14 @@ fn shared_notification_result(
 async fn interrupt_shared_turn(
     client: &CodexAppServerClient,
     thread_id: &str,
-    turn_id: &str,
+    _turn_id: &str,
 ) -> Result<(), String> {
     client
         .request_existing(
             "turn/interrupt",
             json!({
                 "threadId": thread_id,
-                "turnId": turn_id,
+                "turnId": "",
             }),
         )
         .await
