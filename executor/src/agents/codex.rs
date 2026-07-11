@@ -1352,13 +1352,26 @@ fn interrupt_shared_turn_detached(
     turn_id: String,
 ) {
     tokio::spawn(async move {
-        if let Err(error) = interrupt_shared_turn(&client, &thread_id, &turn_id).await {
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            interrupt_shared_turn(&client, &thread_id, &turn_id),
+        )
+        .await;
+        if !matches!(result, Ok(Ok(()))) {
+            client.restart().await;
             log_executor_event(
-                "codex shared turn interrupt failed",
+                "codex shared turn interrupt recovery restarted app-server",
                 &[
                     ("thread_id", thread_id),
                     ("turn_id", turn_id),
-                    ("error", error),
+                    (
+                        "error",
+                        match result {
+                            Ok(Err(error)) => error,
+                            Err(_) => "turn/interrupt timed out".to_owned(),
+                            Ok(Ok(())) => unreachable!(),
+                        },
+                    ),
                 ],
             );
         }
