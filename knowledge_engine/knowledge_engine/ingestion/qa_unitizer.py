@@ -47,7 +47,8 @@ class QAPairUnit:
 
     @property
     def text(self) -> str:
-        return f"Q: {self.question}\n\nA: {self.answer}".strip()
+        answer_separator = "\n" if self.answer.startswith((" ", "\t")) else " "
+        return f"Q: {self.question}\n\nA:{answer_separator}{self.answer}".strip()
 
     @property
     def retrieval_text(self) -> str:
@@ -82,19 +83,6 @@ class _SourceLine:
         return not self.text.strip()
 
 
-def build_qa_pair_nodes(documents: list[Document]) -> list[TextNode] | None:
-    """Return Q/A nodes and uncovered prose for a clear Q/A document."""
-    result = unitize_qa_documents(documents)
-    if result is None:
-        return None
-
-    prose_nodes = [
-        TextNode(text=document.text, metadata=dict(document.metadata or {}))
-        for document in result.prose_documents
-    ]
-    return [*result.qa_nodes, *prose_nodes]
-
-
 def unitize_qa_documents(
     documents: list[Document],
 ) -> QAUnitizationResult | None:
@@ -109,8 +97,12 @@ def unitize_qa_documents(
         extracted.append((text, units, metadata))
         all_units.extend((unit, metadata) for unit in units)
 
-    units_only = [unit for unit, _ in all_units]
-    if not _is_confident_qa_document(documents, units_only):
+    covered_chars = sum(
+        _content_length(text[unit.start : unit.end])
+        for text, units, _ in extracted
+        for unit in units
+    )
+    if not _is_confident_qa_document(documents, len(all_units), covered_chars):
         return None
 
     qa_nodes = [
@@ -170,11 +162,11 @@ def extract_qa_pairs(text: str, *, document_index: int = 0) -> list[QAPairUnit]:
 
         answer_lines = [answer_match.group("inline").strip()]
         answer_lines.extend(
-            line.text.strip() for line in lines[answer_index + 1 : answer_end_index]
+            line.text for line in lines[answer_index + 1 : answer_end_index]
         )
         question = _clean_boundary_text(question_match.group("question"))
-        answer = "\n".join(line for line in answer_lines if line).strip()
-        if not question or not answer:
+        answer = "\n".join(answer_lines).strip("\r\n")
+        if not question or not answer.strip():
             line_index += 1
             continue
 
@@ -324,15 +316,19 @@ def _has_substantive_prose(text: str) -> bool:
 
 def _is_confident_qa_document(
     documents: list[Document],
-    units: list[QAPairUnit],
+    unit_count: int,
+    covered_chars: int,
 ) -> bool:
-    if len(units) < MIN_QA_PAIRS_FOR_DOCUMENT:
+    if unit_count < MIN_QA_PAIRS_FOR_DOCUMENT:
         return False
-    total_chars = sum(len(document.text or "") for document in documents)
+    total_chars = sum(_content_length(document.text or "") for document in documents)
     if total_chars <= 0:
         return False
-    covered_chars = sum(unit.end - unit.start for unit in units)
     return covered_chars / total_chars >= MIN_QA_COVERAGE
+
+
+def _content_length(text: str) -> int:
+    return len(re.sub(r"\s+", "", text))
 
 
 def _extract_section_path(text: str, offset: int) -> str | None:

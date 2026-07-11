@@ -408,6 +408,54 @@ def test_long_contiguous_answer_remains_one_qa_node() -> None:
     assert long_answer in result.index_nodes[0].text
 
 
+def test_qa_answer_preserves_markdown_indentation() -> None:
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "Q1: How is nested content represented?\n"
+                    "A:\n"
+                    "- Parent item\n"
+                    "  - Child item\n\n"
+                    "Q2: How is code represented?\n"
+                    "A:\n"
+                    "    if ready:\n"
+                    "        run()"
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "qa_pair"
+    assert "\n  - Child item" in result.index_nodes[0].text
+    assert "\n    if ready:\n        run()" in result.index_nodes[1].text
+
+
+def test_qa_coverage_ignores_blank_line_formatting() -> None:
+    blank_lines = "\n" * 100
+    result = build_ingestion_result(
+        documents=[
+            Document(
+                text=(
+                    "This ordinary prose is the majority of the document content. "
+                    "It must keep the document on the normal splitter path.\n\n"
+                    f"Q1: First?\n{blank_lines}A: One.\n\n"
+                    f"Q2: Second?\n{blank_lines}A: Two."
+                )
+            )
+        ],
+        splitter_config=None,
+        file_extension=".md",
+        embed_model=MagicMock(),
+    )
+
+    assert result.parser_subtype == "markdown_sentence"
+    assert all(node.metadata["node_role"] == "chunk" for node in result.index_nodes)
+
+
 def test_build_ingestion_result_does_not_unitize_single_qa_document() -> None:
     result = build_ingestion_result(
         documents=[
