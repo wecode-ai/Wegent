@@ -12,6 +12,7 @@ export interface CodexOfficialModel {
   hidden: boolean
   isDefault: boolean
   defaultReasoningEffort: string | null
+  supportedReasoningEfforts: string[]
   supportsFastMode: boolean
 }
 
@@ -32,6 +33,16 @@ export interface CodexOfficialModelList {
 
 export const CODEX_RUNTIME_MODEL_ID = 'gpt-5.5'
 export const CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME = 'codex-official-unavailable'
+
+const CODEX_PICKER_MODELS = [
+  { modelId: 'gpt-5.6-sol', label: 'GPT 5.6 Sol' },
+  { modelId: 'gpt-5.6-terra', label: 'GPT 5.6 Terra' },
+  { modelId: 'gpt-5.6-luna', label: 'GPT 5.6 Luna' },
+  { modelId: 'gpt-5.5', label: 'GPT 5.5' },
+  { modelId: 'gpt-5.4', label: 'GPT 5.4' },
+  { modelId: 'gpt-5.4-mini', label: 'GPT 5.4 Mini' },
+  { modelId: 'gpt-5.3-codex-spark', label: 'GPT 5.3 Codex Spark' },
+] as const
 
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -62,6 +73,30 @@ function providerTypeValue(value: unknown): CodexModelProviderType | null {
   return null
 }
 
+function normalizedModelId(modelId: string): string {
+  return modelId.trim().toLowerCase()
+}
+
+export function codexModelPickerLabel(modelId: string): string {
+  return (
+    CODEX_PICKER_MODELS.find(model => model.modelId === normalizedModelId(modelId))?.label ??
+    modelId
+  )
+}
+
+export function codexModelPickerSortOrder(modelId: string): number {
+  const index = CODEX_PICKER_MODELS.findIndex(model => model.modelId === normalizedModelId(modelId))
+  return index >= 0 ? index : CODEX_PICKER_MODELS.length
+}
+
+function reasoningEffortValue(value: unknown): string | null {
+  if (typeof value === 'string') return stringValue(value)?.toLowerCase() ?? null
+  const record = recordValue(value)
+  return (
+    stringValue(camelOrSnake(record, 'reasoningEffort', 'reasoning_effort'))?.toLowerCase() ?? null
+  )
+}
+
 function normalizeOfficialModel(
   value: unknown,
   provider?: Pick<CodexOfficialModelProvider, 'id' | 'displayName' | 'type' | 'current'>
@@ -83,6 +118,11 @@ function normalizeOfficialModel(
   const additionalSpeedTiers = arrayValue(
     camelOrSnake(record, 'additionalSpeedTiers', 'additional_speed_tiers')
   )
+  const supportedReasoningEfforts = arrayValue(
+    camelOrSnake(record, 'supportedReasoningEfforts', 'supported_reasoning_efforts')
+  )
+    .map(reasoningEffortValue)
+    .filter((effort): effort is string => Boolean(effort))
   return {
     id: stringValue(record.id) ?? modelId,
     modelId,
@@ -99,10 +139,18 @@ function normalizeOfficialModel(
     defaultReasoningEffort:
       stringValue(camelOrSnake(record, 'defaultReasoningEffort', 'default_reasoning_effort')) ??
       null,
+    supportedReasoningEfforts,
     supportsFastMode:
       additionalSpeedTiers.some(tier => stringValue(tier)?.toLowerCase() === 'fast') ||
       serviceTiers.some(tier => stringValue(recordValue(tier).id)?.toLowerCase() === 'fast'),
   }
+}
+
+function sortModels(models: CodexOfficialModel[]): CodexOfficialModel[] {
+  return [...models].sort(
+    (left, right) =>
+      codexModelPickerSortOrder(left.modelId) - codexModelPickerSortOrder(right.modelId)
+  )
 }
 
 function normalizeProvider(value: unknown): CodexOfficialModelProvider | null {
@@ -120,9 +168,11 @@ function normalizeProvider(value: unknown): CodexOfficialModelProvider | null {
     available: record.available !== false,
     error: stringValue(record.error),
   }
-  const normalizedModels = arrayValue(record.data)
-    .map(model => normalizeOfficialModel(model, provider))
-    .filter((model): model is CodexOfficialModel => model !== null)
+  const normalizedModels = sortModels(
+    arrayValue(record.data)
+      .map(model => normalizeOfficialModel(model, provider))
+      .filter((model): model is CodexOfficialModel => model !== null)
+  )
   return { ...provider, models: normalizedModels }
 }
 
@@ -145,9 +195,11 @@ export function normalizeCodexOfficialModelList(value: unknown): CodexOfficialMo
     error: null,
     models: [],
   }
-  const fallbackModels = arrayValue(record.data)
-    .map(model => normalizeOfficialModel(model, fallbackProvider))
-    .filter((model): model is CodexOfficialModel => model !== null)
+  const fallbackModels = sortModels(
+    arrayValue(record.data)
+      .map(model => normalizeOfficialModel(model, fallbackProvider))
+      .filter((model): model is CodexOfficialModel => model !== null)
+  )
   return {
     providers: fallbackModels.length > 0 ? [{ ...fallbackProvider, models: fallbackModels }] : [],
     models: fallbackModels,

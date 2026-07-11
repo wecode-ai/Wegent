@@ -757,6 +757,8 @@ describe('MobileWorkbenchLayout', () => {
       />
     )
 
+    expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-button')).not.toHaveAttribute('style')
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
     expect(screen.getByTestId('model-selector-menu')).toHaveAttribute('data-mobile', 'true')
@@ -787,14 +789,10 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('model-option-claude-sonnet'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(claudeModel)
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('model-selector-confirm-button'))
-
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
   })
 
-  test('updates mobile reasoning controls without closing the model picker', async () => {
+  test('keeps the mobile close-after-selection behavior for reasoning controls', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -841,9 +839,8 @@ describe('MobileWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('model-selector-button'))
     await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
 
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
-    expect(screen.getByTestId('model-control-reasoning-medium')).toHaveClass('bg-[#1f2933]')
-    expect(screen.getByTestId('model-control-reasoning-high')).toHaveClass('bg-surface')
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('中')
   })
 
   test('shows the selected project in the mobile empty project selector', () => {

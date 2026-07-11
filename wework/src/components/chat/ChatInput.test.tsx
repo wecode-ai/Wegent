@@ -914,9 +914,31 @@ describe('ChatInput', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('model-selector-button'))
+    const selectorButton = screen.getByTestId('model-selector-button')
+    expect(selectorButton).toHaveClass(
+      'transition-[width,background-color,color,opacity]',
+      'duration-200'
+    )
+    expect(screen.getByTestId('model-selector-tooltip')).toHaveTextContent('选择模型')
+    expect(screen.getByTestId('model-selector-tooltip')).toHaveTextContent('⌃⇧M')
+    expect(screen.getByTestId('model-selector-tooltip')).toHaveClass('h-9')
+    expect(screen.getByTestId('model-selector-tooltip')).toHaveClass(
+      'group-hover/model-selector:opacity-100',
+      'group-hover/model-selector:delay-[1500ms]'
+    )
+    expect(screen.getByTestId('model-selector-tooltip')).not.toHaveClass(
+      'group-focus-within/model-selector:delay-0'
+    )
+
+    await userEvent.click(selectorButton)
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-menu')).toHaveAttribute(
+      'data-enter-animation',
+      'main'
+    )
+    expect(selectorButton).toHaveStyle({ width: '240px' })
+    expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
       'z-system-popover',
@@ -925,31 +947,51 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu').parentElement?.parentElement).toBe(
       document.body
     )
-    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
-    expect(screen.getByTestId('model-family-gpt')).toBeInTheDocument()
-    expect(screen.getByTestId('model-family-gpt')).toHaveTextContent('海外:gpt-5.5')
-    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
-    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-reasoning')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-speed')).toBeInTheDocument()
+    expect(screen.getByTestId('model-reset-default-button')).toBeDisabled()
+    expect(screen.queryByTestId('model-advanced-intelligence-icon')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-reasoning-slider')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-reasoning-high')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-control-collaborationMode-default')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-control-collaborationMode-plan')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-speed')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-option-default')).not.toBeInTheDocument()
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('海外:gpt-5.5 High')
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+
+    expect(screen.getByTestId('model-selector-submenu')).toHaveAttribute(
+      'data-enter-animation',
+      'submenu'
+    )
+    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
     expect(modelOption.querySelectorAll('span')).toHaveLength(1)
     expect(
       screen
-        .getByTestId('model-control-reasoning-high')
-        .compareDocumentPosition(screen.getByTestId('model-family-gpt')) &
+        .getByTestId('model-control-menu-model')
+        .compareDocumentPosition(screen.getByTestId('model-control-menu-reasoning')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      screen
+        .getByTestId('model-control-menu-speed')
+        .compareDocumentPosition(screen.getByTestId('model-reset-default-button')) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
 
     await userEvent.click(screen.getByTestId('model-option-overseas-gpt-5.5'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
+
+    expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
   })
 
   test('opens desktop speed options from a collapsed model control submenu', async () => {
@@ -994,22 +1036,95 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
     expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
 
+    const speedMenuItem = screen.getByTestId('model-control-menu-speed')
+    const resetRow = screen.getByTestId('model-reset-default-row')
+    const resetButton = screen.getByTestId('model-reset-default-button')
+    expect(speedMenuItem).toHaveClass('bg-muted')
+    expect(resetButton).toHaveClass('text-text-muted', 'hover:bg-muted', 'hover:text-text-primary')
+    expect(resetRow).not.toHaveClass('bg-muted', 'hover:bg-muted')
+    expect(resetButton.querySelector('.lucide-rotate-ccw')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-intelligence-icon')).not.toBeInTheDocument()
+
+    await userEvent.hover(resetRow)
+
+    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(speedMenuItem).not.toHaveClass('bg-muted')
+
+    await userEvent.hover(speedMenuItem)
+
     await userEvent.click(screen.getByTestId('model-control-speed-fast'))
 
     expect(setSelectedModelOption).toHaveBeenCalledWith('speed', 'fast')
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+  })
+
+  test('shows an empty state when no desktop models are available', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ models: [], selectedModel: null })}
+      />
+    )
+
+    expect(screen.getByTestId('model-selector-button')).toHaveTextContent('Default')
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
+
+    expect(screen.getByTestId('model-selector-submenu')).toHaveTextContent('No models available')
+  })
+
+  test('closes the desktop model menu only from its trigger, outside click, or Escape', async () => {
+    const model: UnifiedModel = {
+      name: 'codex-gpt-5.5',
+      type: 'user',
+      displayName: 'Codex:gpt-5.5',
+      config: { ui: { family: 'gpt', modelLabel: 'gpt-5.5', sortOrder: 10 } },
+    }
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ models: [model], selectedModel: model })}
+      />
+    )
+
+    const trigger = screen.getByTestId('model-selector-button')
+    await userEvent.click(trigger)
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+
+    await userEvent.click(trigger)
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+
+    await userEvent.click(trigger)
+    await userEvent.click(trigger)
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
   })
 
   test('drags the desktop reasoning slider to select the nearest option', async () => {
     const model: UnifiedModel = {
-      name: 'overseas-gpt-5.5',
-      type: 'user',
-      displayName: '海外:gpt-5.5',
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
       config: {
         ui: {
-          family: 'gpt',
-          region: 'overseas',
-          modelLabel: 'gpt-5.5',
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
           sortOrder: 10,
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
         },
       },
     }
@@ -1043,6 +1158,7 @@ describe('ChatInput', () => {
       )
 
       await userEvent.click(screen.getByTestId('model-selector-button'))
+      await userEvent.click(screen.getByTestId('model-advanced-toggle'))
 
       const track = screen.getByTestId('model-control-reasoning-track')
       fireEvent.pointerDown(track, { button: 0, clientX: 388, pointerId: 1 })
@@ -1054,12 +1170,351 @@ describe('ChatInput', () => {
 
       expect(setSelectedModelOption).toHaveBeenLastCalledWith('reasoning', 'low')
       expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+      fireEvent.keyDown(track, { key: 'ArrowLeft' })
+      expect(setSelectedModelOption).toHaveBeenLastCalledWith('reasoning', 'medium')
+      fireEvent.keyDown(track, { key: 'End' })
+      expect(setSelectedModelOption).toHaveBeenLastCalledWith('reasoning', 'xhigh')
     } finally {
       vi.restoreAllMocks()
     }
   })
 
-  test('hides the desktop model submenu after the pointer leaves the menu', async () => {
+  test('renders the advertised ultra effort with purple summary and slider treatment', async () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          defaultReasoningEffort: 'low',
+          controls: ['speed'],
+        },
+      },
+    }
+    const terraModel: UnifiedModel = {
+      name: 'gpt-5.6-terra',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Terra',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Terra',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          defaultReasoningEffort: 'low',
+          controls: ['speed'],
+        },
+      },
+    }
+    const setSelectedModelAndOptions = vi.fn()
+    const setSelectedModelOption = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [model, terraModel],
+          selectedModel: model,
+          selectedModelOptions: { reasoning: 'ultra', speed: 'standard' },
+          setSelectedModelAndOptions,
+          setSelectedModelOption,
+        })}
+      />
+    )
+
+    const trigger = screen.getByTestId('model-selector-button')
+    expect(trigger).toHaveTextContent('GPT 5.6 Sol Extra High')
+    expect(trigger.querySelector('.text-reasoning-ultra-text')).toHaveTextContent('Extra High')
+
+    await userEvent.click(trigger)
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
+
+    expect(screen.queryByTestId('model-control-reasoning-max')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-ultra')).toHaveTextContent(
+      'Faster, uses more quota'
+    )
+    expect(
+      within(screen.getByTestId('model-selector-submenu')).getAllByText('Extra High')
+    ).toHaveLength(2)
+
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+
+    expect(screen.getByTestId('model-advanced-panel')).toHaveAttribute(
+      'data-enter-animation',
+      'advanced'
+    )
+    expect(screen.queryByTestId('model-control-menu-model')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-menu-reasoning')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-menu-speed')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('reasoning-slider-faster-label')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('reasoning-slider-smarter-label')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-slider')).toHaveClass('h-14')
+    expect(
+      screen.getByTestId('model-advanced-toggle').querySelector('.lucide-chevron-right')
+    ).toBeInTheDocument()
+    const fastModeToggle = screen.getByTestId('model-advanced-fast-mode-toggle')
+    expect(fastModeToggle).toHaveAttribute('aria-pressed', 'false')
+    await userEvent.click(fastModeToggle)
+    expect(setSelectedModelOption).toHaveBeenCalledWith('speed', 'fast')
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-progress')).toHaveAttribute(
+      'data-ultra',
+      'true'
+    )
+    expect(screen.getByTestId('model-control-reasoning-progress')).toHaveClass(
+      'from-reasoning-ultra-start',
+      'to-reasoning-ultra-end'
+    )
+    expect(screen.getByTestId('reasoning-ultra-burst')).toBeInTheDocument()
+    const sparkles = screen
+      .getByTestId('model-control-reasoning-progress')
+      .querySelectorAll('[data-sparkle-index]')
+    expect(sparkles).toHaveLength(10)
+    expect(sparkles[1]).toHaveStyle({ animationDelay: '-260ms' })
+    const powerSettings = [
+      'gpt-5-6-terra-low',
+      'gpt-5-6-sol-low',
+      'gpt-5-6-sol-medium',
+      'gpt-5-6-sol-high',
+      'gpt-5-6-sol-xhigh',
+      'gpt-5-6-sol-ultra',
+    ]
+    powerSettings.forEach(setting => {
+      expect(screen.getByTestId(`model-power-setting-${setting}`)).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('model-power-setting-gpt-5-6-sol-max')).not.toBeInTheDocument()
+    const solLowSetting = screen.getByTestId('model-power-setting-gpt-5-6-sol-low')
+    expect(solLowSetting).not.toHaveAttribute('title')
+    expect(screen.queryByText('GPT 5.6 Sol Low')).not.toBeInTheDocument()
+
+    fireEvent.pointerDown(solLowSetting, { button: 0, clientX: 160, pointerId: 9 })
+    expect(screen.getByTestId('model-control-reasoning-slider')).toHaveAttribute(
+      'data-interacting',
+      'true'
+    )
+    expect(screen.queryByTestId('model-advanced-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-intelligence-icon')).not.toBeInTheDocument()
+    expect(screen.getByTestId('reasoning-slider-faster-label')).toHaveTextContent('Faster')
+    expect(screen.getByTestId('reasoning-slider-smarter-label')).toHaveTextContent('Smarter')
+    fireEvent.pointerUp(solLowSetting, { button: 0, clientX: 160, pointerId: 9 })
+    expect(screen.getByTestId('model-control-reasoning-slider')).toHaveAttribute(
+      'data-interacting',
+      'false'
+    )
+    expect(screen.getByTestId('model-advanced-toggle')).toBeInTheDocument()
+    expect(screen.getByTestId('model-advanced-intelligence-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('reasoning-slider-faster-label')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-power-setting-gpt-5-6-terra-low'))
+    expect(setSelectedModelAndOptions).toHaveBeenCalledWith(terraModel, {
+      reasoning: 'low',
+      speed: 'standard',
+    })
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+    expect(screen.queryByTestId('model-advanced-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-reasoning')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-menu-speed')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('model-advanced-toggle').querySelector('.lucide-chevron-up')
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-fast-mode-toggle')).not.toBeInTheDocument()
+  })
+
+  test('persists the desktop power view across close, reopen, and a new composer mount', async () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'ultra'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+    const props = {
+      value: '',
+      onChange: vi.fn(),
+      onSubmit: vi.fn(),
+      disabled: false,
+      variant: 'desktop' as const,
+      projectChat: projectChatControls({
+        models: [model],
+        selectedModel: model,
+        selectedModelOptions: { reasoning: 'medium', speed: 'standard' },
+      }),
+    }
+    const firstRender = render(<ChatInput {...props} />)
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.click(screen.getByTestId('model-advanced-toggle'))
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+    expect(localStorage.getItem('wework:model-selector-view')).toBe('power')
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+
+    firstRender.unmount()
+    render(<ChatInput {...props} />)
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-advanced-panel')).toBeInTheDocument()
+  })
+
+  test('offers a Sol medium reset when another model is selected without losing view preference', async () => {
+    localStorage.setItem('wework:model-selector-view', 'power')
+    const solModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'ultra'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+    const terraModel: UnifiedModel = {
+      name: 'gpt-5.6-terra',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Terra',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Terra',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'low',
+          controls: ['speed'],
+        },
+      },
+    }
+    const setSelectedModelAndOptions = vi.fn()
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [solModel, terraModel],
+          selectedModel: terraModel,
+          selectedModelOptions: { reasoning: 'xhigh', speed: 'fast' },
+          setSelectedModelAndOptions,
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-control-menu-model')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('model-advanced-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-reset-default-button')).toHaveTextContent('重置为默认设置')
+
+    await userEvent.click(screen.getByTestId('model-reset-default-button'))
+
+    expect(setSelectedModelAndOptions).toHaveBeenCalledWith(solModel, {
+      reasoning: 'medium',
+      speed: 'standard',
+    })
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(localStorage.getItem('wework:model-selector-view')).toBe('power')
+  })
+
+  test('keeps Advanced available for the Terra light setting shown on the power slider', async () => {
+    const solModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'ultra'],
+          defaultReasoningEffort: 'medium',
+          controls: ['speed'],
+        },
+      },
+    }
+    const terraModel: UnifiedModel = {
+      name: 'gpt-5.6-terra',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Terra',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Terra',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+          defaultReasoningEffort: 'low',
+          controls: ['speed'],
+        },
+      },
+    }
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          models: [solModel, terraModel],
+          selectedModel: terraModel,
+          selectedModelOptions: { reasoning: 'low', speed: 'standard' },
+        })}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('model-selector-button'))
+
+    expect(screen.getByTestId('model-advanced-toggle')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-reset-default-button')).not.toBeInTheDocument()
+  })
+
+  test('suppresses the model tooltip after closing until the pointer re-enters', async () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls()}
+      />
+    )
+    const trigger = screen.getByTestId('model-selector-button')
+
+    await userEvent.click(trigger)
+    await userEvent.click(trigger)
+
+    expect(screen.queryByTestId('model-selector-tooltip')).not.toBeInTheDocument()
+
+    await userEvent.unhover(trigger)
+    await userEvent.hover(trigger)
+
+    expect(screen.getByTestId('model-selector-tooltip')).toBeInTheDocument()
+  })
+
+  test('keeps the desktop model submenu open after the pointer leaves the menu', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -1089,12 +1544,13 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
 
     fireEvent.mouseLeave(screen.getByTestId('model-selector-menu').parentElement as HTMLElement)
 
-    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
   })
 
   test('keeps the desktop model menu in narrow Tauri windows', async () => {
@@ -1138,6 +1594,8 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
     expect(screen.getByTestId('model-selector-menu')).not.toHaveAttribute('data-mobile')
     expect(screen.getByTestId('model-selector-menu')).not.toHaveAttribute('aria-modal')
+    expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
   })
 
@@ -1190,7 +1648,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
-  test('closes the desktop model menu after selecting a model opened by external signal', async () => {
+  test('keeps the desktop model menu open after selecting a model opened by external signal', async () => {
     const model: UnifiedModel = {
       name: 'ali-qwen3-coder-plus',
       type: 'user',
@@ -1222,14 +1680,15 @@ describe('ChatInput', () => {
     )
 
     expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     await userEvent.click(screen.getByTestId('model-option-ali-qwen3-coder-plus'))
 
     expect(setSelectedModel).toHaveBeenCalledWith(model)
-    await waitFor(() => expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument())
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
   })
 
-  test('moves the desktop model submenu upward when the active family is near the viewport bottom', async () => {
+  test('keeps the desktop model submenu inside the viewport near the bottom edge', async () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', {
       configurable: true,
@@ -1239,15 +1698,43 @@ describe('ChatInput', () => {
       function getMockRect(this: HTMLElement) {
         const testId = this.getAttribute('data-testid')
         if (testId === 'model-selector-menu') {
-          return { top: 100, left: 480, width: 256, height: 720 } as DOMRect
+          return {
+            top: 760,
+            bottom: 900,
+            left: 480,
+            right: 736,
+            width: 256,
+            height: 140,
+          } as DOMRect
         }
-        if (testId === 'model-family-minimax') {
-          return { top: 900, left: 500, width: 220, height: 36 } as DOMRect
+        if (testId === 'model-control-menu-model') {
+          return {
+            top: 780,
+            bottom: 812,
+            left: 492,
+            right: 724,
+            width: 232,
+            height: 32,
+          } as DOMRect
         }
         if (testId === 'model-selector-submenu') {
-          return { top: 0, left: 0, width: 288, height: 192 } as DOMRect
+          return {
+            top: 0,
+            bottom: 192,
+            left: 0,
+            right: 288,
+            width: 288,
+            height: 192,
+          } as DOMRect
         }
-        return { top: 0, left: 0, width: 0, height: 0 } as DOMRect
+        return {
+          top: 0,
+          bottom: 0,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 0,
+        } as DOMRect
       }
     )
 
@@ -1282,10 +1769,11 @@ describe('ChatInput', () => {
       )
 
       await userEvent.click(screen.getByTestId('model-selector-button'))
+      await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
       await waitFor(() => {
         expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
-          top: '692px',
+          top: '20px',
         })
       })
     } finally {
@@ -1345,6 +1833,7 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
     const disabledOption = screen.getByTestId('model-option-overseas-gpt-5.4')
     expect(disabledOption).not.toBeDisabled()
@@ -1361,7 +1850,7 @@ describe('ChatInput', () => {
     )
   })
 
-  test('closes the model menu after selecting a reasoning option', async () => {
+  test('keeps the model menu open after selecting a reasoning option', async () => {
     const model: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -1393,12 +1882,12 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
     await userEvent.click(screen.getByTestId('model-control-reasoning-medium'))
 
     expect(setSelectedModelOption).toHaveBeenCalledWith('reasoning', 'medium')
-    await waitFor(() => {
-      expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
-    })
+    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-control-reasoning-medium')).toBeInTheDocument()
   })
 
   test('omits Codex plan mode from the desktop model menu', async () => {
@@ -1439,7 +1928,7 @@ describe('ChatInput', () => {
     expect(menu.queryByText('计划模式')).not.toBeInTheDocument()
   })
 
-  test('keeps reasoning controls for the selected GPT model while hovering another family', async () => {
+  test('flattens model families while keeping controls from the selected GPT model', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.5',
       type: 'user',
@@ -1482,11 +1971,13 @@ describe('ChatInput', () => {
     )
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
-    await userEvent.hover(screen.getByTestId('model-family-claude'))
+    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
+    expect(screen.getByTestId('model-option-claude-opus')).toBeInTheDocument()
+    expect(screen.getByTestId('model-option-overseas-gpt-5.5')).toBeInTheDocument()
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-reasoning-auto')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-option-claude-opus')).toBeInTheDocument()
   })
 
   test('hides speed controls when the selected model version does not support speed', async () => {
@@ -1535,6 +2026,8 @@ describe('ChatInput', () => {
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
 
+    expect(screen.getByTestId('model-control-menu-speed')).toBeDisabled()
+    await userEvent.hover(screen.getByTestId('model-control-menu-reasoning'))
     expect(screen.getByTestId('model-control-reasoning-high')).toBeInTheDocument()
     expect(screen.queryByTestId('model-control-speed-fast')).not.toBeInTheDocument()
   })
@@ -2299,7 +2792,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('请选择项目')
     expect(screen.getByTestId('project-work-button')).not.toHaveTextContent('Local Online')
 
     await userEvent.click(screen.getByTestId('project-work-button'))
@@ -2343,9 +2836,9 @@ describe('ChatInput', () => {
 
     const trigger = screen.getByTestId('project-work-button')
 
-    expect(trigger).toHaveTextContent('进入项目工作')
+    expect(trigger).toHaveTextContent('请选择项目')
     expect(trigger).not.toHaveTextContent('Local Online')
-    expect(trigger).toHaveAccessibleName('进入项目工作')
+    expect(trigger).toHaveAccessibleName('请选择项目')
   })
 
   test('does not include enter-project work as a menu item', async () => {
@@ -2363,7 +2856,7 @@ describe('ChatInput', () => {
       />
     )
 
-    expect(screen.getByTestId('project-work-button')).toHaveTextContent('进入项目工作')
+    expect(screen.getByTestId('project-work-button')).toHaveTextContent('请选择项目')
 
     await userEvent.click(screen.getByTestId('project-work-button'))
 
@@ -2559,6 +3052,7 @@ describe('ChatInput', () => {
           projects: [worktreeProject],
           currentProject: worktreeProject,
           currentProjectId: 7,
+          isGitProject: true,
           executionMode: 'git_worktree',
           executionModeLocked: false,
           onExecutionModeChange: vi.fn(),

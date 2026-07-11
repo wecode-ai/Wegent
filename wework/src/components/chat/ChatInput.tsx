@@ -42,6 +42,7 @@ export interface ProjectChatControls {
   isOptionsLocked: boolean
   modelSelectorOpenSignal?: number
   setSelectedModel: (model: UnifiedModel | null) => void
+  setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   setSelectedModelOption: (optionId: string, value: string) => void
   getSelectedModel?: () => UnifiedModel | null
   getSelectedModelOptions?: () => ModelOptions
@@ -64,6 +65,7 @@ export interface ProjectWorkControls {
   pendingProjectWorkspaceProjectId?: number | null
   executionMode: ProjectExecutionMode
   executionModeLocked?: boolean
+  isGitProject?: boolean
   onSelectProject: (projectId: number | null) => void
   onSelectStandaloneDevice: (deviceId: string | null) => void
   onSelectProjectWorkspace?: (projectId: number, deviceWorkspaceId: number | null) => void
@@ -78,6 +80,8 @@ export interface ProjectWorkControls {
   onCreateBranch?: (branchName: string) => Promise<void>
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
+  projectMenuOpenSignal?: number
+  projectMenuAnchorElement?: HTMLElement | null
 }
 
 export interface ChatInputProps {
@@ -304,6 +308,7 @@ export function ChatInput({
           attachmentErrors={controls.errors}
           contextUsage={controls.contextUsage}
           onSelectModel={controls.setSelectedModel}
+          onSelectModelAndOptions={controls.setSelectedModelAndOptions}
           onSelectModelOption={controls.setSelectedModelOption}
           onBlockedModelSelect={controls.onBlockedModelSelect}
           onFileSelect={files => {

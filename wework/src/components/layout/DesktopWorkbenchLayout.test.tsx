@@ -1456,7 +1456,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-plan-panel')).not.toHaveTextContent('新生成的计划')
   })
 
-  test('renders project-specific empty prompt after selecting a project', () => {
+  test('renders a project-specific empty prompt that opens the project chooser', async () => {
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -1468,18 +1468,28 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(
-      '我们应该在 gitlab-wegent 中构建什么？'
+      '我们应该在 gitlab-wegent 中做些什么？'
     )
+    expect(screen.getByTestId('empty-project-title-button')).toHaveAttribute('title', '更改项目')
+
+    await userEvent.click(screen.getByTestId('empty-project-title-button'))
+
+    expect(screen.getByTestId('project-work-menu')).toBeInTheDocument()
   })
 
   test('keeps the empty composer at the intended desktop proportion', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
+      'flex',
+      'min-h-0',
+      'flex-1',
+      'flex-col'
+    )
+    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
       'w-[min(46rem,calc(100%_-_2rem))]',
       'min-w-0',
-      'max-w-[calc(100%_-_2rem)]',
-      '-translate-y-12'
+      'shrink-0'
     )
   })
 
@@ -2155,9 +2165,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mb-1.5', 'mr-1.5', 'ml-1.5')
     expect(getDesktopWorkbenchMainElement()).toHaveClass('transition-[margin]', 'duration-[300ms]')
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('will-change-[margin]')
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'max-w-[calc(100%_-_2rem)]'
+    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
+      'w-[min(46rem,calc(100%_-_2rem))]'
     )
     expect(document.querySelector('aside')).toBeInTheDocument()
 
@@ -2166,9 +2175,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByText('新对话')).toBeInTheDocument()
     expect(sidebar).toHaveStyle({ width: '240px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
-    expect(screen.getByTestId('desktop-empty-composer-frame')).toHaveClass(
-      'w-[min(46rem,calc(100%_-_2rem))]',
-      'max-w-[calc(100%_-_2rem)]'
+    expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
+      'w-[min(46rem,calc(100%_-_2rem))]'
     )
   })
 
