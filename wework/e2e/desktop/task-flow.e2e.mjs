@@ -244,6 +244,11 @@ function requestContainsToolOutput(request) {
   return JSON.stringify(request.input ?? []).includes('function_call_output')
 }
 
+function requestAdvertisesShellTool(request) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  return tools.some(tool => tool?.name === 'exec_command' || tool?.name === 'shell_command')
+}
+
 function selectShellTool(request, workspacePath) {
   const tools = Array.isArray(request.tools) ? request.tools : []
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
@@ -278,6 +283,7 @@ class DesktopE2EServer {
     this.modelRequests = []
     this.scenario = 'initial'
     this.modelStage = 'initial'
+    this.toolLessPrewarmHandled = false
     this.toolOutput = null
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
@@ -436,6 +442,19 @@ class DesktopE2EServer {
     }
 
     if (requestKind === 'prewarm') {
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    // Codex CLI 0.144 can prewarm a custom Responses provider before adding
+    // tool definitions or request metadata. It must not advance the task loop.
+    if (
+      this.scenario === 'initial' &&
+      this.modelStage === 'initial' &&
+      !this.toolLessPrewarmHandled &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.toolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
       return
     }
