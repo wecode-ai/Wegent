@@ -190,7 +190,7 @@ function responseFailed(id, message) {
     response: {
       id,
       status: 'failed',
-      error: { code: 'server_error', message },
+      error: { code: 'context_length_exceeded', message },
     },
   }
 }
