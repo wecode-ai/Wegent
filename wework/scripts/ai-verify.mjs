@@ -194,6 +194,9 @@ async function runServer(sessionPath, token) {
       VITE_WEWORK_E2E: 'true',
       VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
       VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: token,
+      CODEX_HOME: join(session.directory, 'executor-home', 'codex'),
+      DEVICE_ID: session.deviceId,
+      WEGENT_EXECUTOR_APP_IPC_SOCKET: join(session.directory, 'app-ipc.sock'),
       WEGENT_EXECUTOR_HOME: join(session.directory, 'executor-home'),
       WEGENT_EXECUTOR_LOG_DIR: session.directory,
     },
@@ -241,7 +244,17 @@ async function main() {
     const sessionPath = join(directory, 'session.json')
     await writeFile(
       sessionPath,
-      `${JSON.stringify({ version: 1, directory, token, status: 'starting' }, null, 2)}\n`
+      `${JSON.stringify(
+        {
+          version: 1,
+          deviceId: `ai-verify-${randomUUID()}`,
+          directory,
+          token,
+          status: 'starting',
+        },
+        null,
+        2
+      )}\n`
     )
     const child = spawn(
       process.execPath,
