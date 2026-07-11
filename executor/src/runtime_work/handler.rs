@@ -21,8 +21,9 @@ use tokio::time::sleep;
 use crate::{
     agents::{
         combined_codex_developer_instructions, strip_wework_browser_instructions,
-        CodexActiveTurnCallback, CodexAppServerClient, CodexAppServerTurnOptions,
-        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
+        CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     logging::log_executor_event,
@@ -2259,6 +2260,11 @@ impl RuntimeWorkRpcHandler {
                         turn_id,
                     );
                 });
+            let finished_turn_handler = handler.clone();
+            let finished_turn_local_task_id = turn_local_task_id.clone();
+            let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                finished_turn_handler.clear_active_codex_turn(&finished_turn_local_task_id);
+            });
             let result = handler
                 .codex_app_server
                 .run_turn_with_cancel(
@@ -2275,6 +2281,7 @@ impl RuntimeWorkRpcHandler {
                         request_user_input_answers: Some(request_user_input_rx),
                         thread_started: Some(thread_started),
                         active_turn_started: Some(active_turn_started),
+                        active_turn_finished: Some(active_turn_finished),
                     },
                 )
                 .await;

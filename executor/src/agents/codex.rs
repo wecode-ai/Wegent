@@ -83,6 +83,7 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
 pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
+pub type CodexActiveTurnFinishedCallback = Box<dyn Fn() + Send + 'static>;
 
 #[derive(Default)]
 pub struct CodexAppServerTurnOptions {
@@ -97,6 +98,7 @@ pub struct CodexAppServerTurnOptions {
     pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     pub thread_started: Option<CodexThreadStartedCallback>,
     pub active_turn_started: Option<CodexActiveTurnCallback>,
+    pub active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
 }
 
 pub trait CodexTurnInterrupter: Send + Sync {
@@ -768,6 +770,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         request_user_input_answers,
         thread_started,
         active_turn_started,
+        active_turn_finished,
     } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
@@ -934,6 +937,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                 request_user_input_answers,
                 goal_run_active,
                 active_turn_started,
+                active_turn_finished,
             },
         )
         .await;
@@ -1208,6 +1212,7 @@ struct SharedTurnNotificationOptions {
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     goal_run_active: bool,
     active_turn_started: Option<CodexActiveTurnCallback>,
+    active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
 }
 
 async fn read_shared_turn_notifications(
@@ -1256,7 +1261,7 @@ async fn read_shared_turn_notifications(
         }
         log_codex_raw_turn_message(&message);
 
-        if let Some(turn_id) = turn_started_notification_turn_id(&message) {
+        if let Some(turn_id) = active_root_turn_notification_id(&message, state) {
             if options.active_turn_id.as_deref() != Some(turn_id.as_str()) {
                 if let Some(callback) = options.active_turn_started.as_ref() {
                     callback(thread_id.to_owned(), turn_id.clone());
@@ -1290,6 +1295,9 @@ async fn read_shared_turn_notifications(
 
         if let Some(outcome) = state.handle_message(&message) {
             options.active_turn_id = None;
+            if let Some(callback) = options.active_turn_finished.as_ref() {
+                callback();
+            }
             if !matches!(outcome, ExecutionOutcome::Completed { .. }) {
                 return Ok(outcome);
             }
@@ -1383,11 +1391,14 @@ fn turn_start_response_turn_id(response: &Value) -> Option<String> {
         .or_else(|| string_value(response, "turn_id"))
 }
 
-fn turn_started_notification_turn_id(message: &Value) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
+fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) == Some("turn/completed") {
         return None;
     }
     let params = message_params(message);
+    if state.is_subagent_message(params) {
+        return None;
+    }
     params
         .get("turn")
         .and_then(|turn| string_value(turn, "id"))
@@ -4819,6 +4830,48 @@ mod tests {
             .expect_err("empty objective should be rejected");
 
         assert_eq!(error, "initial goal objective is required");
+    }
+
+    #[test]
+    fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_child_turns() {
+        let mut state = CodexRunState::default();
+        state.set_root_thread_id("thread-root");
+
+        let active_item = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-root",
+                "turnId": "turn-current",
+                "item": { "type": "reasoning" }
+            }
+        });
+        assert_eq!(
+            active_root_turn_notification_id(&active_item, &state).as_deref(),
+            Some("turn-current")
+        );
+
+        let completed_turn = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-root",
+                "turn": { "id": "turn-current", "status": "completed" }
+            }
+        });
+        assert_eq!(
+            active_root_turn_notification_id(&completed_turn, &state),
+            None
+        );
+
+        let child_item = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-root",
+                "turnId": "child-turn",
+                "agentPath": "/root/worker",
+                "item": { "type": "reasoning" }
+            }
+        });
+        assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
     }
 
     #[test]
