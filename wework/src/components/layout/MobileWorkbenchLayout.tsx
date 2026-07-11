@@ -401,6 +401,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     onCompactContext={() => void paneSession.compactContext()}
                     taskPlan={paneSession.taskPlan}
                     onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                    onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                    queuePaused={paneSession.queuedMessagesPaused}
+                    onResumeQueue={paneSession.resumeQueuedMessages}
+                    onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                    onClearQueue={paneSession.clearQueuedMessages}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
                     onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
@@ -492,6 +497,11 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 onCompactContext={() => void paneSession.compactContext()}
                 taskPlan={paneSession.taskPlan}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                queuePaused={paneSession.queuedMessagesPaused}
+                onResumeQueue={paneSession.resumeQueuedMessages}
+                onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                onClearQueue={paneSession.clearQueuedMessages}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
                 onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}

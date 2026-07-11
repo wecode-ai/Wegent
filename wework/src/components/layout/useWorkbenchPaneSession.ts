@@ -134,6 +134,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   } = useWorkbenchPaneContext()
   const paneActive = useWorkbenchPaneActive()
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
+  const [queuedMessagesPaused, setQueuedMessagesPaused] = useState(false)
   const [guidanceMessages] = useState<GuidanceWorkbenchMessage[]>([])
   const [codeCommentContexts, setCodeCommentContexts] = useState<CodeCommentContext[]>([])
   const input = projectChat.input ?? ''
@@ -1069,21 +1070,16 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages]
   )
 
-  useEffect(() => {
-    if (!paneStatus.canSendQueuedMessage) return
-    if (queuedMessages.some(message => message.status === 'sending')) return
-    const queuedMessage = queuedMessages.find(message => message.status === 'queued')
-    if (!queuedMessage) return
-
-    // This advances the next queued message once the pane becomes idle.
-    setQueuedMessages(messages =>
-      messages.map(message =>
-        message.id === queuedMessage.id ? { ...message, status: 'sending' } : message
+  const sendQueuedMessage = useCallback(
+    async (queuedMessage: RuntimePaneQueuedMessage) => {
+      setQueuedMessages(messages =>
+        messages.map(message =>
+          message.id === queuedMessage.id ? { ...message, status: 'sending' } : message
+        )
       )
-    )
 
-    void sendRuntimeMessage(queuedMessage)
-      .then(sent => {
+      try {
+        const sent = await sendRuntimeMessage(queuedMessage)
         setQueuedMessages(messages =>
           sent
             ? messages.filter(message => message.id !== queuedMessage.id)
@@ -1093,8 +1089,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                   : message
               )
         )
-      })
-      .catch(error => {
+      } catch (error) {
         console.error('[Wework] Queued runtime message send failed', {
           id: queuedMessage.id,
           error,
@@ -1107,8 +1102,21 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           )
         )
         setSendPhase('idle')
-      })
-  }, [paneStatus.canSendQueuedMessage, queuedMessages, sendRuntimeMessage])
+      }
+    },
+    [sendRuntimeMessage]
+  )
+
+  useEffect(() => {
+    if (queuedMessagesPaused) return
+    if (!paneStatus.canSendQueuedMessage) return
+    if (queuedMessages.some(message => message.status === 'sending')) return
+    const queuedMessage = queuedMessages.find(message => message.status === 'queued')
+    if (!queuedMessage) return
+
+    // This advances the next queued message once the pane becomes idle.
+    void sendQueuedMessage(queuedMessage)
+  }, [paneStatus.canSendQueuedMessage, queuedMessages, queuedMessagesPaused, sendQueuedMessage])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const sendQueuedMessageAsGuidance = useCallback(
@@ -1591,6 +1599,58 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setQueuedMessages(messages => messages.filter(message => message.id !== id))
   }, [])
 
+  const resumeQueuedMessages = useCallback(() => {
+    setQueuedMessagesPaused(false)
+    const interruptedGuidance = queuedMessages.find(isInterruptedGuidance)
+    const queuedMessage =
+      interruptedGuidance ?? queuedMessages.find(message => message.status === 'queued')
+    if (queuedMessage) void sendQueuedMessage(queuedMessage)
+  }, [queuedMessages, sendQueuedMessage])
+
+  const resumeQueuedMessagesWithInput = useCallback(
+    async (inputOverride?: string, options?: RuntimePaneSendOptions) => {
+      const interruptedGuidance = queuedMessages.find(isInterruptedGuidance)
+      if (!interruptedGuidance) {
+        await send(inputOverride, options)
+        setQueuedMessagesPaused(false)
+        return
+      }
+
+      const submittedInput = (inputOverride ?? input).trim()
+      const combinedMessage = {
+        ...interruptedGuidance,
+        content: [interruptedGuidance.content, submittedInput].filter(Boolean).join('\n\n'),
+        notice: undefined,
+      }
+      setQueuedMessagesPaused(false)
+      await sendQueuedMessage(combinedMessage)
+    },
+    [input, queuedMessages, send, sendQueuedMessage]
+  )
+
+  const clearQueuedMessages = useCallback(() => {
+    setQueuedMessages([])
+    setQueuedMessagesPaused(false)
+  }, [])
+
+  const reorderQueuedMessages = useCallback((sourceId: string, targetId: string) => {
+    setQueuedMessages(messages => {
+      const sourceIndex = messages.findIndex(message => message.id === sourceId)
+      const targetIndex = messages.findIndex(message => message.id === targetId)
+      if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return messages
+
+      const source = messages[sourceIndex]
+      const target = messages[targetIndex]
+      if (source.status !== 'queued' || target.status !== 'queued') return messages
+
+      const reordered = [...messages]
+      reordered.splice(sourceIndex, 1)
+      const insertIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
+      reordered.splice(insertIndex, 0, source)
+      return reordered
+    })
+  }, [])
+
   const editQueuedMessage = useCallback(
     (id: string) => {
       const queuedMessage = queuedMessages.find(message => message.id === id)
@@ -1706,6 +1766,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     const cancelled = await cancelRuntimePaneTask(currentRuntimeTask)
     if (!cancelled) return
 
+    setQueuedMessagesPaused(queuedMessages.some(message => message.status === 'queued'))
+    setSendPhase('idle')
+    void refreshWorkLists()
+
     if (goal?.status === 'active') {
       await updateCurrentGoalStatus('paused')
     }
@@ -1721,6 +1785,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     currentRuntimeTask,
     dispatchMessages,
     goal?.status,
+    queuedMessages,
+    refreshWorkLists,
     updateCurrentGoalStatus,
   ])
 
@@ -1791,6 +1857,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     paneActive,
     paneStatus,
     queuedMessages,
+    queuedMessagesPaused,
     subagentStatuses,
     transcriptHasMoreBefore,
     transcriptFullContent,
@@ -1803,6 +1870,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
   return {
     messages,
     queuedMessages,
+    queuedMessagesPaused,
     guidanceMessages,
     codeCommentContexts,
     input,
@@ -1834,6 +1902,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     addCodeComment,
     clearCodeComments,
     cancelQueuedMessage,
+    resumeQueuedMessages,
+    resumeQueuedMessagesWithInput,
+    clearQueuedMessages,
+    reorderQueuedMessages,
     sendQueuedAsGuidance,
     editQueuedMessage,
     cancelGuidanceMessage,
@@ -1849,6 +1921,10 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
 }
 
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
+
+function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
+  return message.status === 'sending' && message.notice === '正在引导当前对话'
+}
 
 function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {
   return {
