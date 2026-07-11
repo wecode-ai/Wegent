@@ -1,6 +1,7 @@
 import { Bot, Bug, ChevronLeft, Hammer, Megaphone, RefreshCw } from 'lucide-react'
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { cn } from '@/lib/utils'
 import styles from './DesktopEmptyTaskLauncher.module.css'
 
@@ -128,6 +129,16 @@ export function DesktopEmptyTaskLauncher({
   const selectedCategory = TASK_SUGGESTION_CATEGORIES.find(
     category => category.id === selectedCategoryId
   )
+
+  useEffect(() => {
+    const focusComposer = () => {
+      launcherRef.current?.querySelector<HTMLElement>('[data-testid="chat-message-input"]')?.focus()
+    }
+
+    focusComposer()
+    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
+    return () => window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, focusComposer)
+  }, [])
 
   const selectSuggestion = (prompt: string) => {
     onSelectSuggestion(prompt)
