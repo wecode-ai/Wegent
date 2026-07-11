@@ -105,7 +105,8 @@ pub fn write_executor_error_line(line: &str) {
 }
 
 pub fn init_executor_logging(config: &DeviceConfig) {
-    match RollingLogFile::new(rolling_log_config_from_device(config)) {
+    let log_config = rolling_log_config_from_device(config);
+    match create_rolling_log_file(log_config, &config.executor_home) {
         Ok(file) => {
             let mut logger = rolling_logger().lock().expect("rolling logger lock");
             *logger = Some(file);
@@ -114,6 +115,27 @@ pub fn init_executor_logging(config: &DeviceConfig) {
             eprintln!("failed to initialize executor rolling log: {error}");
         }
     }
+}
+
+fn create_rolling_log_file(
+    log_config: RollingLogConfig,
+    executor_home: &Path,
+) -> io::Result<RollingLogFile> {
+    match RollingLogFile::new(log_config.clone()) {
+        Ok(file) => Ok(file),
+        Err(_initial_error) if can_recover_executor_home_file(&log_config.path, executor_home) => {
+            fs::remove_file(executor_home)?;
+            RollingLogFile::new(log_config)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn can_recover_executor_home_file(log_path: &Path, executor_home: &Path) -> bool {
+    log_path.starts_with(executor_home.join("logs"))
+        && fs::metadata(executor_home)
+            .map(|metadata| metadata.is_file())
+            .unwrap_or(false)
 }
 
 pub fn task_fields(task_id: &str, subtask_id: &str) -> Vec<(&'static str, String)> {
@@ -271,13 +293,37 @@ mod tests {
         assert!(!backup_path(&path, 3).exists());
     }
 
+    #[test]
+    fn recreates_executor_home_when_a_file_blocks_log_directory_creation() {
+        let executor_home = temp_executor_home_path("recover-file");
+        fs::write(&executor_home, "stale executor home").unwrap();
+        let log_path = executor_home.join("logs/executor.log");
+
+        let file = create_rolling_log_file(
+            RollingLogConfig {
+                path: log_path.clone(),
+                max_size_bytes: 0,
+                backup_count: 0,
+            },
+            &executor_home,
+        )
+        .unwrap();
+
+        assert!(executor_home.is_dir());
+        assert!(log_path.exists());
+        drop(file);
+        fs::remove_dir_all(executor_home).unwrap();
+    }
+
     fn temp_log_path(label: &str) -> PathBuf {
+        temp_executor_home_path(label).join("executor.log")
+    }
+
+    fn temp_executor_home_path(label: &str) -> PathBuf {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir()
-            .join(format!("wegent-executor-rolling-{label}-{nanos}"))
-            .join("executor.log")
+        std::env::temp_dir().join(format!("wegent-executor-rolling-{label}-{nanos}"))
     }
 }
