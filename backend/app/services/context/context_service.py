@@ -236,6 +236,17 @@ class ContextService:
         context.text_length = 0
 
         base_type_data = context.type_data or {}
+        base_type_data = {
+            key: value
+            for key, value in base_type_data.items()
+            if key
+            not in {
+                "image_pid",
+                "image_pid_source",
+                "image_pid_status",
+                "image_pid_error",
+            }
+        }
         updated_type_data = self._build_attachment_type_data(
             filename=filename,
             extension=extension,

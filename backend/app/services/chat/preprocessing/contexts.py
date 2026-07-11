@@ -399,6 +399,9 @@ def _process_attachment_context(
                 sandbox_path=sandbox_path,
                 is_image=True,
             )
+        image_pid = str((context.type_data or {}).get("image_pid") or "").strip()
+        if image_pid:
+            image_header += f"\n{json.dumps({'pid': image_pid})}"
 
         if supports_image is False:
             text_contents.append(f"[Attachment {idx}]\n{image_header}")
@@ -552,7 +555,7 @@ def _build_attachment_metadata_header(
 
     filename = context.original_filename
     sandbox_path = context_service.build_sandbox_path(task_id, subtask_id, filename)
-    return build_attachment_header(
+    header = build_attachment_header(
         attachment_id=context.id,
         filename=filename,
         mime_type=context.mime_type or "unknown",
@@ -560,6 +563,10 @@ def _build_attachment_metadata_header(
         sandbox_path=sandbox_path,
         is_image=context_service.is_image_context(context),
     )
+    image_pid = str((context.type_data or {}).get("image_pid") or "").strip()
+    if context_service.is_image_context(context) and image_pid:
+        header += f"\n{json.dumps({'pid': image_pid})}"
+    return header
 
 
 async def process_attachments(
