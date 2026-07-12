@@ -11,6 +11,7 @@ import {
   getActiveWorkbenchDeviceId,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
+import { createLocalFileWorkspaceTarget } from '@/lib/workspace-target'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   isDeviceBelowWeWorkVersion,
@@ -460,16 +461,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ? rightPanelShellWidth
     : COLLAPSED_RIGHT_TITLEBAR_ACTIONS_CLEARANCE
   const effectiveRightPanelTabs = useMemo<RightWorkspacePanelTab[]>(() => {
-    const permittedTabs = workspaceProject
+    const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
+    const permittedTabs = canBrowseFiles
       ? rightPanelTabs
       : rightPanelTabs.filter(tab => tab !== 'files')
-    if (rightPanelView === 'launcher' || (!workspaceProject && rightPanelView === 'files')) {
+    if (rightPanelView === 'launcher' || (!canBrowseFiles && rightPanelView === 'files')) {
       return permittedTabs
     }
     return permittedTabs.includes(rightPanelView)
       ? permittedTabs
       : [...permittedTabs, rightPanelView]
-  }, [rightPanelTabs, rightPanelView, workspaceProject])
+  }, [openFileRequest?.target, rightPanelTabs, rightPanelView, workspaceProject])
   const shouldRenderRightPanel = rightPanelOpen || effectiveRightPanelTabs.length > 0
   const chatContentResizing = sidebarResizing || rightSplitResizing
   const defaultEmbeddedBrowserLabel = currentRuntimeTask?.taskId
@@ -495,6 +497,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [activeDeviceId, workspaceProject, workspaceTarget]
   )
   const effectiveWorkspaceTarget = workspaceTarget ?? standaloneRootWorkspaceTarget
+  const fileWorkspaceTarget = openFileRequest?.target ?? effectiveWorkspaceTarget
+  const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
   const workspaceTargetDevice = effectiveWorkspaceTarget?.deviceId
     ? devices.find(device => device.device_id === effectiveWorkspaceTarget.deviceId)
     : undefined
@@ -776,6 +780,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      if (tab === 'files') {
+        setOpenFileRequest(null)
+      }
       setRightPanelTabs(current => {
         const currentTabs = current.includes(tab) ? current : [...current, tab]
         const next = currentTabs.filter(openTab => openTab !== tab)
@@ -790,7 +797,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         return next
       })
     },
-    [rightPanelView, setRightPanelOpen, setRightPanelTabs, setRightPanelView]
+    [rightPanelView, setOpenFileRequest, setRightPanelOpen, setRightPanelTabs, setRightPanelView]
   )
 
   const openReviewFromDiffLoader = useCallback(
@@ -892,9 +899,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [openEnvironmentChangesReview, openRightPanelTab, reviewState.diff, reviewState.loading])
 
   const selectFilesView = useCallback(() => {
-    if (!workspaceProject) return
+    if (!canBrowseFiles) return
     openRightPanelTab('files')
-  }, [openRightPanelTab, workspaceProject])
+  }, [canBrowseFiles, openRightPanelTab])
   const selectBrowserView = useCallback(() => {
     openRightPanelTab('browser')
   }, [openRightPanelTab])
@@ -921,6 +928,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       openRightPanelTab('files')
     },
     [openRightPanelTab, setOpenFileRequest]
+  )
+
+  const openLocalSkillFile = useCallback(
+    (path: string) => {
+      const trimmedPath = path.trim()
+      if (!trimmedPath) return
+      const target = createLocalFileWorkspaceTarget(trimmedPath, devices)
+      if (!target) return
+
+      setOpenFileRequest(current => ({
+        id: (current?.id ?? 0) + 1,
+        path: trimmedPath,
+        target,
+      }))
+      openRightPanelTab('files')
+    },
+    [devices, openRightPanelTab, setOpenFileRequest]
   )
 
   const refreshReview = useCallback(() => {
@@ -1479,6 +1503,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             onEditQueuedMessage={paneSession.editQueuedMessage}
                             onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
                             onClearCodeComments={paneSession.clearCodeComments}
+                            onOpenSkillFile={openLocalSkillFile}
                           />
                         )}
                       </div>
@@ -1522,6 +1547,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 }}
                 fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                 onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+                onOpenLocalSkillFile={openLocalSkillFile}
                 onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
                 onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
                 onOpenAssistantPlan={openAssistantPlan}
@@ -1588,6 +1614,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     onEditQueuedMessage={paneSession.editQueuedMessage}
                     onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
                     onClearCodeComments={paneSession.clearCodeComments}
+                    onOpenSkillFile={openLocalSkillFile}
                   />
                 </>
               }
@@ -1639,15 +1666,16 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}
-              canBrowseFiles={Boolean(workspaceProject)}
+              canBrowseFiles={canBrowseFiles}
               currentRuntimeTask={currentRuntimeTask}
               devices={devices}
               workspaceTarget={effectiveWorkspaceTarget}
+              fileWorkspaceTarget={fileWorkspaceTarget}
               preferLocalTerminal={preferLocalWorkspaceTerminal}
               terminalContextTitle={runtimeTaskTitle}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
-              workspaceTargetError={workspaceTargetError}
+              workspaceTargetError={openFileRequest?.target ? null : workspaceTargetError}
               review={reviewState}
               planContent={rightPanelPlanContent}
               embeddedBrowserLabel={embeddedBrowserLabel}

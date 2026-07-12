@@ -9,7 +9,7 @@ import type { RuntimeWorkListResponse } from '@/types/api'
 
 describe('workbenchRuntimeHelpers', () => {
   test('builds readable titles from structured plugin mentions', () => {
-    expect(buildRuntimeTaskTitle('[$linear](skill:///tmp/linear/SKILL.md) ')).toBe('$linear')
+    expect(buildRuntimeTaskTitle('[$linear](/tmp/linear/SKILL.md) ')).toBe('$linear')
     expect(buildRuntimeTaskTitle('Use [$calendar](app://calendar) today')).toBe(
       'Use $calendar today'
     )

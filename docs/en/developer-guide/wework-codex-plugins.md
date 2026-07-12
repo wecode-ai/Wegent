@@ -53,13 +53,13 @@ Wework requests the model catalog from the Codex app-server's `model/list` metho
 
 ## Chat Runtime
 
-When a user selects a skill, app, or plugin in the composer, the editor inserts a structured badge and serializes it on submit as a Codex app-server-compatible mention:
+When a user selects a skill, app, or plugin in the composer, the editor inserts an indivisible inline mention. The cursor can only stop before or after the mention; copy and submit serialize it as Codex app-server-compatible Markdown:
 
-- Skills use `[$name](skill://path)`.
+- Skills use `[$name](/absolute/path/to/SKILL.md)`.
 - Apps use `[$name](app://connector_id)`.
 - Plugins use `[$name](plugin://plugin_name@marketplace_name)`.
 
-Before sending `turn/input`, the executor parses those markdown mentions and builds Responses API-style `input` text elements. This lets Codex receive the actual skill/app/plugin reference instead of only the display text.
+Clicking a skill mention opens its local `SKILL.md` in the right workspace. Before sending `turn/input`, the executor parses those markdown mentions and builds Responses API-style `input` text elements. The legacy `skill:///absolute/path/to/SKILL.md` form remains parseable for persisted messages. This lets Codex receive the actual skill/app/plugin reference instead of only the display text.
 
 Plugins that the user has not selected are not injected into ordinary conversations automatically. Installing a plugin only makes its skills and apps discoverable to the Codex app-server; activation still depends on Codex app-server plugin state and the user's selection in the conversation.
 

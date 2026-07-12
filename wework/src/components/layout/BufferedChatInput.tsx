@@ -1,5 +1,6 @@
 import { memo, useCallback, useState } from 'react'
 import { ChatInput, type ChatInputProps, type ChatSubmitOptions } from '@/components/chat/ChatInput'
+import { parseComposerMentions } from '@/components/chat/composer/composerMentions'
 
 export const BufferedChatInput = memo(function BufferedChatInput({
   value,
@@ -15,7 +16,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const setDraft = useCallback(
     (nextDraft: string) => {
       setDraftState({ sourceValue: value, draft: nextDraft })
-      if (value.includes('skill://') || value.includes('plugin://')) {
+      if (parseComposerMentions(nextDraft).length > 0) {
         onChange(nextDraft)
       }
     },

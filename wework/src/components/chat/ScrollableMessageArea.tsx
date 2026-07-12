@@ -75,6 +75,7 @@ interface ScrollableMessageAreaProps {
   }) => void
   fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenLocalSkillFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
@@ -134,6 +135,7 @@ function areScrollableMessageAreaPropsEqual(
       ? 'fileChangesDiffPreviewDisabledSubtaskId'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
+    previous.onOpenLocalSkillFile !== next.onOpenLocalSkillFile ? 'onOpenLocalSkillFile' : null,
     previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
       ? 'onRequestUserInputSubmit'
       : null,
@@ -188,6 +190,7 @@ function ScrollableMessagePaneContent({
   onOpenFileChangesReview,
   fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
+  onOpenLocalSkillFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
@@ -205,6 +208,7 @@ function ScrollableMessagePaneContent({
   const { t } = useTranslation('common')
   const internalScrollRef = useRef<HTMLDivElement>(null)
   const scrollRef = externalScrollRef ?? internalScrollRef
+  const activeScrollRefRef = useRef(scrollRef)
   const contentRef = useRef<HTMLDivElement>(null)
   const stickyFooterRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -254,6 +258,10 @@ function ScrollableMessagePaneContent({
     () => [currentScrollKey ?? 'none', messageScrollSignature].join(':'),
     [currentScrollKey, messageScrollSignature]
   )
+
+  useLayoutEffect(() => {
+    activeScrollRefRef.current = scrollRef
+  }, [scrollRef])
 
   const clearScheduledScrolls = useCallback(() => {
     scrollTimersRef.current.forEach(timer => clearTimeout(timer))
@@ -324,12 +332,12 @@ function ScrollableMessagePaneContent({
         />
       )
     },
-    [loadTranscriptGap, loadingTranscriptGapKey]
+    [loadTranscriptGap, loadingTranscriptGapKey, scrollRef]
   )
 
   const saveCurrentScrollPosition = useCallback(
     (scrollTop?: number) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       const content = contentRef.current
       if (!element || currentScrollKey === null || messages.length === 0) return
       setConversationScrollSnapshot(
@@ -342,7 +350,7 @@ function ScrollableMessagePaneContent({
 
   const updateScrollState = useCallback(
     (options: { forceSave?: boolean; skipSave?: boolean } = {}) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       if (!element) return
 
       if (messages.length === 0) {
@@ -377,7 +385,7 @@ function ScrollableMessagePaneContent({
 
   const setScrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       if (!element) return
 
       if (typeof element.scrollTo === 'function') {
@@ -400,7 +408,7 @@ function ScrollableMessagePaneContent({
 
   const restoreSavedScrollPosition = useCallback(
     (key: string, options: { clearScheduled?: boolean } = {}) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       const content = contentRef.current
       const savedSnapshot = conversationScrollSnapshots.get(key)
       if (!element || !savedSnapshot) return
@@ -467,7 +475,7 @@ function ScrollableMessagePaneContent({
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       if (!element) return
 
       if (scrollFrameRef.current !== null) {
@@ -750,6 +758,7 @@ function ScrollableMessagePaneContent({
                 onOpenFileChangesReview={onOpenFileChangesReview}
                 fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onOpenLocalSkillFile={onOpenLocalSkillFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}

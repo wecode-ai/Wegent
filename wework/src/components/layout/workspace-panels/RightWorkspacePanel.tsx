@@ -81,6 +81,7 @@ interface RightWorkspacePanelProps {
   currentRuntimeTask: RuntimeTaskAddress | null
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
+  fileWorkspaceTarget?: WorkspaceTarget | null
   preferLocalTerminal?: boolean
   terminalContextTitle?: string | null
   workspaceFileApi: WorkspaceFileApi
@@ -114,6 +115,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   currentRuntimeTask,
   devices,
   workspaceTarget,
+  fileWorkspaceTarget = workspaceTarget,
   preferLocalTerminal = false,
   terminalContextTitle,
   workspaceFileApi,
@@ -371,9 +373,11 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           activeView === 'files' && (
             <FileWorkspacePanel
               key={
-                workspaceTarget ? `${workspaceTarget.deviceId}:${workspaceTarget.path}` : 'empty'
+                fileWorkspaceTarget
+                  ? `${fileWorkspaceTarget.deviceId}:${fileWorkspaceTarget.path}`
+                  : 'empty'
               }
-              target={workspaceTarget}
+              target={fileWorkspaceTarget}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               onAddCodeComment={onAddCodeComment}

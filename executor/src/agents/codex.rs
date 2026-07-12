@@ -4028,7 +4028,7 @@ fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
 
         output.push_str(&text[cursor..start]);
         output.push_str(&visible_mention_text(name, uri));
-        if seen_paths.insert(uri.to_owned()) {
+        if seen_paths.insert(structured_mention_dedup_key(uri)) {
             mentions.push(mention);
         }
         cursor = uri_end + 1;
@@ -4039,13 +4039,30 @@ fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
 }
 
 fn structured_mention_input(name: &str, uri: &str) -> Option<Value> {
-    if uri.starts_with("skill://") {
+    if is_skill_reference(uri) {
         return Some(skill_input(name, uri));
     }
     if uri.starts_with("app://") || uri.starts_with("plugin://") {
         return Some(mention_input(name, uri));
     }
     None
+}
+
+fn structured_mention_dedup_key(uri: &str) -> String {
+    if is_skill_reference(uri) {
+        normalize_skill_path(uri)
+    } else {
+        uri.to_owned()
+    }
+}
+
+fn is_skill_reference(uri: &str) -> bool {
+    uri.starts_with("skill://") || is_absolute_skill_path(uri)
+}
+
+fn is_absolute_skill_path(path: &str) -> bool {
+    let path = std::path::Path::new(path);
+    path.is_absolute() && path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
 }
 
 fn visible_mention_text(name: &str, uri: &str) -> String {
@@ -4737,7 +4754,26 @@ mod tests {
     }
 
     #[test]
-    fn turn_input_expands_skill_markdown_mentions_for_app_server() {
+    fn turn_input_expands_absolute_skill_markdown_mentions_for_app_server() {
+        let input = turn_input(&Value::String(
+            "[$linear](/Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage".to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![
+                json!({"type": "text", "text": "$linear triage", "text_elements": []}),
+                json!({
+                    "type": "skill",
+                    "name": "linear",
+                    "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn turn_input_expands_legacy_skill_markdown_mentions_for_app_server() {
         let input = turn_input(&Value::String(
             "[$linear](skill:///Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage"
                 .to_owned(),
@@ -4751,6 +4787,30 @@ mod tests {
                     "type": "skill",
                     "name": "linear",
                     "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn turn_input_deduplicates_legacy_and_absolute_references_to_the_same_skill() {
+        let input = turn_input(&Value::String(
+            "[$linear](skill:///Users/me/skills/linear/SKILL.md) then [$linear](/Users/me/skills/linear/SKILL.md)"
+                .to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![
+                json!({
+                    "type": "text",
+                    "text": "$linear then $linear",
+                    "text_elements": [],
+                }),
+                json!({
+                    "type": "skill",
+                    "name": "linear",
+                    "path": "/Users/me/skills/linear/SKILL.md",
                 }),
             ]
         );

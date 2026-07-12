@@ -114,6 +114,7 @@ export interface ChatInputProps {
   onClearQueue?: () => void
   onCancelGuidanceMessage?: (id: string) => void
   onClearCodeComments?: () => void
+  onOpenSkillFile?: (path: string) => void
   isStreaming?: boolean
   onPause?: () => void
   onCompactContext?: () => void | Promise<void>
@@ -212,6 +213,7 @@ export function ChatInput({
   onClearQueue,
   onCancelGuidanceMessage,
   onClearCodeComments,
+  onOpenSkillFile,
   isStreaming = false,
   onPause,
   onCompactContext,
@@ -312,6 +314,7 @@ export function ChatInput({
     disabled,
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
+    onOpenSkillFile,
   }
   const errorBanner = error ? (
     <div
