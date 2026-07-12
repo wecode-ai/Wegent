@@ -2169,7 +2169,11 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(sidebar).toHaveStyle({ width: '0px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'true')
-    expect(sidebar).toHaveClass('transition-[width]', 'duration-[300ms]', 'will-change-[width]')
+    expect(sidebar).toHaveClass(
+      'transition-[width,background-color]',
+      'duration-[300ms]',
+      'will-change-[width]'
+    )
     expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-topbar-left-actions')).toContainElement(
       screen.getByTestId('desktop-window-controls')
@@ -2185,7 +2189,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('expand-sidebar-button'))
 
-    expect(screen.getByText('新对话')).toBeInTheDocument()
+    expect(screen.getByText('新建任务')).toBeInTheDocument()
     expect(sidebar).toHaveStyle({ width: '240px' })
     expect(sidebar).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByTestId('desktop-empty-composer-dock')).toHaveClass(
@@ -3659,7 +3663,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass('h-8', 'w-8')
   })
 
-  test('selects a project while toggling its empty task list', async () => {
+  test('toggles an empty project without changing the center selection', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('runtime-chat-empty')).toHaveTextContent('暂无会话')
@@ -3668,7 +3672,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('project-item-button'))
 
-    expect(baseProps.onSelectProject).toHaveBeenCalledWith(1)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
     expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute(
       'aria-hidden',
       'false'
@@ -3679,7 +3683,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-item-button'))
 
     expect(screen.getByTestId('project-local-tasks-panel-1')).toHaveAttribute('aria-hidden', 'true')
-    expect(baseProps.onSelectProject).toHaveBeenCalledTimes(2)
+    expect(baseProps.onSelectProject).not.toHaveBeenCalled()
   })
 
   test('opens the general settings page from the settings menu', async () => {

@@ -145,7 +145,7 @@ export function CloudConnectionSidebarButton({
                 'h-4 w-4',
                 connected && !cloudWorkEmpty
                   ? 'text-primary'
-                  : 'text-[rgb(var(--color-sidebar-text-secondary))]'
+                  : 'text-[rgb(var(--color-sidebar-text-primary))]'
               )}
             />
           )}
@@ -170,8 +170,7 @@ export function CloudConnectionSidebarButton({
           }}
           title={statusTitle}
           className={cn(
-            'flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-0 pl-0 pr-2 text-left text-[13px] font-medium leading-[18px]',
-            connected ? 'text-[rgb(var(--color-sidebar-text-primary))]' : 'text-text-primary',
+            'flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md py-0 pl-0 pr-2 text-left text-[13px] font-normal leading-[18px] text-[rgb(var(--color-sidebar-text-primary))]',
             (needsAttention || cloudWorkUnavailable) && 'text-red-500'
           )}
         >

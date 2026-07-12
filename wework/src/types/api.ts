@@ -341,6 +341,7 @@ export interface CodexMemoryCitation {
 
 export interface RuntimeTaskSummary {
   taskId: string
+  threadId?: string | null
   workspacePath: string
   workspaceKind?: 'workspace' | 'worktree' | 'chat' | string | null
   worktreeId?: string | null
@@ -350,6 +351,9 @@ export interface RuntimeTaskSummary {
   createdAt?: string | number | null
   updatedAt?: string | number | null
   running?: boolean
+  pinned?: boolean
+  pinnedOrder?: number | null
+  sidebarOrder?: number | null
   status?: string | null
   optimistic?: boolean
   error?: string | null
@@ -411,6 +415,26 @@ export interface RuntimeProjectRef {
   name: string
   description?: string | null
   color?: string | null
+  kind?: 'local' | 'remote' | string
+  source?: 'legacy_root' | 'local_project' | 'remote_project' | string
+  stateDeviceId?: string | null
+  roots?: RuntimeProjectRoot[]
+  pinned?: boolean
+  appearance?: RuntimeProjectAppearance | null
+}
+
+export interface RuntimeProjectRoot {
+  kind: 'local' | string
+  path: string
+  label?: string | null
+}
+
+export interface RuntimeProjectAppearance {
+  color?: 'black' | 'blue' | 'green' | 'orange' | 'pink' | 'purple' | 'red' | 'yellow' | string
+  marker?:
+    | { kind: 'icon'; icon: string }
+    | { kind: 'emoji'; emoji: string }
+    | Record<string, unknown>
 }
 
 export interface RuntimeDeviceWorkspace {
@@ -640,6 +664,7 @@ export interface RuntimeWorkspaceOpenRequest {
 
 export interface RuntimeWorkspaceRenameRequest {
   deviceId: string
+  projectKey?: string | null
   workspacePath: string
   runtime: RuntimeName
   name: string
@@ -647,6 +672,7 @@ export interface RuntimeWorkspaceRenameRequest {
 
 export interface RuntimeWorkspaceRemoveRequest {
   deviceId: string
+  projectKey?: string | null
   workspacePath: string
   runtime: RuntimeName
 }
@@ -658,6 +684,47 @@ export interface RuntimeWorkspaceOpenResponse {
   runtime: RuntimeName
   threadId?: string | null
   error?: string | null
+}
+
+export interface RuntimeSidebarMutationResponse {
+  accepted: boolean
+  deviceId: string
+  error?: string | null
+}
+
+export interface RuntimeProjectReorderRequest {
+  deviceId: string
+  projectKey: string
+  beforeProjectKey?: string | null
+  insertAtEnd?: boolean
+}
+
+export interface RuntimeProjectPinRequest {
+  deviceId: string
+  projectKey: string
+  pinned: boolean
+  beforeProjectKey?: string | null
+}
+
+export interface RuntimeProjectAppearanceRequest {
+  deviceId: string
+  projectKey: string
+  appearance?: RuntimeProjectAppearance | null
+}
+
+export interface RuntimeProjectTaskReorderRequest {
+  deviceId: string
+  projectKey: string
+  threadId: string
+  beforeThreadId?: string | null
+  insertAtEnd?: boolean
+}
+
+export interface RuntimeTaskPinRequest {
+  deviceId: string
+  threadId: string
+  pinned: boolean
+  beforeThreadId?: string | null
 }
 
 export interface BindRuntimeTaskIMSessionsRequest {

@@ -1249,6 +1249,12 @@ describe('createLocalAppServices', () => {
             key: 'local:/Users/me/project',
             id: expect.any(Number),
             name: 'Project',
+            kind: 'local',
+            source: 'legacy_root',
+            stateDeviceId: 'device-uuid',
+            roots: [{ kind: 'local', path: '/Users/me/project' }],
+            pinned: false,
+            appearance: null,
           },
           deviceWorkspaces: [
             expect.objectContaining({

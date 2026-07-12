@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{cmp::Reverse, collections::HashMap};
+use std::{
+    cmp::Reverse,
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -23,6 +28,8 @@ pub(crate) struct RuntimeTaskLink {
     pub status: String,
     pub running: bool,
     pub goal_status: Option<String>,
+    #[serde(skip)]
+    pub git_info: Option<Value>,
     pub created_at: i64,
     pub updated_at: i64,
     pub runtime_handle: Value,
@@ -32,6 +39,12 @@ pub(crate) struct RuntimeTaskLink {
     pub list_order: Option<usize>,
     #[serde(skip)]
     pub group_workspace_path: Option<String>,
+    #[serde(skip)]
+    pub group_project_key: Option<String>,
+    #[serde(skip)]
+    pub pinned: bool,
+    #[serde(skip)]
+    pub pinned_order: Option<usize>,
 }
 
 impl RuntimeTaskLink {
@@ -45,6 +58,7 @@ impl RuntimeTaskLink {
             status: "running".to_owned(),
             running: true,
             goal_status: None,
+            git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
             runtime_handle: json!({}),
@@ -52,6 +66,9 @@ impl RuntimeTaskLink {
             ephemeral: false,
             list_order: None,
             group_workspace_path: None,
+            group_project_key: None,
+            pinned: false,
+            pinned_order: None,
         }
     }
 
@@ -72,6 +89,7 @@ impl RuntimeTaskLink {
             status: "active".to_owned(),
             running: false,
             goal_status: None,
+            git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
             runtime_handle,
@@ -79,6 +97,9 @@ impl RuntimeTaskLink {
             ephemeral: false,
             list_order: None,
             group_workspace_path: None,
+            group_project_key: None,
+            pinned: false,
+            pinned_order: None,
         }
     }
 
@@ -101,6 +122,18 @@ impl RuntimeTaskLink {
         let goal_status = local_link
             .as_ref()
             .and_then(|link| link.goal_status.clone());
+        let mut git_info = thread
+            .get("gitInfo")
+            .or_else(|| thread.get("git_info"))
+            .filter(|value| !value.is_null())
+            .cloned()
+            .or_else(|| local_link.as_ref().and_then(|link| link.git_info.clone()));
+        if let (Some(git_info), Some(current_branch)) = (
+            git_info.as_mut().and_then(Value::as_object_mut),
+            git_branch_at_workspace(&workspace_path),
+        ) {
+            git_info.insert("currentBranch".to_owned(), Value::String(current_branch));
+        }
         let status = if local_archived {
             "archived".to_owned()
         } else if goal_active || local_running {
@@ -130,6 +163,7 @@ impl RuntimeTaskLink {
             status,
             running,
             goal_status,
+            git_info,
             created_at: timestamp_ms_field(thread, "createdAt").unwrap_or_else(now_ms),
             updated_at: timestamp_ms_field(thread, "updatedAt").unwrap_or_else(now_ms),
             runtime_handle: local_link
@@ -140,6 +174,9 @@ impl RuntimeTaskLink {
             ephemeral: local_link.as_ref().is_some_and(|link| link.ephemeral),
             list_order: None,
             group_workspace_path: None,
+            group_project_key: None,
+            pinned: false,
+            pinned_order: None,
         }
     }
 
@@ -153,6 +190,7 @@ impl RuntimeTaskLink {
             status: self.status.clone(),
             running: self.running,
             goal_status: self.goal_status.clone(),
+            git_info: self.git_info.clone(),
             created_at: self.created_at,
             updated_at: self.updated_at,
             runtime_handle: Value::Object(runtime_handle_list_summary_map(&self.runtime_handle)),
@@ -160,6 +198,9 @@ impl RuntimeTaskLink {
             ephemeral: self.ephemeral,
             list_order: self.list_order,
             group_workspace_path: self.group_workspace_path.clone(),
+            group_project_key: self.group_project_key.clone(),
+            pinned: self.pinned,
+            pinned_order: self.pinned_order,
         }
     }
 }
@@ -189,6 +230,27 @@ fn is_terminal_status(status: &str) -> bool {
     )
 }
 
+fn git_branch_at_workspace(workspace_path: &str) -> Option<String> {
+    let workspace = Path::new(workspace_path);
+    let dot_git = workspace.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        let pointer = fs::read_to_string(&dot_git).ok()?;
+        let path = pointer.trim().strip_prefix("gitdir:")?.trim();
+        let path = PathBuf::from(path);
+        if path.is_absolute() {
+            path
+        } else {
+            workspace.join(path)
+        }
+    };
+    let head = fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    head.trim()
+        .strip_prefix("ref: refs/heads/")
+        .map(str::to_owned)
+}
+
 impl Default for RuntimeTaskLink {
     fn default() -> Self {
         Self {
@@ -200,6 +262,7 @@ impl Default for RuntimeTaskLink {
             status: "active".to_owned(),
             running: false,
             goal_status: None,
+            git_info: None,
             created_at: now_ms(),
             updated_at: now_ms(),
             runtime_handle: json!({}),
@@ -207,6 +270,9 @@ impl Default for RuntimeTaskLink {
             ephemeral: false,
             list_order: None,
             group_workspace_path: None,
+            group_project_key: None,
+            pinned: false,
+            pinned_order: None,
         }
     }
 }
@@ -221,6 +287,12 @@ pub(crate) struct RuntimeWorkspaceLink {
     pub updated_at: i64,
     pub workspace_source: String,
     pub remote_host_id: Option<String>,
+    pub project_key: String,
+    pub project_kind: String,
+    pub project_source: String,
+    pub project_roots: Vec<String>,
+    pub project_pinned: bool,
+    pub project_appearance: Option<Value>,
 }
 
 impl Default for RuntimeWorkspaceLink {
@@ -233,6 +305,12 @@ impl Default for RuntimeWorkspaceLink {
             updated_at: now_ms(),
             workspace_source: "local".to_owned(),
             remote_host_id: None,
+            project_key: String::new(),
+            project_kind: "local".to_owned(),
+            project_source: "legacy_root".to_owned(),
+            project_roots: Vec::new(),
+            project_pinned: false,
+            project_appearance: None,
         }
     }
 }
@@ -307,6 +385,10 @@ pub(crate) fn workspace_response(
             let remote_host_id = workspace
                 .as_ref()
                 .and_then(|workspace| workspace.remote_host_id.clone());
+            let project_key = workspace
+                .as_ref()
+                .map(|workspace| workspace.project_key.clone())
+                .filter(|value| !value.is_empty());
             let mut workspace_json = json!({
                 "workspacePath": workspace_path,
                 "workspaceKind": infer_workspace_kind(&workspace_path),
@@ -318,6 +400,18 @@ pub(crate) fn workspace_response(
                     .collect::<Vec<_>>(),
                 "updatedAt": updated_at,
             });
+            if let Some(workspace) = workspace.as_ref() {
+                if let Some(project_key) = project_key {
+                    workspace_json["projectKey"] = Value::String(project_key);
+                }
+                workspace_json["projectKind"] = Value::String(workspace.project_kind.clone());
+                workspace_json["projectSource"] = Value::String(workspace.project_source.clone());
+                workspace_json["projectRoots"] = json!(workspace.project_roots);
+                workspace_json["projectPinned"] = Value::Bool(workspace.project_pinned);
+                if let Some(appearance) = workspace.project_appearance.clone() {
+                    workspace_json["projectAppearance"] = appearance;
+                }
+            }
             if let Some(remote_host_id) = remote_host_id {
                 workspace_json["remoteHostId"] = Value::String(remote_host_id);
             }
@@ -454,6 +548,19 @@ fn local_task_json(link: RuntimeTaskLink) -> Value {
     }
     task.insert("runtimeHandle".to_owned(), Value::Object(runtime_handle));
     task.insert("running".to_owned(), Value::Bool(link.running));
+    task.insert("pinned".to_owned(), Value::Bool(link.pinned));
+    if let Some(order) = link.pinned_order {
+        task.insert("pinnedOrder".to_owned(), json!(order));
+    }
+    if let Some(thread_id) = link.thread_id.clone() {
+        task.insert("threadId".to_owned(), Value::String(thread_id));
+    }
+    if let Some(order) = link.list_order {
+        task.insert("sidebarOrder".to_owned(), json!(order));
+    }
+    if let Some(git_info) = link.git_info {
+        task.insert("gitInfo".to_owned(), git_info);
+    }
     task.insert("status".to_owned(), Value::String(link.status));
     task.insert(
         "createdAt".to_owned(),
@@ -654,6 +761,65 @@ mod tests {
         assert_eq!(handle["threadId"], "thread-1");
         assert_eq!(handle["modelSelection"]["model"], "gpt-5.5");
         assert!(handle.get("messages").is_none());
+    }
+
+    #[test]
+    fn workspace_response_preserves_thread_git_info_for_hover_cards() {
+        let task = RuntimeTaskLink::from_thread_metadata(
+            &json!({
+                "id": "thread-1",
+                "cwd": "/workspace/project",
+                "gitInfo": {
+                    "branch": "codex/hover-details",
+                    "originUrl": "git@github.com:wecode-ai/Wegent.git"
+                }
+            }),
+            None,
+            "/workspace/project".to_owned(),
+        );
+
+        let workspaces = workspace_response(vec![task], Vec::new());
+
+        assert_eq!(
+            workspaces[0]["tasks"][0]["gitInfo"]["branch"],
+            "codex/hover-details"
+        );
+        assert_eq!(
+            workspaces[0]["tasks"][0]["gitInfo"]["originUrl"],
+            "git@github.com:wecode-ai/Wegent.git"
+        );
+        let persisted = serde_json::to_value(RuntimeTaskLink {
+            git_info: Some(json!({"branch": "codex/hover-details"})),
+            ..RuntimeTaskLink::default()
+        })
+        .expect("runtime task link serialization");
+        assert!(persisted.get("git_info").is_none());
+    }
+
+    #[test]
+    fn reads_current_branch_from_worktree_git_pointer() {
+        let root = std::env::temp_dir().join(format!(
+            "wegent-runtime-hover-branch-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let workspace = root.join("workspace");
+        let git_dir = root.join("git-dir");
+        fs::create_dir_all(&workspace).expect("workspace directory");
+        fs::create_dir_all(&git_dir).expect("git directory");
+        fs::write(workspace.join(".git"), "gitdir: ../git-dir\n").expect("git pointer");
+        fs::write(
+            git_dir.join("HEAD"),
+            "ref: refs/heads/codex/hover-details\n",
+        )
+        .expect("git head");
+
+        assert_eq!(
+            git_branch_at_workspace(&workspace.display().to_string()).as_deref(),
+            Some("codex/hover-details")
+        );
+
+        fs::remove_dir_all(root).expect("temporary git workspace cleanup");
     }
 
     #[test]
