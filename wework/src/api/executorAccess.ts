@@ -103,6 +103,13 @@ export interface ExecutorRuntimeClient {
   removeRuntimeWorkspace: (
     data: RuntimeWorkspaceRemoveRequest
   ) => Promise<RuntimeWorkspaceOpenResponse>
+  reorderRuntimeProjects: ReturnType<typeof createRuntimeWorkApi>['reorderRuntimeProjects']
+  setRuntimeProjectPinned: ReturnType<typeof createRuntimeWorkApi>['setRuntimeProjectPinned']
+  setRuntimeProjectAppearance: ReturnType<
+    typeof createRuntimeWorkApi
+  >['setRuntimeProjectAppearance']
+  reorderRuntimeProjectTasks: ReturnType<typeof createRuntimeWorkApi>['reorderRuntimeProjectTasks']
+  setRuntimeTaskPinned: ReturnType<typeof createRuntimeWorkApi>['setRuntimeTaskPinned']
   archiveRuntimeTask: ReturnType<typeof createRuntimeWorkApi>['archiveRuntimeTask']
   renameRuntimeTask: ReturnType<typeof createRuntimeWorkApi>['renameRuntimeTask']
   listArchivedConversations: ReturnType<typeof createRuntimeWorkApi>['listArchivedConversations']

@@ -857,6 +857,13 @@ export function WorkbenchProvider({
   const stableListGitBranches = useStableEvent(projectActions.listGitBranches)
   const stableUpdateProjectName = useStableEvent(projectActions.updateProjectName)
   const stableRemoveProject = useStableEvent(projectActions.removeProject)
+  const stableReorderRuntimeProjects = useStableEvent(projectActions.reorderRuntimeProjects)
+  const stableSetRuntimeProjectPinned = useStableEvent(projectActions.setRuntimeProjectPinned)
+  const stableSetRuntimeProjectAppearance = useStableEvent(
+    projectActions.setRuntimeProjectAppearance
+  )
+  const stableReorderRuntimeProjectTasks = useStableEvent(projectActions.reorderRuntimeProjectTasks)
+  const stableSetRuntimeTaskPinned = useStableEvent(projectActions.setRuntimeTaskPinned)
   const stableGetDeviceHomeDirectory = useStableEvent(projectActions.getDeviceHomeDirectory)
   const stableGetProjectWorkspaceRoot = useStableEvent(projectActions.getProjectWorkspaceRoot)
   const stableListDeviceDirectories = useStableEvent(projectActions.listDeviceDirectories)
@@ -1163,6 +1170,11 @@ export function WorkbenchProvider({
     listGitBranches: projectActions.listGitBranches,
     updateProjectName: projectActions.updateProjectName,
     removeProject: projectActions.removeProject,
+    reorderRuntimeProjects: projectActions.reorderRuntimeProjects,
+    setRuntimeProjectPinned: projectActions.setRuntimeProjectPinned,
+    setRuntimeProjectAppearance: projectActions.setRuntimeProjectAppearance,
+    reorderRuntimeProjectTasks: projectActions.reorderRuntimeProjectTasks,
+    setRuntimeTaskPinned: projectActions.setRuntimeTaskPinned,
     getDeviceHomeDirectory: projectActions.getDeviceHomeDirectory,
     getProjectWorkspaceRoot: projectActions.getProjectWorkspaceRoot,
     listDeviceDirectories: projectActions.listDeviceDirectories,
@@ -1240,6 +1252,11 @@ export function WorkbenchProvider({
       listGitBranches: stableListGitBranches,
       updateProjectName: stableUpdateProjectName,
       removeProject: stableRemoveProject,
+      reorderRuntimeProjects: stableReorderRuntimeProjects,
+      setRuntimeProjectPinned: stableSetRuntimeProjectPinned,
+      setRuntimeProjectAppearance: stableSetRuntimeProjectAppearance,
+      reorderRuntimeProjectTasks: stableReorderRuntimeProjectTasks,
+      setRuntimeTaskPinned: stableSetRuntimeTaskPinned,
       getDeviceHomeDirectory: stableGetDeviceHomeDirectory,
       getProjectWorkspaceRoot: stableGetProjectWorkspaceRoot,
       listDeviceDirectories: stableListDeviceDirectories,
@@ -1314,6 +1331,8 @@ export function WorkbenchProvider({
       stableRefreshWorkLists,
       stableRememberExecutionDevice,
       stableRemoveProject,
+      stableReorderRuntimeProjects,
+      stableReorderRuntimeProjectTasks,
       stableRenameRuntimeTask,
       stableRetryFailedMessage,
       stableRevertTurnFileChanges,
@@ -1325,6 +1344,9 @@ export function WorkbenchProvider({
       stableSendRuntimePaneGuidance,
       stableSendRuntimePaneMessage,
       stableSetRuntimeGoal,
+      stableSetRuntimeProjectAppearance,
+      stableSetRuntimeProjectPinned,
+      stableSetRuntimeTaskPinned,
       stableSetProjectExecutionMode,
       stableSetWorkbenchError,
       stableSetProjectWorktreeBranch,

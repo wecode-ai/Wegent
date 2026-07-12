@@ -547,6 +547,21 @@ export function createHybridWorkbenchServices(
     removeRuntimeWorkspace(data: RuntimeWorkspaceRemoveRequest) {
       return runtimeApi(data.deviceId).removeRuntimeWorkspace(data)
     },
+    reorderRuntimeProjects(data) {
+      return runtimeApi(data.deviceId).reorderRuntimeProjects(data)
+    },
+    setRuntimeProjectPinned(data) {
+      return runtimeApi(data.deviceId).setRuntimeProjectPinned(data)
+    },
+    setRuntimeProjectAppearance(data) {
+      return runtimeApi(data.deviceId).setRuntimeProjectAppearance(data)
+    },
+    reorderRuntimeProjectTasks(data) {
+      return runtimeApi(data.deviceId).reorderRuntimeProjectTasks(data)
+    },
+    setRuntimeTaskPinned(data) {
+      return runtimeApi(data.deviceId).setRuntimeTaskPinned(data)
+    },
     getWorktreeSettings(data) {
       return runtimeApi(data.deviceId).getWorktreeSettings(data)
     },

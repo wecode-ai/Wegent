@@ -15,14 +15,15 @@
   --color-border: 224 224 224;
   --color-muted: 245 245 245;
   --color-sidebar: 229 229 231 / 0.72;
+  --color-sidebar-unfocused: 234 234 236 / 0.64;
   --color-sidebar-active: 222 223 226;
   --color-sidebar-hover: 255 255 255 / 0.7;
   --color-sidebar-marked: 255 244 214;
   --color-sidebar-marked-hover: 255 232 163;
   --color-sidebar-marked-accent: 166 106 0;
-  --color-sidebar-text-primary: 36 40 45;
-  --color-sidebar-text-secondary: 82 89 98;
-  --color-sidebar-text-muted: 136 143 152;
+  --color-sidebar-text-primary: 56 58 61;
+  --color-sidebar-text-secondary: 87 88 91;
+  --color-sidebar-text-muted: 128 129 131;
   --color-mobile-drawer: 238 242 247;
   --color-popover: 255 255 255;
   --color-code-bg: 243 244 246;
@@ -58,14 +59,15 @@
   --color-border: 55 61 70;
   --color-muted: 38 42 48;
   --color-sidebar: 31 35 41 / 0.82;
+  --color-sidebar-unfocused: 35 38 44 / 0.72;
   --color-sidebar-active: 52 58 66;
   --color-sidebar-hover: 255 255 255 / 0.08;
   --color-sidebar-marked: 82 64 24;
   --color-sidebar-marked-hover: 105 83 31;
   --color-sidebar-marked-accent: 245 180 52;
-  --color-sidebar-text-primary: 232 238 246;
-  --color-sidebar-text-secondary: 181 191 205;
-  --color-sidebar-text-muted: 126 138 153;
+  --color-sidebar-text-primary: 221 222 223;
+  --color-sidebar-text-secondary: 188 189 191;
+  --color-sidebar-text-muted: 143 145 148;
   --color-mobile-drawer: 24 39 58;
   --color-popover: 28 31 36;
   --color-code-bg: 15 23 42;
@@ -78,6 +80,7 @@
 
 [data-sidebar-translucent='false'] {
   --color-sidebar: var(--color-bg-surface);
+  --color-sidebar-unfocused: var(--color-bg-surface);
 }
 
 * {

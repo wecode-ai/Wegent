@@ -34,7 +34,10 @@ use crate::{
 use super::{
     codex_global_state::{
         open_codex_global_project, register_codex_global_thread_workspace_root,
-        remove_codex_global_project, rename_codex_global_project, CodexGlobalProjectIndex,
+        remove_codex_global_project, rename_codex_global_project,
+        reorder_codex_global_project_thread, reorder_codex_global_projects,
+        set_codex_global_project_appearance, set_codex_global_project_pinned,
+        set_codex_global_thread_pinned, CodexGlobalProjectIndex,
     },
     codex_notifications::codex_notification,
     codex_rollout::{
@@ -380,6 +383,13 @@ impl RuntimeWorkRpcHandler {
             "runtime.workspaces.open" => self.open_workspace(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
+            "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
+            "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
+            "runtime.sidebar.projects.appearance" => {
+                self.set_sidebar_project_appearance(payload).await
+            }
+            "runtime.sidebar.tasks.reorder" => self.reorder_sidebar_project_task(payload).await,
+            "runtime.sidebar.tasks.pin" => self.pin_sidebar_task(payload).await,
             unsupported => Err(AppIpcError::new(
                 "unsupported_method",
                 format!("Unsupported runtime RPC method: {unsupported}"),
@@ -2276,7 +2286,9 @@ impl RuntimeWorkRpcHandler {
         let label = string_field(&payload, "label")
             .or_else(|| string_field(&payload, "name"))
             .ok_or_else(|| AppIpcError::new("bad_request", "label is required"))?;
-        let project = rename_codex_global_project(&workspace_path, &label)
+        let project_key =
+            string_field(&payload, "projectKey").or_else(|| string_field(&payload, "project_key"));
+        let project = rename_codex_global_project(project_key.as_deref(), &workspace_path, &label)
             .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
 
         Ok(json!({
@@ -2297,8 +2309,11 @@ impl RuntimeWorkRpcHandler {
         }
         let workspace_path = workspace_path(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
-        let workspace_path = remove_codex_global_project(&workspace_path)
-            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        let project_key =
+            string_field(&payload, "projectKey").or_else(|| string_field(&payload, "project_key"));
+        let workspace_path =
+            remove_codex_global_project(project_key.as_deref(), &workspace_path)
+                .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
 
         Ok(json!({
             "success": true,
@@ -2306,6 +2321,78 @@ impl RuntimeWorkRpcHandler {
             "workspacePath": workspace_path,
             "runtime": "codex",
         }))
+    }
+
+    async fn reorder_sidebar_projects(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let before_project_key = string_field(&payload, "beforeProjectKey")
+            .or_else(|| string_field(&payload, "before_project_key"));
+        let insert_at_end = bool_field(&payload, "insertAtEnd")
+            .or_else(|| bool_field(&payload, "insert_at_end"))
+            .unwrap_or(false);
+        reorder_codex_global_projects(&project_key, before_project_key.as_deref(), insert_at_end)
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn pin_sidebar_project(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let pinned = bool_field(&payload, "pinned")
+            .ok_or_else(|| AppIpcError::new("bad_request", "pinned is required"))?;
+        let before_project_key = string_field(&payload, "beforeProjectKey")
+            .or_else(|| string_field(&payload, "before_project_key"));
+        set_codex_global_project_pinned(&project_key, pinned, before_project_key.as_deref())
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn set_sidebar_project_appearance(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let appearance = payload.get("appearance").cloned().filter(Value::is_object);
+        set_codex_global_project_appearance(&project_key, appearance)
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn reorder_sidebar_project_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let thread_id = string_field(&payload, "threadId")
+            .or_else(|| string_field(&payload, "thread_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?;
+        let before_thread_id = string_field(&payload, "beforeThreadId")
+            .or_else(|| string_field(&payload, "before_thread_id"));
+        let insert_at_end = bool_field(&payload, "insertAtEnd")
+            .or_else(|| bool_field(&payload, "insert_at_end"))
+            .unwrap_or(false);
+        reorder_codex_global_project_thread(
+            &project_key,
+            &thread_id,
+            before_thread_id.as_deref(),
+            insert_at_end,
+        )
+        .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn pin_sidebar_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let thread_id = string_field(&payload, "threadId")
+            .or_else(|| string_field(&payload, "thread_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?;
+        let pinned = bool_field(&payload, "pinned")
+            .ok_or_else(|| AppIpcError::new("bad_request", "pinned is required"))?;
+        let before_thread_id = string_field(&payload, "beforeThreadId")
+            .or_else(|| string_field(&payload, "before_thread_id"));
+        set_codex_global_thread_pinned(&thread_id, pinned, before_thread_id.as_deref())
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
     }
 
     async fn prepare_fork_transfer(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -3172,6 +3259,27 @@ impl RuntimeWorkRpcHandler {
         links: Vec<RuntimeTaskLink>,
         project_index: &CodexGlobalProjectIndex,
     ) -> Vec<RuntimeTaskLink> {
+        let links = links
+            .into_iter()
+            .map(|mut link| {
+                if !is_codex_runtime(&link.runtime) {
+                    return link;
+                }
+
+                if let Some(thread_id) = link.thread_id.as_deref() {
+                    link.pinned = project_index.is_pinned_thread(thread_id);
+                    link.pinned_order = project_index.pinned_thread_order(thread_id);
+                    if infer_workspace_kind(&link.workspace_path) == "chat" {
+                        link.list_order = Some(project_index.thread_sort_order(
+                            "chats",
+                            thread_id,
+                            link.list_order.unwrap_or(usize::MAX / 2),
+                        ));
+                    }
+                }
+                link
+            })
+            .collect::<Vec<_>>();
         let input_count = links.len();
         let project_count = project_index.projects().len();
         let project_roots = project_index
@@ -3314,8 +3422,17 @@ impl RuntimeWorkRpcHandler {
                 "group_path"
             };
             let project_workspace_path = project.workspace_path.clone();
+            let project_key = project.key.clone();
             let project_name = project.name.clone();
             link.group_workspace_path = Some(project_workspace_path.clone());
+            link.group_project_key = Some(project_key.clone());
+            if let Some(thread_id) = link.thread_id.as_deref() {
+                link.list_order = Some(project_index.thread_sort_order(
+                    &project_key,
+                    thread_id,
+                    link.list_order.unwrap_or(usize::MAX / 2),
+                ));
+            }
             kept_project += 1;
             log_runtime_project_filter_item(
                 &link,
@@ -4034,14 +4151,27 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
     project_index
         .projects()
         .iter()
-        .map(|project| RuntimeWorkspaceLink {
-            workspace_path: project.workspace_path.clone(),
-            title: project.name.clone(),
-            runtime: "codex".to_owned(),
-            created_at: now,
-            updated_at: now,
-            workspace_source: project.source.clone(),
-            remote_host_id: project.remote_host_id.clone(),
+        .flat_map(|project| {
+            let roots = if project.roots.is_empty() {
+                vec![project.workspace_path.clone()]
+            } else {
+                project.roots.clone()
+            };
+            roots.into_iter().map(|root| RuntimeWorkspaceLink {
+                workspace_path: root,
+                title: project.name.clone(),
+                runtime: "codex".to_owned(),
+                created_at: now,
+                updated_at: now,
+                workspace_source: project.kind.clone(),
+                remote_host_id: project.remote_host_id.clone(),
+                project_key: project.key.clone(),
+                project_kind: project.kind.clone(),
+                project_source: project.source.clone(),
+                project_roots: project.roots.clone(),
+                project_pinned: project.pinned,
+                project_appearance: project.appearance.clone(),
+            })
         })
         .collect()
 }
@@ -5258,6 +5388,14 @@ fn task_action_success(link: &RuntimeTaskLink) -> Value {
         "taskId": link.local_task_id,
         "workspacePath": link.workspace_path,
         "runtime": link.runtime,
+    })
+}
+
+fn sidebar_mutation_response(device_id: &str) -> Value {
+    json!({
+        "success": true,
+        "accepted": true,
+        "deviceId": device_id,
     })
 }
 

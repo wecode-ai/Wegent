@@ -29,6 +29,11 @@ import type {
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
+  RuntimeProjectAppearanceRequest,
+  RuntimeProjectPinRequest,
+  RuntimeProjectReorderRequest,
+  RuntimeProjectTaskReorderRequest,
+  RuntimeTaskPinRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeWorkSearchRequest,
@@ -213,6 +218,11 @@ export interface WorkbenchContextValue {
   listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   updateProjectName: (projectId: number, name: string) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
+  reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
+  setRuntimeProjectPinned: (data: RuntimeProjectPinRequest) => Promise<void>
+  setRuntimeProjectAppearance: (data: RuntimeProjectAppearanceRequest) => Promise<void>
+  reorderRuntimeProjectTasks: (data: RuntimeProjectTaskReorderRequest) => Promise<void>
+  setRuntimeTaskPinned: (data: RuntimeTaskPinRequest) => Promise<void>
   getDeviceHomeDirectory: (deviceId: string) => Promise<string>
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>

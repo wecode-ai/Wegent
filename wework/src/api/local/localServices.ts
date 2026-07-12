@@ -43,6 +43,12 @@ import type {
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
+  RuntimeProjectAppearanceRequest,
+  RuntimeProjectPinRequest,
+  RuntimeProjectReorderRequest,
+  RuntimeProjectTaskReorderRequest,
+  RuntimeSidebarMutationResponse,
+  RuntimeTaskPinRequest,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
   RuntimeWorktreeDeleteRequest,
@@ -501,6 +507,7 @@ function normalizeRuntimeTaskSummary(
   const normalized = {
     ...taskRecord,
     taskId,
+    threadId: stringValue(taskRecord.threadId) ?? stringValue(taskRecord.thread_id) ?? undefined,
     ...(taskId ? { taskId } : {}),
     workspacePath,
     title: stringValue(taskRecord.title) ?? taskId ?? String(taskId),
@@ -1369,6 +1376,10 @@ function normalizeRuntimeWorkDeviceId(
     ...runtimeWork,
     projects: runtimeWork.projects.map(project => ({
       ...project,
+      project: {
+        ...project.project,
+        stateDeviceId: project.project.stateDeviceId ?? localDeviceId,
+      },
       deviceWorkspaces: project.deviceWorkspaces.map(normalizeWorkspace),
     })),
     chats: runtimeWork.chats.map(normalizeWorkspace),
@@ -1426,6 +1437,7 @@ function adaptRuntimeWorkListResponse(
         }))
       : []
   const projects: RuntimeWorkListResponse['projects'] = []
+  const projectsByKey = new Map<string, RuntimeWorkListResponse['projects'][number]>()
   const chats: RuntimeWorkListResponse['chats'] = []
   let totalTasks = 0
   const localWorkspaceLabels = new Set<string>()
@@ -1500,15 +1512,46 @@ function adaptRuntimeWorkListResponse(
       continue
     }
 
-    projects.push({
+    const projectKey =
+      stringValue(workspace.projectKey) ??
+      stringValue(workspace.project_key) ??
+      `local:${workspacePath}`
+    const existingProject = projectsByKey.get(projectKey)
+    if (existingProject) {
+      existingProject.deviceWorkspaces.push(deviceWorkspace)
+      existingProject.totalTasks = (existingProject.totalTasks ?? 0) + tasks.length
+      continue
+    }
+    const rawRoots = Array.isArray(workspace.projectRoots)
+      ? workspace.projectRoots
+      : Array.isArray(workspace.project_roots)
+        ? workspace.project_roots
+        : [workspacePath]
+    const projectWork: RuntimeWorkListResponse['projects'][number] = {
       project: {
-        key: `local:${workspacePath}`,
-        id: stableLocalId(workspacePath),
+        key: projectKey,
+        id: stableLocalId(`${localDeviceId}\0${projectKey}`),
         name: label,
+        kind: stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local',
+        source:
+          stringValue(workspace.projectSource) ??
+          stringValue(workspace.project_source) ??
+          'legacy_root',
+        stateDeviceId: localDeviceId,
+        roots: rawRoots
+          .map(root => stringValue(root))
+          .filter((root): root is string => Boolean(root))
+          .map(path => ({ kind: 'local', path })),
+        pinned: workspace.projectPinned === true || workspace.project_pinned === true,
+        appearance: (workspace.projectAppearance ?? workspace.project_appearance ?? null) as
+          | RuntimeWorkListResponse['projects'][number]['project']['appearance']
+          | null,
       },
       deviceWorkspaces: [deviceWorkspace],
       totalTasks: tasks.length,
-    })
+    }
+    projectsByKey.set(projectKey, projectWork)
+    projects.push(projectWork)
   }
 
   return { projects, chats, totalTasks }
@@ -1712,6 +1755,29 @@ export function createRuntimeWorkApiFromIpc(
       data: RuntimeWorkspaceRemoveRequest
     ): Promise<RuntimeWorkspaceOpenResponse> {
       return requestWithLocalDevice('runtime.workspaces.remove', data)
+    },
+    reorderRuntimeProjects(
+      data: RuntimeProjectReorderRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.reorder', data)
+    },
+    setRuntimeProjectPinned(
+      data: RuntimeProjectPinRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.pin', data)
+    },
+    setRuntimeProjectAppearance(
+      data: RuntimeProjectAppearanceRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.projects.appearance', data)
+    },
+    reorderRuntimeProjectTasks(
+      data: RuntimeProjectTaskReorderRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.tasks.reorder', data)
+    },
+    setRuntimeTaskPinned(data: RuntimeTaskPinRequest): Promise<RuntimeSidebarMutationResponse> {
+      return requestWithLocalDevice('runtime.sidebar.tasks.pin', data)
     },
     getWorktreeSettings(data: { deviceId: string }): Promise<RuntimeWorktreeSettings> {
       return requestWithLocalDevice('runtime.worktrees.settings.get', data)
