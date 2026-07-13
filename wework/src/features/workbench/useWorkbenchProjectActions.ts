@@ -10,6 +10,7 @@ import {
   loadProjectEnvironmentDiff,
   pushProjectChanges,
   type EnvironmentDiffMode,
+  type EnvironmentInfoLoadOptions,
 } from '@/api/environment'
 import type { ExecutorClient } from '@/api/executorAccess'
 import type {
@@ -247,8 +248,11 @@ export function useWorkbenchProjectActions({
   )
 
   const loadEnvironmentInfo = useCallback(
-    (project: ProjectWithTasks | null, workspaceTarget?: WorkspaceTarget | null) =>
-      loadProjectEnvironment(executorClient.commands, project, workspaceTarget),
+    (
+      project: ProjectWithTasks | null,
+      workspaceTarget?: WorkspaceTarget | null,
+      options?: EnvironmentInfoLoadOptions
+    ) => loadProjectEnvironment(executorClient.commands, project, workspaceTarget, options),
     [executorClient]
   )
 

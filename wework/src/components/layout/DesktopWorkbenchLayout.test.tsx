@@ -6115,6 +6115,100 @@ describe('DesktopWorkbenchLayout', () => {
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
   })
 
+  test('refreshes environment info after a runtime task finishes', async () => {
+    const onLoadEnvironmentInfo = vi
+      .fn()
+      .mockResolvedValueOnce({
+        additions: '+1',
+        deletions: '-0',
+        executionTarget: 'local' as const,
+        deviceId: 'runtime-device',
+        branchName: 'runtime/worktree',
+      })
+      .mockResolvedValueOnce({
+        additions: '+8',
+        deletions: '-2',
+        executionTarget: 'local' as const,
+        deviceId: 'runtime-device',
+        branchName: 'runtime/worktree',
+      })
+    const runtimeProject = {
+      id: 12,
+      name: 'runtime-project',
+      tasks: [],
+      config: {
+        mode: 'workspace' as const,
+        execution: { targetType: 'local' as const, deviceId: 'runtime-device' },
+      },
+    }
+    const runtimeTask = {
+      deviceId: 'runtime-device',
+      workspacePath: '/workspace/project-alpha',
+      taskId: 'runtime-1',
+    }
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: runtimeProject.id, name: runtimeProject.name },
+          deviceWorkspaces: [
+            {
+              id: 91,
+              deviceId: 'runtime-device',
+              workspacePath: '/workspace/project-alpha',
+              available: true,
+              mapped: true,
+              tasks: [
+                {
+                  taskId: 'runtime-1',
+                  workspacePath: '/workspace/worktrees/8/project-alpha',
+                  title: 'Runtime task',
+                  runtime: 'codex',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const state = {
+      ...baseProps.state,
+      currentProject: null,
+      currentRuntimeTask: runtimeTask,
+      projects: [runtimeProject],
+      runtimeWork,
+    }
+    const { rerender } = render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={state}
+        currentRuntimeTaskRunning
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+      />
+    )
+
+    await waitFor(() => expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1))
+
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={state}
+        currentRuntimeTaskRunning={false}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+      />
+    )
+
+    await waitFor(() => {
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(2)
+      expect(onLoadEnvironmentInfo).toHaveBeenLastCalledWith(
+        runtimeProject,
+        expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
+        { force: true }
+      )
+    })
+  })
+
   test('loads environment info automatically for the current project workspace', async () => {
     const onLoadEnvironmentInfo = vi.fn().mockResolvedValue({
       additions: '+4',

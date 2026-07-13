@@ -72,6 +72,8 @@ In desktop Wework, open **Environment info** in the upper-right corner, then sel
 
 **Environment info** shows the cumulative changed-file and line counts for the current branch relative to its primary branch. Select the change count to review the full diff between those branches, so committed changes that have not yet been merged are included as well. Untracked files remain included in the counts and review result.
 
+While a task is running, Wework refreshes the change counts periodically in the background and refreshes them immediately when the task finishes. Manually reopening or refreshing **Environment info** reads the latest Git state from the workspace instead of continuing to show a briefly cached count.
+
 - **Commit** stages all tracked and untracked changes and creates a local commit.
 - **Commit and push** creates a local commit, then pushes the current branch.
 - **Push** pushes the current branch without creating another commit.

@@ -23,6 +23,8 @@ const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
+const GIT_SEED_NAME = 'README.md'
+const GIT_SEED_CONTENT = '# Desktop E2E workspace\n'
 const MODEL_API_KEY = 'wework-e2e-test-key'
 const MODEL_PROVIDER_ID = 'wework-e2e'
 const MODEL_ID = 'gpt-5.4'
@@ -314,6 +316,9 @@ class DesktopE2EServer {
     this.modelStage = 'initial'
     this.toolLessPrewarmHandled = false
     this.toolOutput = null
+    this.initialToolRelease = new Promise(resolvePromise => {
+      this.releaseInitialTool = resolvePromise
+    })
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
   }
@@ -367,6 +372,10 @@ class DesktopE2EServer {
     return new Promise(resolvePromise => {
       this.scenarioWaiters.set(scenario, resolvePromise)
     })
+  }
+
+  releaseInitialToolExecution() {
+    this.releaseInitialTool()
   }
 
   async command(action, selector, options = {}) {
@@ -496,6 +505,7 @@ class DesktopE2EServer {
       )
       const tool = selectShellTool(body, this.workspacePath)
       this.modelStage = 'awaiting_tool_output'
+      await this.initialToolRelease
       this.writeSse(response, [
         responseCreated(responseId),
         functionCall('wework-e2e-tool-call', tool.name, tool.arguments),
@@ -691,6 +701,16 @@ async function main() {
     mkdir(workspacePath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
+  await writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT)
+  await runChecked('git', ['init'], { cwd: workspacePath })
+  await runChecked('git', ['config', 'user.name', 'Wework Desktop E2E'], { cwd: workspacePath })
+  await runChecked('git', ['config', 'user.email', 'desktop-e2e@wework.local'], {
+    cwd: workspacePath,
+  })
+  await runChecked('git', ['add', GIT_SEED_NAME], { cwd: workspacePath })
+  await runChecked('git', ['commit', '-m', 'test: initialize desktop e2e workspace'], {
+    cwd: workspacePath,
+  })
 
   const control = new DesktopE2EServer(workspacePath)
   let app
@@ -782,10 +802,41 @@ async function main() {
     await selectE2EModel(control)
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
+    await control.command('waitFor', '[data-testid="environment-info-button"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const environmentSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (!environmentSnapshot.testIds.includes('environment-changes-button')) {
+      await control.command('click', '[data-testid="environment-info-button"]')
+    }
+    await control.command('waitFor', '[data-testid="environment-changes-button"]', {
+      text: '+0',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const cleanEnvironmentText = await control.command(
+      'getText',
+      '[data-testid="environment-changes-button"]'
+    )
+    assert.match(cleanEnvironmentText, /\+0\s*-0/, 'The clean workspace diff was not displayed')
+
+    control.releaseInitialToolExecution()
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+    await control.command('waitFor', '[data-testid="environment-changes-button"]', {
+      text: '+1',
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const changedEnvironmentText = await control.command(
+      'getText',
+      '[data-testid="environment-changes-button"]'
+    )
+    assert.match(
+      changedEnvironmentText,
+      /\+1\s*-0/,
+      'The environment diff did not refresh after the real tool changed the workspace'
+    )
 
     assert.equal(
       await readFile(join(workspacePath, ARTIFACT_NAME), 'utf8'),

@@ -29,6 +29,10 @@ const ENVIRONMENT_INFO_CACHE_TTL_MS = 1500
 
 export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
 
+export interface EnvironmentInfoLoadOptions {
+  force?: boolean
+}
+
 const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
   branch: 'git_branch_diff',
   unstaged: 'git_diff_unstaged',
@@ -469,7 +473,8 @@ async function loadProjectEnvironmentUncached(
 export async function loadProjectEnvironment(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  target?: EnvironmentWorkspaceTarget | null
+  target?: EnvironmentWorkspaceTarget | null,
+  options: EnvironmentInfoLoadOptions = {}
 ): Promise<EnvironmentInfo> {
   if (!project && !target) {
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
@@ -483,7 +488,7 @@ export async function loadProjectEnvironment(
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
   const cached = environmentInfoCache.get(cacheKey)
-  if (cached && cached.expiresAt > now) {
+  if (!options.force && cached && cached.expiresAt > now) {
     return cloneEnvironmentInfo(await cached.promise)
   }
 
