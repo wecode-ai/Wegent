@@ -1,284 +1,184 @@
 # Wegent
 
-> A self-hostable AI workspace for chat, coding, knowledge bases, automation, and local execution.
+> An open-source, self-hostable platform for building and running AI agent teams.
 
 English | [简体中文](README_zh.md)
 
-[![Python](https://img.shields.io/badge/python-3.10--3.13-blue.svg)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com)
-[![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
-[![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
-[![Gemini](https://img.shields.io/badge/Gemini-supported-4285F4.svg)](https://ai.google.dev)
-[![Version](https://img.shields.io/badge/version-1.0.20-brightgreen.svg)](https://github.com/wecode-ai/wegent/releases)
+[![CI](https://github.com/wecode-ai/Wegent/actions/workflows/test.yml/badge.svg)](https://github.com/wecode-ai/Wegent/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/wecode-ai/Wegent)](LICENSE)
+[![GitHub Issues](https://img.shields.io/github/issues/wecode-ai/Wegent)](https://github.com/wecode-ai/Wegent/issues)
+
+Wegent helps teams create and share AI agents that perform real work across chat, coding, knowledge, and automation. Manage team capabilities on the web, and use Wework when agents need to work directly with local projects and development environments.
 
 <div align="center">
 
-[Quick Start](#-quick-start) · [Core Scenarios](#core-scenarios) · [Wework Desktop](#wework-desktop) · [How It Grows](#how-it-grows) · [Documentation](https://wecode-ai.github.io/wegent-docs/) · [Development Guide](https://wecode-ai.github.io/wegent-docs/docs/category/developer-guide)
+**[Deploy Wegent](#quick-start)** · **[Download Wework](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)** · **[Documentation](https://wecode-ai.github.io/wegent-docs/)**
 
 </div>
 
-<div align="center">
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Wegent product interface" />
 
-## Wework Desktop Is Now Available
+## What You Can Build
 
-Download the latest desktop build and choose the installer package that matches your operating system.
+| Scenario | What Wegent provides |
+| --- | --- |
+| **Team AI assistants** | A private chat entry point with shared models, knowledge, skills, group collaboration, and file handling |
+| **AI coding** | Change code, run tests, commit updates, and open pull requests in isolated or local environments |
+| **Knowledge assistants** | Parse and index documents, webpages, and enterprise data for grounded answers |
+| **Continuous automation** | Track information, analyze webpages, filter notifications, and publish feeds from schedules and events |
+| **Local and private-network execution** | Work with local code, CLIs, browsers, dedicated development environments, and intranet resources |
+| **Existing system integration** | Bring agents into applications and team tools through APIs, MCP, and IM bots |
+
+## Choose How You Work
+
+| Use Wegent Web | Use Wework |
+| --- | --- |
+| Create and share agents, models, knowledge bases, and automation | Open local projects and let AI use files, terminals, CLIs, and development environments |
+| Manage users, permissions, and execution devices | Use local Codex, local models, and the local executor |
+| Serve teams through the browser, APIs, and IM | Focus on daily AI coding and local workflows |
+
+Wework can connect to a team deployment of Wegent to use shared models, cloud devices, and remote tasks while working locally.
+
+**[Deploy Wegent](#quick-start)** · **[Download Wework](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
+
+## Why Choose Wegent
+
+| Capability | Benefit |
+| --- | --- |
+| **Reuse capabilities** | Combine models, knowledge, tools, and skills into agents that work across many tasks |
+| **Let bots collaborate** | Organize bots to divide research, analysis, coding, and review work |
+| **Run tasks in the right place** | Choose cloud, containers, local devices, or private environments based on where code and data live |
+| **Reach teams from every entry point** | Use the same agent capabilities from the web, Wework, APIs, and IM |
+
+## Quick Start
+
+### Deploy Wegent Web
+
+Prerequisite: Docker. Run Wegent in a single container with SQLite:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
+```
+
+After it starts:
+
+1. Open http://localhost:3000.
+2. Follow the setup flow to create the administrator password.
+3. Configure a model and API key in Settings.
+4. Choose a built-in agent and send your first message.
+
+Common management commands:
+
+```bash
+wegent-standalone status
+wegent-standalone logs
+wegent-standalone restart
+wegent-standalone stop
+```
+
+If the command is not in your current `PATH`, use `~/.local/bin/wegent-standalone`.
+
+### Use Wework
+
+Download Wework and open a local project to start AI coding. Wework includes local execution and can also connect to a team deployment of Wegent from Settings.
 
 **[Download Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
 
-</div>
+### Wegent Web Deployment Options
 
----
+| Option | Best for | Start here |
+| --- | --- | --- |
+| **Standalone** | Personal trials and lightweight self-hosting | Use the install command above |
+| **Standard** | Team deployments with MySQL, Redis, and dedicated services | [Installation Guide](docs/en/getting-started/installation.md) |
+| **Development** | Contributing and extending Wegent | [Development Setup](docs/en/developer-guide/setup.md) |
 
-## Why Wegent
+Standalone can also use `host`, `container`, or `hybrid` executor modes. See [Standalone Mode](docs/en/deployment/standalone-mode.md) for details.
 
-Wegent is a self-hostable AI workspace for managing chat, coding tasks, knowledge bases, automation, and local execution in one place. You can ask questions over your own materials, hand code repositories to AI, turn recurring information checks into automated feeds, and let your team use the same assistants from DingTalk, Telegram, or other tools. When a task needs local repositories or intranet access, it can run on your own machine.
-
-- **Start privately**: Launch a self-hosted workspace with one command and begin with chat and knowledge Q&A.
-- **Grow into team workflows**: Share common assistants, models, tools, and knowledge bases instead of configuring them repeatedly.
-- **Choose where work runs**: Run coding tasks, automation, and local-device jobs in the environment that fits the job.
-- **Fit existing tools**: Bring AI into your current workflow through APIs or IM bots.
-
----
-
-## 🚀 Quick Start
-
-Prerequisite: Docker and Docker Compose.
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
-```
-
-This starts the default Standalone mode: one container with SQLite for local trials and lightweight deployments.
-
-Then open http://localhost:3000 in your browser.
-
-### Deployment Modes
-
-| Mode                     | Best For                                                                        |
-| ------------------------ | ------------------------------------------------------------------------------- |
-| **Standalone** (default) | Single container + SQLite, best for personal trials and lightweight deployments |
-| **Standard**             | Multi-container + MySQL + Redis, best for teams and production                  |
-| **Development**          | Source startup + hot reload, best for development and extensions                |
-
-Standalone can choose where coding/execution agents run:
-
-| Standalone Executor Mode | Behavior                                                                                | Best For                                                                                              |
-| ------------------------ | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `host`                   | Run the executor on the host machine while Backend, Frontend, and Wework stay in Docker | macOS or any setup that needs host commands such as `open`, `osascript`, Terminal, or local CLI tools |
-| `container`              | Run the executor inside the standalone container                                        | Linux quick start and single-container deployments                                                    |
-| `hybrid`                 | Run both host and container executors                                                   | Keeping the container device while also using host-native capabilities                                |
-
-Interactive macOS installs default to `host`; Linux and non-interactive installs default to `container`.
-
-```bash
-# Standalone mode (default executor mode)
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
-
-# Standalone mode with an explicit executor mode: host, container, or hybrid
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone --executor-mode host
-
-# Standard mode
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
-
-# Development mode
-git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
-```
+## Agent Model
 
 <details>
-<summary><b>Common Commands</b></summary>
+<summary>See how Wegent organizes agents and tasks</summary>
 
-```bash
-# Standalone mode
-docker logs -f wegent-standalone
-docker restart wegent-standalone
-
-# Standard mode
-docker compose logs -f
-docker compose down
-docker compose up -d
-
-# Development mode
-./start.sh --status
-./start.sh --restart
-./start.sh --stop
-```
-
-</details>
-
-See [Standalone Mode](docs/en/deployment/standalone-mode.md) and [Quick Start](docs/en/getting-started/quick-start.md) for details.
-
----
-
-## Core Scenarios
-
-### Chat, Group Chat, and File Handling
-
-<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
-
-Set up a private AI chat entrypoint. Wegent supports multiple models, multi-turn history, group chat with @mentions, file parsing, clarifying questions, answer checking, and long-term memory. When needed, AI can also read files, run commands, or generate diagrams.
-
-### Let AI Work on Code Repositories
-
-<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
-
-Let AI work on code in isolated environments. Wegent connects to GitHub, GitLab, Gitea, and Gerrit so agents can clarify requirements, create branches, modify code, run tests, commit changes, and open pull requests.
-
-### Track Information and Publish Feeds
-
-<img src="https://github.com/user-attachments/assets/6680c33a-f4ba-4ef2-aa8c-e7a53bd003dc" width="100%" alt="Feed Demo"/>
-
-Turn AI into a continuously running task trigger. Set schedules or event triggers so AI can summarize information, analyze webpages, filter notifications, and publish results as a feed.
-
-### Knowledge Q&A
-
-<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
-
-Upload documents, import webpages, or sync DingTalk multi-dimensional tables to build team knowledge bases. Wegent handles parsing, conversion, indexing, and retrieval so AI can answer with your own materials.
-
-### Local Device Execution
-
-<img src="https://github.com/user-attachments/assets/ead0cc30-b3a4-4eb6-a6dd-77ffcbd72238" width="100%" alt="AI Device Demo"/>
-
-Install a local runner on your own machine and connect it securely to Wegent. Tasks can switch between cloud environments and local devices, which is useful when AI needs access to local repositories, intranet resources, or dedicated development environments.
-
-### Wework Desktop
-
-Wework brings the AI coding workspace onto your own computer. You can open a local project, start a coding conversation, let AI read and edit files, review the changes, and keep working even when you are not connected to a Wegent server. When you do connect to a server, cloud models and remote devices appear in the same workspace instead of becoming a separate product.
-
-It is designed for day-to-day coding work:
-
-- **Code where the repo already lives**: work directly against local folders, private networks, local CLIs, and machine-specific setup.
-- **Continue real coding sessions**: pick up local runtime conversations and keep context tied to the project.
-- **Review before you accept**: inspect file changes, browse project files, and use the built-in terminal from the same workbench.
-- **Use local or cloud resources together**: start locally by default, then add server models, cloud devices, and shared authentication when a team deployment is available.
-
-For developer setup and packaging commands, see [wework/README.md](wework/README.md).
-
-### Team Tools and Existing Systems
-
-Connect Wegent agents to DingTalk, Telegram, and other IM tools, or call them from existing applications through an API.
-
----
-
-## How It Grows
-
-You do not need to learn every concept upfront. Wegent can start as a private AI workspace: choose a model, create an assistant, upload materials, and chat. As your team starts reusing these capabilities, you can turn common assistants, knowledge bases, coding tasks, and IM entrypoints into shared workflows.
-
-| Stage                   | How You Can Use Wegent                                                          |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| **Personal use**        | Start the service and create your own AI assistants and knowledge bases         |
-| **Team collaboration**  | Share common assistants, model settings, knowledge bases, and coding tasks      |
-| **Automated workflows** | Let AI handle work through schedules, event triggers, or IM bots                |
-| **Deep integration**    | Connect Wegent to existing systems through APIs, tools, and configuration files |
-
-<details>
-<summary><b>Core concepts for customization and extension</b></summary>
-
-Internally, Wegent splits an AI assistant into reusable pieces:
+Wegent manages capabilities, collaboration, and runtime context separately so they can be reused across tasks and environments.
 
 ```text
-Ghost (prompt + MCP + Skills)
-  + Shell (Chat / ClaudeCode / Dify)
-  + Model (Claude / OpenAI / Gemini / DeepSeek / GLM, etc.)
+Ghost (prompt + MCP + skills)
+  + Shell (Chat / ClaudeCode / Agno / Dify)
+  + Model
   = Bot
 
 Multiple Bots + collaboration mode = Team (the user-facing Agent)
 Team + Workspace = Task (a traceable execution)
 ```
 
-These relationships can be created in the web UI or managed with YAML. The web wizard supports "describe requirements → AI follow-up questions → live prompt tuning → one-click creation."
+Manage these resources through the UI, YAML, or APIs. See [Core Concepts](docs/en/concepts/core-concepts.md) and the [YAML Specification](docs/en/reference/yaml-specification.md) for details.
 
 </details>
 
----
-
-## Deployment and Integration
-
-Wegent can grow from a personal trial to a team deployment:
-
-- **Personal trial**: Standalone mode starts one container, suitable for a laptop or lightweight server.
-- **Team deployment**: Standard mode uses dedicated database, cache, and execution services for long-running use.
-- **Local devices**: Connect your own machine as a place to run tasks that need local repositories or intranet access.
-- **Desktop app**: Use Wework for a local-first coding workspace that can also connect back to a team Wegent deployment.
-- **Existing systems**: Connect Wegent to team tools through APIs or IM bots.
+## Architecture
 
 <details>
-<summary><b>Technical component overview</b></summary>
+<summary>View Wegent's technical components</summary>
 
 ```mermaid
 graph TB
-    User["User / API / IM"] --> Frontend["Next.js Web"]
+    User["User / API / IM"] --> Frontend["Wegent Web<br/>Next.js"]
     User --> Wework["Wework Desktop<br/>Tauri + React"]
-    User --> Backend["FastAPI Backend"]
-    Frontend --> Backend
-    Wework --> Backend
-    Wework --> WeworkExecutor["Local Executor Sidecar<br/>Codex / Local Work"]
+    Frontend --> Backend["Backend<br/>FastAPI"]
+    Wework -. "Optional cloud connection" .-> Backend
+    Wework --> LocalWork["Local Codex / Files / Terminal"]
 
-    Backend --> MySQL[("MySQL / SQLite")]
+    Backend --> Database[("MySQL / SQLite")]
     Backend --> Redis[("Redis")]
-    Backend --> ChatShell["Chat Shell<br/>LangGraph + Multi-LLM"]
+    Backend --> ChatShell["Chat Shell"]
     Backend --> ExecutorManager["Executor Manager"]
     Backend --> KnowledgeRuntime["Knowledge Runtime"]
 
-    ExecutorManager --> CloudExecutor["Cloud Executor<br/>ClaudeCode / Dify"]
-    Backend <--> LocalExecutor["Local Executor<br/>WebSocket"]
+    ExecutorManager --> CloudExecutor["Cloud / Container Executor"]
+    Backend <--> LocalExecutor["Local Executor"]
     KnowledgeRuntime --> VectorStore["Elasticsearch / Qdrant / Milvus"]
-    Backend --> DocConverter["Knowledge Doc Converter<br/>MinerU OCR"]
+    KnowledgeRuntime --> DocConverter["Document Converter"]
 ```
 
 </details>
 
----
+### Repository Map
 
-## For Developers and Team Admins
-
-- **Application integration**: Call Wegent agents from your own apps through `/api/v1/responses`.
-- **External tools**: Use MCP to let AI call existing tools and services.
-- **Reusable capabilities**: Package specialized abilities as Skills and load them only when needed.
-- **Local-first desktop runtime**: Extend Wework when teams need local repositories, terminals, device tools, and cloud-connected coding workflows in one desktop app.
-- **Flexible runtimes**: Use different runtime engines for chat, coding tasks, multi-agent work, and external app proxying.
-- **Central model management**: OpenAI, Claude, Gemini, DeepSeek, GLM, and protocol-compatible model services.
-- **Team sharing and permissions**: Groups, shared agents, shared models, shared Skills, and admin management.
-- **Observability**: OpenTelemetry support across backend, frontend, and execution services.
-
----
-
-## Built-in Assistants
-
-| Assistant    | Purpose                                           |
-| ------------ | ------------------------------------------------- |
-| `chat-team`  | General AI assistant with Mermaid diagram support |
-| `translator` | Multi-language translation                        |
-| `dev-team`   | Git workflow: branch, code, commit, PR            |
-| `wiki-team`  | Codebase Wiki documentation generation            |
-
----
+| Directory | Responsibility |
+| --- | --- |
+| `frontend/` | Wegent Web product |
+| `backend/` | REST API and core business logic |
+| `wework/` | Tauri desktop workbench |
+| `executor/` | Agent task execution environments |
+| `executor_manager/` | Executor scheduling and orchestration |
+| `chat_shell/` | Chat runtime |
+| `knowledge_runtime/` | Knowledge retrieval services |
+| `knowledge_doc_converter/` | Document parsing and conversion |
+| `shared/` | Modules shared across services |
 
 ## Documentation
 
 - [Quick Start](docs/en/getting-started/quick-start.md)
-- [Installation Guide](docs/en/getting-started/installation.md)
+- [Installation and Deployment](docs/en/getting-started/installation.md)
 - [Core Concepts](docs/en/concepts/core-concepts.md)
-- [Skill System](docs/en/concepts/skill-system.md)
-- [YAML Specification](docs/en/reference/yaml-specification.md)
+- [User Guide](docs/en/user-guide/README.md)
 - [OpenAPI Responses API](docs/en/reference/openapi-responses-api.md)
 - [Developer Guide](docs/en/developer-guide/README.md)
+- [Troubleshooting](docs/en/troubleshooting.md)
 
----
+## Get Involved
 
-## Contributing
+Bug reports, documentation improvements, code contributions, and new ways of using Wegent are all welcome.
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-## Support
-
-- 🐛 Issues: [GitHub Issues](https://github.com/wecode-ai/wegent/issues)
-- 💬 Discord: [Join our community](https://discord.gg/MVzJzyqEUp)
+- [Contributing Guide](CONTRIBUTING.md)
+- [Security Policy](SECURITY.md)
+- [GitHub Issues](https://github.com/wecode-ai/Wegent/issues)
+- [Discord Community](https://discord.gg/MVzJzyqEUp)
+- [License](LICENSE)
 
 ## Contributors
 
-Thanks to the following developers for their contributions and efforts to make this project better. 💪
+Thanks to everyone who helps Wegent grow.
 
 <!-- readme: contributors -start -->
 <table>

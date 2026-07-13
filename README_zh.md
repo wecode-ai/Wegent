@@ -1,284 +1,184 @@
 # Wegent
 
-> 可自部署的 AI 工作台：把对话、代码、知识库、自动化和本地执行放到一个入口里。
+> 开源、可自部署的智能体工作平台。
 
 [English](README.md) | 简体中文
 
-[![Python](https://img.shields.io/badge/python-3.10--3.13-blue.svg)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com)
-[![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
-[![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
-[![Gemini](https://img.shields.io/badge/Gemini-支持-4285F4.svg)](https://ai.google.dev)
-[![Version](https://img.shields.io/badge/版本-1.0.20-brightgreen.svg)](https://github.com/wecode-ai/wegent/releases)
+[![CI](https://github.com/wecode-ai/Wegent/actions/workflows/test.yml/badge.svg)](https://github.com/wecode-ai/Wegent/actions/workflows/test.yml)
+[![License](https://img.shields.io/github/license/wecode-ai/Wegent)](LICENSE)
+[![GitHub Issues](https://img.shields.io/github/issues/wecode-ai/Wegent)](https://github.com/wecode-ai/Wegent/issues)
+
+Wegent 让团队创建和共享能够实际执行任务的 AI 智能体，用于对话、代码开发、知识库和自动化工作。通过 Web 管理团队能力，通过 Wework 让智能体直接在本地项目和开发环境中工作。
 
 <div align="center">
 
-[快速开始](#-快速开始) · [核心场景](#核心场景) · [Wework 桌面端](#wework-桌面端) · [工作方式](#工作方式) · [文档](https://wecode-ai.github.io/wegent-docs/zh/) · [开发指南](https://wecode-ai.github.io/wegent-docs/zh/docs/category/developer-guide)
+**[部署 Wegent](#快速开始)** · **[下载 Wework](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)** · **[查看文档](https://wecode-ai.github.io/wegent-docs/zh/)**
 
 </div>
 
-<div align="center">
+<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Wegent 产品界面" />
 
-## Wework 桌面端已发布
+## 可以用 Wegent 做什么
 
-下载最新桌面版本，并选择与你的操作系统匹配的安装包。
+| 场景 | Wegent 可以做什么 |
+| --- | --- |
+| **团队 AI 助手** | 提供可私有部署的对话入口，共享模型、知识和 Skills，支持群聊协作与文件处理 |
+| **AI Coding** | 在隔离环境或本地电脑中修改代码、运行测试、提交变更并创建 Pull Request |
+| **企业知识助手** | 解析和索引文档、网页与企业数据，让智能体基于自己的资料回答问题 |
+| **持续自动化** | 通过定时和事件触发追踪信息、分析网页、筛选通知并发布信息流 |
+| **本地与内网执行** | 使用本地代码、CLI、浏览器、专用开发环境和内网资源完成任务 |
+| **已有系统集成** | 通过 API、MCP 和 IM 机器人把智能体接入现有应用与团队工具 |
 
-**[下载 Wework 桌面端](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
+## 选择使用方式
 
-</div>
+| 使用 Wegent Web | 使用 Wework |
+| --- | --- |
+| 创建和共享智能体、模型、知识库与自动化任务 | 打开本地项目，让 AI 使用文件、终端、CLI 和开发环境 |
+| 统一管理用户、权限和执行设备 | 使用本机 Codex、本地模型和本地 Executor |
+| 通过浏览器、API 和 IM 服务团队 | 面向日常 AI Coding 和本地工作流 |
 
----
+Wework 可以连接到团队部署的 Wegent，在本地工作时使用共享模型、云端设备和远程任务。
+
+**[部署 Wegent](#快速开始)** · **[下载 Wework](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
 
 ## 为什么选择 Wegent
 
-Wegent 是一个可自部署的 AI 工作台，用来统一管理对话、代码任务、知识库、自动化和本地执行。你可以把资料放进知识库直接提问，把代码仓库交给 AI 处理，把每天要关注的信息做成自动追踪，也可以让团队在钉钉、Telegram 里调用同一批助手。需要访问本机仓库或内网资源时，任务还能跑在自己的电脑上。
+| 特点 | 带来的价值 |
+| --- | --- |
+| **能力可以复用** | 模型、知识、工具和 Skills 可以组合成智能体，在不同任务中重复使用 |
+| **多个机器人可以协作** | 按任务组织机器人分工完成检索、分析、编码和审查 |
+| **任务在合适的位置运行** | 根据代码和数据所在位置选择云端、容器、本地设备或内网环境 |
+| **同一套能力服务多个入口** | 从 Web、Wework、API 和 IM 调用团队沉淀的智能体能力 |
 
-- **个人可快速开始**：一条命令启动私有工作台，先用对话和知识库解决日常问题。
-- **团队可逐步沉淀**：常用助手、模型、工具和知识库可以共享，避免每个人重复配置。
-- **任务不被限制在云端**：代码任务、自动化任务和本地执行可以按场景选择运行位置。
-- **容易接进现有流程**：通过 API 或 IM 机器人，把 AI 放到已经在用的工具里。
+## 快速开始
 
----
+### 部署 Wegent Web
 
-## 🚀 快速开始
-
-前置要求：已安装 Docker 和 Docker Compose。
+前置要求：Docker。执行以下命令启动单容器 + SQLite 的 Standalone 模式：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
 ```
 
-这会启动默认的 Standalone 模式：单容器 + SQLite，适合本地试用和轻量部署。
+启动后：
 
-启动后访问 http://localhost:3000。
+1. 打开 http://localhost:3000。
+2. 按页面引导设置管理员密码。
+3. 在设置中配置一个模型和 API Key。
+4. 选择预置智能体并发送第一条消息。
 
-### 部署模式
-
-| 模式                   | 适合场景                                   |
-| ---------------------- | ------------------------------------------ |
-| **Standalone**（默认） | 单容器 + SQLite，适合个人试用和轻量部署    |
-| **Standard**           | 多容器 + MySQL + Redis，适合团队和生产环境 |
-| **Development**        | 源码启动 + 热重载，适合开发和二次扩展      |
-
-Standalone 可以选择编码/执行 Agent 的运行位置：
-
-| Standalone Executor 模式 | 行为                                                                  | 适合场景                                                                        |
-| ------------------------ | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `host`                   | Backend、Frontend 和 Wework 仍在 Docker 中运行，executor 在宿主机运行 | macOS，或需要调用 `open`、`osascript`、系统 Terminal、本机 CLI 工具等宿主机能力 |
-| `container`              | executor 在 standalone 容器内运行                                     | Linux 快速体验和单容器部署                                                      |
-| `hybrid`                 | 宿主机 executor 和容器 executor 同时运行                              | 保留容器设备，同时使用宿主机能力                                                |
-
-交互式 macOS 安装默认选择 `host`；Linux 和非交互安装默认选择 `container`。
+常用管理命令：
 
 ```bash
-# Standalone 模式（默认 executor 模式）
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone
-
-# Standalone 模式显式指定 executor 模式：host、container 或 hybrid
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standalone --executor-mode host
-
-# Standard 模式
-curl -fsSL https://raw.githubusercontent.com/wecode-ai/Wegent/main/install.sh | bash -s -- --standard
-
-# 开发模式
-git clone https://github.com/wecode-ai/Wegent.git && cd Wegent && ./start.sh
+wegent-standalone status
+wegent-standalone logs
+wegent-standalone restart
+wegent-standalone stop
 ```
 
-<details>
-<summary><b>常用命令</b></summary>
+如果命令不在当前 `PATH` 中，可以使用 `~/.local/bin/wegent-standalone`。
 
-```bash
-# Standalone 模式
-docker logs -f wegent-standalone
-docker restart wegent-standalone
+### 使用 Wework
 
-# Standard 模式
-docker compose logs -f
-docker compose down
-docker compose up -d
+下载并安装 Wework，打开一个本地项目即可开始 AI Coding。Wework 自带本地执行能力，也可以在设置中连接团队部署的 Wegent。
 
-# 开发模式
-./start.sh --status
-./start.sh --restart
-./start.sh --stop
-```
+**[下载 Wework Desktop](https://github.com/wecode-ai/Wegent/releases?q=Wework+macOS+DMG+build&expanded=true)**
 
-</details>
+### Wegent Web 部署方式
 
-> 详细部署说明见 [Standalone 模式文档](docs/zh/deployment/standalone-mode.md) 和 [快速开始文档](docs/zh/getting-started/quick-start.md)。
+| 方式 | 适合场景 | 入口 |
+| --- | --- | --- |
+| **Standalone** | 个人体验和轻量自部署 | 上方一键安装命令 |
+| **Standard** | 使用 MySQL、Redis 和独立服务的团队部署 | [安装指南](docs/zh/getting-started/installation.md) |
+| **Development** | 参与开发和二次扩展 | [开发环境搭建](docs/zh/developer-guide/setup.md) |
 
----
+Standalone 还可以选择 `host`、`container` 或 `hybrid` Executor 模式，详见 [Standalone 模式](docs/zh/deployment/standalone-mode.md)。
 
-## 核心场景
-
-### 对话、群聊与文件处理
-
-<img src="https://github.com/user-attachments/assets/677abce3-bd3f-4064-bdab-e247b142c22f" width="100%" alt="Chat Mode Demo"/>
-
-搭建一个可私有化的 AI 对话入口。它支持多模型、多轮历史、群聊 @ 提及、文件解析、追问澄清、回答校验和长期记忆。需要时，AI 也可以读取文件、执行命令或生成图表。
-
-### 让 AI 处理代码仓库
-
-<img src="https://github.com/user-attachments/assets/cc25c415-d3f1-4e9f-a64c-1d2614d69c7d" width="100%" alt="Code Mode Demo"/>
-
-让 AI 在隔离环境中处理代码任务。Wegent 可以连接 GitHub、GitLab、Gitea、Gerrit，完成需求澄清、分支创建、代码修改、测试、提交和 PR 创建等流程。
-
-### 自动追踪信息并生成信息流
-
-<img src="https://github.com/user-attachments/assets/6680c33a-f4ba-4ef2-aa8c-e7a53bd003dc" width="100%" alt="Feed Demo"/>
-
-把 AI 变成持续运行的任务触发器。你可以设置定时规则或事件触发，让 AI 定期汇总信息、分析网页、筛选通知，并把结果沉淀为信息流。
-
-### 知识库问答
-
-<img src="https://github.com/user-attachments/assets/2b210d33-2569-4bc9-acac-e163de4e12a5" width="100%" alt="Knowledge Demo"/>
-
-上传文档、导入网页或同步钉钉多维表，构建团队知识库。Wegent 会负责解析、转换、索引和检索，让 AI 在回答时引用你的资料。
-
-### 本地设备执行
-
-<img src="https://github.com/user-attachments/assets/ead0cc30-b3a4-4eb6-a6dd-77ffcbd72238" width="100%" alt="AI Device Demo"/>
-
-在自己的电脑上安装本地执行程序，并安全连接到 Wegent。任务可以在云端隔离环境和本地设备之间切换，适合需要访问本机仓库、内网资源或专属开发环境的场景。
-
-### Wework 桌面端
-
-Wework 把 AI 编码工作台带到你自己的电脑上。你可以打开本地项目，发起编码对话，让 AI 读取和修改文件，审查改动，并且在没有连接 Wegent 服务端时继续工作。连接服务端后，云端模型和远程设备会进入同一个工作台，而不是变成另一套割裂的产品。
-
-它面向日常编码工作：
-
-- **代码就在原处工作**：直接使用本地目录、内网资源、本机 CLI 和机器上的开发环境。
-- **延续真实编码会话**：打开已有本地运行时会话，让上下文继续留在项目里。
-- **先审查再接受**：在同一个工作台里查看文件改动、浏览项目文件、使用内置终端。
-- **本地和云端一起用**：默认从本地开始，需要团队能力时再加入服务端模型、云端设备和共享认证。
-
-开发启动和打包命令见 [wework/README.md](wework/README.md)。
-
-### 接入团队沟通工具和已有系统
-
-把 Wegent 智能体接入钉钉、Telegram 等 IM 工具，也可以通过 API 接入已有应用，让团队在原来的工作流里直接调用 AI。
-
----
-
-## 从简单开始，再逐步扩展
-
-你不需要一开始就理解所有概念。Wegent 可以先当作一个私有 AI 工作台使用：选模型、创建助手、上传资料、开始对话。等团队开始复用这些能力时，再逐步把常用助手、知识库、代码任务和 IM 入口沉淀下来。
-
-| 阶段             | 你可以怎么用                                       |
-| ---------------- | -------------------------------------------------- |
-| **个人使用**     | 快速启动服务，创建自己的 AI 助手和知识库           |
-| **团队协作**     | 共享常用助手、模型配置、知识库和代码任务           |
-| **自动化工作流** | 用定时任务、事件触发或 IM 机器人让 AI 主动处理工作 |
-| **深度集成**     | 通过 API、工具扩展和配置文件接入已有系统           |
+## 智能体模型
 
 <details>
-<summary><b>核心概念（给需要自定义和扩展的人）</b></summary>
+<summary>了解 Wegent 如何组织智能体与任务</summary>
 
-Wegent 内部把一个 AI 助手拆成几块可复用配置：
+Wegent 将能力、协作关系和运行上下文分开管理，使它们可以在不同任务和环境中复用。
 
 ```text
 Ghost（提示词 + MCP + Skills）
-  + Shell（Chat / ClaudeCode / Dify）
-  + Model（Claude / OpenAI / Gemini / DeepSeek / GLM 等）
+  + Shell（Chat / ClaudeCode / Agno / Dify）
+  + Model
   = Bot（机器人）
 
-多个 Bot + 协作模式 = Team（用户看到的智能体）
+多个 Bot + 协作模式 = Team（界面中的“智能体”）
 Team + Workspace = Task（一次可追踪的执行）
 ```
 
-这些关系可以通过 Web UI 创建，也可以用 YAML 管理。Web UI 里的创建向导支持“描述需求 → AI 追问 → 实时微调 → 一键创建”。
+这些资源可以通过界面、YAML 和 API 管理。详细说明见 [核心概念](docs/zh/concepts/core-concepts.md)和 [YAML 规范](docs/zh/reference/yaml-specification.md)。
 
 </details>
 
----
-
-## 部署和接入
-
-Wegent 可以从个人试用逐步扩展到团队部署：
-
-- **个人试用**：Standalone 模式单容器启动，适合本机或轻量服务器。
-- **团队部署**：Standard 模式使用独立数据库、缓存和执行服务，适合长期运行。
-- **本地设备**：把自己的电脑接入为执行环境，处理需要本机仓库或内网资源的任务。
-- **桌面应用**：使用 Wework 获得本地优先的编码工作台，也可以连接回团队 Wegent 部署。
-- **已有系统**：通过 API 或 IM 机器人，把 Wegent 接到团队现有工具里。
+## 架构概览
 
 <details>
-<summary><b>技术组件概览</b></summary>
+<summary>查看 Wegent 技术组件</summary>
 
 ```mermaid
 graph TB
-    User["用户 / API / IM"] --> Frontend["Next.js Web"]
+    User["用户 / API / IM"] --> Frontend["Wegent Web<br/>Next.js"]
     User --> Wework["Wework Desktop<br/>Tauri + React"]
-    User --> Backend["FastAPI Backend"]
-    Frontend --> Backend
-    Wework --> Backend
-    Wework --> WeworkExecutor["Local Executor Sidecar<br/>Codex / Local Work"]
+    Frontend --> Backend["Backend<br/>FastAPI"]
+    Wework -. "可选云端连接" .-> Backend
+    Wework --> LocalWork["本地 Codex / 文件 / 终端"]
 
-    Backend --> MySQL[("MySQL / SQLite")]
+    Backend --> Database[("MySQL / SQLite")]
     Backend --> Redis[("Redis")]
-    Backend --> ChatShell["Chat Shell<br/>LangGraph + Multi-LLM"]
+    Backend --> ChatShell["Chat Shell"]
     Backend --> ExecutorManager["Executor Manager"]
     Backend --> KnowledgeRuntime["Knowledge Runtime"]
 
-    ExecutorManager --> CloudExecutor["云端 Executor<br/>ClaudeCode / Dify"]
-    Backend <--> LocalExecutor["本地 Executor<br/>WebSocket"]
+    ExecutorManager --> CloudExecutor["云端 / 容器 Executor"]
+    Backend <--> LocalExecutor["本地 Executor"]
     KnowledgeRuntime --> VectorStore["Elasticsearch / Qdrant / Milvus"]
-    Backend --> DocConverter["Knowledge Doc Converter<br/>MinerU OCR"]
+    KnowledgeRuntime --> DocConverter["Document Converter"]
 ```
 
 </details>
 
----
+### 仓库结构
 
-## 给开发者和团队管理员
-
-- **接入自己的应用**：通过 `/api/v1/responses` 调用 Wegent 中的智能体。
-- **连接外部工具**：通过 MCP 让 AI 调用已有工具和服务。
-- **复用复杂能力**：把特定能力打包成 Skill，需要时再加载。
-- **本地优先桌面运行时**：扩展 Wework，把本地仓库、终端、设备工具和云端协同编码放进同一个桌面应用。
-- **选择适合的运行方式**：对话、代码任务、多智能体协作和外部应用代理可以分别使用不同运行引擎。
-- **统一管理模型**：支持 OpenAI、Claude、Gemini、DeepSeek、GLM 以及兼容协议的模型服务。
-- **团队共享和权限**：支持组织、共享智能体、共享模型、共享 Skills 和管理后台。
-- **可观测性**：后端、前端和执行服务支持 OpenTelemetry 配置。
-
----
-
-## 预置助手
-
-| 助手         | 用途                             |
-| ------------ | -------------------------------- |
-| `chat-team`  | 通用 AI 助手，支持 Mermaid 图表  |
-| `translator` | 多语言翻译                       |
-| `dev-team`   | Git 工作流：分支、编码、提交、PR |
-| `wiki-team`  | 代码库 Wiki 文档生成             |
-
----
+| 目录 | 职责 |
+| --- | --- |
+| `frontend/` | Wegent Web 产品 |
+| `backend/` | REST API 和核心业务逻辑 |
+| `wework/` | Tauri 桌面工作台 |
+| `executor/` | 智能体任务执行环境 |
+| `executor_manager/` | Executor 调度与编排 |
+| `chat_shell/` | 对话运行时 |
+| `knowledge_runtime/` | 知识检索服务 |
+| `knowledge_doc_converter/` | 文档解析与转换 |
+| `shared/` | 跨服务共享模块 |
 
 ## 文档
 
 - [快速开始](docs/zh/getting-started/quick-start.md)
-- [安装指南](docs/zh/getting-started/installation.md)
+- [安装与部署](docs/zh/getting-started/installation.md)
 - [核心概念](docs/zh/concepts/core-concepts.md)
-- [Skill 系统](docs/zh/concepts/skill-system.md)
-- [YAML 规范](docs/zh/reference/yaml-specification.md)
+- [用户指南](docs/zh/user-guide/README.md)
 - [OpenAPI Responses API](docs/zh/reference/openapi-responses-api.md)
-- [开发指南](docs/zh/developer-guide/README.md)
+- [开发者指南](docs/zh/developer-guide/README.md)
+- [故障排查](docs/zh/troubleshooting.md)
 
----
+## 参与项目
 
-## 贡献
+欢迎提交问题、改进文档、贡献代码或分享新的使用方式。
 
-我们欢迎贡献！详情请参阅 [贡献指南](CONTRIBUTING.md)。
-
-## 支持
-
-- 🐛 问题反馈：[GitHub Issues](https://github.com/wecode-ai/wegent/issues)
-- 💬 Discord：[加入社区](https://discord.gg/MVzJzyqEUp)
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)
+- [问题反馈](https://github.com/wecode-ai/Wegent/issues)
+- [Discord 社区](https://discord.gg/MVzJzyqEUp)
+- [开源许可证](LICENSE)
 
 ## 贡献者
 
-感谢以下开发者的贡献，让这个项目变得更好 💪
+感谢所有帮助 Wegent 持续成长的贡献者。
 
 <!-- readme: contributors -start -->
 <table>
@@ -595,4 +495,4 @@ graph TB
 
 ---
 
-<p align="center">由 WeCode-AI 团队用 ❤️ 制作</p>
+<p align="center">Made with ❤️ by WeCode-AI Team</p>
