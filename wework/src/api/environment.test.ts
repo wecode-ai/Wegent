@@ -148,9 +148,8 @@ describe('loadProjectEnvironment', () => {
       max_output_bytes: 4096,
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/projects/directmessage_single',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -216,9 +215,8 @@ describe('loadProjectEnvironment', () => {
       max_output_bytes: 4096,
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -281,7 +279,7 @@ describe('loadProjectEnvironment', () => {
     })
     for (const commandKey of [
       'git_branch',
-      'git_diff_shortstat',
+      'git_branch_diff_shortstat',
       'git_status_porcelain',
       'git_remote_url',
     ]) {
@@ -431,7 +429,7 @@ describe('loadProjectEnvironment', () => {
     const cachedInfo = await loadProjectEnvironment(api, project)
 
     expect(cachedInfo.branchName).toBe('human/narwhal-20260528-073440')
-    // 4 calls: git_branch, git_diff_shortstat, git_status_porcelain, git_remote_url
+    // 4 calls: git_branch, git_branch_diff_shortstat, git_status_porcelain, git_remote_url
     expect(executeCommand).toHaveBeenCalledTimes(4)
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
       command_key: 'git_branch',
@@ -440,9 +438,8 @@ describe('loadProjectEnvironment', () => {
       max_output_bytes: 4096,
     })
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -470,7 +467,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: true,
           stdout: ' 1 file changed, 1 insertion(+), 1 deletion(-)',
@@ -523,9 +520,8 @@ describe('loadProjectEnvironment', () => {
     expect(info.additions).toBe('+1')
     expect(info.deletions).toBe('-1')
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff_shortstat',
+      command_key: 'git_branch_diff_shortstat',
       path: '/workspace/Wegent',
-      args: ['HEAD', '--'],
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
@@ -541,7 +537,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: true,
           stdout: ' 1 file changed, 5 insertions(+), 2 deletions(-)',
@@ -607,7 +603,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: false,
           stdout: '',
@@ -679,7 +675,7 @@ describe('loadProjectEnvironment', () => {
         })
       }
 
-      if (data.command_key === 'git_diff_shortstat') {
+      if (data.command_key === 'git_branch_diff_shortstat') {
         return Promise.resolve({
           success: false,
           stdout: '',
@@ -765,7 +761,7 @@ describe('commitProjectChanges', () => {
     ).resolves.toBe('diff --git a/src/env.ts b/src/env.ts\n+new')
 
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff',
+      command_key: 'git_branch_diff',
       path: '/workspace/Wegent',
       timeout_seconds: 30,
       max_output_bytes: 5 * 1024 * 1024,
@@ -805,7 +801,7 @@ describe('commitProjectChanges', () => {
     ).resolves.toBe('')
 
     expect(executeCommand).toHaveBeenCalledWith('device-123', {
-      command_key: 'git_diff',
+      command_key: 'git_branch_diff',
       path: '/workspace/worktrees/1029/Wegent',
       timeout_seconds: 30,
       max_output_bytes: 5 * 1024 * 1024,

@@ -5,6 +5,7 @@ import type { LocalCodexHomeMigrationStatus } from '@/api/local/codexPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
 
 const CODEX_MIGRATION_DISMISSED_STORAGE_KEY = 'wework.plugins.codexMigrationDismissed'
+const SHOULD_SKIP_CODEX_HOME_INITIALIZATION = import.meta.env.VITE_WEWORK_E2E === 'true'
 
 function CodexHomeInitializationDialog({
   status,
@@ -105,12 +106,14 @@ function CodexHomeInitializationDialog({
 export function CodexHomeInitializer({ children }: { children?: ReactNode }) {
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const [status, setStatus] = useState<LocalCodexHomeMigrationStatus | null>(null)
-  const [checked, setChecked] = useState(false)
+  const [checked, setChecked] = useState(SHOULD_SKIP_CODEX_HOME_INITIALIZATION)
   const [isInitializing, setIsInitializing] = useState(false)
   const [remoteAppsEnabled, setRemoteAppsEnabled] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (SHOULD_SKIP_CODEX_HOME_INITIALIZATION) return
+
     let isCurrent = true
     const migrationDismissed =
       typeof window !== 'undefined' &&

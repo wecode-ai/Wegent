@@ -487,7 +487,13 @@ fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), Str
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
     let mut command = Command::new("git");
-    command.arg("-C").arg(path).args(args);
+    command
+        .arg("-c")
+        .arg("core.bare=false")
+        .arg("-C")
+        .arg(path)
+        .args(args);
+    command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
     if let Some(envs) = envs {
         command.envs(envs.iter().copied());
     }
@@ -696,8 +702,12 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
     use serde_json::Value;
+
+    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn default_settings_match_codex() {
@@ -724,7 +734,7 @@ mod tests {
 
     #[test]
     fn snapshot_delete_and_restore_preserve_uncommitted_files() {
-        let root = env::temp_dir().join(format!("wegent-worktree-test-{}", now_ms()));
+        let root = test_directory("wegent-worktree-test");
         let source = root.join("source");
         fs::create_dir_all(&source).unwrap();
         run_git(&source, &["init"]);
@@ -777,7 +787,7 @@ mod tests {
 
     #[test]
     fn discovered_worktree_includes_source_repository_path() {
-        let root = env::temp_dir().join(format!("wegent-worktree-discovery-test-{}", now_ms()));
+        let root = test_directory("wegent-worktree-discovery-test");
         let source = root.join("source");
         fs::create_dir_all(&source).unwrap();
         run_git(&source, &["init"]);
@@ -823,16 +833,30 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    fn test_directory(prefix: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
     fn run_git(path: &Path, args: &[&str]) {
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        command
+            .arg("-c")
+            .arg("core.bare=false")
             .arg("-C")
             .arg(path)
             .args(args)
-            .output()
-            .unwrap();
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE");
+        let output = command.output().unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
     }
@@ -847,6 +871,7 @@ mod tests {
             status: "active".to_owned(),
             running: false,
             goal_status: None,
+            git_info: None,
             created_at: 0,
             updated_at: 0,
             runtime_handle: Value::Null,
@@ -854,6 +879,9 @@ mod tests {
             ephemeral: false,
             list_order: None,
             group_workspace_path: None,
+            group_project_key: None,
+            pinned: false,
+            pinned_order: None,
         }
     }
 }

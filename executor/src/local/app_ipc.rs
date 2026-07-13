@@ -87,7 +87,9 @@ if target.exists() and target.is_file():
 
 print(json.dumps(result, ensure_ascii=False))
 "#;
+const GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; [ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); [ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; git diff --shortstat "$merge_base" --"#;
 const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
+const GIT_BRANCH_DIFF_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
 const TURN_FILE_CHANGES_SCRIPT: &str = r#"
 import gzip
 import hashlib
@@ -819,6 +821,16 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         "git_diff" => Some(command_definition(
             "bash -lc <git_workspace_diff>",
             &["bash", "-lc", GIT_WORKSPACE_DIFF_SCRIPT],
+            None,
+        )),
+        "git_branch_diff" => Some(command_definition(
+            "bash -lc <git_branch_diff>",
+            &["bash", "-lc", GIT_BRANCH_DIFF_SCRIPT],
+            None,
+        )),
+        "git_branch_diff_shortstat" => Some(command_definition(
+            "bash -lc <git_branch_diff_shortstat>",
+            &["bash", "-lc", GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT],
             None,
         )),
         "git_diff_unstaged" => Some(command_definition(
