@@ -805,18 +805,22 @@ def test_llm_responses_proxy_endpoint_streams_from_provider(
     )
 
     response = test_client.post(
-        "/api/runtime-work/llm-responses-proxy/test-token/responses",
-        headers={"content-type": "application/json", "accept": "text/event-stream"},
+        "/api/runtime-work/llm-responses-proxy/responses",
+        headers={
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "authorization": "Bearer test-token",
+        },
         json={"model": "gpt-4-turbo", "input": "hello"},
     )
 
     assert response.status_code == 200
     proxy_mock.assert_awaited_once()
     call_args = proxy_mock.await_args
-    assert call_args.args[0] == "test-token"
+    assert call_args.args[0].headers["authorization"] == "Bearer test-token"
 
 
-def test_llm_responses_proxy_endpoint_does_not_require_bearer_auth(
+def test_llm_responses_proxy_endpoint_does_not_require_user_bearer_auth(
     test_client,
     monkeypatch,
 ):
@@ -835,9 +839,23 @@ def test_llm_responses_proxy_endpoint_does_not_require_bearer_auth(
     )
 
     response = test_client.post(
-        "/api/runtime-work/llm-responses-proxy/test-token/responses",
-        headers={"content-type": "application/json", "accept": "text/event-stream"},
+        "/api/runtime-work/llm-responses-proxy/responses",
+        headers={
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "authorization": "Bearer test-token",
+        },
         json={"model": "gpt-4-turbo", "input": "hello"},
     )
 
     assert response.status_code == 200
+
+
+def test_llm_responses_proxy_endpoint_rejects_missing_authorization(test_client):
+    response = test_client.post(
+        "/api/runtime-work/llm-responses-proxy/responses",
+        headers={"content-type": "application/json", "accept": "text/event-stream"},
+        json={"model": "gpt-4-turbo", "input": "hello"},
+    )
+
+    assert response.status_code == 401

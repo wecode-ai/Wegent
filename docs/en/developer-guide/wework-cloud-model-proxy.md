@@ -20,7 +20,7 @@ Introduce a backend LLM proxy gateway: Wework sends only user input and model se
 ### Key Components
 
 - `app/services/llm_proxy_service.py`: core proxy service.
-- `POST /api/runtime-work/llm-responses-proxy/{token}/responses`: proxy endpoint.
+- `POST /api/runtime-work/llm-responses-proxy/responses`: proxy endpoint. The encrypted proxy token is passed in the `Authorization: Bearer` header.
 - `app/services/chat/trigger/unified.py` and `runtime_work_service.py`: decide whether to use proxy mode based on model config.
 
 ### Request Flow

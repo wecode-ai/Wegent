@@ -19,7 +19,7 @@ mod config;
 
 use axum::{
     body::{Body, Bytes},
-    extract::{Multipart, Path as AxumPath, Query, State},
+    extract::{Multipart, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -90,7 +90,7 @@ where
         .route("/envs", get(envd_envs))
         .route("/v1/responses", post(openai_responses::<R>))
         .route(
-            "/v1/codex-responses-proxy/{token}/responses",
+            "/v1/codex-responses-proxy/responses",
             post(codex_responses_proxy),
         )
         .route("/v1/attachments/sync", post(sync_attachments))
@@ -235,17 +235,32 @@ fn codex_responses_proxy_registry() -> &'static Mutex<HashMap<String, CodexRespo
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-async fn codex_responses_proxy(
-    AxumPath(token): AxumPath<String>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response, HttpError> {
+fn extract_codex_responses_proxy_local_token(headers: &HeaderMap) -> Option<String> {
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .trim();
+    let mut parts = auth.split_whitespace();
+    if parts.next()?.eq_ignore_ascii_case("Bearer") {
+        parts.next().map(str::to_owned)
+    } else {
+        None
+    }
+}
+
+async fn codex_responses_proxy(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {
     let request_id = next_codex_responses_proxy_request_id();
     let started_at = Instant::now();
+    let local_token =
+        extract_codex_responses_proxy_local_token(&headers).ok_or_else(|| HttpError {
+            status: StatusCode::UNAUTHORIZED,
+            detail: "missing Codex responses proxy local token".to_owned(),
+        })?;
     let upstream = codex_responses_proxy_registry()
         .lock()
         .expect("proxy registry should not be poisoned")
-        .get(&token)
+        .get(&local_token)
         .cloned()
         .ok_or_else(|| HttpError {
             status: StatusCode::NOT_FOUND,
@@ -258,7 +273,7 @@ async fn codex_responses_proxy(
         "codex responses proxy request started",
         &[
             ("request_id", request_id.clone()),
-            ("token", token.clone()),
+            ("token", local_token.clone()),
             ("upstream", codex_responses_proxy_log_target(&upstream_url)),
             ("proxy_configured", upstream.proxy_url.is_some().to_string()),
             ("body_bytes", body.len().to_string()),

@@ -151,7 +151,11 @@ async def test_proxy_llm_responses_forwards_to_provider(
         return_value=b'{"model":"gpt-4-turbo","input":"hello"}'
     )
     request_mock.headers = Headers(
-        {"content-type": "application/json", "accept": "text/event-stream"}
+        {
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "authorization": f"Bearer {token}",
+        }
     )
 
     upstream_response_mock = MagicMock()
@@ -171,7 +175,7 @@ async def test_proxy_llm_responses_forwards_to_provider(
     with patch(
         "app.services.llm_proxy_service.httpx.AsyncClient", return_value=client_mock
     ):
-        response = await proxy_llm_responses(token, request_mock, test_db)
+        response = await proxy_llm_responses(request_mock, test_db)
 
     assert response.status_code == 200
     assert response.media_type == "text/event-stream"
@@ -208,8 +212,8 @@ def test_build_codex_runtime_model_config_uses_backend_proxy_for_cloud_models(
     assert config["codex_responses_compat_proxy"] is True
     assert "api_key" in config
     assert config["api_key"] != "sk-test-key"
-    assert config["base_url"].startswith(
-        "https://wegent.example.com/api/runtime-work/llm-responses-proxy/"
+    assert config["base_url"] == (
+        "https://wegent.example.com/api/runtime-work/llm-responses-proxy"
     )
 
 
