@@ -21,6 +21,7 @@ required-features = ["dev-reload"]
 [features]
 default = []
 dev-reload = ["dep:ctrlc", "dep:notify"]
+custom-runtime = []
 
 [dependencies]
 axum = { version = "0.8", features = ["multipart"] }
