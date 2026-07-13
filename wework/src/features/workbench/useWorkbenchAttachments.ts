@@ -5,7 +5,7 @@ import {
   isValidFileSize,
   uploadAttachment as defaultUploadAttachment,
 } from '@/api/attachments'
-import { readTextAttachmentMetadata } from '@/lib/attachments'
+import { readTextAttachmentMetadata, releaseAttachmentPreview } from '@/lib/attachments'
 
 interface UseWorkbenchAttachmentsOptions {
   uploadAttachment?: (file: File, onProgress?: (progress: number) => void) => Promise<Attachment>
@@ -133,23 +133,26 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
 
   const removeAttachment = useCallback(
     async (attachmentId: number) => {
+      const attachment = state.attachments.find(item => item.id === attachmentId)
+      if (attachment) releaseAttachmentPreview(attachment)
       updateScopeState(current => ({
         ...current,
         attachments: current.attachments.filter(attachment => attachment.id !== attachmentId),
       }))
       await deleteAttachment(attachmentId)
     },
-    [deleteAttachment, updateScopeState]
+    [deleteAttachment, state.attachments, updateScopeState]
   )
 
   const resetAttachments = useCallback(() => {
+    state.attachments.forEach(releaseAttachmentPreview)
     updateScopeState(current => ({
       ...current,
       attachments: [],
       uploadingFiles: new Map(),
       errors: new Map(),
     }))
-  }, [updateScopeState])
+  }, [state.attachments, updateScopeState])
 
   return {
     state,

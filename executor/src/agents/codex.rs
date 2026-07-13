@@ -419,6 +419,28 @@ impl CodexAppServerClient {
         self.state.lock().await.active_threads.remove(thread_id);
     }
 
+    async fn unsubscribe_thread(&self, thread_id: &str) {
+        let result: Result<(), String> = async {
+            let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
+            let message = json!({
+                "method": "thread/unsubscribe",
+                "id": request_id,
+                "params": {"threadId": thread_id},
+            });
+            let write_result = handle.write_message(message).await;
+            handle.remove_pending(request_id).await;
+            drop(response_rx);
+            write_result
+        }
+        .await;
+        if let Err(error) = result {
+            log_executor_event(
+                "codex shared thread unsubscribe failed",
+                &[("thread_id", thread_id.to_owned()), ("error", error)],
+            );
+        }
+    }
+
     async fn unscoped_notification_belongs_to_thread(&self, thread_id: &str) -> bool {
         let state = self.state.lock().await;
         state.active_threads.len() == 1 && state.active_threads.contains(thread_id)
@@ -780,6 +802,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     }
     log_executor_event("codex shared app-server turn starting", &fields);
 
+    let mut subscribed_thread_id = None;
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
         let mut notification_rx = client
@@ -836,6 +859,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared thread request finished", &thread_fields);
             thread_id
         };
+        subscribed_thread_id = Some(thread_id.clone());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
@@ -915,7 +939,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         {
             Ok(turn) => turn,
             Err(error) => {
-                client.mark_thread_idle(&thread_id).await;
                 return Err(error);
             }
         };
@@ -941,7 +964,6 @@ async fn run_codex_app_server_turn_on_shared_client(
             },
         )
         .await;
-        client.mark_thread_idle(&thread_id).await;
         let outcome = outcome_result?;
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
@@ -952,6 +974,11 @@ async fn run_codex_app_server_turn_on_shared_client(
         Ok(CodexAppServerTurn { thread_id, outcome })
     }
     .await;
+
+    if let Some(thread_id) = subscribed_thread_id {
+        client.mark_thread_idle(&thread_id).await;
+        client.unsubscribe_thread(&thread_id).await;
+    }
 
     if let Err(error) = &result {
         let mut failed_fields = fields.clone();

@@ -18,6 +18,7 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
+import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import {
   applyRequestUserInputResponseToMessages,
@@ -1296,7 +1297,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
                 content: submittedInput,
                 status: 'queued',
                 createdAt: new Date().toISOString(),
-                attachments: currentAttachments,
+                attachments: persistAttachmentReferences(currentAttachments),
                 runtimeGoalRequest: true,
                 ...getRuntimeModelFields(),
               }
@@ -1520,7 +1521,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
               codeComments: codeCommentContexts,
               status: 'queued',
               createdAt: new Date().toISOString(),
-              attachments: currentAttachments,
+              attachments: persistAttachmentReferences(currentAttachments),
               ...getRuntimeModelFields(),
             }
 
@@ -1544,7 +1545,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
             content: submittedInput,
             status: 'queued',
             createdAt: new Date().toISOString(),
-            attachments: currentAttachments,
+            attachments: persistAttachmentReferences(currentAttachments),
             ...getRuntimeModelFields(),
           }
 
@@ -2039,7 +2040,7 @@ function createLocalUserMessage(
     id: options.id ?? `runtime-local-pane-${Date.now()}`,
     role: 'user',
     content,
-    attachments,
+    attachments: attachments ? persistAttachmentReferences(attachments) : undefined,
     status: 'done',
     createdAt: options.createdAt ?? new Date().toISOString(),
     runtimeGoalRequest: options.runtimeGoalRequest ? true : undefined,

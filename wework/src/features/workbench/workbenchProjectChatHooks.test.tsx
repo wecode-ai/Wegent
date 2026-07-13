@@ -556,6 +556,38 @@ describe('workbench project chat hooks', () => {
     expect(result.current.attachments).toEqual([])
   })
 
+  test('releases temporary image previews when attachments leave the composer', async () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const firstAttachment: Attachment = {
+      id: 44,
+      filename: 'first.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-27T00:00:00.000Z',
+      local_preview_url: 'blob:first-preview',
+    }
+    const secondAttachment: Attachment = {
+      ...firstAttachment,
+      id: 45,
+      filename: 'second.png',
+      local_preview_url: 'blob:second-preview',
+    }
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const { result } = renderHook(() => useWorkbenchAttachments({ deleteAttachment: remove }))
+
+    act(() => {
+      result.current.addExistingAttachment(firstAttachment)
+      result.current.addExistingAttachment(secondAttachment)
+    })
+    await act(async () => result.current.removeAttachment(firstAttachment.id))
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:first-preview')
+
+    act(() => result.current.resetAttachments())
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:second-preview')
+  })
+
   test('uploads attachments without restricting file extensions', async () => {
     const attachment: Attachment = {
       id: 43,

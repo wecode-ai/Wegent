@@ -117,7 +117,7 @@ type ProcessingBlockUpdate = {
 
 const MAX_LIVE_MESSAGE_CONTENT_CHARS = 200_000
 const MAX_LIVE_BLOCK_CONTENT_CHARS = 120_000
-const MAX_LIVE_TOOL_OUTPUT_CHARS = 120_000
+const MAX_LIVE_TOOL_OUTPUT_CHARS = 64 * 1024
 
 export type WorkbenchMessageAction<
   TAttachment = unknown,

@@ -719,6 +719,13 @@ async fn runtime_tasks_reuse_one_codex_process_across_follow_up_turns() {
             .count(),
         1
     );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/unsubscribe")
+            .count(),
+        2
+    );
 }
 
 #[tokio::test]
