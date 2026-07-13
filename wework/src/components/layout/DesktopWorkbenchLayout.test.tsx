@@ -4664,6 +4664,14 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
     await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('opened from tool block'))
     expect(screen.getByTestId('right-workspace-file-tab')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('workspace-file-tree-container')).toHaveClass(
+      'pointer-events-none',
+      'w-0',
+      'opacity-0'
+    )
+    expect(screen.getByTestId('workspace-file-toggle-tree-button')).toHaveAccessibleName(
+      '显示目录树'
+    )
     expect(readWorkspaceTextFile).toHaveBeenCalledWith(
       'workspace-cloud-device',
       '/workspace/project/README.md'

@@ -388,6 +388,7 @@ export function FileWorkspacePanel({
     let cancelled = false
     void Promise.resolve().then(() => {
       if (!cancelled) {
+        setDirectoryTreeVisible(false)
         openFilePath(openFileRequest.path, {
           lineStart: openFileRequest.lineStart,
           lineEnd: openFileRequest.lineEnd,
