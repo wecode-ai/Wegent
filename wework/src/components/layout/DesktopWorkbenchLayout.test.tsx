@@ -84,6 +84,14 @@ const nativeDirectoryPickerMocks = vi.hoisted(() => ({
   openNativeProjectDirectoryPicker: vi.fn(),
 }))
 
+const automationMocks = vi.hoisted(() => ({
+  useNativeDirectoryPicker: true,
+}))
+
+vi.mock('@/e2e/automation', () => ({
+  shouldUseNativeProjectDirectoryPicker: () => automationMocks.useNativeDirectoryPicker,
+}))
+
 vi.mock('@/lib/native-directory-picker', () => ({
   openNativeProjectDirectoryPicker: nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker,
 }))
@@ -498,6 +506,7 @@ describe('DesktopWorkbenchLayout', () => {
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
+    automationMocks.useNativeDirectoryPicker = true
     openExternalUrlMock.mockResolvedValue(true)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
@@ -3105,9 +3114,10 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('opens a standalone Codex workspace from an existing local folder selected in Finder', async () => {
     const onOpenStandaloneWorkspace = vi.fn()
-    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(
-      '/Users/alice/repo'
-    )
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(async () => {
+      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+      return '/Users/alice/repo'
+    })
 
     render(
       <DesktopWorkbenchLayout
@@ -3177,6 +3187,42 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(onOpenStandaloneWorkspace).not.toHaveBeenCalled()
     expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  })
+
+  test('uses the controllable folder dialog during desktop E2E verification', async () => {
+    automationMocks.useNativeDirectoryPicker = false
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/Users/alice')
+    const onListDeviceDirectories = vi.fn().mockResolvedValue(['repo'])
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+        onListDeviceDirectories={onListDeviceDirectories}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: 'device-1',
+              name: 'sifang-executor',
+              status: 'online',
+              is_default: true,
+              bind_shell: 'claudecode',
+              device_type: 'local',
+              executor_version: '1.8.5',
+            },
+          ],
+        }}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    expect(await screen.findByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
+    await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
+    expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
   })
 
   test('falls back to the remote-style folder dialog when existing folder targets a remote device', async () => {
