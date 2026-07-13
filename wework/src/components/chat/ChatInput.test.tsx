@@ -2400,7 +2400,36 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('pause-goal-button')).toBeInTheDocument()
   })
 
-  test.each(['blocked', 'usageLimited', 'budgetLimited'] as const)(
+  test('offers the resume action for a blocked goal', async () => {
+    const onResumeGoal = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        goal={{
+          threadId: 'thread-1',
+          objective: 'Resolve the issue',
+          status: 'blocked',
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1780000000000,
+          updatedAt: 1780000000000,
+        }}
+        onResumeGoal={onResumeGoal}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('resume-goal-button'))
+
+    expect(onResumeGoal).toHaveBeenCalledTimes(1)
+  })
+
+  test.each(['usageLimited', 'budgetLimited'] as const)(
     'does not offer the pause action for a %s goal',
     status => {
       render(
