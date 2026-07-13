@@ -13,6 +13,9 @@ export const paths = {
     getHref: () => getRuntimeConfigSync().docsUrl,
   },
   auth: {
+    wework_authorize: {
+      getHref: () => '/auth/wework/authorize',
+    },
     password_login: {
       getHref: () => '/login',
     },

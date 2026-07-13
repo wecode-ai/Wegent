@@ -70,7 +70,7 @@ def _authorize_base_url() -> str:
 
 def _build_authorize_url(session_id: str) -> str:
     params = urlencode({"session_id": session_id})
-    return f"{_authorize_base_url()}/wework/authorize?{params}"
+    return f"{_authorize_base_url()}/auth/wework/authorize?{params}"
 
 
 async def _read_session(session_id: str) -> dict:
