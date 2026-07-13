@@ -33,6 +33,8 @@ import type {
   RuntimeWorkListResponse,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
+  RuntimeWorkspaceSearchRequest,
+  RuntimeWorkspaceSearchResponse,
 } from '@/types/api'
 import type {
   WorkspaceFileApi,
@@ -86,6 +88,9 @@ export interface ExecutorRuntimeClient {
   deleteDeviceWorkspace: ReturnType<typeof createRuntimeWorkApi>['deleteDeviceWorkspace']
   getRuntimeTranscript: (data: RuntimeTranscriptRequest) => Promise<RuntimeTranscriptResponse>
   searchRuntimeWork: (data: RuntimeWorkSearchRequest) => Promise<RuntimeWorkSearchResponse>
+  searchRuntimeWorkspace: (
+    data: RuntimeWorkspaceSearchRequest
+  ) => Promise<RuntimeWorkspaceSearchResponse>
   revertRuntimeFileChanges: (
     data: RuntimeFileChangesRevertRequest
   ) => Promise<RuntimeFileChangesRevertResponse>
@@ -212,7 +217,6 @@ export function createExecutorClientFromApis({
   })
 
   const resolve = (deviceId: string) => registry.resolve(deviceId)
-
   const commands: ExecutorCommandClient = {
     listDevices: async () => {
       const entries = await registry.refresh()
@@ -252,6 +256,15 @@ export function createExecutorClientFromApis({
     async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
       await resolve(deviceId)
       return deviceApi.listWorkspaceEntries(deviceId, path)
+    },
+    async searchWorkspaceEntries(deviceId, root, query, cancellationToken) {
+      await resolve(deviceId)
+      return runtimeWorkApi.searchRuntimeWorkspace({
+        deviceId,
+        root,
+        query,
+        cancellationToken,
+      })
     },
     async readWorkspaceTextFile(
       deviceId: string,

@@ -52,6 +52,8 @@ from app.schemas.runtime_work import (
     RuntimeWorkspaceOpenResponse,
     RuntimeWorkspaceRemoveRequest,
     RuntimeWorkspaceRenameRequest,
+    RuntimeWorkspaceSearchRequest,
+    RuntimeWorkspaceSearchResponse,
 )
 from app.services import runtime_work_service
 from shared.telemetry.decorators import (
@@ -166,6 +168,25 @@ async def search_runtime_work_endpoint(
     """Search online runtime transcripts owned by the current user."""
 
     return await runtime_work_service.search_runtime_work(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/workspace/search",
+    response_model=RuntimeWorkspaceSearchResponse,
+    response_model_by_alias=True,
+)
+async def search_runtime_workspace_endpoint(
+    request: RuntimeWorkspaceSearchRequest = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Search workspace paths through the owning online local executor."""
+
+    return await runtime_work_service.search_runtime_workspace(
         db=db,
         user_id=current_user.id,
         request=request,

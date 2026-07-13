@@ -501,6 +501,26 @@ export interface RuntimeWorkSearchResponse {
   items: RuntimeWorkSearchItem[]
 }
 
+export interface RuntimeWorkspaceSearchRequest {
+  deviceId: string
+  root: string
+  query: string
+  cancellationToken?: string
+}
+
+export interface RuntimeWorkspaceSearchItem {
+  root: string
+  path: string
+  fileName: string
+  matchType: 'file' | 'directory'
+  score: number
+  indices?: number[] | null
+}
+
+export interface RuntimeWorkspaceSearchResponse {
+  files: RuntimeWorkspaceSearchItem[]
+}
+
 export interface RuntimeTranscriptResponse {
   taskId?: string
   workspacePath: string

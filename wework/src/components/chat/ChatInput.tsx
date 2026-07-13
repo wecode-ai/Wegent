@@ -20,7 +20,7 @@ import type {
   UnifiedSkill,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
-import type { CodeCommentContext } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
 import { GoalStatusBar } from './composer/GoalStatusBar'
@@ -115,6 +115,8 @@ export interface ChatInputProps {
   onCancelGuidanceMessage?: (id: string) => void
   onClearCodeComments?: () => void
   onOpenSkillFile?: (path: string) => void
+  workspaceTarget?: WorkspaceTarget | null
+  workspaceFileApi?: WorkspaceFileApi
   isStreaming?: boolean
   onPause?: () => void
   onCompactContext?: () => void | Promise<void>
@@ -214,6 +216,8 @@ export function ChatInput({
   onCancelGuidanceMessage,
   onClearCodeComments,
   onOpenSkillFile,
+  workspaceTarget,
+  workspaceFileApi,
   isStreaming = false,
   onPause,
   onCompactContext,
@@ -315,6 +319,8 @@ export function ChatInput({
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
     onOpenSkillFile,
+    workspaceTarget,
+    workspaceFileApi,
   }
   const errorBanner = error ? (
     <div

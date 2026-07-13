@@ -959,6 +959,7 @@ export function WorkbenchProvider({
   const workspaceFileApi = useMemo(
     () => ({
       listWorkspaceEntries: executorClient.files.listWorkspaceEntries,
+      searchWorkspaceEntries: executorClient.files.searchWorkspaceEntries,
       readWorkspaceTextFile: executorClient.files.readWorkspaceTextFile,
       readWorkspaceFileChunk: executorClient.files.readWorkspaceFileChunk,
     }),
@@ -971,6 +972,7 @@ export function WorkbenchProvider({
       devices: state.devices,
       runtimeWork: state.runtimeWork,
       standaloneDeviceId: state.standaloneDeviceId,
+      standaloneWorkspacePath: state.standaloneWorkspacePath,
       selectedDeviceWorkspaceId: state.selectedDeviceWorkspaceId,
       pendingProjectWorkspaceProjectId: state.pendingProjectWorkspaceProjectId,
       user: state.user,
@@ -985,6 +987,7 @@ export function WorkbenchProvider({
       state.runtimeWork,
       state.selectedDeviceWorkspaceId,
       state.standaloneDeviceId,
+      state.standaloneWorkspacePath,
       state.user,
     ]
   )

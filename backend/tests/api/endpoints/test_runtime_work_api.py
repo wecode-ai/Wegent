@@ -512,6 +512,49 @@ def test_runtime_workspace_open_endpoint_dispatches_request(
     assert request.label == "Hello project"
 
 
+def test_runtime_workspace_search_endpoint_dispatches_request(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "files": [
+                {
+                    "root": "/repo/Wegent",
+                    "path": "frontend/src/auth.ts",
+                    "fileName": "auth.ts",
+                    "matchType": "file",
+                    "score": 91,
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "search_runtime_workspace",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/workspace/search",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "root": "/repo/Wegent",
+            "query": "auth",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["files"][0]["fileName"] == "auth.ts"
+    request = service_mock.await_args.kwargs["request"]
+    assert request.device_id == "device-1"
+    assert request.query == "auth"
+
+
 def test_runtime_workspace_rename_endpoint_dispatches_request(
     test_client,
     test_token,
