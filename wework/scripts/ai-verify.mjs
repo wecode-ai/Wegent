@@ -7,14 +7,21 @@
 
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
+import { homedir, tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const defaultTimeoutMs = 30_000
+const startupTimeoutMs = 60_000
+const corsHeaders = {
+  'access-control-allow-headers': 'authorization, content-type',
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-origin': '*',
+}
 
 function usage() {
   console.error(`Usage:
@@ -46,9 +53,7 @@ function parseArgs(argv) {
 
 function json(response, status, value) {
   response.writeHead(status, {
-    'access-control-allow-headers': 'authorization, content-type',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-origin': '*',
+    ...corsHeaders,
     'content-type': 'application/json; charset=utf-8',
   })
   response.end(`${JSON.stringify(value)}\n`)
@@ -86,64 +91,20 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
-function execFileText(file, args) {
-  return new Promise((resolvePromise, reject) => {
-    execFile(file, args, { encoding: 'utf8' }, (error, stdout) => {
-      if (error) reject(error)
-      else resolvePromise(stdout)
+async function stopOwnedSessionProcesses(session) {
+  if (!Number.isInteger(session.launcherPid)) return
+  await signalProcessGroup(session.launcherPid, 'TERM')
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+  await signalProcessGroup(session.launcherPid, 'KILL')
+}
+
+function signalProcessGroup(processGroupId, signal) {
+  return new Promise(resolvePromise => {
+    execFile('/bin/kill', [`-${signal}`, `-${processGroupId}`], () => {
+      // The process group may already have exited.
+      resolvePromise()
     })
   })
-}
-
-async function ownedSessionProcessIds(session) {
-  if (!Number.isInteger(session.launcherPid) || !session.socketPath) return []
-  const table = await execFileText('ps', ['-axo', 'pid=,ppid='])
-  const children = new Map()
-  for (const line of table.split('\n')) {
-    const [pidText, parentText] = line.trim().split(/\s+/)
-    const pid = Number(pidText)
-    const parentPid = Number(parentText)
-    if (!Number.isInteger(pid) || !Number.isInteger(parentPid)) continue
-    const values = children.get(parentPid) ?? []
-    values.push(pid)
-    children.set(parentPid, values)
-  }
-
-  const candidates = []
-  const pending = [session.launcherPid]
-  while (pending.length > 0) {
-    const pid = pending.pop()
-    if (!pid || candidates.includes(pid)) continue
-    candidates.push(pid)
-    pending.push(...(children.get(pid) ?? []))
-  }
-
-  const owned = []
-  for (const pid of candidates) {
-    try {
-      const command = await execFileText('ps', ['eww', '-p', String(pid), '-o', 'command='])
-      if (command.includes(session.socketPath)) owned.push(pid)
-    } catch {
-      // The process may exit while the session is being stopped.
-    }
-  }
-  return owned
-}
-
-function signalProcesses(processIds, signal) {
-  for (const pid of processIds) {
-    try {
-      process.kill(pid, signal)
-    } catch {
-      // The process may have exited between discovery and signalling.
-    }
-  }
-}
-
-async function stopOwnedSessionProcesses(session) {
-  signalProcesses((await ownedSessionProcessIds(session)).reverse(), 'SIGTERM')
-  await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
-  signalProcesses(await ownedSessionProcessIds(session), 'SIGKILL')
 }
 
 async function runServer(sessionPath, token) {
@@ -157,9 +118,7 @@ async function runServer(sessionPath, token) {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1')
       if (request.method === 'OPTIONS') {
         response.writeHead(204, {
-          'access-control-allow-headers': 'authorization, content-type',
-          'access-control-allow-methods': 'GET, POST, OPTIONS',
-          'access-control-allow-origin': '*',
+          ...corsHeaders,
         })
         return response.end()
       }
@@ -171,7 +130,7 @@ async function runServer(sessionPath, token) {
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
         if (!command) {
-          response.writeHead(204)
+          response.writeHead(204, corsHeaders)
           return response.end()
         }
         return json(response, 200, command)
@@ -230,11 +189,14 @@ async function runServer(sessionPath, token) {
   const updated = {
     ...session,
     controlUrl,
-    socketPath: join(session.directory, 'app-ipc.sock'),
+    socketPath: join(tmpdir(), `wework-ai-${randomUUID()}.sock`),
     status: 'starting',
   }
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
   const log = join(session.directory, 'app.log')
+  const codexHome = join(session.directory, 'executor-home', 'codex')
+  await mkdir(codexHome, { recursive: true })
+  await symlink(join(homedir(), '.codex', 'auth.json'), join(codexHome, 'auth.json'))
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
     cwd: weworkDir,
     detached: true,
@@ -243,7 +205,7 @@ async function runServer(sessionPath, token) {
       VITE_WEWORK_E2E: 'true',
       VITE_WEWORK_DESKTOP_E2E_CONTROL_URL: controlUrl,
       VITE_WEWORK_DESKTOP_E2E_CONTROL_TOKEN: token,
-      CODEX_HOME: join(session.directory, 'executor-home', 'codex'),
+      CODEX_HOME: codexHome,
       DEVICE_ID: session.deviceId,
       WEGENT_EXECUTOR_APP_IPC_SOCKET: updated.socketPath,
       WEGENT_EXECUTOR_HOME: join(session.directory, 'executor-home'),
@@ -312,22 +274,33 @@ async function main() {
       { detached: true, stdio: 'ignore' }
     )
     child.unref()
-    for (let attempt = 0; attempt < 100; attempt += 1) {
+    const startupDeadline = Date.now() + startupTimeoutMs
+    while (Date.now() < startupDeadline) {
       const session = JSON.parse(await readFile(sessionPath, 'utf8'))
       if (session.controlUrl) {
-        console.log(
-          JSON.stringify({ session: sessionPath, controlUrl: session.controlUrl }, null, 2)
-        )
-        return
+        try {
+          const status = await request(session, token, '/status')
+          if (status.ready) {
+            console.log(
+              JSON.stringify({ session: sessionPath, controlUrl: session.controlUrl }, null, 2)
+            )
+            return
+          }
+        } catch {
+          // The controller can be briefly unavailable while its process starts.
+        }
       }
       await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
-    throw new Error('Timed out starting AI verification controller')
+    throw new Error('Timed out waiting for the Wework WebView to connect to AI verification')
   }
   if (!options.session) throw new Error('--session is required')
   const session = JSON.parse(await readFile(options.session, 'utf8'))
   if (command === 'stop') {
     await request(session, session.token, '/shutdown', 'POST')
+    await stopOwnedSessionProcesses(session)
+    await rm(session.socketPath, { force: true })
+    await rm(join(session.directory, 'executor-home', 'codex', 'auth.json'), { force: true })
     return
   }
   if (command === 'status') {
