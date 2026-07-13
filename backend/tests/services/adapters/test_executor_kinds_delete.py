@@ -68,6 +68,10 @@ async def test_cleanup_sandbox_by_task_id_http_error():
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.post = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
 
-    with patch("httpx.AsyncClient", return_value=mock_client):
+    with patch("httpx.AsyncClient", return_value=mock_client) as mock_client_cls:
         with pytest.raises(HTTPException, match="Error cleaning up sandbox"):
             await cleanup_sandbox_by_task_id_async(Mock(), task_id=1234)
+
+    mock_client_cls.assert_called_once_with(
+        timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
+    )

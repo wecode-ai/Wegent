@@ -161,9 +161,14 @@ async def cleanup_sandbox_by_task_id_async(
             EXECUTOR_SANDBOX_CLEANUP_BY_TASK_URL,
             task_id,
         )
-        # Timeout must exceed the archive callback window (executor_manager
-        # allows up to 130s for the archive upload) plus pod deletion.
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        # connect timeout (10s) fails fast when executor_manager is unreachable
+        # instead of blocking the orphan cleanup loop for the full read timeout.
+        # read timeout (180s) must exceed the archive callback window
+        # (executor_manager allows up to 130s for the archive upload) plus pod
+        # deletion.
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=10.0)
+        ) as client:
             response = await client.post(
                 EXECUTOR_SANDBOX_CLEANUP_BY_TASK_URL,
                 json=payload,
