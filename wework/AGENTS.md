@@ -25,9 +25,13 @@ pnpm --filter wework exec eslint <changed-files>
 
 E2E tests use real backend requests. Do not skip, silently fail, or replace a failing integration with frontend mocks.
 
+- Design verification cases as a QA test plan before running them. For every changed behavior, cover the preconditions, environment and test data, exact steps, expected results, negative and recovery paths, and cleanup. Record the actual result and retain reproducible evidence for failures and critical-path success.
+- Changes to a core user flow must add or update automated E2E regression coverage in the same change. Treat task creation and launch, agent interaction, local-runtime lifecycle, permissions, and failure recovery as core flows when they are affected.
+- E2E coverage complements, but never replaces, verification in the real Tauri application.
+
 ## Real desktop verification
 
-Any Wework UI behavior change requires isolated real-Tauri verification in addition to unit tests. Use `scripts/ai-verify.mjs`; do not drive a personal Wework window, external Chrome, or browser plug-ins.
+Any Wework UI, Tauri command, local-runtime, IPC, or desktop integration behavior change requires isolated real-Tauri verification in addition to unit and E2E tests. A browser-only or mocked run is not sufficient. Use `scripts/ai-verify.mjs`; do not drive a personal Wework window, external Chrome, or browser plug-ins.
 
 ```bash
 pnpm --filter wework ai:verify start
@@ -41,6 +45,7 @@ pnpm --filter wework ai:verify stop --session <session-path>
 - `start` waits for the WebView, creates an isolated executor home, links local Codex authentication only for that session, and uses a short temporary IPC socket path.
 - Session files and credentials are secrets: never print their contents. Always stop the session; it removes the auth link and terminates the isolated process group.
 - Begin with `snapshot`, use existing `data-testid` selectors, and assert a visible text or stable element after each critical action.
+- Execute the complete QA test plan in the isolated Tauri session, including the primary path, relevant boundary and error cases, and recovery. Document the environment, cases run, actual results, and evidence in the change handoff or pull request.
 - On failure, inspect `app.log`, `executor.log`, and Tauri logs under `test-results/ai-verify/`; do not silently downgrade to mocked verification.
 
 ## Local runtime boundaries
