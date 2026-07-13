@@ -116,9 +116,6 @@ impl RuntimeTaskLink {
             .as_ref()
             .and_then(|link| local_terminal_status_if_current(link, thread));
         let local_running = local_link.as_ref().is_some_and(|link| link.running);
-        let goal_active = local_link
-            .as_ref()
-            .is_some_and(RuntimeTaskLink::has_active_goal);
         let goal_status = local_link
             .as_ref()
             .and_then(|link| link.goal_status.clone());
@@ -136,7 +133,7 @@ impl RuntimeTaskLink {
         }
         let status = if local_archived {
             "archived".to_owned()
-        } else if goal_active || local_running {
+        } else if local_running {
             "running".to_owned()
         } else if let Some(status) = &local_terminal_status {
             status.clone()
@@ -145,7 +142,7 @@ impl RuntimeTaskLink {
         };
         let running = !local_archived
             && local_terminal_status.is_none()
-            && (goal_active || local_running || normalized_running_status(&status));
+            && (local_running || normalized_running_status(&status));
         Self {
             local_task_id: local_link
                 .as_ref()
@@ -202,14 +199,6 @@ impl RuntimeTaskLink {
             pinned: self.pinned,
             pinned_order: self.pinned_order,
         }
-    }
-}
-
-impl RuntimeTaskLink {
-    pub fn has_active_goal(&self) -> bool {
-        self.goal_status
-            .as_deref()
-            .is_some_and(|status| status.eq_ignore_ascii_case("active"))
     }
 }
 
@@ -839,7 +828,7 @@ mod tests {
     }
 
     #[test]
-    fn active_goal_keeps_task_running_when_thread_list_is_idle() {
+    fn active_goal_does_not_keep_task_running_when_thread_list_is_idle() {
         let local_link = RuntimeTaskLink {
             local_task_id: "task-1".to_owned(),
             thread_id: Some("thread-1".to_owned()),
@@ -858,8 +847,8 @@ mod tests {
             "/workspace/project".to_owned(),
         );
 
-        assert_eq!(link.status, "running");
-        assert!(link.running);
+        assert_eq!(link.status, "active");
+        assert!(!link.running);
         assert_eq!(link.goal_status.as_deref(), Some("active"));
     }
 

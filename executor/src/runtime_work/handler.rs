@@ -3776,7 +3776,7 @@ impl RuntimeWorkRpcHandler {
             runtime_handle.insert("threadPath".to_owned(), Value::String(path));
             link.runtime_handle = Value::Object(runtime_handle);
         }
-        if local_active || link.has_active_goal() {
+        if local_active {
             link.status = "running".to_owned();
             link.running = true;
         }
@@ -3950,13 +3950,8 @@ impl RuntimeWorkRpcHandler {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
             }
-            let goal_active = link.has_active_goal();
-            link.status = if goal_active {
-                "running".to_owned()
-            } else {
-                status.to_owned()
-            };
-            link.running = goal_active || status == "running";
+            link.status = status.to_owned();
+            link.running = status == "running";
             link.updated_at = now_ms();
             if link.thread_id.is_some() && status != "running" {
                 retain_runtime_handle_user_messages(&mut link.runtime_handle);
@@ -3986,19 +3981,8 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn sync_runtime_task_goal_status(&self, local_task_id: &str, goal_status: Option<String>) {
-        let active_goal = goal_status
-            .as_deref()
-            .is_some_and(|status| status.eq_ignore_ascii_case("active"));
-        let task_active = self.is_active_local_task(local_task_id);
         let updated = self.store.update_task(local_task_id, |link| {
             link.goal_status = goal_status.clone();
-            if active_goal {
-                link.status = "running".to_owned();
-                link.running = true;
-            } else if !task_active {
-                link.status = goal_status.clone().unwrap_or_else(|| "active".to_owned());
-                link.running = false;
-            }
             link.updated_at = now_ms();
         });
         if updated.is_some() {
@@ -4018,7 +4002,7 @@ fn is_unmapped_pending_codex_shadow(
 }
 
 fn normalize_inactive_running_codex_task(link: &mut RuntimeTaskLink) -> bool {
-    if link.has_active_goal() || !is_inactive_running_codex_task(link) {
+    if !is_inactive_running_codex_task(link) {
         return false;
     }
     link.status = "active".to_owned();
@@ -5690,6 +5674,49 @@ fn current_process_max_rss_kb() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finishing_an_active_goal_keeps_the_task_idle() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.goal_status = Some("active".to_owned());
+        handler.upsert_local_task(link);
+
+        handler.finish_local_task("task-1", Some("thread-1".to_owned()), "done");
+
+        let task = handler
+            .local_task_link("task-1")
+            .expect("task should remain stored");
+        assert_eq!(task.status, "done");
+        assert!(!task.running);
+        assert_eq!(task.goal_status.as_deref(), Some("active"));
+    }
+
+    #[test]
+    fn syncing_an_active_goal_does_not_start_an_idle_task() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.status = "done".to_owned();
+        link.running = false;
+        handler.upsert_local_task(link);
+
+        handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+        let task = handler
+            .local_task_link("task-1")
+            .expect("task should remain stored");
+        assert_eq!(task.status, "done");
+        assert!(!task.running);
+        assert_eq!(task.goal_status.as_deref(), Some("active"));
+    }
 
     #[test]
     fn current_codex_model_provider_reads_configured_provider_name() {
