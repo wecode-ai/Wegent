@@ -379,16 +379,25 @@ describe('DesktopSidebar', () => {
     )
   })
 
-  test('shows cloud login in the account row when a default Backend is configured', async () => {
+  test('keeps the account menu available before cloud login', async () => {
     vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'http://localhost:8000')
     renderSidebar({}, { status: 'disconnected', isConnected: false, user: null })
 
     const accountButton = screen.getByTestId('settings-button')
-    expect(accountButton).toHaveTextContent('点击登录')
-    expect(accountButton).toHaveTextContent('http://localhost:8000')
+    expect(accountButton).toHaveAccessibleName('账户与设置')
+    expect(accountButton).toHaveTextContent('Wegent 账户')
+    expect(accountButton).toHaveTextContent('未登录')
+    expect(accountButton).not.toHaveTextContent('http://localhost:8000')
     expect(accountButton).not.toHaveTextContent('alice@example.com')
 
     await userEvent.click(accountButton)
+
+    expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('settings-menu-button')).toHaveTextContent('设置')
+    expect(screen.getByTestId('login-menu-button')).toHaveTextContent('登录 Wegent')
+    expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('login-menu-button'))
 
     expect(screen.getByTestId('cloud-connection-dialog')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-backend-url-input')).toHaveValue('http://localhost:8000')

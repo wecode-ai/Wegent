@@ -45,12 +45,14 @@ vi.mock('@/api/local/codexUsage', () => ({
 function renderMenu({
   showLogout,
   onLogout = vi.fn(),
-}: { showLogout?: boolean; onLogout?: () => void } = {}) {
+  onLogin,
+}: { showLogout?: boolean; onLogout?: () => void; onLogin?: () => void } = {}) {
   render(
     <DesktopSettingsMenu
       user={{ id: 1, email: 'user@example.com', user_name: 'User' }}
       onOpenSettings={vi.fn()}
       onLogout={onLogout}
+      onLogin={onLogin}
       showLogout={showLogout}
     />
   )
@@ -106,6 +108,21 @@ describe('DesktopSettingsMenu', () => {
     await userEvent.click(screen.getByTestId('logout-menu-button'))
 
     expect(onLogout).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows a descriptive login action for a disconnected cloud account', async () => {
+    const onLogin = vi.fn()
+
+    renderMenu({ showLogout: false, onLogin })
+
+    const loginButton = screen.getByTestId('login-menu-button')
+    expect(loginButton).toHaveTextContent('登录 Wegent')
+    expect(loginButton).toHaveTextContent('连接云端模型、设备和同步')
+    expect(screen.queryByTestId('logout-menu-button')).not.toBeInTheDocument()
+
+    await userEvent.click(loginButton)
+
+    expect(onLogin).toHaveBeenCalledTimes(1)
   })
 
   test('installs a discovered app update', async () => {

@@ -79,7 +79,7 @@ export function CloudConnectionSidebarButton({
   const label = connected
     ? t('workbench.cloud_work_entry', '云端工作')
     : needsAttention
-      ? t('workbench.cloud_connection_attention', '云端需重新登录')
+      ? t('workbench.cloud_connection_attention', '云端连接已失效')
       : t('workbench.cloud_connection_sidebar_disconnected', '连接云端')
   const title = connected
     ? t('workbench.cloud_connection_sidebar_connected', {

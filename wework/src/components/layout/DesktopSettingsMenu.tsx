@@ -1,4 +1,4 @@
-import { ChevronDown, Clock, Download, Loader2, LogOut, Settings } from 'lucide-react'
+import { ChevronDown, Clock, Download, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -45,12 +45,14 @@ interface DesktopSettingsMenuProps {
   user: UserProfile | null
   onOpenSettings: () => void
   onLogout: () => void
+  onLogin?: () => void
   showLogout?: boolean
 }
 
 export function DesktopSettingsMenu({
   onOpenSettings,
   onLogout,
+  onLogin,
   showLogout,
 }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
@@ -148,6 +150,18 @@ export function DesktopSettingsMenu({
       data-testid="settings-menu"
       className="absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-[20px] border border-border/70 bg-popover/95 py-2.5 text-text-primary shadow-[0_24px_60px_rgba(0,0,0,0.36)] ring-1 ring-border/40 backdrop-blur-xl"
     >
+      {onLogin ? (
+        <>
+          <SettingsMenuItem
+            testId="login-menu-button"
+            icon={<LogIn className="h-4 w-4 shrink-0 text-primary" />}
+            label={t('workbench.account_cloud_login', '登录 Wegent')}
+            description={t('workbench.account_cloud_login_description', '连接云端模型、设备和同步')}
+            onClick={onLogin}
+          />
+          <div className="mx-4 my-1.5 border-t border-border/70" />
+        </>
+      ) : null}
       <SettingsMenuItem
         testId="settings-menu-button"
         icon={<Settings className="h-4 w-4 shrink-0 text-text-secondary" />}
@@ -272,6 +286,7 @@ interface SettingsMenuItemProps {
   testId: string
   icon: ReactNode
   label: string
+  description?: string
   shortcut?: string
   trailing?: ReactNode
   active?: boolean
@@ -285,6 +300,7 @@ function SettingsMenuItem({
   testId,
   icon,
   label,
+  description,
   shortcut,
   trailing,
   active = false,
@@ -301,12 +317,19 @@ function SettingsMenuItem({
       disabled={disabled}
       aria-expanded={ariaExpanded}
       aria-controls={ariaControls}
-      className={`flex h-9 w-full items-center gap-3 px-4 text-left text-[13px] font-semibold leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
-        active ? 'bg-hover' : ''
-      }`}
+      className={`flex w-full items-center gap-3 px-4 text-left text-[13px] font-semibold leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
+        description ? 'min-h-12 py-2' : 'h-9'
+      } ${active ? 'bg-hover' : ''}`}
     >
       {icon}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{label}</span>
+        {description ? (
+          <span className="block truncate text-[11px] font-medium leading-4 text-text-secondary">
+            {description}
+          </span>
+        ) : null}
+      </span>
       {shortcut ? (
         <KeyboardShortcut
           value={shortcut}

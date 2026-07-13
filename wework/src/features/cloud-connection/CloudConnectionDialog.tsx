@@ -47,6 +47,10 @@ export function CloudConnectionDialog({
 
   const isConnected = cloud.isConnected
   const host = displayHost(cloud.backendUrl)
+  const cloudError =
+    cloud.error === 'Cloud login has expired'
+      ? t('workbench.cloud_connection_relogin_required', '云端登录已过期，请重新登录。')
+      : cloud.error
 
   async function handleAuthorizationSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -200,13 +204,13 @@ export function CloudConnectionDialog({
               </div>
             )}
 
-            {(error || cloud.error) && (
+            {(error || cloudError) && (
               <div
                 data-testid="cloud-connection-error"
                 className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
               >
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error || cloud.error}</span>
+                <span>{error || cloudError}</span>
               </div>
             )}
 
