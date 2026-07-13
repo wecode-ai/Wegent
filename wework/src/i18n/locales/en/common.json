@@ -697,6 +697,8 @@
     "plugins_marketplace_welcome_title": "Add a plugin marketplace",
     "plugins_marketplace_welcome_description": "A marketplace can come from a GitHub repository or local marketplace.json file. Add one to search, install, and manage Codex-compatible plugins.",
     "plugins_marketplace_config_title": "Add marketplace",
+    "plugins_marketplace_edit_title": "Edit marketplace",
+    "plugins_marketplace_edit_description": "Update the GitHub repository or local marketplace path.",
     "plugins_marketplace_config_description": "Enter a GitHub repository or local marketplace.json file/folder.",
     "plugins_marketplace_name": "Marketplace name",
     "plugins_marketplace_path": "Marketplace address",

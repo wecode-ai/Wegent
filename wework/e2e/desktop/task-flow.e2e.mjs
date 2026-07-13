@@ -25,6 +25,7 @@ const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const MODEL_API_KEY = 'wework-e2e-test-key'
 const MODEL_PROVIDER_ID = 'wework-e2e'
 const MODEL_ID = 'gpt-5.4'
+const MODEL_LABEL = 'GPT 5.4'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
 
@@ -149,6 +150,22 @@ async function fillComposerUntilSendEnabled(control, selector, value) {
 async function sendPrompt(control, selector, prompt) {
   await fillComposerUntilSendEnabled(control, selector, prompt)
   await control.command('click', '[data-testid="send-message-button"]')
+}
+
+async function selectE2EModel(control) {
+  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="model-selector-button"]')
+  await control.command('click', '[data-testid="model-control-menu-model"]')
+  await control.command('waitFor', `[data-testid="model-option-${MODEL_ID}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('click', `[data-testid="model-option-${MODEL_ID}"]`)
+  await control.command('waitFor', '[data-testid="model-selector-button"]', {
+    text: MODEL_LABEL,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
 }
 
 function createSse(events) {
@@ -745,6 +762,7 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await selectE2EModel(control)
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
