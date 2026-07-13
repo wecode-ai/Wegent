@@ -52,4 +52,19 @@ describe('CloudConnectionDialog', () => {
 
     expect(screen.getByTestId('cloud-backend-url-input')).toHaveValue('https://saved.example.com')
   })
+
+  it('localizes an expired cloud session error', () => {
+    renderDialog({
+      ...cloudConnection('https://saved.example.com'),
+      status: 'expired',
+      error: 'Cloud login has expired',
+    })
+
+    expect(screen.getByTestId('cloud-connection-error')).toHaveTextContent(
+      '云端登录已过期，请重新登录。'
+    )
+    expect(screen.getByTestId('cloud-connection-error')).not.toHaveTextContent(
+      'Cloud login has expired'
+    )
+  })
 })

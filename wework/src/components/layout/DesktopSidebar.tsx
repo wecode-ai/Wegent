@@ -12,7 +12,6 @@ import {
   GitCompareArrows,
   Grid3X3,
   Loader2,
-  LogIn,
   MessageSquarePlus,
   Pin,
   Plus,
@@ -2466,8 +2465,8 @@ export function DesktopSidebar({
   const hasAvailableAppUpdate = Boolean(useOptionalAppUpdate()?.availableUpdate)
   const sidebarAccount = requiresCloudLogin
     ? {
-        label: t('workbench.account_cloud_login', '点击登录'),
-        detail: defaultWegentBackendUrl,
+        label: t('workbench.account_cloud_title', 'Wegent 账户'),
+        detail: t('workbench.account_not_logged_in', '未登录'),
       }
     : getSidebarAccountSummary(
         usesCloudAccount ? cloud.user : user,
@@ -3475,12 +3474,6 @@ export function DesktopSidebar({
                 type="button"
                 data-testid="settings-button"
                 onClick={() => {
-                  if (requiresCloudLogin) {
-                    setSettingsMenuOpen(false)
-                    setImNotificationMenuOpen(false)
-                    setAccountCloudDialogOpen(true)
-                    return
-                  }
                   setImNotificationMenuOpen(false)
                   setSettingsMenuOpen(open => !open)
                 }}
@@ -3488,27 +3481,15 @@ export function DesktopSidebar({
                   'flex h-[60px] min-w-0 flex-1 items-center gap-3 rounded-[10px] py-2 pl-1.5 text-left text-[rgb(var(--color-sidebar-text-primary))]',
                   hasAvailableAppUpdate ? 'pr-[72px]' : 'pr-10'
                 )}
-                title={
-                  requiresCloudLogin
-                    ? t('workbench.account_cloud_login', '点击登录')
-                    : t('workbench.settings', '设置')
-                }
-                aria-label={
-                  requiresCloudLogin
-                    ? t('workbench.account_cloud_login', '点击登录')
-                    : t('workbench.settings', '设置')
-                }
+                title={t('workbench.account_and_settings', '账户与设置')}
+                aria-label={t('workbench.account_and_settings', '账户与设置')}
                 aria-expanded={settingsMenuOpen}
               >
                 <span
                   data-testid="sidebar-account-avatar"
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary"
                 >
-                  {requiresCloudLogin ? (
-                    <LogIn className="h-4 w-4" aria-hidden="true" />
-                  ) : (
-                    <UserRound className="h-5 w-5" aria-hidden="true" />
-                  )}
+                  <UserRound className="h-5 w-5" aria-hidden="true" />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-semibold leading-[18px]">
@@ -3559,6 +3540,14 @@ export function DesktopSidebar({
                     setSettingsMenuOpen(false)
                     onOpenSettings()
                   }}
+                  onLogin={
+                    requiresCloudLogin
+                      ? () => {
+                          setSettingsMenuOpen(false)
+                          setAccountCloudDialogOpen(true)
+                        }
+                      : undefined
+                  }
                   onLogout={() => {
                     setSettingsMenuOpen(false)
                     if (usesCloudAccount) {

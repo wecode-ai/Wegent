@@ -6,7 +6,7 @@ sidebar_position: 32
 
 Wework remains a complete local app by default. Local Codex, local model configs, the local executor, local workspaces, and local conversations do not require Backend login or cloud devices. Cloud connection is an optional capability layer: after the user enters a Backend URL from the sidebar and signs in with the WeWork login flow, server models, cloud devices, and cloud Codex auth sync join the same workbench.
 
-Set `VITE_WEGENT_BACKEND_URL` at build time to provide the default Backend URL in Connect cloud. This value only prefills the field and remains editable; an existing local connection address takes precedence over the build default. When configured, the desktop account area shows a sign-in entry while disconnected and the cloud username and email after connection; Log out in the account menu only disconnects the cloud connection.
+Set `VITE_WEGENT_BACKEND_URL` at build time to provide the default Backend URL in Connect cloud. This value only prefills the field and remains editable; an existing local connection address takes precedence over the build default. When configured, the desktop account area shows "Wegent account / Not signed in" while disconnected and continues to open the full account menu. Users start cloud authorization through "Sign in to Wegent" at the top of that menu. After connection, the account area shows the cloud username and email; Log out in the account menu only disconnects the cloud connection.
 
 ## State Ownership
 
@@ -25,11 +25,12 @@ Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when
 
 ## Interaction Entry
 
-The desktop sidebar shows the cloud entry near the bottom:
+The desktop sidebar provides two cloud entry points with distinct responsibilities:
 
-- Disconnected state shows "local mode / connect cloud".
-- Connected state shows the cloud host, cloud user, and online cloud device count.
-- Expired or error state asks the user to sign in again while local features remain available.
+- The workspace entry shows cloud connection status. It says "Connect cloud" while disconnected and "Cloud connection expired" after login expiry; clicking it can restore the connection directly.
+- The account area always opens the account menu and does not change its click behavior with login state. While signed out, "Sign in to Wegent" appears at the top of the menu, and Settings, Check for updates, and Remaining usage stay accessible.
+- After connection, the account area shows the cloud username and email, while the workspace entry shows the cloud host, cloud user, and online cloud device count.
+- Expired or failed cloud connections do not block local features.
 
 Settings are grouped by capability:
 
