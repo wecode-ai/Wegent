@@ -38,7 +38,22 @@ def _crawl_result(
 async def test_crawl_uses_inline_comments_for_nested_xiaohongshu(monkeypatch):
     service = WebContentService()
     calls: list[dict[str, str]] = []
-    comments = [{"comment_id": "comment-1", "content": "Great"}]
+    comments = [
+        {
+            "comment_id": "comment-1",
+            "content": "Great",
+            "target_id": "",
+            "sub_comment_count": 3,
+            "sub_comments": [
+                {
+                    "comment_id": "reply-1",
+                    "content": "Nested reply",
+                    "target_id": "comment-1",
+                    "sub_comment_count": 0,
+                }
+            ],
+        }
+    ]
 
     async def fake_run_job(params):
         calls.append(params)
@@ -67,6 +82,9 @@ async def test_crawl_uses_inline_comments_for_nested_xiaohongshu(monkeypatch):
         }
     ]
     assert preview.comment_count == 1
+    assert preview.type_data["comments"][0]["parent_id"] is None
+    assert preview.type_data["comments"][0]["reply_count"] == 3
+    assert "Nested reply" not in str(preview.type_data["comments"])
     assert preview.type_data["comment_fetch"] == {"status": "ready", "error": None}
 
 
@@ -89,10 +107,14 @@ async def test_crawl_fetches_douyin_comments_separately(monkeypatch):
             ]
         return [
             {
-                "comment_id": "comment-1",
-                "article_id": "item-1",
-                "content": "Great",
-                "target_id": "0",
+                "comments": [
+                    {
+                        "comment_id": "comment-1",
+                        "article_id": "item-1",
+                        "content": "Great",
+                        "parent_id": "0",
+                    }
+                ]
             }
         ]
 
@@ -112,7 +134,10 @@ async def test_crawl_fetches_douyin_comments_separately(monkeypatch):
         "fetched_count": 1,
     }
     assert preview.type_data["comments"][0]["parent_id"] is None
-    assert preview.type_data["raw_result"]["comments"][0]["comment_id"] == "comment-1"
+    assert (
+        preview.type_data["raw_result"]["comments"][0]["comments"][0]["comment_id"]
+        == "comment-1"
+    )
 
 
 @pytest.mark.asyncio
@@ -131,7 +156,18 @@ async def test_crawl_fetches_bilibili_comments_by_article_id(monkeypatch):
                     "content": "Page body",
                 }
             ]
-        return [{"comment_id": "comment-1", "content": "Great"}]
+        return [
+            {
+                "comments": [
+                    {
+                        "comment_id": 308892461632,
+                        "content": "Great",
+                        "parent_id": "0",
+                        "reply_count": 53,
+                    }
+                ]
+            }
+        ]
 
     monkeypatch.setattr(
         "app.services.web_content.spider_job_client.run_job", fake_run_job
@@ -150,6 +186,9 @@ async def test_crawl_fetches_bilibili_comments_by_article_id(monkeypatch):
         },
     ]
     assert preview.comment_count == 1
+    assert preview.type_data["comments"][0]["comment_id"] == "308892461632"
+    assert preview.type_data["comments"][0]["parent_id"] is None
+    assert preview.type_data["comments"][0]["reply_count"] == 53
 
 
 @pytest.mark.asyncio
@@ -276,6 +315,15 @@ def test_parse_page_rows_auto_detects_nested_and_flat_structures():
         True,
     )
     assert service._parse_page_rows([article]) == (article, [], False)
+
+
+def test_extract_first_row_comments_rejects_invalid_structures():
+    service = WebContentService()
+
+    with pytest.raises(SpiderJobError, match="comment result rows are empty"):
+        service._extract_first_row_comments([])
+    with pytest.raises(SpiderJobError, match="comments are invalid"):
+        service._extract_first_row_comments([{}])
 
 
 @pytest.mark.parametrize(

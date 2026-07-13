@@ -770,6 +770,18 @@
     "videoCount": "{{count}} 个视频",
     "imageCount": "{{count}} 张图片",
     "commentCount": "{{count}} 条首屏评论",
+    "compactTextCount": "正文 {{count}}",
+    "compactVideoCount": "视频 {{count}}",
+    "compactImageCount": "图片 {{count}}",
+    "compactCommentCount": "评论 {{count}}",
+    "platforms": {
+      "xiaohongshu": "小红书",
+      "douyin": "抖音",
+      "bilibili": "B站"
+    },
+    "tooltipSource": "来源：{{source}}",
+    "tooltipContent": "内容：{{content}}",
+    "tooltipLink": "链接：{{url}}",
     "videoMetadataOnlyTitle": "当前模型不支持视频内容理解",
     "videoMetadataOnlyDescription": "如需理解视频，请切换到视频理解模型，或选择媒体分析工具。",
     "errors": {

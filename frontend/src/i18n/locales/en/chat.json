@@ -770,6 +770,18 @@
     "videoCount": "{{count}} videos",
     "imageCount": "{{count}} images",
     "commentCount": "{{count}} first-screen comments",
+    "compactTextCount": "Content {{count}}",
+    "compactVideoCount": "Videos {{count}}",
+    "compactImageCount": "Images {{count}}",
+    "compactCommentCount": "Comments {{count}}",
+    "platforms": {
+      "xiaohongshu": "Xiaohongshu",
+      "douyin": "Douyin",
+      "bilibili": "Bilibili"
+    },
+    "tooltipSource": "Source: {{source}}",
+    "tooltipContent": "Content: {{content}}",
+    "tooltipLink": "Link: {{url}}",
     "videoMetadataOnlyTitle": "The current model does not support video understanding",
     "videoMetadataOnlyDescription": "To understand the video, switch to a video-understanding model or select the media analysis tool.",
     "errors": {
