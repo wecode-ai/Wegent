@@ -39,6 +39,8 @@ import { DeviceStatusPrompt } from './DeviceStatusPrompt'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
+  WORKBENCH_MAIN_HEADER_PORTAL_ID,
+  WorkbenchMainHeaderPortal,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
@@ -254,6 +256,7 @@ const MemoizedBottomWorkspacePanel = memo(function MemoizedBottomWorkspacePanel(
 
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
+  const isTauri = isTauriRuntime()
   const [terminalPinnedPaneKeys, setTerminalPinnedPaneKeys] = useState<string[]>([])
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
@@ -285,7 +288,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
     setTerminalPinnedPaneKeys(current => current.filter(key => key !== paneKey))
   }, [])
 
-  return (
+  const paneStack = (
     <CachedWorkbenchPaneStack
       activePane={props.activePane}
       maxPanes={MAX_CACHED_DESKTOP_WORKBENCH_TABS}
@@ -303,6 +306,19 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         />
       )}
     />
+  )
+
+  if (!isTauri) return paneStack
+
+  return (
+    <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+      <header
+        id={WORKBENCH_MAIN_HEADER_PORTAL_ID}
+        data-testid="workbench-main-header"
+        className="relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40 bg-background/95"
+      />
+      {paneStack}
+    </div>
   )
 }
 
@@ -1229,11 +1245,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       {workspacePanelActions}
     </>
   )
-  const tauriMainHeader = isTauri ? (
-    <header
-      data-testid="workbench-main-header"
-      className="relative z-chrome flex h-[38px] shrink-0 items-center overflow-hidden border-b border-border/40 bg-background/95"
-    >
+  const tauriMainHeaderContent = isTauri ? (
+    <div className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden">
       <MacOSTitleBarDragRegion className="absolute inset-0 z-0 h-full w-full" />
       {sidebarCollapsed && (
         <div
@@ -1300,7 +1313,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           {topRightActions}
         </div>
       </div>
-    </header>
+    </div>
   ) : undefined
   useLayoutEffect(() => {
     if (previousRightPanelSessionKey.current === rightPanelSessionKey) {
@@ -1338,7 +1351,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         !isTauri && 'mt-1.5 rounded-xl border border-border/60 shadow-[0_3px_16px_rgba(0,0,0,0.04)]'
       )}
     >
-      {paneActive ? tauriMainHeader : null}
+      {paneActive && tauriMainHeaderContent ? (
+        <WorkbenchMainHeaderPortal>{tauriMainHeaderContent}</WorkbenchMainHeaderPortal>
+      ) : null}
       <WorkbenchPaneActiveOnly>
         {!isTauri && (
           <div
