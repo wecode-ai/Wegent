@@ -697,6 +697,8 @@
     "plugins_marketplace_welcome_title": "添加一个插件市场",
     "plugins_marketplace_welcome_description": "插件市场可以来自 GitHub 仓库或本地 marketplace.json。添加后即可搜索、安装和管理 Codex 兼容插件。",
     "plugins_marketplace_config_title": "添加市场",
+    "plugins_marketplace_edit_title": "编辑市场",
+    "plugins_marketplace_edit_description": "更新 GitHub 仓库或本地市场路径。",
     "plugins_marketplace_config_description": "填写 GitHub 仓库地址，或本地 marketplace.json/目录。",
     "plugins_marketplace_name": "市场名称",
     "plugins_marketplace_path": "市场地址",

@@ -46,6 +46,11 @@ export interface LocalCodexMarketplace {
   path: string
 }
 
+function normalizeMarketplaceSource(source: string): string {
+  const normalized = source.trim().replace(/\\\\/g, '/')
+  return normalized.replace(/(?:\/\.agents\/plugins)?\/marketplace\.json$/i, '')
+}
+
 export interface LocalCodexPluginApi {
   codexHomeMigrationStatus(): Promise<LocalCodexHomeMigrationStatus>
   initializeCodexHome(options: {
@@ -72,11 +77,7 @@ export interface LocalCodexPluginApi {
   readInstalledPluginForTrial(id: string | number): Promise<InstalledPlugin>
   deleteMarketplace(id: string): Promise<LocalCodexPluginsState>
   reorderMarketplaces(ids: string[]): Promise<LocalCodexPluginsState>
-  upsertMarketplace(data: {
-    id?: string
-    name: string
-    path: string
-  }): Promise<LocalCodexPluginsState>
+  upsertMarketplace(data: { id?: string; path: string }): Promise<LocalCodexPluginsState>
   installAvailablePlugin(pluginId: string | number): Promise<InstalledPlugin>
   updateInstalledPlugin(
     id: string | number,
@@ -702,11 +703,21 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
       return readState()
     },
     async upsertMarketplace(data) {
+      const source = normalizeMarketplaceSource(data.path)
+      if (data.id && data.id !== '') {
+        const currentState = cachedState ?? (await readState())
+        const existing = currentState.marketplaces.find(marketplace => marketplace.id === data.id)
+        if (existing?.path === source) return currentState
+
+        await codexAppServerRequest('marketplace/remove', {
+          marketplaceName: data.id,
+        })
+      }
       const response = await codexAppServerRequest<{
         marketplaceName: string
         installedRoot: string
       }>('marketplace/add', {
-        source: data.path,
+        source,
         refName: null,
         sparsePaths: null,
       })

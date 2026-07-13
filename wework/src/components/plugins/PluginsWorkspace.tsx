@@ -64,7 +64,6 @@ interface MarketplaceOption {
 
 interface MarketplaceFormState {
   id?: string
-  name: string
   path: string
 }
 
@@ -1833,7 +1832,7 @@ export function PluginsWorkspace({
                         onClick={() => {
                           setShowAddMarketplaceMenu(false)
                           setMarketplaceConfigError(null)
-                          setMarketplaceForm({ name: '', path: '' })
+                          setMarketplaceForm({ path: '' })
                         }}
                       >
                         <span className="text-sm font-medium text-text-primary">
@@ -1888,7 +1887,7 @@ export function PluginsWorkspace({
                   customAddLabel={t('workbench.plugins_add_custom_marketplace', '添加自定义市场')}
                   onAddCustomMarketplace={() => {
                     setMarketplaceConfigError(null)
-                    setMarketplaceForm({ name: '', path: '' })
+                    setMarketplaceForm({ path: '' })
                   }}
                   onManage={() => navigateTo('/plugins/manage')}
                 />
@@ -2160,7 +2159,6 @@ export function PluginsWorkspace({
                             setMarketplaceConfigError(null)
                             setMarketplaceForm({
                               id: marketplace.id,
-                              name: marketplace.name,
                               path: marketplace.path || '',
                             })
                           }}
@@ -2209,31 +2207,23 @@ export function PluginsWorkspace({
           >
             <div className="space-y-1">
               <h2 className="text-base font-semibold text-text-primary">
-                {t('workbench.plugins_marketplace_config_title', '添加市场')}
+                {marketplaceForm.id
+                  ? t('workbench.plugins_marketplace_edit_title', '编辑市场')
+                  : t('workbench.plugins_marketplace_config_title', '添加市场')}
               </h2>
               <p className="text-sm leading-5 text-text-secondary">
-                {t(
-                  'workbench.plugins_marketplace_config_description',
-                  '填写 GitHub 仓库地址，或本地 marketplace.json/目录。'
-                )}
+                {marketplaceForm.id
+                  ? t(
+                      'workbench.plugins_marketplace_edit_description',
+                      '更新市场地址。市场名称由 marketplace.json 决定。'
+                    )
+                  : t(
+                      'workbench.plugins_marketplace_config_description',
+                      '填写 GitHub 仓库地址，或本地 marketplace.json/目录。'
+                    )}
               </p>
             </div>
             <div className="mt-5 space-y-4">
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium text-text-primary">
-                  {t('workbench.plugins_marketplace_name', '市场名称')}
-                </span>
-                <input
-                  data-testid="plugins-marketplace-name-input"
-                  value={marketplaceForm.name}
-                  onChange={event =>
-                    setMarketplaceForm(previous =>
-                      previous ? { ...previous, name: event.target.value } : previous
-                    )
-                  }
-                  className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-muted"
-                />
-              </label>
               <label className="block space-y-1.5">
                 <span className="text-sm font-medium text-text-primary">
                   {t('workbench.plugins_marketplace_path', '市场路径')}
