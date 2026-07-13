@@ -2499,12 +2499,8 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         api_key(&request.model_config),
     ) {
         let model_provider = model_provider(&request.model_config);
-        let provider_base_url = codex_provider_base_url(&request.model_config, &base_url, &api_key);
-        let provider_api_key = if provider_base_url == base_url.trim_end_matches('/') {
-            api_key.clone()
-        } else {
-            "wegent-codex-responses-proxy".to_owned()
-        };
+        let (provider_base_url, provider_api_key) =
+            resolve_codex_provider_config(&request.model_config, &base_url, &api_key);
         launch_config.model_provider = Some(model_provider.clone());
         launch_config.config_overrides.extend([
             "forced_login_method=api".to_owned(),
@@ -2628,17 +2624,21 @@ fn codex_model_context_window(model_config: &Value) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 
-fn codex_provider_base_url(model_config: &Value, base_url: &str, api_key: &str) -> String {
+fn resolve_codex_provider_config(
+    model_config: &Value,
+    base_url: &str,
+    api_key: &str,
+) -> (String, String) {
     let normalized_base_url = base_url.trim_end_matches('/').to_owned();
     let wire_api = wire_api(model_config);
     let use_compat_proxy = bool_value(model_config.get("codex_responses_compat_proxy"))
         .unwrap_or(false)
         || bool_value(model_config.get("codexResponsesCompatProxy")).unwrap_or(false);
     if wire_api != "responses" || !use_compat_proxy {
-        return normalized_base_url;
+        return (normalized_base_url, api_key.to_owned());
     }
 
-    let token = register_codex_responses_proxy(CodexResponsesProxyUpstream {
+    let local_token = register_codex_responses_proxy(CodexResponsesProxyUpstream {
         base_url: normalized_base_url,
         responses_url: non_empty_config(model_config, "responses_url")
             .or_else(|| non_empty_config(model_config, "responsesUrl")),
@@ -2646,9 +2646,12 @@ fn codex_provider_base_url(model_config: &Value, base_url: &str, api_key: &str) 
         default_headers: parse_header_map(model_config.get("default_headers")),
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
     });
-    let base_url = executor_loopback_base_url()
+    let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
-    format!("{base_url}/v1/codex-responses-proxy/{token}")
+    (
+        format!("{local_base_url}/v1/codex-responses-proxy"),
+        local_token,
+    )
 }
 
 fn executor_server_port() -> u16 {
@@ -4398,12 +4401,12 @@ mod tests {
 
         assert!(launch_config.config_overrides.iter().any(|override_value| {
             override_value.starts_with("model_providers.wecode-openai.base_url=\"http://127.0.0.1:")
-                && override_value.contains("/v1/codex-responses-proxy/codex-")
+                && override_value.ends_with("/v1/codex-responses-proxy\"")
         }));
-        assert!(launch_config.config_overrides.contains(
-            &"model_providers.wecode-openai.experimental_bearer_token=\"wegent-codex-responses-proxy\""
-                .to_owned()
-        ));
+        assert!(launch_config.config_overrides.iter().any(|override_value| {
+            override_value
+                .starts_with("model_providers.wecode-openai.experimental_bearer_token=\"codex-")
+        }));
     }
 
     #[test]

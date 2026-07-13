@@ -4,7 +4,7 @@
 
 """Runtime-native local work endpoints for Wework."""
 
-from fastapi import APIRouter, Body, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -630,22 +630,31 @@ def _resolve_runtime_work_backend_url(fastapi_request: Request) -> str:
     return f"{backend_url.rstrip('/')}{settings.API_PREFIX}/runtime-work"
 
 
-@router.post("/llm-responses-proxy/{token}/responses")
+@router.post("/llm-responses-proxy/responses")
 async def llm_responses_proxy_endpoint(
-    token: str,
     fastapi_request: Request,
     db: Session = Depends(get_db),
 ):
     """Proxy an LLM responses request to the real provider without exposing api_key.
 
     The WeWork local executor receives an encrypted proxy token from
-    /resolve-model-config and calls this endpoint. The backend decrypts the
-    token, resolves the Wegent Model CRD, attaches the stored provider
-    credentials, and forwards the request to the real LLM provider.
+    /resolve-model-config and calls this endpoint with the token in the
+    ``Authorization: Bearer`` header. The backend decrypts the token, resolves
+    the Wegent Model CRD, attaches the stored provider credentials, and
+    forwards the request to the real LLM provider.
     """
-    from app.services.llm_proxy_service import proxy_llm_responses
+    from app.services.llm_proxy_service import (
+        LLMProxyTokenError,
+        proxy_llm_responses,
+    )
 
-    return await proxy_llm_responses(token, fastapi_request, db)
+    try:
+        return await proxy_llm_responses(fastapi_request, db)
+    except LLMProxyTokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+        ) from exc
 
 
 @router.post(

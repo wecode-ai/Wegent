@@ -223,7 +223,7 @@ def _build_codex_runtime_model_config(
                         "model_id": str(full_config.get("model_id") or model_name),
                         "api_format": "responses",
                         "protocol": "openai-responses",
-                        "base_url": f"{proxy_base_url}/llm-responses-proxy/{proxy_token}",
+                        "base_url": f"{proxy_base_url}/llm-responses-proxy",
                         "api_key": proxy_token,
                         "codex_responses_compat_proxy": True,
                     }

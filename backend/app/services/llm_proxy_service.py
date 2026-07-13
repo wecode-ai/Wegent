@@ -235,12 +235,21 @@ def resolve_llm_proxy_model_config(
     return _extract_model_config(model_spec)
 
 
+def _extract_bearer_token(request: Request) -> str:
+    """Extract the proxy token from the ``Authorization: Bearer`` header."""
+    auth = request.headers.get("authorization") or ""
+    parts = auth.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    raise LLMProxyTokenError("Missing or invalid Authorization header")
+
+
 async def proxy_llm_responses(
-    token: str,
     request: Request,
     db: Session,
 ) -> StreamingResponse:
     """Validate token and stream the LLM responses request to the provider."""
+    token = _extract_bearer_token(request)
     payload = decode_llm_proxy_token(token, db)
     model_config = resolve_llm_proxy_model_config(db, payload)
     user_id = payload["u"]
