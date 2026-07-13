@@ -42,12 +42,16 @@ vi.mock('@/api/local/codexUsage', () => ({
   }),
 }))
 
-function renderMenu() {
+function renderMenu({
+  showLogout,
+  onLogout = vi.fn(),
+}: { showLogout?: boolean; onLogout?: () => void } = {}) {
   render(
     <DesktopSettingsMenu
       user={{ id: 1, email: 'user@example.com', user_name: 'User' }}
       onOpenSettings={vi.fn()}
-      onLogout={vi.fn()}
+      onLogout={onLogout}
+      showLogout={showLogout}
     />
   )
 }
@@ -91,6 +95,17 @@ describe('DesktopSettingsMenu', () => {
 
     expect(screen.queryByTestId('logout-menu-button')).not.toBeInTheDocument()
     expect(screen.queryByText('退出登录')).not.toBeInTheDocument()
+  })
+
+  test('shows logout for a connected cloud account in local-first app runtime', async () => {
+    runtimeModeMock.isLocalFirstAppRuntime.mockReturnValue(true)
+    const onLogout = vi.fn()
+
+    renderMenu({ showLogout: true, onLogout })
+
+    await userEvent.click(screen.getByTestId('logout-menu-button'))
+
+    expect(onLogout).toHaveBeenCalledTimes(1)
   })
 
   test('installs a discovered app update', async () => {

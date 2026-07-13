@@ -18,6 +18,21 @@ describe('getRuntimeConfig', () => {
     )
   })
 
+  test('reads the default Wegent Backend URL from build-time config', () => {
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'https://cloud.example.com')
+
+    expect(getRuntimeConfig().wegentBackendUrl).toBe('https://cloud.example.com')
+  })
+
+  test('prefers the runtime default Wegent Backend URL over build-time config', () => {
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'https://build.example.com')
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      wegentBackendUrl: 'https://runtime.example.com',
+    }
+
+    expect(getRuntimeConfig().wegentBackendUrl).toBe('https://runtime.example.com')
+  })
+
   test('prefers runtime config over build-time environment values', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'http://build.example.com/api')
     vi.stubEnv('VITE_SOCKET_BASE_URL', 'http://build.example.com')

@@ -590,6 +590,7 @@
     "empty_conversation_title": "Start a new conversation",
     "empty_conversation_description": "Ask a question, paste context, or add attachments below. WeWork responses will appear here.",
     "account_fallback": "Current account",
+    "account_cloud_login": "Sign in",
     "personal_account": "Personal account",
     "remaining_usage": "Remaining usage",
     "quota_load_failed": "Failed to fetch quota info",

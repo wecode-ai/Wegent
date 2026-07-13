@@ -12,12 +12,14 @@ import {
   GitCompareArrows,
   Grid3X3,
   Loader2,
+  LogIn,
   MessageSquarePlus,
   Pin,
   Plus,
   RotateCw,
   Search,
   Sparkles,
+  UserRound,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -46,6 +48,7 @@ import {
 } from '@/components/projects/StandaloneProjectDialogs'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getRuntimeConfig } from '@/config/runtime'
 import {
   canUseForProjectCreation,
   isCloudDevice,
@@ -248,15 +251,6 @@ const SIDEBAR_CHROME_TAB_BUTTON_CLASS =
 const SIDEBAR_CHROME_TAB_TOOLTIP_CLASS =
   'pointer-events-none absolute left-1/2 top-[calc(100%+0.375rem)] z-popover -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-background px-2 py-1 text-xs font-medium leading-none text-text-primary opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.14)] transition-opacity group-hover:opacity-100'
 
-function getAccountInitials(label: string): string {
-  const normalizedLabel = label.trim()
-  if (!normalizedLabel) return 'U'
-  const [namePart] = normalizedLabel.split('@')
-  const words = namePart.split(/[._\-\s]+/).filter(Boolean)
-  if (words.length >= 2) return `${words[0][0]}${words[1][0]}`.toUpperCase()
-  return namePart.slice(0, 2).toUpperCase()
-}
-
 function getSidebarAccountSummary(user: UserProfile | null, fallback: string) {
   const userName = user?.user_name?.trim()
   const email = user?.email?.trim()
@@ -265,7 +259,6 @@ function getSidebarAccountSummary(user: UserProfile | null, fallback: string) {
   return {
     label,
     detail,
-    initials: getAccountInitials(label),
   }
 }
 
@@ -2465,9 +2458,21 @@ export function DesktopSidebar({
     onResizeStateChange,
   })
   const showCloudConnectionEntry = isCloudConnectionUiAvailable()
+  const cloud = useOptionalCloudConnection()
+  const defaultWegentBackendUrl = getRuntimeConfig().wegentBackendUrl
+  const usesCloudAccount = showCloudConnectionEntry && Boolean(defaultWegentBackendUrl)
+  const requiresCloudLogin = usesCloudAccount && !cloud.isConnected
   const usesOverlayTitlebar = isTauriRuntime()
   const hasAvailableAppUpdate = Boolean(useOptionalAppUpdate()?.availableUpdate)
-  const sidebarAccount = getSidebarAccountSummary(user, t('workbench.account_fallback', '当前账号'))
+  const sidebarAccount = requiresCloudLogin
+    ? {
+        label: t('workbench.account_cloud_login', '点击登录'),
+        detail: defaultWegentBackendUrl,
+      }
+    : getSidebarAccountSummary(
+        usesCloudAccount ? cloud.user : user,
+        t('workbench.account_fallback', '当前账号')
+      )
   const workbenchAppLabel = t('workbench.app_wework')
   const appsAppLabel = t('workbench.apps')
   const windowFocused = useSidebarWindowFocus()
@@ -2481,6 +2486,7 @@ export function DesktopSidebar({
   )
   const storageScopeRef = useRef(storageScope)
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
+  const [accountCloudDialogOpen, setAccountCloudDialogOpen] = useState(false)
   const [imNotificationMenuOpen, setImNotificationMenuOpen] = useState(false)
   const [archiveSectionMode, setArchiveSectionMode] = useState<'projects' | 'chats' | null>(null)
   const [forceArchiveSectionMode, setForceArchiveSectionMode] = useState<
@@ -3469,6 +3475,12 @@ export function DesktopSidebar({
                 type="button"
                 data-testid="settings-button"
                 onClick={() => {
+                  if (requiresCloudLogin) {
+                    setSettingsMenuOpen(false)
+                    setImNotificationMenuOpen(false)
+                    setAccountCloudDialogOpen(true)
+                    return
+                  }
                   setImNotificationMenuOpen(false)
                   setSettingsMenuOpen(open => !open)
                 }}
@@ -3476,12 +3488,27 @@ export function DesktopSidebar({
                   'flex h-[60px] min-w-0 flex-1 items-center gap-3 rounded-[10px] py-2 pl-1.5 text-left text-[rgb(var(--color-sidebar-text-primary))]',
                   hasAvailableAppUpdate ? 'pr-[72px]' : 'pr-10'
                 )}
-                title={t('workbench.settings', '设置')}
-                aria-label={t('workbench.settings', '设置')}
+                title={
+                  requiresCloudLogin
+                    ? t('workbench.account_cloud_login', '点击登录')
+                    : t('workbench.settings', '设置')
+                }
+                aria-label={
+                  requiresCloudLogin
+                    ? t('workbench.account_cloud_login', '点击登录')
+                    : t('workbench.settings', '设置')
+                }
                 aria-expanded={settingsMenuOpen}
               >
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[12px] font-semibold leading-none text-primary">
-                  {sidebarAccount.initials}
+                <span
+                  data-testid="sidebar-account-avatar"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/20 text-primary"
+                >
+                  {requiresCloudLogin ? (
+                    <LogIn className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <UserRound className="h-5 w-5" aria-hidden="true" />
+                  )}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-semibold leading-[18px]">
@@ -3527,15 +3554,35 @@ export function DesktopSidebar({
               {settingsMenuOpen && (
                 <DesktopSettingsMenu
                   user={user}
+                  showLogout={usesCloudAccount ? cloud.isConnected : undefined}
                   onOpenSettings={() => {
                     setSettingsMenuOpen(false)
                     onOpenSettings()
                   }}
-                  onLogout={onLogout}
+                  onLogout={() => {
+                    setSettingsMenuOpen(false)
+                    if (usesCloudAccount) {
+                      cloud.disconnect()
+                      return
+                    }
+                    onLogout()
+                  }}
                 />
               )}
             </div>
           </div>
+
+          {accountCloudDialogOpen && (
+            <CloudConnectionDialog
+              open
+              onlineCloudDeviceCount={0}
+              onClose={() => setAccountCloudDialogOpen(false)}
+              onOpenSettings={() => {
+                setAccountCloudDialogOpen(false)
+                onOpenSettings({ settingsPage: 'connections' })
+              }}
+            />
+          )}
 
           <StandaloneBlankProjectDialog
             open={blankProjectDialogOpen}

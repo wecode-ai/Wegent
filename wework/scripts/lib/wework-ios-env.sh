@@ -55,6 +55,7 @@ print_wework_env_summary() {
   echo "  ENV_FILE=${WEWORK_RESOLVED_ENV_FILE:-<none>}"
   echo "  VITE_API_BASE_URL=${VITE_API_BASE_URL:-<unset>}"
   echo "  VITE_SOCKET_BASE_URL=${VITE_SOCKET_BASE_URL:-<unset>}"
+  echo "  VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
   echo "  VITE_SOCKET_PATH=${VITE_SOCKET_PATH:-<unset>}"
   echo "  VITE_APP_BASE_PATH=${VITE_APP_BASE_PATH:-<unset>}"
   echo "  APPLE_DEVELOPMENT_TEAM=${APPLE_DEVELOPMENT_TEAM:-<unset>}"
