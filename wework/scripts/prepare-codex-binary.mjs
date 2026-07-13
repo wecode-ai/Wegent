@@ -77,13 +77,13 @@ async function pathExists(path) {
   }
 }
 
-async function sha256File(path) {
-  const hash = createHash('sha256')
+async function integrityFile(path) {
+  const hash = createHash('sha512')
   const input = await import('node:fs').then(fs => fs.createReadStream(path))
   for await (const chunk of input) {
     hash.update(chunk)
   }
-  return hash.digest('hex')
+  return `sha512-${hash.digest('base64')}`
 }
 
 async function download(url, destination) {
@@ -126,11 +126,11 @@ async function prepareTarget(target, entry) {
     await download(entry.tarball, tarballPath)
   }
 
-  const actualSha = await sha256File(tarballPath)
-  if (actualSha !== entry.sha256) {
+  const actualIntegrity = await integrityFile(tarballPath)
+  if (actualIntegrity !== entry.integrity) {
     await rm(tarballPath, { force: true })
     throw new Error(
-      `Codex tarball sha256 mismatch for ${target}: expected ${entry.sha256}, got ${actualSha}`
+      `Codex tarball integrity mismatch for ${target}: expected ${entry.integrity}, got ${actualIntegrity}`
     )
   }
 
@@ -149,7 +149,7 @@ async function prepareTarget(target, entry) {
         codexVersion: entry.version,
         binaryPath: entry.binaryPath,
         tarball: entry.tarball,
-        sha256: entry.sha256,
+        integrity: entry.integrity,
       },
       null,
       2

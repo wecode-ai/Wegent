@@ -1229,11 +1229,16 @@ async fn read_shared_turn_notifications(
                 _ = cancel_rx => {
                     options.cancellation = None;
                     if let Some(turn_id) = options.active_turn_id.as_deref() {
-                        interrupt_shared_turn_detached(
-                            client.clone(),
-                            thread_id.to_owned(),
-                            turn_id.to_owned(),
-                        );
+                        if let Err(error) = interrupt_shared_turn(client, thread_id, turn_id).await {
+                            log_executor_event(
+                                "codex shared turn interrupt failed",
+                                &[
+                                    ("thread_id", thread_id.to_owned()),
+                                    ("turn_id", turn_id.to_owned()),
+                                    ("error", error),
+                                ],
+                            );
+                        }
                     }
                     return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
                 }
@@ -1344,25 +1349,6 @@ async fn interrupt_shared_turn(
         )
         .await
         .map(|_| ())
-}
-
-fn interrupt_shared_turn_detached(
-    client: CodexAppServerClient,
-    thread_id: String,
-    turn_id: String,
-) {
-    tokio::spawn(async move {
-        if let Err(error) = interrupt_shared_turn(&client, &thread_id, &turn_id).await {
-            log_executor_event(
-                "codex shared turn interrupt failed",
-                &[
-                    ("thread_id", thread_id),
-                    ("turn_id", turn_id),
-                    ("error", error),
-                ],
-            );
-        }
-    });
 }
 
 async fn answer_shared_request_user_input(
