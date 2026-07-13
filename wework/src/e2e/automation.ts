@@ -12,7 +12,14 @@ const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRC
 const DESKTOP_CONTROL_RETRY_DELAY_MS = 250
 const DESKTOP_CONTROL_IDLE_POLL_DELAY_MS = 50
 
-type DesktopControlAction = 'click' | 'fill' | 'getText' | 'snapshot' | 'waitFor' | 'press'
+type DesktopControlAction =
+  | 'capture'
+  | 'click'
+  | 'fill'
+  | 'getText'
+  | 'snapshot'
+  | 'waitFor'
+  | 'press'
 
 interface DesktopControlCommand {
   id: string
@@ -196,6 +203,25 @@ function desktopControlSnapshot(): string {
   })
 }
 
+async function captureDesktopControlScreenshot(selector: string): Promise<string> {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+
+  const { default: html2canvas } = await import('html2canvas')
+  const canvas = await html2canvas(element, {
+    allowTaint: false,
+    backgroundColor: getComputedStyle(document.documentElement).backgroundColor,
+    height: element === document.body ? window.innerHeight : undefined,
+    logging: false,
+    scale: Math.min(window.devicePixelRatio, 2),
+    useCORS: true,
+    width: element === document.body ? window.innerWidth : undefined,
+    windowHeight: window.innerHeight,
+    windowWidth: window.innerWidth,
+  })
+  return canvas.toDataURL('image/png')
+}
+
 function desktopControlElementEnabled(element: HTMLElement): boolean {
   if (element.getAttribute('aria-disabled') === 'true') return false
   return !('disabled' in element) || !(element as HTMLButtonElement).disabled
@@ -263,6 +289,8 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
 
 async function executeDesktopControlCommand(command: DesktopControlCommand): Promise<string> {
   switch (command.action) {
+    case 'capture':
+      return captureDesktopControlScreenshot(command.selector)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':

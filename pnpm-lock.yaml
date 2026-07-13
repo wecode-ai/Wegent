@@ -665,6 +665,9 @@ importers:
       globals:
         specifier: ^17.6.0
         version: 17.6.0
+      html2canvas:
+        specifier: ^1.4.1
+        version: 1.4.1
       jsdom:
         specifier: ^28.1.0
         version: 28.1.0
