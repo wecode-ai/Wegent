@@ -86,7 +86,7 @@ interface ConnectionsSettingsPageProps {
   onRefreshWorkLists?: () => Promise<void>
 }
 
-type SettingsCategory = 'personal' | 'integrations' | 'archived'
+type SettingsCategory = 'personal' | 'integrations' | 'coding' | 'archived'
 
 interface SettingsNavItem {
   key: string
@@ -165,7 +165,7 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: FolderGit2,
     label: 'settings_nav_worktrees',
     fallback: '工作树',
-    category: 'integrations',
+    category: 'coding',
   },
   {
     key: 'archived-conversations',
@@ -184,6 +184,10 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
   integrations: {
     label: 'settings_category_integrations',
     fallback: '集成',
+  },
+  coding: {
+    label: 'settings_category_coding',
+    fallback: '编码',
   },
   archived: {
     label: 'settings_category_archived',

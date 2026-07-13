@@ -14,6 +14,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 export function PluginManagementPage() {
   const { t } = useTranslation('common')
@@ -55,6 +56,7 @@ export function PluginManagementPage() {
   const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
+  const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -115,7 +117,7 @@ export function PluginManagementPage() {
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
-          onOpenRuntimeTask={openRuntimeTask}
+          onOpenRuntimeTask={handleOpenRuntimeTask}
           onRenameRuntimeTask={renameRuntimeTask}
           onArchiveRuntimeTask={archiveRuntimeTask}
           onArchiveProjectConversations={archiveProjectConversations}
@@ -162,7 +164,7 @@ export function PluginManagementPage() {
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSettings={() => setSettingsOpen(true)}
             onSelectProject={handleSelectProject}
-            onOpenRuntimeTask={openRuntimeTask}
+            onOpenRuntimeTask={handleOpenRuntimeTask}
             onCreateProject={createProject}
             onCreateGitWorkspaceProject={createGitWorkspaceProject}
             onPrepareDeviceWorkspace={prepareDeviceWorkspace}
@@ -199,9 +201,7 @@ export function PluginManagementPage() {
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         onSearchRuntimeWork={searchRuntimeWork}
-        onOpenRuntimeTask={async address => {
-          await openRuntimeTask(address)
-        }}
+        onOpenRuntimeTask={handleOpenRuntimeTask}
       />
     </div>
   )

@@ -308,7 +308,32 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('settings-nav-general')).toHaveClass(
       'bg-[rgb(var(--color-sidebar-active))]'
     )
-    expect(screen.getByTestId('settings-nav-worktrees')).toBeInTheDocument()
+    const integrationsCategory = screen.getByTestId('settings-category-integrations')
+    const codingCategory = screen.getByTestId('settings-category-coding')
+    const archivedCategory = screen.getByTestId('settings-category-archived')
+    const pluginsNav = screen.getByTestId('settings-nav-plugins')
+    const worktreesNav = screen.getByTestId('settings-nav-worktrees')
+
+    expect(integrationsCategory).toHaveTextContent('集成')
+    expect(codingCategory).toHaveTextContent('编码')
+    expect(archivedCategory).toHaveTextContent('已归档')
+    expect(integrationsCategory.parentElement).toContainElement(pluginsNav)
+    expect(
+      within(integrationsCategory.parentElement!).queryByTestId('settings-nav-worktrees')
+    ).toBeNull()
+    expect(codingCategory.parentElement).toContainElement(worktreesNav)
+    expect(within(codingCategory.parentElement!).queryByTestId('settings-nav-plugins')).toBeNull()
+    expect(
+      pluginsNav.compareDocumentPosition(codingCategory) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      worktreesNav.compareDocumentPosition(archivedCategory) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    await userEvent.click(worktreesNav)
+
+    expect(window.location.pathname).toBe('/settings/worktrees')
+    expect(screen.getByTestId('worktrees-settings-page')).toBeInTheDocument()
   })
 
   test('adds titlebar clearance for the settings back button in Tauri', () => {

@@ -23,6 +23,7 @@ interface ActionMenuProps {
   icon?: ComponentType<{ className?: string }>
   variant?: 'horizontal' | 'vertical'
   triggerClassName?: string
+  placement?: 'side' | 'bottom-end'
   contextMenuPosition?: MenuPosition | null
   onContextMenuClose?: () => void
 }
@@ -39,6 +40,7 @@ export function ActionMenu({
   icon: Icon = MoreHorizontal,
   variant = 'horizontal',
   triggerClassName,
+  placement = 'side',
   contextMenuPosition,
   onContextMenuClose,
 }: ActionMenuProps) {
@@ -99,6 +101,18 @@ export function ActionMenu({
       const trigger = containerRef.current
       if (!trigger) return
       const triggerRect = trigger.getBoundingClientRect()
+      if (placement === 'bottom-end') {
+        const belowTop = triggerRect.bottom + MENU_GAP
+        const aboveTop = triggerRect.top - menuHeight - MENU_GAP
+        const top =
+          belowTop + menuHeight <= viewportHeight - VIEWPORT_PADDING
+            ? belowTop
+            : Math.max(VIEWPORT_PADDING, aboveTop)
+        const left = Math.max(VIEWPORT_PADDING, Math.min(triggerRect.right - menuWidth, maxLeft))
+        setMenuPosition({ left, top })
+        return
+      }
+
       const rightSideLeft = triggerRect.right + MENU_GAP
       const leftSideLeft = triggerRect.left - menuWidth - MENU_GAP
       const hasRoomOnRight = rightSideLeft + menuWidth <= viewportWidth - VIEWPORT_PADDING
@@ -116,7 +130,7 @@ export function ActionMenu({
       window.removeEventListener('resize', updatePosition)
       window.removeEventListener('scroll', updatePosition, true)
     }
-  }, [contextMenuPosition, menuOpen])
+  }, [contextMenuPosition, menuOpen, placement])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -127,9 +141,16 @@ export function ActionMenu({
         closeMenu()
       }
     }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeMenu()
+    }
 
     document.addEventListener('pointerdown', handlePointerDown)
-    return () => document.removeEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
   }, [closeMenu, menuOpen])
 
   return (
@@ -148,6 +169,7 @@ export function ActionMenu({
         }
         aria-label={ariaLabel}
         aria-expanded={menuOpen}
+        aria-haspopup="menu"
       >
         <Icon className={variant === 'vertical' ? 'h-4 w-4 rotate-90' : 'h-4 w-4'} />
       </button>

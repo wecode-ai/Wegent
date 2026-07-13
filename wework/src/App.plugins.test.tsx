@@ -583,6 +583,9 @@ describe('App plugins route', () => {
     localStorage.clear()
     vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
+    workbenchValue.state.runtimeWork = null
+    workbenchValue.state.currentRuntimeTask = null
+    vi.mocked(workbenchValue.openRuntimeTask).mockReset().mockResolvedValue(undefined)
     mockSystemSkillsFetch()
   })
 
@@ -599,6 +602,50 @@ describe('App plugins route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+    expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
+  })
+
+  test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {
+    const workspacePath = '/Users/alice/Documents/Codex/plugin-task'
+    workbenchValue.state.runtimeWork = {
+      projects: [],
+      chats: [
+        {
+          deviceId: 'local-device',
+          deviceName: 'Local Mac',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath,
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'plugin-task',
+              workspacePath,
+              workspaceKind: 'chat',
+              title: 'Return to task',
+              runtime: 'codex',
+            },
+          ],
+        },
+      ],
+      totalTasks: 1,
+    }
+    window.history.pushState({}, '', '/plugins')
+
+    render(<App />)
+
+    await userEvent.click(await screen.findByTestId('runtime-local-task-row-plugin-task'))
+
+    await waitFor(() => {
+      expect(workbenchValue.openRuntimeTask).toHaveBeenCalledWith({
+        deviceId: 'local-device',
+        workspacePath,
+        taskId: 'plugin-task',
+      })
+      expect(window.location.pathname).toBe('/runtime-tasks')
+    })
+    expect(window.location.search).toBe('?deviceId=local-device&taskId=plugin-task')
+    expect(screen.queryByTestId('plugins-workspace')).not.toBeInTheDocument()
   })
 
   test('preserves the workbench composer while visiting plugins', async () => {
