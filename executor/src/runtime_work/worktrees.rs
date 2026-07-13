@@ -696,8 +696,12 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
     use serde_json::Value;
+
+    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn default_settings_match_codex() {
@@ -724,7 +728,7 @@ mod tests {
 
     #[test]
     fn snapshot_delete_and_restore_preserve_uncommitted_files() {
-        let root = env::temp_dir().join(format!("wegent-worktree-test-{}", now_ms()));
+        let root = test_directory("wegent-worktree-test");
         let source = root.join("source");
         fs::create_dir_all(&source).unwrap();
         run_git(&source, &["init"]);
@@ -777,7 +781,7 @@ mod tests {
 
     #[test]
     fn discovered_worktree_includes_source_repository_path() {
-        let root = env::temp_dir().join(format!("wegent-worktree-discovery-test-{}", now_ms()));
+        let root = test_directory("wegent-worktree-discovery-test");
         let source = root.join("source");
         fs::create_dir_all(&source).unwrap();
         run_git(&source, &["init"]);
@@ -821,6 +825,14 @@ mod tests {
             Some(fs::canonicalize(&source).unwrap().to_str().unwrap())
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    fn test_directory(prefix: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
     }
 
     fn run_git(path: &Path, args: &[&str]) {
