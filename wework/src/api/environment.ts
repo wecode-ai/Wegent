@@ -30,7 +30,7 @@ const ENVIRONMENT_INFO_CACHE_TTL_MS = 1500
 export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
 
 const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
-  branch: 'git_diff',
+  branch: 'git_branch_diff',
   unstaged: 'git_diff_unstaged',
   staged: 'git_diff_staged',
   commit: 'git_diff_last_commit',
@@ -340,12 +340,10 @@ async function loadBranchDiffShortStat(
   deviceId: string,
   path: string
 ): Promise<string> {
-  // Use diff against HEAD for tracked uncommitted line changes.
-  // This captures staged + unstaged modifications to tracked files.
+  // Compare the current branch with its merge base to the primary branch.
+  // This includes committed branch changes as well as tracked worktree changes.
   try {
-    return await runGitCommand(api, deviceId, 'git_diff_shortstat', path, {
-      args: ['HEAD', '--'],
-    })
+    return await runGitCommand(api, deviceId, 'git_branch_diff_shortstat', path)
   } catch {
     // HEAD may not exist (no commits yet).
     return ''
