@@ -847,6 +847,7 @@ mod tests {
             status: "active".to_owned(),
             running: false,
             goal_status: None,
+            git_info: None,
             created_at: 0,
             updated_at: 0,
             runtime_handle: Value::Null,
@@ -854,6 +855,9 @@ mod tests {
             ephemeral: false,
             list_order: None,
             group_workspace_path: None,
+            group_project_key: None,
+            pinned: false,
+            pinned_order: None,
         }
     }
 }
