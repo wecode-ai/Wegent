@@ -487,7 +487,12 @@ fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), Str
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
     let mut command = Command::new("git");
-    command.arg("-C").arg(path).args(args);
+    command
+        .arg("-c")
+        .arg("core.bare=false")
+        .arg("-C")
+        .arg(path)
+        .args(args);
     if let Some(envs) = envs {
         command.envs(envs.iter().copied());
     }
@@ -846,7 +851,9 @@ mod tests {
             .unwrap();
         assert!(
             output.status.success(),
-            "{}",
+            "git -C {} {} failed: {}",
+            path.display(),
+            args.join(" "),
             String::from_utf8_lossy(&output.stderr)
         );
     }
