@@ -15,6 +15,7 @@ const DESKTOP_CONTROL_IDLE_POLL_DELAY_MS = 50
 type DesktopControlAction =
   | 'capture'
   | 'click'
+  | 'clickWhenEnabled'
   | 'fill'
   | 'getText'
   | 'snapshot'
@@ -29,6 +30,7 @@ interface DesktopControlCommand {
   text?: string
   timeoutMs?: number
   enabled?: boolean
+  stableMs?: number
   key?: string
 }
 
@@ -230,6 +232,7 @@ function desktopControlElementEnabled(element: HTMLElement): boolean {
 async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
+  let matchedAt: number | null = null
 
   while (Date.now() - startedAt < timeoutMs) {
     const elements = findDesktopControlElements(command.selector)
@@ -237,7 +240,12 @@ async function waitForDesktopControlElement(command: DesktopControlCommand): Pro
     const hasExpectedText = !command.text || text.includes(command.text)
     const isEnabled = !command.enabled || elements.some(desktopControlElementEnabled)
     if (elements.length > 0 && hasExpectedText && isEnabled) {
-      return text
+      matchedAt ??= Date.now()
+      if (Date.now() - matchedAt >= (command.stableMs ?? 0)) {
+        return text
+      }
+    } else {
+      matchedAt = null
     }
     await new Promise(resolve => window.setTimeout(resolve, 50))
   }
@@ -302,6 +310,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       if (!desktopControlElementEnabled(element)) {
         throw new Error(`Selector "${command.selector}" is disabled`)
+      }
+      element.click()
+      return element.textContent?.trim() ?? ''
+    }
+    case 'clickWhenEnabled': {
+      await waitForDesktopControlElement({ ...command, enabled: true })
+      const element = findDesktopControlElements(command.selector).find(
+        desktopControlElementEnabled
+      )
+      if (!element) {
+        throw new Error(`Selector "${command.selector}" became disabled before click`)
       }
       element.click()
       return element.textContent?.trim() ?? ''

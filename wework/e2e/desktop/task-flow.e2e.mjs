@@ -12,6 +12,7 @@ const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
 const UI_TIMEOUT_MS = 120_000
 const PROCESS_STOP_TIMEOUT_MS = 10_000
+const COMPOSER_READY_STABILITY_MS = 750
 const TASK_PROMPT = 'WEWORK_DESKTOP_E2E_TASK: create the requested verification file.'
 const COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_COMPLETE'
 const FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FOLLOW_UP: confirm the completed task.'
@@ -129,35 +130,26 @@ async function appendProcessOutput(stream, destination) {
   })
 }
 
-async function fillComposerUntilSendEnabled(control, selector, value) {
-  let lastError
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    await control.command('fill', selector, { value })
-    try {
-      await control.command('waitFor', '[data-testid="send-message-button"]', {
-        enabled: true,
-        timeoutMs: 3_000,
-      })
-      return
-    } catch (error) {
-      lastError = error
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-    }
-  }
-  throw lastError
-}
-
 async function sendPrompt(control, selector, prompt) {
-  await fillComposerUntilSendEnabled(control, selector, prompt)
-  await control.command('click', '[data-testid="send-message-button"]')
+  await control.command('fill', selector, { value: prompt })
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
 }
 
 async function selectE2EModel(control) {
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="model-selector-button"]')
-  await control.command('click', '[data-testid="model-control-menu-model"]')
+  await control.command('clickWhenEnabled', '[data-testid="model-selector-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="model-control-menu-model"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: UI_TIMEOUT_MS,
+  })
   await control.command('waitFor', `[data-testid="model-option-${MODEL_ID}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -860,7 +852,10 @@ async function main() {
     await control.command('waitFor', '[data-testid="assistant-error-card"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })
-    await control.command('click', '[data-testid="assistant-error-retry"]')
+    await control.command('clickWhenEnabled', '[data-testid="assistant-error-retry"]', {
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: RETRY_COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
