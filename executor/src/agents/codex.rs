@@ -4036,6 +4036,18 @@ fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
 
         let name = &text[start + 2..label_end];
         let uri = &text[uri_start..uri_end];
+        if let Some(path) = composer_file_reference_path(uri) {
+            output.push_str(&text[cursor..start]);
+            if path.chars().any(char::is_whitespace) && !path.contains('"') {
+                output.push('"');
+                output.push_str(&path);
+                output.push('"');
+            } else {
+                output.push_str(&path);
+            }
+            cursor = uri_end + 1;
+            continue;
+        }
         let Some(mention) = structured_mention_input(name, uri) else {
             output.push_str(&text[cursor..uri_end + 1]);
             cursor = uri_end + 1;
@@ -4052,6 +4064,40 @@ fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
 
     output.push_str(&text[cursor..]);
     (output, mentions)
+}
+
+fn composer_file_reference_path(uri: &str) -> Option<String> {
+    let encoded = uri
+        .strip_prefix("file://")
+        .or_else(|| uri.strip_prefix("folder://"))?;
+    percent_decode_utf8(encoded)
+}
+
+fn percent_decode_utf8(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = *bytes.get(index + 1)?;
+            let low = *bytes.get(index + 2)?;
+            output.push(hex_value(high)? * 16 + hex_value(low)?);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(output).ok()
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn structured_mention_input(name: &str, uri: &str) -> Option<Value> {
@@ -4857,6 +4903,23 @@ mod tests {
                     "path": "plugin://sample@test",
                 }),
             ]
+        );
+    }
+
+    #[test]
+    fn turn_input_converts_composer_file_references_to_plain_paths() {
+        let input = turn_input(&Value::String(
+            "Inspect [$frontend](folder://%2FUsers%2Fme%2FMy%20Project%2Ffrontend) and [$auth.ts](file://%2FUsers%2Fme%2FMy%20Project%2Ffrontend%2Fauth.ts)"
+                .to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![json!({
+                "type": "text",
+                "text": "Inspect \"/Users/me/My Project/frontend\" and \"/Users/me/My Project/frontend/auth.ts\"",
+                "text_elements": [],
+            })]
         );
     }
 

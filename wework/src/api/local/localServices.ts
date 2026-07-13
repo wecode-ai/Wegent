@@ -51,6 +51,8 @@ import type {
   RuntimeTaskPinRequest,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
+  RuntimeWorkspaceSearchRequest,
+  RuntimeWorkspaceSearchResponse,
   RuntimeWorktreeDeleteRequest,
   RuntimeWorktreeListResponse,
   RuntimeWorktreeMutationResponse,
@@ -1651,6 +1653,11 @@ export function createRuntimeWorkApiFromIpc(
     },
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return requestWithLocalDevice('runtime.tasks.search', data)
+    },
+    searchRuntimeWorkspace(
+      data: RuntimeWorkspaceSearchRequest
+    ): Promise<RuntimeWorkspaceSearchResponse> {
+      return requestWithLocalDevice('runtime.workspace.search', data)
     },
     revertRuntimeFileChanges(
       data: RuntimeFileChangesRevertRequest

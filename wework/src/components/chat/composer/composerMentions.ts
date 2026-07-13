@@ -1,5 +1,5 @@
 const LOCAL_MENTION_REFERENCE_PATTERN =
-  /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+))\)/g
+  /\[\$([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+))\)/g
 const COMPOSER_REFERENCE_PATTERN = /^\[\$[^\]]+]\(([^)\n]+)\)$/
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
 const COMPOSER_MENTION_ICON_PATHS = [
@@ -37,9 +37,11 @@ export function parseComposerMentions(value: string): ParsedComposerMention[] {
     const start = match.index ?? 0
     const reference = match[0]
     const name = match[1]
+    const uri = match[2]
+    const isPathReference = uri.startsWith('file://') || uri.startsWith('folder://')
     return {
       name,
-      label: displaySkillNameFromName(name),
+      label: isPathReference ? name : displaySkillNameFromName(name),
       reference,
       start,
       end: start + reference.length,
@@ -52,6 +54,38 @@ export function composerSkillFilePath(reference: string): string | null {
   if (!href) return null
   const filePath = href.startsWith('skill://') ? href.slice('skill://'.length) : href
   return filePath.startsWith('/') && filePath.endsWith('/SKILL.md') ? filePath : null
+}
+
+export function composerPathReference(reference: string): {
+  path: string
+  directory: boolean
+} | null {
+  const href = reference.match(COMPOSER_REFERENCE_PATTERN)?.[1]
+  if (!href) return null
+  const directory = href.startsWith('folder://')
+  if (!directory && !href.startsWith('file://')) return null
+  const encodedPath = href.slice(directory ? 'folder://'.length : 'file://'.length)
+  try {
+    return { path: decodeURIComponent(encodedPath), directory }
+  } catch {
+    return null
+  }
+}
+
+export function resolveComposerWorkspacePath(root: string, path: string): string {
+  if (/^(?:[a-zA-Z]:[\\/]|[\\/])/.test(path)) return path
+  const separator = root.includes('\\') ? '\\' : '/'
+  return `${root.replace(/[\\/]+$/, '')}${separator}${path.replace(/^[\\/]+/, '')}`
+}
+
+export function createComposerPathReference(path: string, directory: boolean): string {
+  const normalized = path.replaceAll('\\', '/')
+  const name = normalized.split('/').filter(Boolean).at(-1) ?? normalized
+  const encodedPath = encodeURIComponent(path).replace(
+    /[!'()*]/g,
+    character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  )
+  return `[$${name}](${directory ? 'folder' : 'file'}://${encodedPath})`
 }
 
 export function replaceComposerMentionTrigger(
@@ -101,28 +135,64 @@ export function findComposerMentionDeletionRange(
 export function createComposerMentionElement(payload: ComposerMentionPayload): HTMLSpanElement {
   const element = document.createElement('span')
   element.className = 'composer-mention-node composer-mention-link'
-  element.setAttribute('data-testid', `local-skill-chip-${localSkillTestId(payload.name)}`)
+  const pathReference = composerPathReference(payload.reference)
+  const displayLabel = pathReference ? composerPathDisplayName(pathReference.path) : payload.label
+  element.setAttribute(
+    'data-testid',
+    pathReference
+      ? `composer-path-chip-${localSkillTestId(payload.name)}`
+      : `local-skill-chip-${localSkillTestId(payload.name)}`
+  )
   element.setAttribute('data-composer-skill-reference', payload.reference)
   element.setAttribute('data-composer-skill-name', payload.name)
-  element.setAttribute('data-composer-skill-label', payload.label)
+  element.setAttribute('data-composer-skill-label', displayLabel)
   const skillFilePath = composerSkillFilePath(payload.reference)
   if (skillFilePath) element.setAttribute('data-composer-skill-path', skillFilePath)
+  if (pathReference) {
+    element.setAttribute('data-composer-path', pathReference.path)
+    element.setAttribute('data-composer-path-kind', pathReference.directory ? 'folder' : 'file')
+  }
   element.setAttribute('contenteditable', 'false')
-  element.setAttribute('aria-label', payload.label)
+  element.setAttribute('aria-label', displayLabel)
   element.setAttribute('spellcheck', 'false')
   element.setAttribute('tabindex', '-1')
 
   const iconSlot = document.createElement('span')
   iconSlot.className = 'composer-mention-icon-slot'
   iconSlot.setAttribute('aria-hidden', 'true')
-  iconSlot.append(createComposerMentionIcon())
+  iconSlot.append(
+    pathReference?.directory ? createComposerFolderIcon() : createComposerMentionIcon()
+  )
 
   const label = document.createElement('span')
   label.className = 'composer-mention-label'
-  label.textContent = payload.label
+  label.textContent = displayLabel
 
   element.append(iconSlot, label)
   return element
+}
+
+function composerPathDisplayName(path: string): string {
+  const normalized = path.replaceAll('\\', '/').replace(/\/$/, '')
+  return normalized.split('/').filter(Boolean).at(-1) ?? path
+}
+
+function createComposerFolderIcon(): SVGSVGElement {
+  const icon = document.createElementNS(SVG_NAMESPACE, 'svg')
+  icon.classList.add('composer-mention-icon')
+  icon.setAttribute('viewBox', '0 0 24 24')
+  icon.setAttribute('fill', 'none')
+  icon.setAttribute('stroke', 'currentColor')
+  icon.setAttribute('stroke-width', '2')
+  icon.setAttribute('stroke-linecap', 'round')
+  icon.setAttribute('stroke-linejoin', 'round')
+  const path = document.createElementNS(SVG_NAMESPACE, 'path')
+  path.setAttribute(
+    'd',
+    'M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z'
+  )
+  icon.append(path)
+  return icon
 }
 
 function createComposerMentionIcon(): SVGSVGElement {

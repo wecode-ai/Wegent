@@ -43,6 +43,8 @@ import type {
   RuntimeTranscriptResponse,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
+  RuntimeWorkspaceSearchRequest,
+  RuntimeWorkspaceSearchResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
   RuntimeWorkspaceRemoveRequest,
@@ -100,6 +102,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     },
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return client.post('/runtime-work/search', data)
+    },
+    searchRuntimeWorkspace(
+      data: RuntimeWorkspaceSearchRequest
+    ): Promise<RuntimeWorkspaceSearchResponse> {
+      return client.post('/runtime-work/workspace/search', data)
     },
     revertRuntimeFileChanges(
       request: RuntimeFileChangesRevertRequest

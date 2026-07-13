@@ -138,6 +138,24 @@ async function sendPrompt(control, selector, prompt) {
   })
 }
 
+async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
+  let lastError
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await sendPrompt(control, selector, prompt)
+    try {
+      return await withTimeout(
+        control.awaitScenarioRequest(scenario),
+        2_000,
+        `The model service did not receive the ${scenario} request`
+      )
+    } catch (error) {
+      lastError = error
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+  }
+  throw lastError
+}
+
 async function selectE2EModel(control) {
   await control.command('waitFor', '[data-testid="model-selector-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -691,6 +709,7 @@ async function main() {
     mkdir(workspacePath, { recursive: true }),
     mkdir(homePath, { recursive: true }),
   ])
+  await writeFile(join(workspacePath, 'auth.ts'), 'export const authenticated = true\n')
 
   const control = new DesktopE2EServer(workspacePath)
   let app
@@ -726,6 +745,7 @@ async function main() {
         WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
         DEVICE_ID: `wework-e2e-device-${process.pid}`,
         WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+        WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: '127.0.0.1:0',
         WEWORK_EXECUTOR_SIDECAR: executorBinary,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -786,6 +806,22 @@ async function main() {
       text: COMPLETION_TEXT,
       timeoutMs: UI_TIMEOUT_MS,
     })
+
+    phase = 'workspace-mention'
+    await control.command('fill', composerSelector, { value: '@' })
+    await control.command('waitFor', '[data-testid="mention-files-action"]', {
+      enabled: true,
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', composerSelector, { value: '@auth' })
+    await control.command('waitFor', '[data-testid="workspace-mention-option-0"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="workspace-mention-option-0"]')
+    await control.command('waitFor', '[data-testid="composer-path-chip-auth-ts"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', composerSelector, { value: '' })
 
     assert.equal(
       await readFile(join(workspacePath, ARTIFACT_NAME), 'utf8'),
@@ -848,7 +884,7 @@ async function main() {
 
     phase = 'retry'
     control.setScenario('retry')
-    await sendPrompt(control, composerSelector, RETRY_PROMPT)
+    await sendPromptUntilScenarioRequest(control, composerSelector, RETRY_PROMPT, 'retry')
     await control.command('waitFor', '[data-testid="assistant-error-card"]', {
       timeoutMs: UI_TIMEOUT_MS,
     })

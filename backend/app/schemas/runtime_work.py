@@ -533,6 +533,36 @@ class RuntimeWorkspaceOpenResponse(BaseModel):
     error: Optional[str] = None
 
 
+class RuntimeWorkspaceSearchRequest(BaseModel):
+    """Search files and directories in one device-local runtime workspace."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    device_id: str = Field(..., alias="deviceId", min_length=1)
+    root: str = Field(..., min_length=1)
+    query: str = Field(..., min_length=1)
+    cancellation_token: Optional[str] = Field(default=None, alias="cancellationToken")
+
+
+class RuntimeWorkspaceSearchItem(BaseModel):
+    """One fuzzy workspace path match returned by the owning executor."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    root: str
+    path: str
+    file_name: str = Field(..., alias="fileName")
+    match_type: Literal["file", "directory"] = Field(..., alias="matchType")
+    score: int
+    indices: Optional[list[int]] = None
+
+
+class RuntimeWorkspaceSearchResponse(BaseModel):
+    """Fuzzy workspace path matches."""
+
+    files: list[RuntimeWorkspaceSearchItem] = Field(default_factory=list)
+
+
 class BindRuntimeTaskIMSessionsRequest(BaseModel):
     """Bind private IM sessions to a device-local runtime task."""
 

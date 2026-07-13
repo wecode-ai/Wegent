@@ -6,7 +6,7 @@ import type {
   RuntimeContextUsage,
   UnifiedModel,
 } from '@/types/api'
-import type { CodeCommentContext } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { DragDropEvent } from '@tauri-apps/api/webview'
@@ -46,6 +46,8 @@ interface ProjectChatComposerProps {
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
   onOpenSkillFile?: (path: string) => void
+  workspaceTarget?: WorkspaceTarget | null
+  workspaceFileApi?: WorkspaceFileApi
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -166,6 +168,8 @@ export function ProjectChatComposer({
   onBlockedModelSelect,
   onFileSelect,
   onOpenSkillFile,
+  workspaceTarget,
+  workspaceFileApi,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -331,6 +335,8 @@ export function ProjectChatComposer({
           rows={2}
           onPasteFiles={onFileSelect}
           onOpenSkillFile={onOpenSkillFile}
+          workspaceTarget={workspaceTarget}
+          workspaceFileApi={workspaceFileApi}
           className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-[18px] text-text-secondary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
