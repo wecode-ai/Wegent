@@ -3,8 +3,6 @@ mod local_executor;
 mod local_terminal;
 mod process_environment;
 
-#[cfg(all(desktop, target_os = "macos"))]
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
 use std::sync::{
@@ -42,11 +40,6 @@ const TRAY_MENU_QUIT_ID: &str = "quit";
 #[cfg(desktop)]
 const TRAY_MENU_TASK_PREFIX: &str = "task:";
 
-#[cfg(all(desktop, target_os = "macos"))]
-thread_local! {
-    static MACOS_CACHED_DOCK_ICON: RefCell<Option<objc2::rc::Retained<objc2_app_kit::NSImage>>> =
-        const { RefCell::new(None) };
-}
 #[cfg(desktop)]
 const TRAY_ID: &str = "wework-main";
 #[cfg(desktop)]
@@ -316,10 +309,21 @@ enum MainWindowOpenAction {
 }
 
 #[cfg(desktop)]
-#[derive(Default)]
 struct MainWindowLifecycleState {
+    dock_icon_visible: AtomicBool,
     destroy_to_tray_in_progress: AtomicBool,
     pending_open_action: Mutex<Option<MainWindowOpenAction>>,
+}
+
+#[cfg(desktop)]
+impl Default for MainWindowLifecycleState {
+    fn default() -> Self {
+        Self {
+            dock_icon_visible: AtomicBool::new(true),
+            destroy_to_tray_in_progress: AtomicBool::new(false),
+            pending_open_action: Mutex::new(None),
+        }
+    }
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -1681,74 +1685,18 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
 fn set_dock_icon_visible<R: tauri::Runtime>(app: &tauri::AppHandle<R>, visible: bool) {
     #[cfg(target_os = "macos")]
     {
-        if !visible {
-            cache_current_macos_dock_icon();
+        let state = app.state::<MainWindowLifecycleState>();
+        if state.dock_icon_visible.swap(visible, Ordering::SeqCst) == visible {
+            return;
         }
-        let policy = if visible {
-            tauri::ActivationPolicy::Regular
-        } else {
-            tauri::ActivationPolicy::Accessory
-        };
-        if let Err(error) = app.set_activation_policy(policy) {
-            log::warn!("Failed to update macOS activation policy: {error}");
-        }
-        if visible {
-            refresh_macos_dock_icon();
+        if let Err(error) = app.set_dock_visibility(visible) {
+            state.dock_icon_visible.store(!visible, Ordering::SeqCst);
+            log::warn!("Failed to update macOS Dock visibility: {error}");
         }
     }
 
     #[cfg(not(target_os = "macos"))]
     let _ = (app, visible);
-}
-
-#[cfg(all(desktop, target_os = "macos"))]
-fn macos_application() -> Option<objc2::rc::Retained<objc2_app_kit::NSApplication>> {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::NSApplication;
-
-    let Some(main_thread) = MainThreadMarker::new() else {
-        log::warn!("Skipped macOS Dock icon operation outside the main thread");
-        return None;
-    };
-    Some(NSApplication::sharedApplication(main_thread))
-}
-
-#[cfg(all(desktop, target_os = "macos"))]
-fn cache_current_macos_dock_icon() {
-    let Some(app) = macos_application() else {
-        return;
-    };
-    let Some(app_icon) = app.applicationIconImage() else {
-        return;
-    };
-    MACOS_CACHED_DOCK_ICON.with(|cached| {
-        *cached.borrow_mut() = Some(app_icon);
-    });
-}
-
-#[cfg(all(desktop, target_os = "macos"))]
-fn refresh_macos_dock_icon() {
-    let Some(app) = macos_application() else {
-        return;
-    };
-    MACOS_CACHED_DOCK_ICON.with(|cached| {
-        if let Some(app_icon) = cached.borrow().as_ref() {
-            unsafe {
-                app.setApplicationIconImage(Some(app_icon));
-            }
-        }
-    });
-}
-
-#[cfg(all(desktop, target_os = "macos"))]
-fn initialize_macos_dock_icon_cache() {
-    if let Some(app) = macos_application() {
-        if let Some(app_icon) = app.applicationIconImage() {
-            MACOS_CACHED_DOCK_ICON.with(|cached| {
-                *cached.borrow_mut() = Some(app_icon);
-            });
-        }
-    }
 }
 
 #[cfg(desktop)]
@@ -3263,9 +3211,16 @@ pub fn run() {
     app.run(|app_handle, event| {
         #[cfg(desktop)]
         match event {
-            tauri::RunEvent::Ready => {
-                #[cfg(target_os = "macos")]
-                initialize_macos_dock_icon_cache();
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } => {
+                if !has_visible_windows {
+                    if let Err(error) = ensure_main_window(app_handle, None) {
+                        log::warn!("Failed to reopen main window from macOS activation: {error}");
+                    }
+                }
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
                 let lifecycle = app_handle.state::<MainWindowLifecycleState>();

@@ -26,7 +26,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|fill|press|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|press|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
@@ -312,6 +312,7 @@ async function main() {
     capture: 'capture',
     snapshot: 'snapshot',
     click: 'click',
+    'close-to-tray': 'closeMainWindowToTray',
     fill: 'fill',
     press: 'press',
     'wait-for': 'waitFor',
@@ -324,7 +325,12 @@ async function main() {
   }
   const selector =
     options.selector ??
-    (command === 'capture' || command === 'snapshot' || command === 'text' ? 'body' : null)
+    (command === 'capture' ||
+    command === 'snapshot' ||
+    command === 'text' ||
+    command === 'close-to-tray'
+      ? 'body'
+      : null)
   if (!selector) throw new Error('--selector is required')
   const value = await request(session, session.token, '/command', 'POST', {
     action,
