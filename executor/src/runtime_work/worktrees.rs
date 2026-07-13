@@ -493,6 +493,7 @@ fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Resu
         .arg("-C")
         .arg(path)
         .args(args);
+    command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
     if let Some(envs) = envs {
         command.envs(envs.iter().copied());
     }
@@ -841,14 +842,16 @@ mod tests {
     }
 
     fn run_git(path: &Path, args: &[&str]) {
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        command
             .arg("-c")
             .arg("core.bare=false")
             .arg("-C")
             .arg(path)
             .args(args)
-            .output()
-            .unwrap();
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE");
+        let output = command.output().unwrap();
         assert!(
             output.status.success(),
             "git -C {} {} failed: {}",
