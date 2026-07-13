@@ -1735,6 +1735,30 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-markdown-link-icon')).toBeInTheDocument()
   })
 
+  test('keeps angle-bracket external link destinations as external links', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-angle-bracket-external-link',
+            role: 'assistant',
+            content: '[Wegent](<https://github.com/wecode-ai/Wegent>)',
+            status: 'done',
+            createdAt: '2026-07-13T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByRole('link', { name: 'Wegent' })).toHaveAttribute(
+      'href',
+      'https://github.com/wecode-ai/Wegent'
+    )
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
+  })
+
   test('routes assistant file-path links to the workspace file panel', async () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
@@ -1756,6 +1780,34 @@ describe('MessageList', () => {
     expect(screen.queryByRole('link', { name: /managing-tasks\.md/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
+  })
+
+  test('removes angle brackets from assistant file link destinations', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-angle-bracket-file-link',
+            role: 'assistant',
+            content:
+              '[MessageList.tsx](</Users/dev/repo/wework/src/components/chat/MessageList.tsx:18>)',
+            status: 'done',
+            createdAt: '2026-07-13T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/Users/dev/repo/wework/src/components/chat/MessageList.tsx',
+      {
+        lineStart: 18,
+        lineEnd: undefined,
+      }
+    )
   })
 
   test('passes assistant file link line numbers to open-file actions', async () => {

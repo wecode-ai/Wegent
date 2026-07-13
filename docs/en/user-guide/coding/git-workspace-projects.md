@@ -106,6 +106,8 @@ The file preview does not save or modify files. You can select a code range in t
 
 When an assistant response, Codex reference, or memory citation includes a file link with line numbers, clicking the link opens the right-side file preview and scrolls to and highlights that line range. File links without line numbers still open the file without selecting code lines.
 
+File link destinations can use Markdown angle-bracket syntax, such as `[file](</absolute/path/file.ts:18>)`. Wework removes the surrounding angle brackets before resolving the absolute path and line number, so the brackets do not become part of the filesystem path.
+
 ## Use the Right-Side Browser
 
 In the macOS desktop Wework app, the right workspace panel can also open a browser tab. Click the new-tab button in the right panel, choose **Browser**, then enter an `http` or `https` URL in the address bar to open the page in app. The right panel keeps at most one browser tab; after the browser is open, the new-tab menu does not offer a second browser entry.
