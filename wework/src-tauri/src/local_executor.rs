@@ -43,6 +43,7 @@ const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
 const LOCAL_EXECUTOR_CONNECT_RETRY_MS: u64 = 250;
+const LOCAL_EXECUTOR_CONNECT_TIMEOUT_SECS: u64 = 60;
 const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = 10;
 const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
@@ -1820,7 +1821,8 @@ async fn start_executor_if_needed_unlocked(
 
     spawn_sidecar_if_needed(app.clone(), state).await?;
 
-    loop {
+    let started_at = Instant::now();
+    let last_error = loop {
         let error = match connect_and_attach_sidecar_socket(app.clone(), state).await {
             Ok(()) => return Ok(()),
             Err(error) => error,
@@ -1832,8 +1834,18 @@ async fn start_executor_if_needed_unlocked(
             fail_pending_requests(state, message.clone());
             return Err(message);
         }
+        if started_at.elapsed() >= Duration::from_secs(LOCAL_EXECUTOR_CONNECT_TIMEOUT_SECS) {
+            break error;
+        }
         retry_connect_delay().await;
-    }
+    };
+
+    let message = format!(
+        "Timed out waiting for local executor socket after {LOCAL_EXECUTOR_CONNECT_TIMEOUT_SECS}s: {last_error}"
+    );
+    set_executor_error(state, message.clone());
+    fail_pending_requests(state, message.clone());
+    Err(message)
 }
 
 #[cfg(not(unix))]
