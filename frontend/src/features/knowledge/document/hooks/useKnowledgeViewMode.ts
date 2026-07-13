@@ -27,6 +27,26 @@ function readBrowserView(): string | null {
   return new URLSearchParams(window.location.search).get('view')
 }
 
+function readBrowserTaskParam(): string | null {
+  if (typeof window === 'undefined') return null
+  const params = new URLSearchParams(window.location.search)
+  for (const key of TASK_QUERY_KEYS) {
+    const value = params.get(key)
+    if (value) return value
+  }
+  return null
+}
+
+function readTaskParam(searchParams: URLSearchParams): string | null {
+  const browserValue = readBrowserTaskParam()
+  if (browserValue) return browserValue
+  for (const key of TASK_QUERY_KEYS) {
+    const value = searchParams.get(key)
+    if (value) return value
+  }
+  return null
+}
+
 function removeTaskParams(url: URL): boolean {
   let removed = false
   for (const key of TASK_QUERY_KEYS) {
@@ -63,7 +83,8 @@ export function useKnowledgeViewMode(kbType?: KnowledgeBaseType | null, resetKey
   const resolvedView = useMemo(() => {
     void resetKey
     const viewParam = readBrowserView() ?? searchParams.get('view')
-    return isKnowledgeView(viewParam) ? viewParam : defaultView
+    if (isKnowledgeView(viewParam)) return viewParam
+    return readTaskParam(searchParams) ? 'notebook' : defaultView
   }, [searchParams, defaultView, resetKey])
 
   const [currentView, setCurrentViewState] = useState<KnowledgeView>(resolvedView)

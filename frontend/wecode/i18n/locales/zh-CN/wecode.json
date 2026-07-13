@@ -30,7 +30,17 @@
     "capability_openclaw": "OpenClaw",
     "machines_count": "台机器",
     "powered_by_prefix": "由",
-    "powered_by_suffix": "平台提供云算力"
+    "powered_by_suffix": "平台提供云算力",
+    "metrics": {
+      "cpu": "CPU",
+      "memory": "内存",
+      "disk": "磁盘",
+      "loading": "加载中...",
+      "no_data": "暂无数据",
+      "alert_title": "资源使用率较高",
+      "alert_desc": "CPU、内存或磁盘使用率超过 80%，可能影响任务执行。建议扩容云设备规格或清理工作区缓存。",
+      "alert_link": "查看扩容指南"
+    }
   },
   "published_apps": {
     "tab": "应用",

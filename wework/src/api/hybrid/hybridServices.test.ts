@@ -49,6 +49,7 @@ const mocks = vi.hoisted(() => {
       listRuntimeWork: localListRuntimeWork,
       createRuntimeTask: localCreateRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
+      compactRuntimeTask: vi.fn(),
       searchRuntimeWork: localSearchRuntimeWork,
       listArchivedConversations: vi.fn(async () => ({
         items: [],
@@ -92,6 +93,7 @@ const mocks = vi.hoisted(() => {
       listRuntimeWork: cloudListRuntimeWork,
       createRuntimeTask: cloudCreateRuntimeTask,
       rollbackRuntimeTask: vi.fn(),
+      compactRuntimeTask: vi.fn(),
       searchRuntimeWork: cloudSearchRuntimeWork,
       listArchivedConversations: vi.fn(async () => ({
         items: [],
@@ -155,6 +157,9 @@ vi.mock('@/api/local/localServices', () => ({
     },
     rollbackRuntimeTask(data: Record<string, unknown>) {
       return request('runtime.tasks.rollback', data, String(data.deviceId))
+    },
+    compactRuntimeTask(data: Record<string, unknown>) {
+      return request('runtime.tasks.compact', data, String(data.deviceId))
     },
     async searchRuntimeWork(data: Record<string, unknown>) {
       return request(

@@ -1,6 +1,7 @@
 import { Check, Search } from 'lucide-react'
 import type { KeyboardEvent } from 'react'
 import { useCallback, useMemo } from 'react'
+import { isImeEnterEvent } from '@/lib/ime'
 import { getModelDisplayLabel, getModelUiMetadata, groupModelsByFamily } from '@/lib/model-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ModelOptions, UnifiedModel } from '@/types/api'
@@ -126,6 +127,7 @@ export function SlashModelMenu({
       onSelectedIndexChange(Math.max(selectedIndex - 1, 0))
       return
     }
+    if (isImeEnterEvent(event)) return
     if (event.key === 'Enter' && filteredModels[selectedIndex]) {
       event.preventDefault()
       handleSelect(filteredModels[selectedIndex])

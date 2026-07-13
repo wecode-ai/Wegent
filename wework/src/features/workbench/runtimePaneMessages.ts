@@ -177,6 +177,15 @@ export function createRuntimeTaskStreamHandlers(
         subtaskId: identity.subtaskId,
         block,
       })
+      if (isStandaloneCompletedContextCompaction(identity.subtaskId, block)) {
+        handlers.onMessageAction({
+          type: 'assistant_done',
+          subtaskId: identity.subtaskId,
+          content: '',
+        })
+        handlers.onAssistantSettled?.()
+        handlers.onRefreshWorkLists?.()
+      }
     },
     onBlockUpdated: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) return
@@ -237,6 +246,26 @@ export function createRuntimeTaskStreamHandlers(
       handlers.onRuntimeGoalCleared?.(payload)
     },
   }
+}
+
+function isStandaloneCompletedContextCompaction(
+  subtaskId: string,
+  block: ProcessingBlock
+): boolean {
+  return isStandaloneContextCompactionSubtask(subtaskId) && isCompletedContextCompactionBlock(block)
+}
+
+function isStandaloneContextCompactionSubtask(subtaskId: string): boolean {
+  return subtaskId.endsWith('-context-compact')
+}
+
+function isCompletedContextCompactionBlock(block: ProcessingBlock): boolean {
+  if (block.type !== 'tool' || block.status !== 'done') return false
+  return normalizeToolName(block.toolName) === 'contextcompaction'
+}
+
+function normalizeToolName(toolName: string): string {
+  return toolName.replace(/[\s_-]+/g, '').toLowerCase()
 }
 
 export function runtimeMessagesToWorkbenchMessages(

@@ -67,7 +67,7 @@ class KnowledgeFolderService:
     def _check_kb_write_access(
         db: Session, knowledge_base_id: int, user_id: int
     ) -> Kind:
-        """Verify user has write access to the knowledge base.
+        """Verify user has document-area write access to the knowledge base.
 
         Raises ValueError if access is denied or KB not found.
         """

@@ -119,6 +119,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     clearRuntimeGoal,
     sendRuntimePaneMessage,
     sendRuntimePaneGuidance,
+    compactRuntimePaneTask,
     editLastUserMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
@@ -1206,6 +1207,29 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           }
         }
 
+        if (submittedInput === '/compact') {
+          if (!currentRuntimeTask) {
+            setError('当前对话还没有可压缩的 Codex 线程')
+            return
+          }
+          if (paneStatus.isBusy) {
+            setError('当前回复进行中，完成后再压缩上下文')
+            return
+          }
+          if (currentAttachments.length > 0 || hasCodeComments) {
+            setError('/compact 不能和附件或代码评论一起发送')
+            return
+          }
+          setInput('')
+          setSendPhase('submitting')
+          try {
+            await compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
+          } finally {
+            setSendPhase(current => (current === 'submitting' ? 'idle' : current))
+          }
+          return
+        }
+
         const pendingInitialGoal =
           !currentRuntimeTask && pendingGoalState && isUnboundPendingGoalState(pendingGoalState)
             ? runtimeGoalCreateInput(pendingGoalState.goal)
@@ -1354,6 +1378,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       [
         appendLocalUserMessage,
         codeCommentContexts,
+        compactRuntimePaneTask,
         currentRuntimeTask,
         dispatchMessages,
         goalDraftActive,
@@ -1418,6 +1443,23 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       type: 'assistant_cancelled',
     })
   }, [activeAssistantMessage, cancelRuntimePaneTask, currentRuntimeTask, dispatchMessages])
+
+  const compactContext = useCallback(async () => {
+    if (!currentRuntimeTask) {
+      setError('当前对话还没有可压缩的 Codex 线程')
+      return false
+    }
+    if (paneStatus.isBusy) {
+      setError('当前回复进行中，完成后再压缩上下文')
+      return false
+    }
+    setSendPhase('submitting')
+    try {
+      return await compactRuntimePaneTask(currentRuntimeTask, { onError: setError })
+    } finally {
+      setSendPhase(current => (current === 'submitting' ? 'idle' : current))
+    }
+  }, [compactRuntimePaneTask, currentRuntimeTask, paneStatus.isBusy])
 
   const setCurrentGoal = useCallback(async () => {
     projectChat.setSelectedModelOption('collaborationMode', 'default')
@@ -1589,6 +1631,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     editQueuedMessage,
     cancelGuidanceMessage,
     pauseCurrentResponse,
+    compactContext,
     setCurrentGoal,
     cancelGoalDraft,
     editCurrentGoal,

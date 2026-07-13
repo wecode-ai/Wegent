@@ -112,6 +112,61 @@ button:disabled {
 }
 
 @layer utilities {
+  .context-usage-compact-trigger {
+    position: relative;
+  }
+
+  .context-usage-compact-trigger::before {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 9999px;
+    background: conic-gradient(
+      from 0deg,
+      transparent 0 34%,
+      currentColor 42% 54%,
+      transparent 62% 100%
+    );
+    opacity: 0;
+    transform: rotate(0deg);
+    pointer-events: none;
+    mask: radial-gradient(circle, transparent 0 53%, #000 58% 100%);
+    -webkit-mask: radial-gradient(circle, transparent 0 53%, #000 58% 100%);
+  }
+
+  .context-usage-compact-visual {
+    transform-origin: center;
+    transition:
+      filter 150ms ease,
+      transform 180ms ease;
+  }
+
+  .context-usage-compact-trigger:hover:not(:disabled)::before {
+    animation: context-usage-orbit-ring 1.2s cubic-bezier(0.65, 0, 0.2, 1) infinite;
+    opacity: 0.42;
+  }
+
+  .context-usage-compact-trigger:hover:not(:disabled) .context-usage-compact-visual {
+    transform: scale(1.08);
+    filter: saturate(1.12);
+  }
+
+  @keyframes context-usage-orbit-ring {
+    0% {
+      transform: rotate(0deg);
+    }
+
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .context-usage-compact-trigger:hover:not(:disabled)::before {
+      animation: none;
+    }
+  }
+
   @keyframes local-skill-caret-blink {
     0%,
     49% {

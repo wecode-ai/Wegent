@@ -53,6 +53,7 @@ import { SlotIndicator } from '@/features/devices/components/SlotIndicator'
 import { VersionBadge } from '@/features/devices/components/VersionBadge'
 import { RunningTasksList } from '@/features/devices/components/RunningTasksList'
 import { CloudDeviceCreateSection } from './CloudDeviceCreateSection'
+import { DeviceMetrics } from './DeviceMetrics'
 import type { DeviceUpgradeState } from '@/contexts/DeviceContext'
 
 /**
@@ -419,6 +420,13 @@ function CloudMachineCard({
           />
         ))}
       </div>
+
+      {/* Real-time resource metrics (CPU / memory / disk) */}
+      {isAnyOnline && (
+        <div className="mt-1">
+          <DeviceMetrics deviceId={primaryDevice.device_id} />
+        </div>
+      )}
 
       {/* Running tasks list (aggregated from all devices) */}
       {allRunningTasks.length > 0 && (

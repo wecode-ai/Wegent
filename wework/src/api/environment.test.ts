@@ -862,8 +862,61 @@ describe('commitProjectChanges', () => {
     })
   })
 
-  test('rejects an empty commit message before calling the device', async () => {
-    const executeCommand = vi.fn()
+  test('generates a commit message before committing when the provided message is empty', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: { success: true, message: 'feat: update environment info' },
+        stderr: '',
+      })
+      .mockResolvedValueOnce({ success: true, stdout: '[main abc123] update\n', stderr: '' })
+
+    await commitProjectChanges(
+      { executeCommand },
+      {
+        id: 1,
+        name: 'Wegent',
+        config: {
+          mode: 'workspace',
+          execution: { targetType: 'local', deviceId: 'device-123' },
+          workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
+        },
+      },
+      '   '
+    )
+
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'device-123', {
+      command_key: 'git_add_all',
+      path: '/workspace/Wegent',
+      timeout_seconds: 30,
+      max_output_bytes: 4096,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'device-123', {
+      command_key: 'git_generate_commit_message',
+      path: '/workspace/Wegent',
+      timeout_seconds: 120,
+      max_output_bytes: 8192,
+    })
+    expect(executeCommand).toHaveBeenNthCalledWith(3, 'device-123', {
+      command_key: 'git_commit',
+      path: '/workspace/Wegent',
+      args: ['-m', 'feat: update environment info'],
+      timeout_seconds: 30,
+      max_output_bytes: 8192,
+    })
+  })
+
+  test('rejects invalid generated commit messages before running git commit', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: { success: false, error: 'Codex auth is missing' },
+        stderr: '',
+      })
 
     await expect(
       commitProjectChanges(
@@ -877,11 +930,11 @@ describe('commitProjectChanges', () => {
             workspace: { source: 'local_path', localPath: '/workspace/Wegent' },
           },
         },
-        '   '
+        ''
       )
-    ).rejects.toThrow('Commit message is required')
+    ).rejects.toThrow('Codex auth is missing')
 
-    expect(executeCommand).not.toHaveBeenCalled()
+    expect(executeCommand).toHaveBeenCalledTimes(2)
   })
 })
 

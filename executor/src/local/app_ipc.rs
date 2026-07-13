@@ -24,6 +24,8 @@ use tokio::{
 use crate::{
     agents::resolve_codex_binary,
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
+    local::git_commit_message::generate_commit_message,
+    local::local_skills::list_local_skills,
     logging::{format_executor_log, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     version::get_version,
@@ -163,233 +165,6 @@ if target.exists() and target.is_file():
 
 print(json.dumps(result, ensure_ascii=False))
 "#;
-const LOCAL_SKILLS_SCRIPT: &str = r##"
-import json
-from pathlib import Path
-
-
-def strip_quotes(value):
-    stripped = value.strip()
-    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in {"\"", "'"}:
-        return stripped[1:-1]
-    return stripped
-
-
-def normalize_block_scalar(lines, style):
-    non_empty_indents = [
-        len(line) - len(line.lstrip(" "))
-        for line in lines
-        if line.strip()
-    ]
-    trim_indent = min(non_empty_indents) if non_empty_indents else 0
-    values = [
-        line[trim_indent:] if len(line) >= trim_indent else line
-        for line in lines
-    ]
-    if style == ">":
-        paragraphs = []
-        current = []
-        for line in values:
-            if line.strip():
-                current.append(line.strip())
-                continue
-            if current:
-                paragraphs.append(" ".join(current))
-                current = []
-        if current:
-            paragraphs.append(" ".join(current))
-        return "\n".join(paragraphs).strip()
-    return "\n".join(values).strip()
-
-
-def parse_frontmatter(path):
-    metadata = {}
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return metadata
-    if not lines or lines[0].strip() != "---":
-        return metadata
-
-    frontmatter = []
-    for line in lines[1:]:
-        stripped = line.strip()
-        if stripped == "---":
-            break
-        frontmatter.append(line)
-
-    index = 0
-    while index < len(frontmatter):
-        line = frontmatter[index]
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or ":" not in line:
-            index += 1
-            continue
-        current_indent = len(line) - len(line.lstrip(" "))
-        key, value = line.split(":", 1)
-        key = key.strip()
-        raw_value = value.strip()
-        if not key:
-            index += 1
-            continue
-        if raw_value in {"|", ">"} or raw_value.startswith("|") or raw_value.startswith(">"):
-            style = raw_value[0]
-            block_lines = []
-            index += 1
-            while index < len(frontmatter):
-                next_line = frontmatter[index]
-                next_stripped = next_line.strip()
-                next_indent = len(next_line) - len(next_line.lstrip(" "))
-                if next_stripped and next_indent <= current_indent and ":" in next_line:
-                    break
-                block_lines.append(next_line)
-                index += 1
-            metadata[key] = normalize_block_scalar(block_lines, style)
-            continue
-        metadata[key] = strip_quotes(raw_value)
-        index += 1
-    return metadata
-
-
-def skill_entry(skill_dir, source, scope, source_priority, plugin_name=None):
-    skill_md = skill_dir / "SKILL.md"
-    if not skill_dir.is_dir() or not skill_md.is_file():
-        return None
-    metadata = parse_frontmatter(skill_md)
-    name = metadata.get("name") or skill_dir.name
-    description = metadata.get("description") or ""
-    try:
-        mtime = skill_md.stat().st_mtime
-    except OSError:
-        mtime = None
-    entry = {
-        "name": name,
-        "description": description,
-        "path": str(skill_md),
-        "source": source,
-        "scope": scope,
-        "origin": "local",
-        "source_priority": source_priority,
-    }
-    if description:
-        entry["short_description"] = description
-    if plugin_name:
-        entry["plugin_name"] = plugin_name
-    if mtime is not None:
-        entry["mtime"] = mtime
-    return entry
-
-
-def scan_skill_dir(root, source, scope, source_priority):
-    output = []
-    if not root.is_dir():
-        return output
-    for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
-        if child.name == ".system":
-            continue
-        entry = skill_entry(child, source, scope, source_priority)
-        if entry is not None:
-            output.append(entry)
-    return output
-
-
-def scan_system_skill_dir(root, source):
-    return scan_skill_dir(root / ".system", source, "system", 10)
-
-
-def plugin_source_priority(provider):
-    return {
-        "openai-curated-remote": 20,
-        "openai-bundled": 30,
-        "openai-primary-runtime": 30,
-        "openai-curated": 40,
-    }.get(provider or "", 50)
-
-
-def plugin_metadata(root, skill_dir):
-    plugin_root = skill_dir.parent.parent
-    plugin_name = plugin_root.name
-    provider = None
-    version = None
-    try:
-        parts = plugin_root.relative_to(root).parts
-    except ValueError:
-        parts = ()
-    if len(parts) >= 4 and parts[0] == "cache":
-        provider = parts[1]
-        plugin_name = parts[2]
-        version = parts[3]
-    elif parts:
-        plugin_name = parts[0]
-    return plugin_name, provider, version
-
-
-def scan_plugin_dir(root, source):
-    output = []
-    if not root.is_dir():
-        return output
-    for skill_md in sorted(root.rglob("SKILL.md"), key=lambda item: str(item).lower()):
-        skill_dir = skill_md.parent
-        if skill_dir.parent.name != "skills":
-            continue
-        plugin_name, provider, version = plugin_metadata(root, skill_dir)
-        entry = skill_entry(
-            skill_dir,
-            source,
-            "user",
-            plugin_source_priority(provider),
-            plugin_name,
-        )
-        if entry is not None:
-            if provider:
-                entry["plugin_provider"] = provider
-            if version:
-                entry["plugin_version"] = version
-            output.append(entry)
-    return output
-
-
-def skill_identity(skill):
-    name = (skill.get("name") or "").strip().lower()
-    return name or skill["path"]
-
-
-def prefer_skill(left, right):
-    left_rank = left.get("source_priority", 99)
-    right_rank = right.get("source_priority", 99)
-    if left_rank != right_rank:
-        return left if left_rank < right_rank else right
-    left_mtime = left.get("mtime") or 0
-    right_mtime = right.get("mtime") or 0
-    if left_mtime != right_mtime:
-        return left if left_mtime > right_mtime else right
-    return left if left["path"] <= right["path"] else right
-
-
-home = Path.home()
-skills = []
-codex_skills_root = home / ".codex" / "skills"
-skills.extend(scan_skill_dir(codex_skills_root, "codex", "user", 0))
-skills.extend(scan_system_skill_dir(codex_skills_root, "codex"))
-skills.extend(scan_plugin_dir(home / ".codex" / "plugins", "codex-plugin"))
-
-deduped_by_name = {}
-for skill in skills:
-    key = skill_identity(skill)
-    current = deduped_by_name.get(key)
-    deduped_by_name[key] = prefer_skill(current, skill) if current else skill
-
-deduped = sorted(
-    deduped_by_name.values(),
-    key=lambda skill: (
-        skill.get("source_priority", 99),
-        skill["name"].lower(),
-        skill["path"],
-    ),
-)
-
-print(json.dumps(deduped, ensure_ascii=False))
-"##;
 const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
 const TURN_FILE_CHANGES_SCRIPT: &str = r#"
 import gzip
@@ -869,7 +644,23 @@ impl AppIpcServer {
         let command_key = string_field(&params, "command_key")
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| AppIpcError::new("bad_request", "command_key is required"))?;
-        let command = local_app_command(command_key.trim()).ok_or_else(|| {
+        let command_key = command_key.trim();
+
+        if command_key == "git_generate_commit_message" {
+            let cwd = string_field(&params, "path").or_else(|| string_field(&params, "cwd"));
+            let env = string_env(params.get("env"))?;
+            let result = generate_commit_message(cwd, env).await;
+            return serde_json::to_value(result)
+                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
+        if command_key == "ls_skills" {
+            let result = list_local_skills().await;
+            return serde_json::to_value(result)
+                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
+        let command = local_app_command(command_key).ok_or_else(|| {
             AppIpcError::new(
                 "unknown_command",
                 format!("Device command key '{command_key}' is not configured"),
@@ -1158,11 +949,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         )),
         "git_add_all" => Some(command_definition("git add --all", &["git", "add", "--all"], None)),
         "git_commit" => Some(command_definition("git commit", &["git", "commit"], None)),
-        "ls_skills" => Some(command_definition(
-            "python3 -c <local_skills>",
-            &["python3", "-c", LOCAL_SKILLS_SCRIPT],
-            Some(PostProcessor::Json),
-        )),
         "browser_relay_restart" => Some(command_definition(
             "sh -lc <browser_relay_restart>",
             &[

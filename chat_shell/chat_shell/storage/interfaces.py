@@ -101,7 +101,7 @@ class HistoryStoreInterface(ABC):
         session_id: str,
         limit: Optional[int] = None,
         before_message_id: Optional[str] = None,
-        supports_image: bool | None = None,
+        supports_image: bool = False,
         supports_video: bool = False,
     ) -> list[Message]:
         """
@@ -112,8 +112,6 @@ class HistoryStoreInterface(ABC):
             limit: Maximum number of messages to return
             before_message_id: Only return messages before this ID (for pagination)
             supports_image: Whether the model supports image input.
-                If True or None, image attachments keep the legacy image_url blocks.
-                If False, image attachments are replayed as metadata only.
             supports_video: Whether the model supports video input.
                 If True, video attachments will include canonical video blocks.
                 If False (default), video attachments cannot be resolved as model input.

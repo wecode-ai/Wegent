@@ -6,5 +6,7 @@ pub mod app_ipc;
 pub mod backend;
 pub mod capabilities;
 pub mod command;
+pub mod git_commit_message;
+pub mod local_skills;
 pub mod pty;
 pub mod session;

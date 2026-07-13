@@ -23,6 +23,7 @@ interface ComposerToolbarProps {
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
   onSetGoal?: () => void
+  onCompactContext?: () => void
   goalDraftActive?: boolean
   onCancelGoalDraft?: () => void
   isStreaming?: boolean
@@ -46,6 +47,7 @@ export function ComposerToolbar({
   onSetPlanMode,
   onClearPlanMode,
   onSetGoal,
+  onCompactContext,
   goalDraftActive = false,
   onCancelGoalDraft,
   isStreaming = false,
@@ -77,7 +79,11 @@ export function ComposerToolbar({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        <ContextUsageIndicator usage={contextUsage} />
+        <ContextUsageIndicator
+          usage={contextUsage}
+          disabled={disabled}
+          onCompactContext={onCompactContext}
+        />
         {isModelSelectionReady ? (
           <ModelSelector
             models={models}
