@@ -2013,6 +2013,10 @@ mod tests {
         assert_eq!(updated["payload"]["data"]["block_id"], "search-1");
         assert_eq!(updated["payload"]["data"]["updates"]["status"], "done");
         assert_eq!(
+            updated["payload"]["data"]["updates"]["tool_input"]["type"],
+            "search"
+        );
+        assert_eq!(
             updated["payload"]["data"]["updates"]["tool_input"]["query"],
             "Wegent documentation"
         );

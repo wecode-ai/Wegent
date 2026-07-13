@@ -234,6 +234,7 @@ describe('ToolBlocksDisplay', () => {
     expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
       'https://docs.wegent.ai/guide'
     )
+    expect(screen.getByText('https://docs.wegent.ai/guide')).toBeInTheDocument()
     expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
       "'install' in https://docs.wegent.ai/guide"
     )
