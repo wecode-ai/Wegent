@@ -18,12 +18,29 @@ Token encryption key lifecycle:
   automatically so deployments do not need manual key provisioning.
 - For tests/development without a database, a deterministic fallback key is
   derived from existing settings.
+
+Request signing lifecycle:
+- If ``LLM_PROXY_SIGNING_KEY`` is set, it is used as the master HMAC key.
+- Otherwise the key is loaded from ``SystemConfig`` (key
+  ``llm_proxy_signing_key``). A legacy ``codex_proxy_signing_key`` entry is
+  migrated automatically.
+- If no stored key exists, a new random key is generated and persisted.
+- For tests/development without a database, a deterministic fallback key is
+  derived from existing settings.
+
+Each proxy token carries a unique ``jti`` claim. The per-token signing key is
+derived as ``HMAC-SHA256(master_signing_key, jti)`` and returned to the executor
+alongside the encrypted token. The executor must include the token in the
+``Authorization`` header and sign every request with a fresh nonce.
 """
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import time
+import uuid
 from typing import Any, Optional
 
 import httpx
@@ -41,6 +58,17 @@ from app.services.chat.config.model_resolver import (
 logger = logging.getLogger(__name__)
 
 _TOKEN_KEY_CACHE: Optional[Fernet] = None
+_SIGNING_KEY_CACHE: Optional[str] = None
+_NONCE_MEMORY_CACHE: dict[str, int] = {}
+
+LLM_PROXY_NONCE_REDIS_KEY_PREFIX = "llm_proxy_nonce"
+LLM_PROXY_SIGNING_KEY_CONFIG_KEY = "llm_proxy_signing_key"
+LLM_PROXY_SIGNING_KEY_LEGACY_CONFIG_KEY = "codex_proxy_signing_key"
+LLM_PROXY_TOKEN_KEY_CONFIG_KEY = "llm_proxy_token_key"
+LLM_PROXY_TOKEN_KEY_LEGACY_CONFIG_KEY = "codex_proxy_token_key"
+
+NONCE_HEADER_NAME = "X-Wegent-Request-Nonce"
+SIGNATURE_HEADER_NAME = "X-Wegent-Body-Signature"
 
 
 class LLMProxyTokenError(Exception):
@@ -74,7 +102,7 @@ def _load_stored_token_key(db: Session) -> Optional[str]:
 
     config = (
         db.query(SystemConfig)
-        .filter(SystemConfig.config_key == "llm_proxy_token_key")
+        .filter(SystemConfig.config_key == LLM_PROXY_TOKEN_KEY_CONFIG_KEY)
         .first()
     )
     if config is not None:
@@ -84,7 +112,7 @@ def _load_stored_token_key(db: Session) -> Optional[str]:
 
     legacy_config = (
         db.query(SystemConfig)
-        .filter(SystemConfig.config_key == "codex_proxy_token_key")
+        .filter(SystemConfig.config_key == LLM_PROXY_TOKEN_KEY_LEGACY_CONFIG_KEY)
         .first()
     )
     if legacy_config is not None:
@@ -93,7 +121,7 @@ def _load_stored_token_key(db: Session) -> Optional[str]:
             key = stored.strip()
             if config is None:
                 config = SystemConfig(
-                    config_key="llm_proxy_token_key",
+                    config_key=LLM_PROXY_TOKEN_KEY_CONFIG_KEY,
                     config_value={"key": key},
                 )
                 db.add(config)
@@ -117,7 +145,7 @@ def _load_or_create_stored_token_key(db: Session) -> str:
 
     key = Fernet.generate_key().decode("utf-8")
     config = SystemConfig(
-        config_key="llm_proxy_token_key",
+        config_key=LLM_PROXY_TOKEN_KEY_CONFIG_KEY,
         config_value={"key": key},
     )
     db.add(config)
@@ -154,6 +182,122 @@ def _get_fernet(db: Optional[Session] = None) -> Fernet:
     return _TOKEN_KEY_CACHE
 
 
+def _env_signing_key() -> Optional[str]:
+    """Return the explicitly configured master signing key, if any."""
+    key = settings.LLM_PROXY_SIGNING_KEY.strip()
+    return key or None
+
+
+def _dev_fallback_signing_key() -> str:
+    """Return a deterministic dev/test signing key derived from existing settings.
+
+    This is only used when no env key and no database are available. It must
+    not be relied upon in production.
+    """
+    seed = settings.SHARE_TOKEN_AES_KEY or settings.INTERNAL_SERVICE_TOKEN
+    raw = seed.encode("utf-8")[:32].ljust(32, b"0")
+    return base64.urlsafe_b64encode(raw).decode("utf-8")
+
+
+def _load_stored_signing_key(db: Session) -> Optional[str]:
+    """Return a stored master signing key, migrating a legacy key name if found."""
+    from app.models.system_config import SystemConfig
+
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == LLM_PROXY_SIGNING_KEY_CONFIG_KEY)
+        .first()
+    )
+    if config is not None:
+        stored = (config.config_value or {}).get("key")
+        if isinstance(stored, str) and stored.strip():
+            return stored.strip()
+
+    legacy_config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == LLM_PROXY_SIGNING_KEY_LEGACY_CONFIG_KEY)
+        .first()
+    )
+    if legacy_config is not None:
+        stored = (legacy_config.config_value or {}).get("key")
+        if isinstance(stored, str) and stored.strip():
+            key = stored.strip()
+            if config is None:
+                config = SystemConfig(
+                    config_key=LLM_PROXY_SIGNING_KEY_CONFIG_KEY,
+                    config_value={"key": key},
+                )
+                db.add(config)
+            else:
+                config.config_value = {"key": key}
+            db.delete(legacy_config)
+            db.commit()
+            logger.info(
+                "Migrated legacy Codex proxy signing key to LLM proxy signing key"
+            )
+            return key
+
+    return None
+
+
+def _load_or_create_stored_signing_key(db: Session) -> str:
+    """Load the persisted master signing key from SystemConfig, creating one if missing."""
+    stored_key = _load_stored_signing_key(db)
+    if stored_key is not None:
+        return stored_key
+
+    from app.models.system_config import SystemConfig
+
+    key = base64.urlsafe_b64encode(hashlib.sha256(uuid.uuid4().bytes).digest()).decode(
+        "utf-8"
+    )
+    config = SystemConfig(
+        config_key=LLM_PROXY_SIGNING_KEY_CONFIG_KEY,
+        config_value={"key": key},
+    )
+    db.add(config)
+    db.commit()
+    logger.info("Generated and persisted new LLM proxy signing key")
+    return key
+
+
+def _get_master_signing_key(db: Optional[Session] = None) -> str:
+    """Return the master HMAC signing key.
+
+    Priority:
+    1. ``LLM_PROXY_SIGNING_KEY`` environment variable.
+    2. Persisted ``SystemConfig`` value (auto-generated on first use).
+    3. Deterministic dev/test fallback (no DB or env key).
+    """
+    global _SIGNING_KEY_CACHE  # noqa: PLW0603
+
+    env_key = _env_signing_key()
+    if env_key is not None:
+        return env_key
+
+    if _SIGNING_KEY_CACHE is not None:
+        return _SIGNING_KEY_CACHE
+
+    if db is not None:
+        key = _load_or_create_stored_signing_key(db)
+    else:
+        key = _dev_fallback_signing_key()
+
+    _SIGNING_KEY_CACHE = key
+    return key
+
+
+def derive_per_token_signing_key(jti: str, db: Optional[Session] = None) -> str:
+    """Derive a per-token HMAC signing key from the master key and token ``jti``."""
+    master_key = _get_master_signing_key(db)
+    digest = hmac.new(
+        master_key.encode("utf-8"),
+        jti.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return digest
+
+
 def _encode_payload(payload: dict[str, Any], db: Optional[Session] = None) -> str:
     data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     return _get_fernet(db).encrypt(data).decode("utf-8")
@@ -173,17 +317,147 @@ def _decode_payload(token: str, db: Optional[Session] = None) -> dict[str, Any]:
     return payload
 
 
+def _signature_for_request(
+    signing_key: str,
+    nonce: str,
+    body: bytes,
+) -> str:
+    """Return the hex HMAC-SHA256 signature for ``nonce + body``."""
+    return hmac.new(
+        signing_key.encode("utf-8"),
+        nonce.encode("utf-8") + body,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _verify_request_signature(
+    payload: dict[str, Any],
+    nonce: str,
+    body: bytes,
+    signature: str,
+    db: Optional[Session] = None,
+) -> None:
+    """Verify the HMAC signature for a request."""
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti:
+        raise LLMProxyTokenError("Malformed proxy token: missing jti")
+
+    expected = _signature_for_request(
+        derive_per_token_signing_key(jti, db), nonce, body
+    )
+    if not hmac.compare_digest(expected, signature):
+        raise LLMProxyTokenError("Invalid request signature")
+
+
+def _redis_client() -> Optional[Any]:
+    """Return a Redis client if one can be created, otherwise None."""
+    try:
+        import redis
+
+        client = redis.from_url(settings.REDIS_URL)
+        client.ping()
+        return client
+    except Exception:
+        return None
+
+
+def _nonce_cache_key(jti: str, nonce: str) -> str:
+    return f"{LLM_PROXY_NONCE_REDIS_KEY_PREFIX}:{jti}:{nonce}"
+
+
+def _record_nonce(
+    payload: dict[str, Any],
+    nonce: str,
+    db: Optional[Session] = None,
+) -> None:
+    """Store a nonce to prevent replay.
+
+    The nonce is associated with the token ``jti`` and expires together with
+    the token. Redis is used when available; otherwise a process-local in-memory
+    cache is used as a fallback for tests and single-process deployments.
+    """
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti:
+        raise LLMProxyTokenError("Malformed proxy token: missing jti")
+
+    exp = payload.get("exp")
+    if not isinstance(exp, int):
+        raise LLMProxyTokenError("Malformed proxy token: missing exp")
+
+    ttl = max(1, exp - int(time.time()))
+
+    redis_client = _redis_client()
+    if redis_client is not None:
+        try:
+            redis_client.setex(_nonce_cache_key(jti, nonce), ttl, "1")
+            return
+        except Exception:
+            pass
+
+    _NONCE_MEMORY_CACHE[_nonce_cache_key(jti, nonce)] = exp
+    _cleanup_expired_nonces()
+
+
+def _cleanup_expired_nonces() -> None:
+    """Remove expired entries from the in-memory nonce cache."""
+    now = int(time.time())
+    expired = [key for key, exp in _NONCE_MEMORY_CACHE.items() if exp <= now]
+    for key in expired:
+        _NONCE_MEMORY_CACHE.pop(key, None)
+
+
+def _is_nonce_reused(
+    payload: dict[str, Any],
+    nonce: str,
+) -> bool:
+    """Return True if the nonce has been seen before for this token."""
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti:
+        raise LLMProxyTokenError("Malformed proxy token: missing jti")
+
+    key = _nonce_cache_key(jti, nonce)
+
+    redis_client = _redis_client()
+    if redis_client is not None:
+        try:
+            return bool(redis_client.exists(key))
+        except Exception:
+            pass
+
+    return key in _NONCE_MEMORY_CACHE
+
+
+def _extract_bearer_token(request: Request) -> str:
+    """Extract the Fernet token from the ``Authorization: Bearer`` header."""
+    auth = request.headers.get("authorization") or ""
+    parts = auth.split()
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1]
+    raise LLMProxyTokenError("Missing or invalid Authorization header")
+
+
+def _extract_signature_headers(request: Request) -> tuple[str, str]:
+    """Return the nonce and body signature headers."""
+    nonce = request.headers.get(NONCE_HEADER_NAME) or ""
+    signature = request.headers.get(SIGNATURE_HEADER_NAME) or ""
+    if not nonce or not signature:
+        raise LLMProxyTokenError("Missing request signature headers")
+    return nonce, signature
+
+
 def create_llm_proxy_token(
     db: Session,
     user_id: int,
     model_namespace: str,
     model_name: str,
     expires_in_seconds: Optional[int] = None,
-) -> str:
-    """Create an encrypted proxy token for a Wegent Model CRD.
+) -> tuple[str, str]:
+    """Create an encrypted proxy token and per-token signing key for a Model CRD.
 
     The token binds the caller (user_id) to one Model CRD identified by
     namespace + name. It is time-limited and encrypted with the backend key.
+    The returned signing key is derived from the token ``jti`` and must be used
+    by the executor to sign every proxied request.
     """
     if expires_in_seconds is None:
         expires_in_seconds = settings.LLM_PROXY_TOKEN_TTL_SECONDS
@@ -197,14 +471,18 @@ def create_llm_proxy_token(
         raise LLMProxyConfigurationError(f"Model '{model_name}' namespace mismatch")
 
     now = int(time.time())
+    jti = str(uuid.uuid4())
     payload = {
         "u": user_id,
         "ns": resolved_namespace,
         "n": model_name,
         "iat": now,
         "exp": now + expires_in_seconds,
+        "jti": jti,
     }
-    return _encode_payload(payload, db)
+    token = _encode_payload(payload, db)
+    signing_key = derive_per_token_signing_key(jti, db)
+    return token, signing_key
 
 
 def decode_llm_proxy_token(token: str, db: Optional[Session] = None) -> dict[str, Any]:
@@ -236,12 +514,21 @@ def resolve_llm_proxy_model_config(
 
 
 async def proxy_llm_responses(
-    token: str,
     request: Request,
     db: Session,
 ) -> StreamingResponse:
-    """Validate token and stream the LLM responses request to the provider."""
+    """Validate token and signature and stream the LLM responses request to the provider."""
+    token = _extract_bearer_token(request)
+    nonce, signature = _extract_signature_headers(request)
     payload = decode_llm_proxy_token(token, db)
+
+    if _is_nonce_reused(payload, nonce):
+        raise LLMProxyTokenError("Request nonce reused")
+
+    body_bytes = await request.body()
+    _verify_request_signature(payload, nonce, body_bytes, signature, db)
+    _record_nonce(payload, nonce, db)
+
     model_config = resolve_llm_proxy_model_config(db, payload)
     user_id = payload["u"]
 
@@ -257,7 +544,6 @@ async def proxy_llm_responses(
             detail="Model configuration incomplete",
         )
 
-    body_bytes = await request.body()
     try:
         body_json = json.loads(body_bytes)
         if isinstance(body_json, dict):

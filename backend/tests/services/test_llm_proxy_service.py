@@ -13,8 +13,11 @@ from app.models.user import User
 from app.services import llm_proxy_service
 from app.services.chat.trigger.unified import _build_codex_runtime_model_config
 from app.services.llm_proxy_service import (
+    NONCE_HEADER_NAME,
+    SIGNATURE_HEADER_NAME,
     LLMProxyConfigurationError,
     LLMProxyTokenError,
+    _signature_for_request,
     create_llm_proxy_token,
     decode_llm_proxy_token,
     proxy_llm_responses,
@@ -23,11 +26,13 @@ from app.services.llm_proxy_service import (
 
 
 @pytest.fixture(autouse=True)
-def _reset_llm_proxy_token_key_cache():
-    """Reset the global Fernet key cache so each test exercises key resolution."""
+def _reset_llm_proxy_key_caches():
+    """Reset the global key caches so each test exercises key resolution."""
     llm_proxy_service._TOKEN_KEY_CACHE = None
+    llm_proxy_service._SIGNING_KEY_CACHE = None
     yield
     llm_proxy_service._TOKEN_KEY_CACHE = None
+    llm_proxy_service._SIGNING_KEY_CACHE = None
 
 
 def _model_kind(user_id: int, name: str = "deepseek-v4-flash") -> Kind:
@@ -66,7 +71,7 @@ def test_model_kind(test_db, test_user: User) -> Kind:
 
 
 def test_create_and_decode_proxy_token(test_db, test_user: User, test_model_kind: Kind):
-    token = create_llm_proxy_token(
+    token, signing_key = create_llm_proxy_token(
         test_db,
         test_user.id,
         "default",
@@ -74,12 +79,15 @@ def test_create_and_decode_proxy_token(test_db, test_user: User, test_model_kind
     )
     assert isinstance(token, str)
     assert len(token) > 0
+    assert isinstance(signing_key, str)
+    assert len(signing_key) > 0
 
     payload = decode_llm_proxy_token(token)
     assert payload["u"] == test_user.id
     assert payload["ns"] == "default"
     assert payload["n"] == test_model_kind.name
     assert payload["exp"] > payload["iat"]
+    assert "jti" in payload
 
 
 def test_decode_proxy_token_rejects_invalid_token():
@@ -90,20 +98,23 @@ def test_decode_proxy_token_rejects_invalid_token():
 def test_decode_proxy_token_rejects_tampered_token(
     test_db, test_user: User, test_model_kind: Kind
 ):
-    token = create_llm_proxy_token(
+    token, _ = create_llm_proxy_token(
         test_db,
         test_user.id,
         "default",
         test_model_kind.name,
     )
+    # Fernet tolerates trailing data, so mutate a byte in the middle of the token.
+    tampered = bytearray(token.encode("utf-8"))
+    tampered[len(tampered) // 2] ^= 1
     with pytest.raises(LLMProxyTokenError):
-        decode_llm_proxy_token(token + "x")
+        decode_llm_proxy_token(tampered.decode("utf-8"))
 
 
 def test_decode_proxy_token_rejects_expired_token(
     test_db, test_user: User, test_model_kind: Kind
 ):
-    token = create_llm_proxy_token(
+    token, _ = create_llm_proxy_token(
         test_db,
         test_user.id,
         "default",
@@ -122,7 +133,7 @@ def test_create_proxy_token_fails_for_missing_model(test_db, test_user: User):
 def test_resolve_llm_proxy_model_config(
     test_db, test_user: User, test_model_kind: Kind
 ):
-    token = create_llm_proxy_token(
+    token, _ = create_llm_proxy_token(
         test_db,
         test_user.id,
         "default",
@@ -139,19 +150,27 @@ def test_resolve_llm_proxy_model_config(
 async def test_proxy_llm_responses_forwards_to_provider(
     test_db, test_user: User, test_model_kind: Kind
 ):
-    token = create_llm_proxy_token(
+    token, signing_key = create_llm_proxy_token(
         test_db,
         test_user.id,
         "default",
         test_model_kind.name,
     )
 
+    body = b'{"model":"gpt-4-turbo","input":"hello"}'
+    nonce = "test-nonce-123"
+    signature = _signature_for_request(signing_key, nonce, body)
+
     request_mock = MagicMock(spec=Request)
-    request_mock.body = AsyncMock(
-        return_value=b'{"model":"gpt-4-turbo","input":"hello"}'
-    )
+    request_mock.body = AsyncMock(return_value=body)
     request_mock.headers = Headers(
-        {"content-type": "application/json", "accept": "text/event-stream"}
+        {
+            "authorization": f"Bearer {token}",
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            NONCE_HEADER_NAME: nonce,
+            SIGNATURE_HEADER_NAME: signature,
+        }
     )
 
     upstream_response_mock = MagicMock()
@@ -171,7 +190,7 @@ async def test_proxy_llm_responses_forwards_to_provider(
     with patch(
         "app.services.llm_proxy_service.httpx.AsyncClient", return_value=client_mock
     ):
-        response = await proxy_llm_responses(token, request_mock, test_db)
+        response = await proxy_llm_responses(request_mock, test_db)
 
     assert response.status_code == 200
     assert response.media_type == "text/event-stream"
@@ -192,6 +211,105 @@ async def test_proxy_llm_responses_forwards_to_provider(
     client_mock.aclose.assert_awaited_once()
 
 
+async def test_proxy_llm_responses_rejects_missing_signature(
+    test_db, test_user: User, test_model_kind: Kind
+):
+    token, _ = create_llm_proxy_token(
+        test_db,
+        test_user.id,
+        "default",
+        test_model_kind.name,
+    )
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(return_value=b"{}")
+    request_mock.headers = Headers(
+        {"authorization": f"Bearer {token}", "content-type": "application/json"}
+    )
+
+    with pytest.raises(LLMProxyTokenError):
+        await proxy_llm_responses(request_mock, test_db)
+
+
+async def test_proxy_llm_responses_rejects_invalid_signature(
+    test_db, test_user: User, test_model_kind: Kind
+):
+    token, signing_key = create_llm_proxy_token(
+        test_db,
+        test_user.id,
+        "default",
+        test_model_kind.name,
+    )
+
+    body = b'{"input":"hello"}'
+    nonce = "test-nonce-123"
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(return_value=body)
+    request_mock.headers = Headers(
+        {
+            "authorization": f"Bearer {token}",
+            "content-type": "application/json",
+            NONCE_HEADER_NAME: nonce,
+            SIGNATURE_HEADER_NAME: "invalid-signature",
+        }
+    )
+
+    with pytest.raises(LLMProxyTokenError):
+        await proxy_llm_responses(request_mock, test_db)
+
+
+async def test_proxy_llm_responses_rejects_reused_nonce(
+    test_db, test_user: User, test_model_kind: Kind
+):
+    token, signing_key = create_llm_proxy_token(
+        test_db,
+        test_user.id,
+        "default",
+        test_model_kind.name,
+    )
+
+    body = b'{"input":"hello"}'
+    nonce = "reused-nonce"
+    signature = _signature_for_request(signing_key, nonce, body)
+
+    request_mock = MagicMock(spec=Request)
+    request_mock.body = AsyncMock(return_value=body)
+    request_mock.headers = Headers(
+        {
+            "authorization": f"Bearer {token}",
+            "content-type": "application/json",
+            NONCE_HEADER_NAME: nonce,
+            SIGNATURE_HEADER_NAME: signature,
+        }
+    )
+
+    # First request succeeds.
+    upstream_response_mock = MagicMock()
+    upstream_response_mock.status_code = 200
+    upstream_response_mock.headers = {"content-type": "text/event-stream"}
+
+    async def fake_aiter_raw():
+        yield b"data: ok\n\n"
+
+    upstream_response_mock.aiter_raw = fake_aiter_raw
+
+    client_mock = AsyncMock()
+    client_mock.send = AsyncMock(return_value=upstream_response_mock)
+    client_mock.aclose = AsyncMock()
+
+    with patch(
+        "app.services.llm_proxy_service.httpx.AsyncClient", return_value=client_mock
+    ):
+        response = await proxy_llm_responses(request_mock, test_db)
+        assert response.status_code == 200
+
+    # Second request with the same nonce is rejected.
+    request_mock.body = AsyncMock(return_value=body)
+    with pytest.raises(LLMProxyTokenError):
+        await proxy_llm_responses(request_mock, test_db)
+
+
 def test_build_codex_runtime_model_config_uses_backend_proxy_for_cloud_models(
     test_db, test_user: User, test_model_kind: Kind
 ):
@@ -208,8 +326,11 @@ def test_build_codex_runtime_model_config_uses_backend_proxy_for_cloud_models(
     assert config["codex_responses_compat_proxy"] is True
     assert "api_key" in config
     assert config["api_key"] != "sk-test-key"
-    assert config["base_url"].startswith(
-        "https://wegent.example.com/api/runtime-work/llm-responses-proxy/"
+    assert "signing_key" in config
+    assert config["signing_key"] != "sk-test-key"
+    assert (
+        config["base_url"]
+        == "https://wegent.example.com/api/runtime-work/llm-responses"
     )
 
 
@@ -226,6 +347,7 @@ def test_build_codex_runtime_model_config_returns_credentials_without_proxy(
     assert config["base_url"] == "https://api.example.com/v1"
     assert config["api_key"] == "sk-test-key"
     assert "codex_responses_compat_proxy" not in config
+    assert "signing_key" not in config
 
 
 def test_llm_proxy_token_key_is_persisted_in_system_config(

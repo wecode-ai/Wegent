@@ -624,6 +624,16 @@ class Settings(BaseSettings):
             "LLM_PROXY_TOKEN_TTL_SECONDS", "CODEX_PROXY_TOKEN_TTL_SECONDS"
         ),
     )
+    # HMAC signing key used to derive per-token request-body signatures for the
+    # LLM proxy gateway. If not set, the backend automatically generates and
+    # persists a key in the system_configs table on first use. This key must be
+    # kept secret; it is the root of trust for replay-protection signatures.
+    LLM_PROXY_SIGNING_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "LLM_PROXY_SIGNING_KEY", "CODEX_PROXY_SIGNING_KEY"
+        ),
+    )
     # Knowledge runtime service URL for remote RAG execution
     KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
     # RAG data-plane execution mode
