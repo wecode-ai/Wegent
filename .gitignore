@@ -112,3 +112,6 @@ wework/src-tauri/binaries/
 docs/superpowers/
 .worktrees/
 .gstack/
+
+# temp_docs
+temp_docs/
