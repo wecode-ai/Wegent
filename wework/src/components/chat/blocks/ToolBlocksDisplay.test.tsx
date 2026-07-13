@@ -243,7 +243,7 @@ describe('ToolBlocksDisplay', () => {
             toolName: 'bash',
             toolInput: {
               command:
-                '/bin/zsh -lc "sed -n \'1,120p\' wework/src/components/chat/blocks/toolBlockKinds.ts"',
+                "/bin/zsh -lc \"sed -n '1,120p' wework/src/components/chat/blocks/toolBlockKinds.ts\nsed -n '180,220p' wework/src/components/chat/blocks/toolBlockKinds.ts\"",
             },
             status: 'done',
             createdAt: 1770000000001,
@@ -258,6 +258,8 @@ describe('ToolBlocksDisplay', () => {
 
     expect(screen.getByText('Read toolBlockActivity.ts')).toBeInTheDocument()
     expect(screen.getByText('Read toolBlockKinds.ts')).toBeInTheDocument()
+    expect(screen.queryByText('Read sed')).not.toBeInTheDocument()
+    expect(screen.queryByText('Read 180,220p')).not.toBeInTheDocument()
     expect(screen.queryByText(/已运行 nl -ba/)).not.toBeInTheDocument()
   })
 

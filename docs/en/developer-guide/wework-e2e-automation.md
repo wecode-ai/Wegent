@@ -105,6 +105,8 @@ The desktop E2E build additionally injects `VITE_WEWORK_DESKTOP_E2E_CONTROL_URL`
 
 The controller uses short polling: the server returns `204` when no command is available, and the frontend waits briefly before polling again. This prevents a stale long-poll connection, left behind by a WebView reload, task switch, or stream completion, from consuming later commands. When `fill` targets a Lexical editor, the controller uses the editor's exposed `value` setter so the React/Lexical state is actually committed; do not replace it with raw DOM insertion. Failure diagnostics include delivered `commandHistory` in `scenario-state.json` to aid control-channel debugging.
 
+On macOS, the desktop controller's `capture` command asks Tauri for a native WebKit `WKWebView` snapshot instead of cloning the DOM in the page. The native command is available only when `VITE_WEWORK_E2E=true` and times out after 10 seconds. Capturing `body` returns the full PNG directly; other selectors are cropped from that native snapshot using the element bounds. This keeps failure diagnostics faithful to fonts, native WebView rendering, and the real page state without depending on a hidden iframe load event.
+
 Switching models in the same conversation can cause Codex to issue an internal context-compaction request. The desktop task-flow E2E loopback Responses service identifies and responds to these requests through `client_metadata.x-codex-turn-metadata.request_kind === "compaction"`, so they are not mistaken for a user follow-up message.
 
 ## Test Helper

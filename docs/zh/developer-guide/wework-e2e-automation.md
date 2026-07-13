@@ -105,6 +105,8 @@ http://127.0.0.1:9998/v1
 
 控制器使用短轮询：没有待执行指令时服务端返回 `204`，前端短暂等待后再次请求。这避免了 WebView 刷新、任务切换或流结束时遗留的长轮询连接吞掉后续指令。对 Lexical 编辑器执行 `fill` 时，控制器会使用编辑器暴露的 `value` setter，以便真实提交 React/Lexical 状态；不要用原始 DOM 插入来替代它。失败诊断中的 `scenario-state.json` 会记录已投递的 `commandHistory`，用于定位控制通道问题。
 
+桌面控制器的 `capture` 指令在 macOS 上通过 Tauri 调用 WebKit 原生 `WKWebView` snapshot，而不是在页面内复制 DOM。原生层仅在 `VITE_WEWORK_E2E=true` 时开放该命令，并在 10 秒后超时；截取 `body` 时直接返回完整 PNG，截取其他选择器时由前端按照元素边界裁剪原生快照。这样失败诊断可以覆盖字体、原生 WebView 渲染和真实页面状态，也不会依赖隐藏 iframe 的加载事件。
+
 同一会话在模型切换后可能触发 Codex 的内部上下文压缩请求。桌面端任务流 E2E 的 loopback Responses 服务会通过 `client_metadata.x-codex-turn-metadata.request_kind === "compaction"` 识别并响应这类请求，使它不被误判为用户发送的后续消息。
 
 ## 测试封装
