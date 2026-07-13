@@ -160,32 +160,40 @@ async def _cleanup_orphan_sandbox(
             "reason": "sandbox_cleanup_failed",
         }
 
-    deleted = bool(result.get("deleted") or result.get("redis_cleared"))
+    deleted = bool(result.get("deleted"))
+    redis_cleared = bool(result.get("redis_cleared"))
+    archived = result.get("archived", False)
+    reason = result.get("reason", "")
+
     logger.info(
         "+++ [executor_job] Orphan sandbox cleanup task_id=%s pod_name=%s "
-        "archived=%s deleted=%s reason=%s",
+        "archived=%s deleted=%s redis_cleared=%s reason=%s",
         task_id,
         pod_name,
-        result.get("archived"),
+        archived,
         deleted,
-        result.get("reason"),
+        redis_cleared,
+        reason,
     )
+
     if deleted:
-        return {
-            "task_id": task_id,
-            "pod_name": pod_name,
-            "deleted": True,
-            "skipped": False,
-            "reason": result.get("reason", "sandbox_deleted"),
-            "archived": result.get("archived", False),
-        }
+        skipped = False
+    elif redis_cleared:
+        # redis_cleared without pod deletion means the pod is still running —
+        # treat as failed so it will be retried in the next cleanup cycle
+        skipped = False
+        reason = "pod_delete_failed_metadata_cleared"
+    else:
+        skipped = True
+        reason = reason or "sandbox_cleanup_skipped"
+
     return {
         "task_id": task_id,
         "pod_name": pod_name,
-        "deleted": False,
-        "skipped": True,
-        "reason": result.get("reason", "sandbox_cleanup_skipped"),
-        "archived": result.get("archived", False),
+        "deleted": deleted,
+        "skipped": skipped,
+        "reason": reason,
+        "archived": archived,
     }
 
 

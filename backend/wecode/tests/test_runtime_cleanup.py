@@ -861,7 +861,7 @@ async def test_cleanup_orphan_sandbox_failed():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_cleanup_orphan_sandbox_not_deleted():
-    """When sandbox cleanup result does not indicate deletion, it's skipped."""
+    """When neither pod nor Redis is cleared, it's skipped."""
     job_service_instance = JobService(Mock())
 
     with patch(
@@ -884,6 +884,34 @@ async def test_cleanup_orphan_sandbox_not_deleted():
     assert result["deleted"] is False
     assert result["skipped"] is True
     assert result["reason"] == "sandbox_not_found"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_sandbox_redis_cleared_but_pod_alive():
+    """redis_cleared=True but deleted=False means pod is still alive — treated as failed."""
+    job_service_instance = JobService(Mock())
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as ek_service:
+        ek_service.cleanup_sandbox_by_task_id_async = AsyncMock(
+            return_value={
+                "deleted": False,
+                "redis_cleared": True,
+                "archived": False,
+                "reason": "sandbox_metadata_cleared",
+            }
+        )
+
+        result = await job_service_instance._cleanup_orphan_sandbox(
+            task_id=5003,
+            pod_name="sandbox-5003-aaa",
+        )
+
+    assert result["deleted"] is False
+    assert result["skipped"] is False
+    assert result["reason"] == "pod_delete_failed_metadata_cleared"
 
 
 @pytest.mark.unit
