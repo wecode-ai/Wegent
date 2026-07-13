@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
@@ -15,14 +15,13 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 const PluginsWorkspace = lazy(() =>
   import('@/components/plugins/PluginsWorkspace').then(module => ({
     default: module.PluginsWorkspace,
   }))
 )
-const DEFER_PLUGIN_SIDEBAR_RENDER = import.meta.env.MODE !== 'test'
-
 function PluginsWorkspaceRouteFallback({
   sidebarCollapsed,
   topBarLeftActions,
@@ -121,15 +120,9 @@ export function PluginsPage() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
-  const [desktopSidebarReady, setDesktopSidebarReady] = useState(!DEFER_PLUGIN_SIDEBAR_RENDER)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
-
-  useEffect(() => {
-    if (isMobile || desktopSidebarReady) return undefined
-    const frame = window.requestAnimationFrame(() => setDesktopSidebarReady(true))
-    return () => window.cancelAnimationFrame(frame)
-  }, [desktopSidebarReady, isMobile])
+  const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -171,15 +164,7 @@ export function PluginsPage() {
 
   return (
     <div className="flex h-full overflow-hidden bg-background text-text-primary">
-      {!isMobile && !desktopSidebarReady && (
-        <aside
-          data-testid="plugins-sidebar-placeholder"
-          aria-hidden="true"
-          className="shrink-0 bg-sidebar"
-          style={{ width: sidebarCollapsed ? 0 : 240 }}
-        />
-      )}
-      {!isMobile && desktopSidebarReady && (
+      {!isMobile && (
         <DesktopSidebar
           user={state.user}
           projects={state.projects}
@@ -198,7 +183,7 @@ export function PluginsPage() {
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
-          onOpenRuntimeTask={openRuntimeTask}
+          onOpenRuntimeTask={handleOpenRuntimeTask}
           onRenameRuntimeTask={renameRuntimeTask}
           onArchiveRuntimeTask={archiveRuntimeTask}
           onArchiveProjectConversations={archiveProjectConversations}
@@ -245,7 +230,7 @@ export function PluginsPage() {
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSettings={() => setSettingsOpen(true)}
             onSelectProject={handleSelectProject}
-            onOpenRuntimeTask={openRuntimeTask}
+            onOpenRuntimeTask={handleOpenRuntimeTask}
             onCreateProject={createProject}
             onCreateGitWorkspaceProject={createGitWorkspaceProject}
             onPrepareDeviceWorkspace={prepareDeviceWorkspace}
@@ -305,9 +290,7 @@ export function PluginsPage() {
         open={searchOpen}
         onClose={() => setSearchOpen(false)}
         onSearchRuntimeWork={searchRuntimeWork}
-        onOpenRuntimeTask={async address => {
-          await openRuntimeTask(address)
-        }}
+        onOpenRuntimeTask={handleOpenRuntimeTask}
       />
     </div>
   )

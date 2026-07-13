@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
@@ -28,12 +28,16 @@ const archivedItem: ArchivedConversationItem = {
   updatedAt: '2026-06-24T10:30:00Z',
 }
 
-function archivedItemAt(index: number): ArchivedConversationItem {
+function archivedItemAt(
+  index: number,
+  overrides: Partial<ArchivedConversationItem> = {}
+): ArchivedConversationItem {
   return {
     ...archivedItem,
     id: `conversation-${index}`,
     taskId: `codex-${index}`,
     title: `Archived conversation ${index}`,
+    ...overrides,
   }
 }
 
@@ -41,50 +45,24 @@ describe('ArchivedConversationsSettingsPage', () => {
   const listArchivedConversations = vi.fn()
   const deleteArchivedConversation = vi.fn()
   const deleteArchivedConversationsBulk = vi.fn()
-  const previewArchivedConversationCleanup = vi.fn()
-  const cleanupArchivedConversations = vi.fn()
   const unarchiveConversation = vi.fn()
 
   beforeEach(() => {
-    createLocalAppServicesMock.mockClear()
+    createLocalAppServicesMock.mockReset()
     resetArchivedConversationsSettingsStateForTest()
-    listArchivedConversations.mockResolvedValue({
+    listArchivedConversations.mockReset().mockResolvedValue({
       items: [archivedItem],
       projectGroups: [],
       total: 1,
     })
-    deleteArchivedConversation.mockResolvedValue({})
-    deleteArchivedConversationsBulk.mockResolvedValue({ results: [] })
-    previewArchivedConversationCleanup.mockResolvedValue({
-      success: true,
-      deleted: false,
-      taskCount: 1,
-      targetCount: 2,
-      cleanableCount: 2,
-      skippedCount: 0,
-      errorCount: 0,
-      bytes: 1536,
-      results: [],
-    })
-    cleanupArchivedConversations.mockResolvedValue({
-      success: true,
-      deleted: true,
-      taskCount: 1,
-      targetCount: 2,
-      cleanableCount: 2,
-      skippedCount: 0,
-      errorCount: 0,
-      bytes: 1536,
-      results: [],
-    })
-    unarchiveConversation.mockResolvedValue({})
+    deleteArchivedConversation.mockReset().mockResolvedValue({})
+    deleteArchivedConversationsBulk.mockReset().mockResolvedValue({ results: [] })
+    unarchiveConversation.mockReset().mockResolvedValue({})
     createLocalAppServicesMock.mockReturnValue({
       runtimeWorkApi: {
         listArchivedConversations,
         deleteArchivedConversation,
         deleteArchivedConversationsBulk,
-        previewArchivedConversationCleanup,
-        cleanupArchivedConversations,
         unarchiveConversation,
       },
     } as unknown as ReturnType<typeof createLocalAppServices>)
@@ -94,21 +72,32 @@ describe('ArchivedConversationsSettingsPage', () => {
     vi.restoreAllMocks()
   })
 
-  test('opens an in-app delete confirmation dialog instead of the browser confirm', async () => {
+  test('uses the compact Codex row and an in-app single delete confirmation', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm')
 
     render(<ArchivedConversationsSettingsPage />)
 
-    await screen.findAllByText('Greet user')
+    await screen.findByText('Greet user')
 
-    await userEvent.click(screen.getByTestId('archived-delete-button-device-1-codex-1'))
+    expect(screen.queryByText('/Users/crystal/dev/git/weekly-report')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('archived-cleanup-preview-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('archived-refresh-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('archived-filter-controls')).toHaveClass('sticky', 'top-0')
+    expect(screen.getByTestId('archived-search-input')).toHaveClass('h-8', 'max-md:h-11')
+
+    const deleteButton = screen.getByTestId('archived-delete-button-device-1-codex-1')
+    const unarchiveButton = screen.getByTestId('archived-unarchive-button-device-1-codex-1')
+    expect(deleteButton).toHaveClass('h-8', 'w-8', 'max-md:h-11', 'max-md:w-11')
+    expect(unarchiveButton).toHaveClass('h-8', 'max-md:h-11')
+
+    await userEvent.click(deleteButton)
 
     expect(confirmSpy).not.toHaveBeenCalled()
     expect(screen.getByTestId('archived-delete-confirm-dialog')).toHaveTextContent(
-      '删除已归档聊天?'
+      '删除已归档任务?'
     )
     expect(screen.getByTestId('archived-delete-confirm-dialog')).toHaveTextContent(
-      '这将永久删除已归档聊天'
+      '这将永久删除已归档任务'
     )
 
     await userEvent.click(screen.getByTestId('archived-delete-confirm-dialog-confirm-button'))
@@ -120,7 +109,6 @@ describe('ArchivedConversationsSettingsPage', () => {
         taskId: 'codex-1',
       })
     })
-    expect(listArchivedConversations).toHaveBeenCalledTimes(1)
     expect(screen.queryByText('Greet user')).not.toBeInTheDocument()
     expect(createLocalAppServices).toHaveBeenCalledTimes(1)
   })
@@ -133,8 +121,6 @@ describe('ArchivedConversationsSettingsPage', () => {
       listArchivedConversations,
       deleteArchivedConversation,
       deleteArchivedConversationsBulk,
-      previewArchivedConversationCleanup,
-      cleanupArchivedConversations,
       unarchiveConversation,
     } as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
 
@@ -166,46 +152,245 @@ describe('ArchivedConversationsSettingsPage', () => {
     expect(onLeaveSettings).toHaveBeenCalled()
   })
 
-  test('scans and cleans archived conversation leftover files manually', async () => {
+  test('combines source and sort choices in a checked popup menu', async () => {
+    listArchivedConversations.mockResolvedValue({
+      items: [
+        archivedItemAt(1, {
+          title: 'Zebra task',
+          projectName: 'Wegent',
+          source: 'local',
+          createdAt: '2026-07-01T10:00:00Z',
+          updatedAt: '2026-07-03T10:00:00Z',
+        }),
+        archivedItemAt(2, {
+          title: 'Alpha task',
+          projectName: 'Wegent',
+          source: 'cloud',
+          deviceId: 'cloud-device',
+          deviceAddress: 'cloud.example.com',
+          createdAt: '2026-07-04T10:00:00Z',
+          updatedAt: '2026-07-02T10:00:00Z',
+        }),
+      ],
+      projectGroups: [],
+      total: 2,
+    })
+
     render(<ArchivedConversationsSettingsPage />)
 
-    await screen.findAllByText('Greet user')
+    await screen.findByText('Zebra task')
+    const filterMenuButton = screen.getByTestId('archived-filter-menu')
+    expect(filterMenuButton).toHaveClass('h-8', 'max-md:h-11')
+    expect(filterMenuButton).toHaveTextContent('所有任务')
 
-    await userEvent.click(screen.getByTestId('archived-cleanup-preview-button'))
+    await userEvent.click(filterMenuButton)
 
-    await waitFor(() => {
-      expect(previewArchivedConversationCleanup).toHaveBeenCalledWith({
-        items: [
-          {
-            deviceId: 'device-1',
-            workspacePath: '/Users/crystal/dev/git/weekly-report',
-            taskId: 'codex-1',
-          },
-        ],
-      })
-    })
-    expect(screen.getByTestId('archived-cleanup-summary')).toHaveTextContent('2')
-    expect(screen.getByTestId('archived-cleanup-summary')).toHaveTextContent('1.5 KB')
+    expect(screen.getByTestId('archived-source-option-all')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('archived-sort-option-updated')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
 
-    await userEvent.click(screen.getByTestId('archived-cleanup-button'))
+    await userEvent.click(screen.getByTestId('archived-source-option-cloud'))
 
-    await waitFor(() => {
-      expect(cleanupArchivedConversations).toHaveBeenCalledWith({
-        items: [
-          {
-            deviceId: 'device-1',
-            workspacePath: '/Users/crystal/dev/git/weekly-report',
-            taskId: 'codex-1',
-          },
-        ],
-      })
-    })
+    expect(filterMenuButton).toHaveTextContent('云端')
+    expect(screen.queryByText('Zebra task')).not.toBeInTheDocument()
+    expect(screen.getByText('Alpha task')).toBeInTheDocument()
+    expect(screen.getByText('cloud.example.com')).toBeInTheDocument()
+
+    await userEvent.click(filterMenuButton)
+    await userEvent.click(screen.getByTestId('archived-source-option-all'))
+    await userEvent.click(filterMenuButton)
+    await userEvent.click(screen.getByTestId('archived-sort-option-alphabetical'))
+
+    const rows = within(screen.getByTestId('archived-group-Wegent')).getAllByTestId(
+      /^archived-item-/
+    )
+    expect(rows[0]).toHaveTextContent('Alpha task')
+    expect(rows[1]).toHaveTextContent('Zebra task')
+
+    await userEvent.click(filterMenuButton)
+    expect(screen.getByTestId('archived-sort-option-alphabetical')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
   })
 
-  test('deletes archived conversations in batches with visible progress', async () => {
+  test('groups projects with icons and counts, then hides the header for one selected project', async () => {
+    listArchivedConversations.mockResolvedValue({
+      items: [
+        archivedItemAt(1, {
+          title: 'Wegent task one',
+          projectName: 'Wegent',
+          workspacePath: '/worktrees/runtime-1/Wegent',
+        }),
+        archivedItemAt(2, {
+          title: 'Wegent task two',
+          projectName: 'Wegent',
+          workspacePath: '/worktrees/runtime-2/Wegent',
+        }),
+        archivedItemAt(3, {
+          title: 'Other task',
+          projectName: 'Other',
+          workspacePath: '/repos/Other',
+        }),
+      ],
+      projectGroups: [],
+      total: 3,
+    })
+
+    render(<ArchivedConversationsSettingsPage />)
+
+    await screen.findByText('Wegent task one')
+
+    expect(screen.getByTestId('archived-group-count-Wegent')).toHaveTextContent('2 个任务')
+    expect(screen.getByRole('heading', { name: 'Wegent' }).querySelector('svg')).not.toBeNull()
+    expect(screen.getByTestId('archived-project-actions-Wegent')).toHaveAttribute(
+      'aria-haspopup',
+      'menu'
+    )
+
+    await userEvent.click(screen.getByTestId('archived-project-actions-Wegent'))
+    expect(screen.getByTestId('archived-delete-project-Wegent')).toHaveTextContent(
+      '删除此项目中的全部任务'
+    )
+
+    await userEvent.click(screen.getByTestId('archived-project-filter'))
+    expect(screen.getByTestId('archived-project-option-all')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    await userEvent.click(screen.getByTestId('archived-project-option-Wegent'))
+
+    expect(screen.getByTestId('archived-project-filter')).toHaveTextContent('Wegent')
+    expect(screen.queryByRole('heading', { name: 'Wegent' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Other task')).not.toBeInTheDocument()
+    expect(screen.getByText('Wegent task one')).toBeInTheDocument()
+    expect(screen.getByText('Wegent task two')).toBeInTheDocument()
+  })
+
+  test('deletes every task in a project in batches regardless of the active search', async () => {
+    const projectItems = Array.from({ length: 6 }, (_, index) =>
+      archivedItemAt(index + 1, {
+        title: `Target ${index + 1}`,
+        projectName: 'Target project',
+        workspacePath: `/repos/target-${index + 1}`,
+      })
+    )
+    const unrelatedItem = archivedItemAt(20, {
+      title: 'Keep this task',
+      projectName: 'Other project',
+      workspacePath: '/repos/other',
+    })
+    listArchivedConversations
+      .mockReset()
+      .mockResolvedValueOnce({
+        items: [...projectItems, unrelatedItem],
+        projectGroups: [],
+        total: 7,
+      })
+      .mockResolvedValue({
+        items: [unrelatedItem],
+        projectGroups: [],
+        total: 1,
+      })
+    deleteArchivedConversationsBulk
+      .mockReset()
+      .mockResolvedValueOnce({
+        results: projectItems.slice(0, 5).map(item => ({ taskId: item.taskId, deleted: true })),
+      })
+      .mockResolvedValueOnce({
+        results: projectItems.slice(5).map(item => ({ taskId: item.taskId, deleted: true })),
+      })
+
+    render(<ArchivedConversationsSettingsPage />)
+
+    await screen.findByText('Target 1')
+    await userEvent.type(screen.getByTestId('archived-search-input'), 'Target 1')
+    expect(screen.getByTestId('archived-group-count-Target-project')).toHaveTextContent('1 个任务')
+
+    await userEvent.click(screen.getByTestId('archived-project-actions-Target-project'))
+    await userEvent.click(screen.getByTestId('archived-delete-project-Target-project'))
+
+    const dialog = screen.getByTestId('archived-project-delete-confirm-dialog')
+    expect(dialog).toHaveTextContent('删除此项目中的全部任务?')
+    expect(dialog).toHaveTextContent('“Target project”中的 6 个已归档任务')
+
+    await userEvent.click(
+      screen.getByTestId('archived-project-delete-confirm-dialog-confirm-button')
+    )
+
+    await waitFor(() => expect(deleteArchivedConversationsBulk).toHaveBeenCalledTimes(2))
+    expect(deleteArchivedConversationsBulk.mock.calls[0][0].items).toHaveLength(5)
+    expect(deleteArchivedConversationsBulk.mock.calls[1][0].items).toHaveLength(1)
+    expect(
+      deleteArchivedConversationsBulk.mock.calls.flatMap(([request]) =>
+        request.items.map((item: { taskId: string }) => item.taskId)
+      )
+    ).toEqual(projectItems.map(item => item.taskId))
+
+    await userEvent.clear(screen.getByTestId('archived-search-input'))
+    expect(await screen.findByText('Keep this task')).toBeInTheDocument()
+    expect(screen.queryByText('Target 1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('archived-bulk-delete-background-progress')).toHaveTextContent(
+      '6 / 6'
+    )
+  })
+
+  test('deletes all archived tasks regardless of source and search filters', async () => {
+    const localItem = archivedItemAt(1, {
+      title: 'Local target',
+      projectName: 'Local project',
+      source: 'local',
+    })
+    const cloudItem = archivedItemAt(2, {
+      title: 'Cloud target',
+      projectName: 'Cloud project',
+      source: 'cloud',
+      deviceId: 'cloud-device',
+    })
+    listArchivedConversations
+      .mockReset()
+      .mockResolvedValueOnce({ items: [localItem, cloudItem], projectGroups: [], total: 2 })
+      .mockResolvedValue({ items: [], projectGroups: [], total: 0 })
+    deleteArchivedConversationsBulk.mockReset().mockResolvedValueOnce({
+      results: [localItem, cloudItem].map(item => ({ taskId: item.taskId, deleted: true })),
+    })
+
+    render(<ArchivedConversationsSettingsPage />)
+
+    await screen.findByText('Local target')
+    await userEvent.click(screen.getByTestId('archived-filter-menu'))
+    await userEvent.click(screen.getByTestId('archived-source-option-local'))
+    await userEvent.type(screen.getByTestId('archived-search-input'), 'Local')
+    expect(screen.queryByText('Cloud target')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('archived-bulk-delete-button'))
+    expect(screen.getByTestId('archived-bulk-delete-confirm-dialog')).toHaveTextContent(
+      '删除全部已归档任务?'
+    )
+    await userEvent.click(screen.getByTestId('archived-bulk-delete-confirm-dialog-confirm-button'))
+
+    await waitFor(() => expect(deleteArchivedConversationsBulk).toHaveBeenCalledTimes(1))
+    expect(deleteArchivedConversationsBulk.mock.calls[0][0].items).toEqual([
+      {
+        deviceId: 'device-1',
+        workspacePath: '/Users/crystal/dev/git/weekly-report',
+        taskId: 'codex-1',
+      },
+      {
+        deviceId: 'cloud-device',
+        workspacePath: '/Users/crystal/dev/git/weekly-report',
+        taskId: 'codex-2',
+      },
+    ])
+  })
+
+  test('keeps background batch progress visible across remounts', async () => {
     const archivedItems = Array.from({ length: 6 }, (_, index) => archivedItemAt(index + 1))
     let resolveSecondBatch: (() => void) | undefined
     listArchivedConversations
+      .mockReset()
       .mockResolvedValueOnce({
         items: archivedItems,
         projectGroups: [],
@@ -217,6 +402,7 @@ describe('ArchivedConversationsSettingsPage', () => {
         total: 0,
       })
     deleteArchivedConversationsBulk
+      .mockReset()
       .mockResolvedValueOnce({
         results: archivedItems.slice(0, 5).map(item => ({
           taskId: item.taskId,
@@ -242,14 +428,7 @@ describe('ArchivedConversationsSettingsPage', () => {
     await userEvent.click(screen.getByTestId('archived-bulk-delete-button'))
     await userEvent.click(screen.getByTestId('archived-bulk-delete-confirm-dialog-confirm-button'))
 
-    await waitFor(() => {
-      expect(screen.queryByTestId('archived-bulk-delete-confirm-dialog')).not.toBeInTheDocument()
-    })
-    await waitFor(() => {
-      expect(deleteArchivedConversationsBulk).toHaveBeenCalledTimes(2)
-    })
-    expect(deleteArchivedConversationsBulk.mock.calls[0][0].items).toHaveLength(5)
-    expect(deleteArchivedConversationsBulk.mock.calls[1][0].items).toHaveLength(1)
+    await waitFor(() => expect(deleteArchivedConversationsBulk).toHaveBeenCalledTimes(2))
     expect(screen.getByTestId('archived-bulk-delete-background-progress')).toHaveTextContent(
       '5 / 6'
     )
@@ -270,35 +449,23 @@ describe('ArchivedConversationsSettingsPage', () => {
     })
   })
 
-  test('groups archived worktrees from the same project together', async () => {
-    listArchivedConversations.mockResolvedValue({
-      items: [
-        {
-          ...archivedItem,
-          id: 'conversation-1',
-          taskId: 'codex-1',
-          projectKey: '/Users/crystal/.wegent-executor/workspace/worktrees/runtime-1/Wegent',
-          projectName: 'Wegent',
-          workspacePath: '/Users/crystal/.wegent-executor/workspace/worktrees/runtime-1/Wegent',
-        },
-        {
-          ...archivedItem,
-          id: 'conversation-2',
-          taskId: 'codex-2',
-          projectKey: '/Users/crystal/.wegent-executor/workspace/worktrees/runtime-2/Wegent',
-          projectName: 'Wegent',
-          workspacePath: '/Users/crystal/.wegent-executor/workspace/worktrees/runtime-2/Wegent',
-        },
-      ],
+  test('renders empty and load failure states', async () => {
+    listArchivedConversations.mockReset().mockResolvedValue({
+      items: [],
       projectGroups: [],
-      total: 2,
+      total: 0,
     })
 
+    const { unmount } = render(<ArchivedConversationsSettingsPage />)
+
+    expect(await screen.findByTestId('archived-empty')).toHaveTextContent('暂无已归档任务。')
+    expect(screen.queryByTestId('archived-filter-controls')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('archived-bulk-delete-button')).not.toBeInTheDocument()
+
+    unmount()
+    listArchivedConversations.mockReset().mockRejectedValueOnce(new Error('executor offline'))
     render(<ArchivedConversationsSettingsPage />)
 
-    await screen.findAllByText('Greet user')
-
-    expect(screen.getByTestId('archived-project-filter')).toHaveTextContent('Wegent (2)')
-    expect(screen.getByTestId('archived-group-Wegent')).toHaveTextContent('2')
+    expect(await screen.findByTestId('archived-error')).toHaveTextContent('executor offline')
   })
 })
