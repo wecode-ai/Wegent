@@ -70,6 +70,8 @@ The worktree ID is the task ID. The task stores `git_worktree` as the execution 
 
 In desktop Wework, open **Environment info** in the upper-right corner, then select **Commit or push** to run one of these actions in the current task or project's actual workspace directory:
 
+**Environment info** shows the cumulative changed-file and line counts for the current branch relative to its primary branch. Select the change count to review the full diff between those branches, so committed changes that have not yet been merged are included as well. Untracked files remain included in the counts and review result.
+
 - **Commit** stages all tracked and untracked changes and creates a local commit.
 - **Commit and push** creates a local commit, then pushes the current branch.
 - **Push** pushes the current branch without creating another commit.
