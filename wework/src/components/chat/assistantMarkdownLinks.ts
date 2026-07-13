@@ -13,7 +13,11 @@ export type MarkdownLinkTarget =
 // navigate the SPA to a broken `http://localhost/...` URL, so file links are
 // routed to the caller instead.
 export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
-  const value = href?.trim()
+  const trimmedHref = href?.trim()
+  const value =
+    trimmedHref?.startsWith('<') && trimmedHref.endsWith('>')
+      ? trimmedHref.slice(1, -1).trim()
+      : trimmedHref
   if (!value) return { kind: 'none' }
   if (/^(https?|mailto|tel):/i.test(value)) return { kind: 'external' }
   if (value.startsWith('#')) return { kind: 'none' }
