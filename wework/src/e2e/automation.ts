@@ -6,6 +6,7 @@ import {
   type TestLocalModelConnectionResult,
 } from '@/features/model-settings/localModelConnectionTest'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { closeMainWindowToTray } from '@/tauri/runtimeTaskCloseGuard'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -16,6 +17,7 @@ type DesktopControlAction =
   | 'capture'
   | 'click'
   | 'clickWhenEnabled'
+  | 'closeMainWindowToTray'
   | 'fill'
   | 'getText'
   | 'snapshot'
@@ -306,6 +308,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   switch (command.action) {
     case 'capture':
       return captureDesktopControlScreenshot(command.selector)
+    case 'closeMainWindowToTray':
+      window.setTimeout(() => {
+        void closeMainWindowToTray().catch(error => {
+          console.error('[Wework] Failed to close the main window during E2E verification:', error)
+        })
+      }, 100)
+      return ''
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
