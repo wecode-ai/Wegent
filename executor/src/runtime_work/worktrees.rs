@@ -837,6 +837,8 @@ mod tests {
 
     fn run_git(path: &Path, args: &[&str]) {
         let output = Command::new("git")
+            .arg("-c")
+            .arg("core.bare=false")
             .arg("-C")
             .arg(path)
             .args(args)
