@@ -342,8 +342,8 @@ impl WorktreeManager {
         let mut active = self
             .list(tasks)?
             .into_iter()
+            .filter(|(record, linked_tasks)| is_auto_prune_candidate(record, linked_tasks))
             .map(|(record, _)| record)
-            .filter(|record| record.state == "active")
             .collect::<Vec<_>>();
         active.sort_by_key(|record| std::cmp::Reverse(record.updated_at));
         let mut removed = Vec::new();
@@ -683,6 +683,10 @@ fn same_path(left: &str, right: &str) -> bool {
     normalized_path_key(Path::new(left)) == normalized_path_key(Path::new(right))
 }
 
+fn is_auto_prune_candidate(record: &ManagedWorktree, linked_tasks: &[RuntimeTaskLink]) -> bool {
+    record.state == "active" && linked_tasks.iter().all(|task| task.status == "archived")
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -693,6 +697,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[test]
     fn default_settings_match_codex() {
@@ -758,6 +763,19 @@ mod tests {
     }
 
     #[test]
+    fn auto_prune_only_selects_archived_or_unlinked_worktrees() {
+        let record = ManagedWorktree::default();
+        let mut active_task = task_link("active");
+        active_task.status = "active".to_owned();
+        let mut archived_task = task_link("archived");
+        archived_task.status = "archived".to_owned();
+
+        assert!(!is_auto_prune_candidate(&record, &[active_task]));
+        assert!(is_auto_prune_candidate(&record, &[archived_task]));
+        assert!(is_auto_prune_candidate(&record, &[]));
+    }
+
+    #[test]
     fn discovered_worktree_includes_source_repository_path() {
         let root = env::temp_dir().join(format!("wegent-worktree-discovery-test-{}", now_ms()));
         let source = root.join("source");
@@ -817,5 +835,25 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    fn task_link(id: &str) -> RuntimeTaskLink {
+        RuntimeTaskLink {
+            local_task_id: id.to_owned(),
+            thread_id: None,
+            workspace_path: format!("/tmp/{id}"),
+            title: id.to_owned(),
+            runtime: "codex".to_owned(),
+            status: "active".to_owned(),
+            running: false,
+            goal_status: None,
+            created_at: 0,
+            updated_at: 0,
+            runtime_handle: Value::Null,
+            parent: None,
+            ephemeral: false,
+            list_order: None,
+            group_workspace_path: None,
+        }
     }
 }

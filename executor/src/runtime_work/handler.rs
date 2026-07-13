@@ -8,7 +8,10 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -76,6 +79,7 @@ const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
 const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
 const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
+const WORKTREE_AUTO_CLEANUP_IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
@@ -250,6 +254,7 @@ pub struct RuntimeWorkRpcHandler {
     transcript_cache: TranscriptCache,
     thread_list_cache: CodexThreadListCache,
     worktrees: WorktreeManager,
+    worktree_cleanup_generation: Arc<AtomicU64>,
 }
 
 struct ActiveTurnCancellation {
@@ -307,6 +312,7 @@ impl RuntimeWorkRpcHandler {
             transcript_cache: TranscriptCache::default(),
             thread_list_cache: CodexThreadListCache::default(),
             worktrees: WorktreeManager::from_env(),
+            worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
         };
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
@@ -421,13 +427,50 @@ impl RuntimeWorkRpcHandler {
             .worktrees
             .prepare(Path::new(&source_path), &worktree_id, git_ref.as_deref())
             .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
-        let _ = self.worktrees.prune(&self.store.list_task_summaries(true));
+        self.schedule_worktree_prune();
         Ok(json!({
             "success": true,
             "deviceId": self.device_id,
             "worktree": record,
             "path": record.path,
         }))
+    }
+
+    fn schedule_worktree_prune(&self) {
+        let generation = self
+            .worktree_cleanup_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        let cleanup_generation = self.worktree_cleanup_generation.clone();
+        let worktrees = self.worktrees.clone();
+        let store = self.store.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(WORKTREE_AUTO_CLEANUP_IDLE_DELAY).await;
+                if cleanup_generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+
+                let tasks = store.list_task_summaries(true);
+                if tasks.iter().any(|task| task.running) {
+                    continue;
+                }
+
+                let result = tokio::task::spawn_blocking(move || worktrees.prune(&tasks)).await;
+                match result {
+                    Ok(Err(error)) => {
+                        wework_debug_log(&format!("background worktree cleanup failed: {error}"));
+                    }
+                    Err(error) => {
+                        wework_debug_log(&format!(
+                            "background worktree cleanup task failed: {error}"
+                        ));
+                    }
+                    Ok(Ok(_)) => {}
+                }
+                return;
+            }
+        });
     }
 
     async fn list_worktrees(&self) -> Result<Value, AppIpcError> {
@@ -1712,6 +1755,7 @@ impl RuntimeWorkRpcHandler {
         }
         let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
+        self.schedule_worktree_prune();
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
         let mut side_source = side_source_thread(&payload);
         if let Some(source) = &mut side_source {
@@ -1868,6 +1912,7 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
+        self.schedule_worktree_prune();
         let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
         let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         let direct_thread_id = ephemeral.then(|| thread_id.clone());
