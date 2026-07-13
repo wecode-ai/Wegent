@@ -122,9 +122,13 @@ After Web Inspector opens, run this when the app becomes slow:
 window.__WEWORK_PERF__.snapshot();
 ```
 
-The snapshot includes the current URL, page visibility, DOM node count, memory snapshot, navigation timing, resource count, and recent events. When comparing multiple snapshots, focus on:
+The snapshot includes the current URL, page visibility, DOM node count, memory snapshot, navigation timing, resource count, recent events, and Wework process-group data. macOS reparents WebKit XPC processes to PID 1; diagnostics use LaunchServices to associate the current Wework instance with its Web Content, GPU, and Networking processes.
+
+Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS includes shared mappings and reclaimable resident pages and is commonly much larger than actual memory pressure. Prefer `physical_footprint_kib` when investigating leaks or system resource usage, and treat RSS as a secondary residency metric. When comparing multiple snapshots, focus on:
 
 - Whether `memory.usedJSHeapSize` keeps growing.
+- Whether `processMemory.groups[].physical_footprint_kib` keeps growing after a task completes and cools down.
+- Whether growth belongs to `webkit-webcontent`, `codex-app-server`, `executor`, or `main`.
 - Whether `domNodeCount` keeps growing.
 - Dense `longtask` or `event-loop-lag` events.
 - Repeated `slow-react-commit` events.

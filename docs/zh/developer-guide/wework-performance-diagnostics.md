@@ -122,9 +122,13 @@ Web Inspector 打开后，在卡顿后执行：
 window.__WEWORK_PERF__.snapshot();
 ```
 
-返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量和最近事件。需要持续观察时可以多次执行，重点比较：
+返回值包含当前 URL、页面可见性、DOM 节点数、内存快照、导航时序、resource 数量、最近事件，以及 Wework 进程组快照。macOS 上 WebKit XPC 进程会被系统改挂到 PID 1；诊断会通过 LaunchServices 将当前 Wework 实例对应的 Web Content、GPU 和 Networking 进程重新关联进来。
+
+进程组同时提供 `rss_kib` 和 `physical_footprint_kib`：RSS 包含共享映射和可回收驻留页，通常明显高于真实内存压力；判断泄漏或系统资源占用时应优先比较 `physical_footprint_kib`，RSS 只作为地址空间驻留的辅助指标。需要持续观察时可以多次执行，重点比较：
 
 - `memory.usedJSHeapSize` 是否持续上涨。
+- `processMemory.groups[].physical_footprint_kib` 是否在任务结束并冷却后仍持续上涨。
+- 增长来自 `webkit-webcontent`、`codex-app-server`、`executor` 还是 `main`。
 - `domNodeCount` 是否持续上涨。
 - 是否存在密集 `longtask` 或 `event-loop-lag`。
 - 是否存在重复的 `slow-react-commit`。

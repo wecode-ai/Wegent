@@ -118,7 +118,7 @@ describe('reduceWorkbenchMessages', () => {
     const output =
       state[0].blocks?.[0]?.type === 'tool' ? state[0].blocks[0].toolOutput : ''
     expect(typeof output).toBe('string')
-    expect((output as string).length).toBe(120_000)
+    expect((output as string).length).toBe(64 * 1024)
     expect((output as string).endsWith('tail')).toBe(true)
   })
 
@@ -161,7 +161,7 @@ describe('reduceWorkbenchMessages', () => {
     expect(block?.type).toBe('tool')
     if (block?.type !== 'tool') return
     expect(block.toolOutputOriginalChars).toBe(120_018)
-    expect(String(block.toolOutput).length).toBe(120_000)
+    expect(String(block.toolOutput).length).toBe(64 * 1024)
     expect(String(block.toolOutput).endsWith('tailnext')).toBe(true)
   })
 
