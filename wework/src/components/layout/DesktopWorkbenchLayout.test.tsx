@@ -85,11 +85,11 @@ const nativeDirectoryPickerMocks = vi.hoisted(() => ({
 }))
 
 const automationMocks = vi.hoisted(() => ({
-  enabled: false,
+  useNativeDirectoryPicker: true,
 }))
 
 vi.mock('@/e2e/automation', () => ({
-  isWeworkAutomationEnabled: () => automationMocks.enabled,
+  shouldUseNativeProjectDirectoryPicker: () => automationMocks.useNativeDirectoryPicker,
 }))
 
 vi.mock('@/lib/native-directory-picker', () => ({
@@ -506,7 +506,7 @@ describe('DesktopWorkbenchLayout', () => {
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
-    automationMocks.enabled = false
+    automationMocks.useNativeDirectoryPicker = true
     openExternalUrlMock.mockResolvedValue(true)
     startLocalTerminalMock.mockResolvedValue('local-terminal-1')
     closeLocalTerminalMock.mockResolvedValue(undefined)
@@ -3190,7 +3190,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('uses the controllable folder dialog during desktop E2E verification', async () => {
-    automationMocks.enabled = true
+    automationMocks.useNativeDirectoryPicker = false
     const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/Users/alice')
     const onListDeviceDirectories = vi.fn().mockResolvedValue(['repo'])
 

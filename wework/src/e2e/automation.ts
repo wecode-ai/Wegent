@@ -71,6 +71,13 @@ export function isWeworkAutomationEnabled(): boolean {
   return import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
 }
 
+export function shouldUseNativeProjectDirectoryPicker(): boolean {
+  return (
+    !isWeworkAutomationEnabled() ||
+    import.meta.env.VITE_WEWORK_E2E_NATIVE_DIRECTORY_PICKER === 'true'
+  )
+}
+
 function desktopControlUrl(): string | null {
   const value = import.meta.env.VITE_WEWORK_DESKTOP_E2E_CONTROL_URL?.trim()
   return value ? value.replace(/\/+$/, '') : null

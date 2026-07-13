@@ -11,7 +11,7 @@ import type {
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
-import { isWeworkAutomationEnabled } from '@/e2e/automation'
+import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
@@ -171,9 +171,10 @@ export function DesktopWorkbenchLayout() {
       if (mode === 'existing') {
         // Mount the dialog before opening the native picker so the triggering menu and
         // pointer event are fully dismissed before macOS starts its modal event loop.
-        // Desktop automation uses the equivalent in-app picker because native OS dialogs
-        // cannot be driven or observed through the isolated WebView controller.
-        setStandalonePreferNativeLocalPicker(!isWeworkAutomationEnabled())
+        // Desktop automation uses the equivalent in-app picker by default because native OS
+        // dialogs cannot be driven through the isolated WebView controller. An explicit E2E
+        // override keeps the controller active for real native-picker verification.
+        setStandalonePreferNativeLocalPicker(shouldUseNativeProjectDirectoryPicker())
         setStandaloneWorkspaceDialogMode('existing')
         void onRefreshDevices?.().catch(() => undefined)
         return
