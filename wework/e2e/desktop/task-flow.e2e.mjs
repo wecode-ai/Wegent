@@ -721,27 +721,23 @@ async function main() {
     ])
     await writeCodexConfig(join(executorHome, 'codex'), control.url)
 
-    app = spawn(
-      appBinary,
-      ['--open-workspace', workspacePath, '--workspace-label', 'Desktop E2E'],
-      {
-        cwd: weworkDir,
-        env: {
-          ...process.env,
-          CODEX_BIN: codexBinary,
-          HOME: homePath,
-          WEGENT_CODEX_HOME: join(executorHome, 'codex'),
-          WEGENT_EXECUTOR_HOME: executorHome,
-          WEGENT_EXECUTOR_APP_IPC_SOCKET: executorSocketPath,
-          WEGENT_EXECUTOR_LOG_DIR: resultDir,
-          WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
-          DEVICE_ID: `wework-e2e-device-${process.pid}`,
-          WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
-          WEWORK_EXECUTOR_SIDECAR: executorBinary,
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }
-    )
+    app = spawn(appBinary, [], {
+      cwd: weworkDir,
+      env: {
+        ...process.env,
+        CODEX_BIN: codexBinary,
+        HOME: homePath,
+        WEGENT_CODEX_HOME: join(executorHome, 'codex'),
+        WEGENT_EXECUTOR_HOME: executorHome,
+        WEGENT_EXECUTOR_APP_IPC_SOCKET: executorSocketPath,
+        WEGENT_EXECUTOR_LOG_DIR: resultDir,
+        WEGENT_EXECUTOR_LOG_FILE: 'executor.log',
+        DEVICE_ID: `wework-e2e-device-${process.pid}`,
+        WEWORK_E2E_MODEL_API_KEY: MODEL_API_KEY,
+        WEWORK_EXECUTOR_SIDECAR: executorBinary,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     await Promise.all([
       appendProcessOutput(app.stdout, appLogPath),
       appendProcessOutput(app.stderr, appLogPath),
@@ -757,6 +753,35 @@ async function main() {
       /^(tauri|http):/,
       'The desktop controller did not connect from a webview'
     )
+
+    phase = 'project-folder-cancel'
+    await control.command('waitFor', '[data-testid="projects-create-button"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="projects-create-button"]')
+    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="cancel-device-folder-picker-button"]')
+    const cancelledFolderPickerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      cancelledFolderPickerSnapshot.testIds.includes('standalone-folder-project-dialog'),
+      false,
+      'Cancelling folder selection did not restore the workbench'
+    )
+
+    phase = 'project-folder-select'
+    await control.command('click', '[data-testid="projects-create-button"]')
+    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: workspacePath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await control.command('click', '[data-testid="confirm-device-folder-picker-button"]')
 
     const composerSelector = '[data-testid="chat-message-input"][contenteditable="true"]'
     await control.command('waitFor', composerSelector, {

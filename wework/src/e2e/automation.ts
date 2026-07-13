@@ -65,7 +65,7 @@ declare global {
   }
 }
 
-function isAutomationEnabled(): boolean {
+export function isWeworkAutomationEnabled(): boolean {
   return import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true'
 }
 
@@ -172,7 +172,7 @@ function createBridge(): WeworkAutomationBridge {
 }
 
 export function installWeworkAutomationBridge() {
-  if (!isAutomationEnabled() || typeof window === 'undefined') {
+  if (!isWeworkAutomationEnabled() || typeof window === 'undefined') {
     return
   }
 

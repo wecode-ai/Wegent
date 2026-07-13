@@ -4,21 +4,14 @@ import type { ProjectCreateMode } from '@/components/chat/ChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
 import type {
-  DeviceInfo,
   IMPrivateSession,
   ProjectWithTasks,
   RuntimeTaskAddress,
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
-import {
-  canUseForProjectCreation,
-  isCloudDevice,
-  isClaudeCodeDevice,
-  isRemoteDevice,
-} from '@/lib/device-capabilities'
 import { isSettingsRoute, navigateTo } from '@/lib/navigation'
-import { openNativeProjectDirectoryPicker } from '@/lib/native-directory-picker'
+import { isWeworkAutomationEnabled } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
@@ -44,28 +37,6 @@ import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskRe
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
 const SIDEBAR_AUTO_COLLAPSE_WINDOW_WIDTH = 960
-
-function isLocalStandaloneDevice(device: DeviceInfo): boolean {
-  return !isCloudDevice(device) && !isRemoteDevice(device)
-}
-
-function getPreferredLocalStandaloneDevice(
-  devices: DeviceInfo[],
-  preferredDeviceId: string | null | undefined
-): DeviceInfo | null {
-  const usableDevices = devices.filter(
-    device =>
-      isLocalStandaloneDevice(device) &&
-      isClaudeCodeDevice(device) &&
-      canUseForProjectCreation(device)
-  )
-  return (
-    usableDevices.find(device => device.device_id === preferredDeviceId) ??
-    usableDevices.find(device => device.is_default) ??
-    usableDevices[0] ??
-    null
-  )
-}
 
 export function DesktopWorkbenchLayout() {
   const { t } = useTranslation('common')
@@ -198,28 +169,11 @@ export function DesktopWorkbenchLayout() {
       setStandaloneRemoteDialogIntent(intent)
 
       if (mode === 'existing') {
-        const preferredDeviceId =
-          state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
-        const localDevice = getPreferredLocalStandaloneDevice(state.devices, preferredDeviceId)
-
-        if (localDevice) {
-          try {
-            const selectedPath = await openNativeProjectDirectoryPicker()
-            if (selectedPath) {
-              await onOpenStandaloneWorkspace?.(localDevice.device_id, selectedPath)
-              setStandaloneWorkspaceDialogMode(null)
-              setStandalonePreferNativeLocalPicker(true)
-              return
-            }
-            setStandaloneWorkspaceDialogMode(null)
-            setStandalonePreferNativeLocalPicker(true)
-            return
-          } catch (error) {
-            console.error('[Wework project] native picker failed in layout', error)
-          }
-        }
-
-        setStandalonePreferNativeLocalPicker(false)
+        // Mount the dialog before opening the native picker so the triggering menu and
+        // pointer event are fully dismissed before macOS starts its modal event loop.
+        // Desktop automation uses the equivalent in-app picker because native OS dialogs
+        // cannot be driven or observed through the isolated WebView controller.
+        setStandalonePreferNativeLocalPicker(!isWeworkAutomationEnabled())
         setStandaloneWorkspaceDialogMode('existing')
         void onRefreshDevices?.().catch(() => undefined)
         return
@@ -229,13 +183,7 @@ export function DesktopWorkbenchLayout() {
       setStandaloneWorkspaceDialogMode(mode)
       void onRefreshDevices?.().catch(() => undefined)
     },
-    [
-      onOpenStandaloneWorkspace,
-      onRefreshDevices,
-      state.devices,
-      state.standaloneDeviceId,
-      state.user?.preferences?.default_execution_target,
-    ]
+    [onRefreshDevices]
   )
 
   const openProjectFromWorkMenu = useCallback(
