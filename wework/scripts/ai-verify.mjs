@@ -26,12 +26,13 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <snapshot|click|fill|press|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|fill|press|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT              Replacement value for fill
   --key KEY                 Keyboard key for press
+  --output PATH             PNG output path for capture
   --text TEXT               Expected text for wait-for
   --timeout MS              Command timeout (default: ${defaultTimeoutMs})`)
 }
@@ -308,6 +309,7 @@ async function main() {
     return
   }
   const action = {
+    capture: 'capture',
     snapshot: 'snapshot',
     click: 'click',
     fill: 'fill',
@@ -321,7 +323,8 @@ async function main() {
     return
   }
   const selector =
-    options.selector ?? (command === 'snapshot' || command === 'text' ? 'body' : null)
+    options.selector ??
+    (command === 'capture' || command === 'snapshot' || command === 'text' ? 'body' : null)
   if (!selector) throw new Error('--selector is required')
   const value = await request(session, session.token, '/command', 'POST', {
     action,
@@ -331,6 +334,16 @@ async function main() {
     text: options.text,
     timeoutMs: options.timeout ? Number(options.timeout) : undefined,
   })
+  if (command === 'capture') {
+    if (!options.output) throw new Error('--output is required')
+    const prefix = 'data:image/png;base64,'
+    if (!value.value?.startsWith(prefix)) throw new Error('Invalid screenshot payload')
+    const outputPath = resolve(options.output)
+    await mkdir(dirname(outputPath), { recursive: true })
+    await writeFile(outputPath, Buffer.from(value.value.slice(prefix.length), 'base64'))
+    console.log(outputPath)
+    return
+  }
   console.log(typeof value.value === 'string' ? value.value : JSON.stringify(value.value, null, 2))
 }
 
