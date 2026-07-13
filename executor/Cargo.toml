@@ -32,6 +32,7 @@ ctrlc = { version = "3.4", features = ["termination"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
 flate2 = "1.0"
+hmac = "0.12"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 libc = "0.2"
 notify = { version = "6.1", optional = true }

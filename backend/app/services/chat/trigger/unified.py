@@ -211,7 +211,7 @@ def _build_codex_runtime_model_config(
                     )
 
                     namespace = _kind.namespace if _kind else "default"
-                    proxy_token = create_llm_proxy_token(
+                    proxy_token, signing_key = create_llm_proxy_token(
                         db,
                         user_id,
                         namespace,
@@ -223,8 +223,9 @@ def _build_codex_runtime_model_config(
                         "model_id": str(full_config.get("model_id") or model_name),
                         "api_format": "responses",
                         "protocol": "openai-responses",
-                        "base_url": f"{proxy_base_url}/llm-responses-proxy/{proxy_token}",
+                        "base_url": f"{proxy_base_url}/llm-responses",
                         "api_key": proxy_token,
+                        "signing_key": signing_key,
                         "codex_responses_compat_proxy": True,
                     }
                 else:

@@ -19,7 +19,7 @@ mod config;
 
 use axum::{
     body::{Body, Bytes},
-    extract::{Multipart, Path as AxumPath, Query, State},
+    extract::{Multipart, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -27,8 +27,10 @@ use axum::{
 };
 use base64::Engine;
 use futures_util::{Stream, StreamExt};
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use sha2::Sha256;
 use tokio::{process::Command, sync::Semaphore, time::timeout};
 
 use crate::{
@@ -90,7 +92,7 @@ where
         .route("/envs", get(envd_envs))
         .route("/v1/responses", post(openai_responses::<R>))
         .route(
-            "/v1/codex-responses-proxy/{token}/responses",
+            "/v1/codex-responses-proxy/responses",
             post(codex_responses_proxy),
         )
         .route("/v1/attachments/sync", post(sync_attachments))
@@ -207,9 +209,13 @@ pub struct CodexResponsesProxyUpstream {
     pub base_url: String,
     pub responses_url: Option<String>,
     pub api_key: String,
+    pub signing_key: String,
     pub default_headers: Vec<(String, String)>,
     pub proxy_url: Option<String>,
 }
+
+const WEGENT_NONCE_HEADER: &str = "X-Wegent-Request-Nonce";
+const WEGENT_SIGNATURE_HEADER: &str = "X-Wegent-Body-Signature";
 
 pub fn register_codex_responses_proxy(upstream: CodexResponsesProxyUpstream) -> String {
     static NEXT_ID: OnceLock<Mutex<u64>> = OnceLock::new();
@@ -235,17 +241,60 @@ fn codex_responses_proxy_registry() -> &'static Mutex<HashMap<String, CodexRespo
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-async fn codex_responses_proxy(
-    AxumPath(token): AxumPath<String>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> Result<Response, HttpError> {
+fn extract_codex_responses_proxy_local_token(headers: &HeaderMap) -> Option<String> {
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .trim();
+    let mut parts = auth.split_whitespace();
+    if parts.next()? == "Bearer" {
+        parts.next().map(str::to_owned)
+    } else {
+        None
+    }
+}
+
+fn generate_codex_responses_proxy_nonce() -> String {
+    static NEXT_ID: OnceLock<Mutex<u64>> = OnceLock::new();
+    let counter = {
+        let next_id = NEXT_ID.get_or_init(|| Mutex::new(0));
+        let mut guard = next_id
+            .lock()
+            .expect("nonce counter should not be poisoned");
+        *guard += 1;
+        *guard
+    };
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{}-{}-{}", std::process::id(), nanos, counter)
+}
+
+fn hmac_sha256_hex(key: &str, data: &[u8]) -> String {
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(key.as_bytes()).expect("HMAC can take key of any size");
+    mac.update(data);
+    mac.finalize()
+        .into_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+async fn codex_responses_proxy(headers: HeaderMap, body: Bytes) -> Result<Response, HttpError> {
     let request_id = next_codex_responses_proxy_request_id();
     let started_at = Instant::now();
+    let local_token =
+        extract_codex_responses_proxy_local_token(&headers).ok_or_else(|| HttpError {
+            status: StatusCode::UNAUTHORIZED,
+            detail: "missing Codex responses proxy local token".to_owned(),
+        })?;
     let upstream = codex_responses_proxy_registry()
         .lock()
         .expect("proxy registry should not be poisoned")
-        .get(&token)
+        .get(&local_token)
         .cloned()
         .ok_or_else(|| HttpError {
             status: StatusCode::NOT_FOUND,
@@ -258,7 +307,6 @@ async fn codex_responses_proxy(
         "codex responses proxy request started",
         &[
             ("request_id", request_id.clone()),
-            ("token", token.clone()),
             ("upstream", codex_responses_proxy_log_target(&upstream_url)),
             ("proxy_configured", upstream.proxy_url.is_some().to_string()),
             ("body_bytes", body.len().to_string()),
@@ -273,9 +321,13 @@ async fn codex_responses_proxy(
         ],
     );
     let client = codex_responses_proxy_client(upstream.proxy_url.as_deref())?;
+    let nonce = generate_codex_responses_proxy_nonce();
+    let signature = hmac_sha256_hex(&upstream.signing_key, &[nonce.as_bytes(), &body].concat());
     let mut request = client
         .post(upstream_url)
         .bearer_auth(upstream.api_key)
+        .header(WEGENT_NONCE_HEADER, &nonce)
+        .header(WEGENT_SIGNATURE_HEADER, &signature)
         .body(body.to_vec());
     if let Some(content_type) = headers
         .get(header::CONTENT_TYPE)
