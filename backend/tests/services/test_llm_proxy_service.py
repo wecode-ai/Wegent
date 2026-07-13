@@ -17,6 +17,8 @@ from app.services.llm_proxy_service import (
     SIGNATURE_HEADER_NAME,
     LLMProxyConfigurationError,
     LLMProxyTokenError,
+    _is_nonce_reused,
+    _record_nonce,
     _signature_for_request,
     create_llm_proxy_token,
     decode_llm_proxy_token,
@@ -30,9 +32,12 @@ def _reset_llm_proxy_key_caches():
     """Reset the global key caches so each test exercises key resolution."""
     llm_proxy_service._TOKEN_KEY_CACHE = None
     llm_proxy_service._SIGNING_KEY_CACHE = None
+    original_redis_client = llm_proxy_service._REDIS_CLIENT_CACHE
+    llm_proxy_service._REDIS_CLIENT_CACHE = None
     yield
     llm_proxy_service._TOKEN_KEY_CACHE = None
     llm_proxy_service._SIGNING_KEY_CACHE = None
+    llm_proxy_service._REDIS_CLIENT_CACHE = original_redis_client
 
 
 def _model_kind(user_id: int, name: str = "deepseek-v4-flash") -> Kind:
@@ -371,3 +376,53 @@ def test_llm_proxy_token_key_is_persisted_in_system_config(
     assert stored is not None
     assert isinstance((stored.config_value or {}).get("key"), str)
     assert len((stored.config_value or {})["key"]) > 0
+
+
+def test_record_nonce_rejects_duplicate_in_memory(
+    test_db, test_user: User, test_model_kind: Kind
+):
+    token, _ = create_llm_proxy_token(
+        test_db,
+        test_user.id,
+        "default",
+        test_model_kind.name,
+    )
+    payload = decode_llm_proxy_token(token)
+    nonce = "duplicate-nonce"
+
+    _record_nonce(payload, nonce)
+    assert _is_nonce_reused(payload, nonce) is True
+
+    with pytest.raises(LLMProxyTokenError):
+        _record_nonce(payload, nonce)
+
+
+def test_record_nonce_uses_redis_set_nx_ex_atomically(
+    test_db, test_user: User, test_model_kind: Kind, monkeypatch
+):
+    token, _ = create_llm_proxy_token(
+        test_db,
+        test_user.id,
+        "default",
+        test_model_kind.name,
+    )
+    payload = decode_llm_proxy_token(token)
+    nonce = "atomic-nonce"
+
+    redis_mock = MagicMock()
+    # First call sets the nonce; second call simulates it already existing.
+    redis_mock.set = MagicMock(side_effect=[True, None])
+    monkeypatch.setattr(
+        llm_proxy_service,
+        "_REDIS_CLIENT_CACHE",
+        redis_mock,
+    )
+
+    _record_nonce(payload, nonce)
+    redis_mock.set.assert_called_once()
+    call_kwargs = redis_mock.set.call_args.kwargs
+    assert call_kwargs.get("nx") is True
+    assert call_kwargs.get("ex") >= 1
+
+    with pytest.raises(LLMProxyTokenError, match="Request nonce reused"):
+        _record_nonce(payload, nonce)

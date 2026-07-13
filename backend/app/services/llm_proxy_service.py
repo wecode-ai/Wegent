@@ -60,6 +60,7 @@ logger = logging.getLogger(__name__)
 _TOKEN_KEY_CACHE: Optional[Fernet] = None
 _SIGNING_KEY_CACHE: Optional[str] = None
 _NONCE_MEMORY_CACHE: dict[str, int] = {}
+_REDIS_CLIENT_CACHE: Optional[Any] = None
 
 LLM_PROXY_NONCE_REDIS_KEY_PREFIX = "llm_proxy_nonce"
 LLM_PROXY_SIGNING_KEY_CONFIG_KEY = "llm_proxy_signing_key"
@@ -350,14 +351,34 @@ def _verify_request_signature(
 
 
 def _redis_client() -> Optional[Any]:
-    """Return a Redis client if one can be created, otherwise None."""
+    """Return a cached Redis client, creating one on first use if possible.
+
+    The client is reused across calls to avoid creating a new TCP connection
+    for every nonce check. If Redis becomes unavailable, the cached client is
+    discarded and the function returns None so the caller can fall back to the
+    in-memory nonce cache.
+    """
+    global _REDIS_CLIENT_CACHE  # noqa: PLW0603
+
+    if _REDIS_CLIENT_CACHE is not None:
+        try:
+            _REDIS_CLIENT_CACHE.ping()
+            return _REDIS_CLIENT_CACHE
+        except Exception as exc:
+            logger.warning(
+                "LLM proxy cached Redis client failed ping, recreating: %s", exc
+            )
+            _REDIS_CLIENT_CACHE = None
+
     try:
         import redis
 
         client = redis.from_url(settings.REDIS_URL)
         client.ping()
+        _REDIS_CLIENT_CACHE = client
         return client
-    except Exception:
+    except Exception as exc:
+        logger.warning("LLM proxy Redis nonce store unavailable: %s", exc)
         return None
 
 
@@ -370,11 +391,14 @@ def _record_nonce(
     nonce: str,
     db: Optional[Session] = None,
 ) -> None:
-    """Store a nonce to prevent replay.
+    """Store a nonce atomically to prevent replay.
 
     The nonce is associated with the token ``jti`` and expires together with
     the token. Redis is used when available; otherwise a process-local in-memory
     cache is used as a fallback for tests and single-process deployments.
+
+    Raises:
+        LLMProxyTokenError: If the nonce has already been recorded.
     """
     jti = payload.get("jti")
     if not isinstance(jti, str) or not jti:
@@ -385,16 +409,31 @@ def _record_nonce(
         raise LLMProxyTokenError("Malformed proxy token: missing exp")
 
     ttl = max(1, exp - int(time.time()))
+    key = _nonce_cache_key(jti, nonce)
 
     redis_client = _redis_client()
     if redis_client is not None:
         try:
-            redis_client.setex(_nonce_cache_key(jti, nonce), ttl, "1")
-            return
-        except Exception:
-            pass
+            # SET NX EX is atomic: it only succeeds when the key did not exist.
+            # This closes the check-then-set race window across concurrent
+            # requests with the same nonce.
+            set_ok = redis_client.set(key, "1", nx=True, ex=ttl)
+            if set_ok:
+                return
+            raise LLMProxyTokenError("Request nonce reused")
+        except LLMProxyTokenError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "LLM proxy failed to record nonce in Redis, falling back to memory: %s",
+                exc,
+            )
 
-    _NONCE_MEMORY_CACHE[_nonce_cache_key(jti, nonce)] = exp
+    # Memory fallback: the CPython GIL makes dict get/set effectively atomic,
+    # which is acceptable for the single-process/test fallback path.
+    if key in _NONCE_MEMORY_CACHE:
+        raise LLMProxyTokenError("Request nonce reused")
+    _NONCE_MEMORY_CACHE[key] = exp
     _cleanup_expired_nonces()
 
 
@@ -421,8 +460,11 @@ def _is_nonce_reused(
     if redis_client is not None:
         try:
             return bool(redis_client.exists(key))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "LLM proxy failed to check nonce in Redis, falling back to memory: %s",
+                exc,
+            )
 
     return key in _NONCE_MEMORY_CACHE
 
