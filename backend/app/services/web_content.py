@@ -151,6 +151,7 @@ class WebContentService:
         try:
             async with asyncio.timeout(_COMMENT_TIMEOUT_SECONDS):
                 comment_rows = await spider_job_client.run_job(comment_params)
+                comments = self._extract_first_row_comments(comment_rows)
         except (SpiderJobError, TimeoutError) as exc:
             error = (
                 str(exc)
@@ -173,7 +174,7 @@ class WebContentService:
 
         return _SpiderCrawlResult(
             article=article,
-            comments=comment_rows,
+            comments=comments,
             page_rows=page_rows,
             comment_rows=comment_rows,
             comment_fetch_status="ready",
@@ -327,13 +328,21 @@ class WebContentService:
         row = rows[0]
         nested_article = row.get("article")
         if isinstance(nested_article, dict):
-            raw_comments = row.get("comments")
-            if raw_comments is not None and not isinstance(raw_comments, list):
-                raise SpiderJobError("External web content comments are invalid")
-            return nested_article, raw_comments or [], True
+            return nested_article, self._extract_first_row_comments(rows), True
         if not isinstance(row.get("site"), str) and not row.get("article_id"):
             raise SpiderJobError("External web content article is missing")
         return row, [], False
+
+    def _extract_first_row_comments(
+        self,
+        rows: list[dict[str, Any]],
+    ) -> list[Any]:
+        if not rows:
+            raise SpiderJobError("External web comment result rows are empty")
+        raw_comments = rows[0].get("comments")
+        if not isinstance(raw_comments, list):
+            raise SpiderJobError("External web content comments are invalid")
+        return raw_comments
 
     def _build_comment_job_params(
         self,
@@ -701,9 +710,15 @@ class WebContentService:
             content = self._first_string(raw_comment, "content")
             if not content:
                 continue
-            comment_id = self._first_string(raw_comment, "comment_id")
-            target_id = self._first_string(raw_comment, "target_id")
-            parent_id = target_id if target_id not in {None, "", "0"} else None
+            comment_id = self._identifier(raw_comment.get("comment_id"))
+            raw_parent_id = raw_comment.get("parent_id")
+            if raw_parent_id is None:
+                raw_parent_id = raw_comment.get("target_id")
+            raw_parent_id = self._identifier(raw_parent_id)
+            parent_id = raw_parent_id if raw_parent_id not in {None, "0"} else None
+            reply_count = raw_comment.get("reply_count")
+            if reply_count is None:
+                reply_count = raw_comment.get("sub_comment_count")
             dedupe_key = comment_id or f"{source_item_id}:{index}:{content}"
             if dedupe_key in seen_ids:
                 continue
@@ -717,7 +732,7 @@ class WebContentService:
                     "author_id": self._identifier(raw_comment.get("user_id")),
                     "content": content,
                     "like_count": raw_comment.get("like_count"),
-                    "reply_count": raw_comment.get("sub_comment_count"),
+                    "reply_count": reply_count,
                     "created_at": self._first_string(raw_comment, "pub_time"),
                     "ip_location": self._first_string(raw_comment, "location"),
                     "source_item_id": source_item_id,
