@@ -1,5 +1,5 @@
 import { AppWindow, ChevronDown, FileOutput, Folders, Loader2 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
 import { cn } from '@/lib/utils'
@@ -134,7 +134,25 @@ export function FileWorkspacePanel({
   onAddCodeComment,
 }: FileWorkspacePanelProps) {
   const { t } = useTranslation('common')
-  const rootPath = target?.path ?? ''
+  const targetDeviceId = target?.deviceId
+  const targetPath = target?.path
+  const targetSource = target?.source
+  const targetTaskId = target?.taskId
+  const targetWorkspaceSource = target?.workspaceSource
+  const stableTarget = useMemo<WorkspaceTarget | null>(() => {
+    if (!targetDeviceId || !targetPath || !targetSource) return null
+    return {
+      deviceId: targetDeviceId,
+      path: targetPath,
+      source: targetSource,
+      taskId: targetTaskId,
+      workspaceSource: targetWorkspaceSource,
+    }
+  }, [targetDeviceId, targetPath, targetSource, targetTaskId, targetWorkspaceSource])
+  const rootPath = stableTarget?.path ?? ''
+  const listWorkspaceEntries = workspaceFileApi.listWorkspaceEntries
+  const readWorkspaceTextFile = workspaceFileApi.readWorkspaceTextFile
+  const readWorkspaceFileChunk = workspaceFileApi.readWorkspaceFileChunk
   const [activeDirectoryPath, setActiveDirectoryPath] = useState(target?.path ?? '')
   const [entriesByPath, setEntriesByPath] = useState<Record<string, WorkspaceFileEntry[]>>({})
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
@@ -198,7 +216,7 @@ export function FileWorkspacePanel({
 
   const loadTree = useCallback(
     async (path: string, forceRefresh = false) => {
-      if (!target) return
+      if (!stableTarget) return
       const cachedAt = directoryLoadedAtByPath.current.get(path)
       if (!forceRefresh && isWorkspaceDirectoryCacheFresh(cachedAt)) {
         setExpandedPaths(previous => new Set(previous).add(path))
@@ -215,7 +233,7 @@ export function FileWorkspacePanel({
       setTreeError(null)
       setTreeRetryPath(null)
       try {
-        const result = await workspaceFileApi.listWorkspaceEntries(target.deviceId, path)
+        const result = await listWorkspaceEntries(stableTarget.deviceId, path)
         if (latestTreeRequestByPath.current.get(path) !== requestId) return
         const resolvedPath = result.path || path
         setEntriesByPath(previous => ({
@@ -247,7 +265,7 @@ export function FileWorkspacePanel({
         }
       }
     },
-    [target, t, workspaceFileApi]
+    [listWorkspaceEntries, stableTarget, t]
   )
 
   const openDirectory = useCallback(
@@ -266,7 +284,7 @@ export function FileWorkspacePanel({
 
   const openFile = useCallback(
     async (entry: WorkspaceFileEntry, options?: WorkspaceFileOpenOptions) => {
-      if (!target || entry.isDirectory) return
+      if (!stableTarget || entry.isDirectory) return
       const requestId = fileRequestSequence.current + 1
       const nextLineTarget = createPreviewLineTarget(entry.path, options)
       fileRequestSequence.current = requestId
@@ -278,24 +296,24 @@ export function FileWorkspacePanel({
       setPreviewError(null)
       setPreview(null)
       setBinaryPreview(null)
-      if (target.workspaceSource !== 'remote') {
+      if (stableTarget.workspaceSource !== 'remote') {
         void loadFileOpeners(entry.path)
       }
       try {
         if (isTextFile(entry.path)) {
-          const file = await workspaceFileApi.readWorkspaceTextFile(target.deviceId, entry.path)
+          const file = await readWorkspaceTextFile(stableTarget.deviceId, entry.path)
           if (fileRequestSequence.current !== requestId) return
           setPreview(file)
           return
         }
-        if (!workspaceFileApi.readWorkspaceFileChunk) {
+        if (!readWorkspaceFileChunk) {
           throw new Error('Binary file preview is unavailable')
         }
         const chunks: Uint8Array[] = []
         let offset = 0
         let chunk: WorkspaceFileChunkResponse
         do {
-          chunk = await workspaceFileApi.readWorkspaceFileChunk(target.deviceId, entry.path, offset)
+          chunk = await readWorkspaceFileChunk(stableTarget.deviceId, entry.path, offset)
           if (fileRequestSequence.current !== requestId) return
           chunks.push(decodeBase64(chunk.contentBase64))
           offset += chunks[chunks.length - 1].byteLength
@@ -337,13 +355,13 @@ export function FileWorkspacePanel({
         }
       }
     },
-    [loadFileOpeners, target, t, workspaceFileApi]
+    [loadFileOpeners, readWorkspaceFileChunk, readWorkspaceTextFile, stableTarget, t]
   )
 
   const openFilePath = useCallback(
     (path: string, options?: WorkspaceFileOpenOptions) => {
-      if (!target) return
-      const resolvedPath = resolveWorkspaceFilePath(target, path)
+      if (!stableTarget) return
+      const resolvedPath = resolveWorkspaceFilePath(stableTarget, path)
       if (!resolvedPath) return
 
       void openFile(
@@ -356,11 +374,11 @@ export function FileWorkspacePanel({
         options
       )
     },
-    [openFile, target]
+    [openFile, stableTarget]
   )
 
   useEffect(() => {
-    if (!target) return
+    if (!stableTarget) return
     directoryLoadedAtByPath.current.clear()
     latestTreeRequestByPath.current.clear()
     let cancelled = false
@@ -368,20 +386,20 @@ export function FileWorkspacePanel({
       if (!cancelled) {
         setEntriesByPath({})
         setExpandedPaths(new Set())
-        setActiveDirectoryPath(target.path)
+        setActiveDirectoryPath(stableTarget.path)
         setSelectedFilePath(null)
         setPreview(null)
         setBinaryPreview(null)
         setPreviewLineTarget(null)
         setTreeError(null)
         setTreeRetryPath(null)
-        void loadTree(target.path)
+        void loadTree(stableTarget.path)
       }
     })
     return () => {
       cancelled = true
     }
-  }, [loadTree, target])
+  }, [loadTree, stableTarget])
 
   useEffect(() => {
     if (!openFileRequest?.path) return
@@ -426,7 +444,7 @@ export function FileWorkspacePanel({
     }
   }, [fileOpenerMenuOpen])
 
-  if (!target) {
+  if (!stableTarget) {
     return (
       <section className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-sm text-text-muted">
         {t('workbench.workspace_file_no_workspace', '暂无可浏览的工作区')}
@@ -436,9 +454,11 @@ export function FileWorkspacePanel({
 
   const activePreviewLineTarget =
     previewLineTarget && previewLineTarget.filePath === preview?.path ? previewLineTarget : null
-  const displayPath = selectedFilePath ?? target.path
+  const displayPath = selectedFilePath ?? stableTarget.path
   const canOpenFile =
-    target.workspaceSource !== 'remote' && Boolean(selectedFilePath) && isLocalTerminalAvailable()
+    stableTarget.workspaceSource !== 'remote' &&
+    Boolean(selectedFilePath) &&
+    isLocalTerminalAvailable()
   const compatibleFileOpeners =
     fileOpeners?.filePath === selectedFilePath ? fileOpeners.applications : []
   const defaultApplicationPath =

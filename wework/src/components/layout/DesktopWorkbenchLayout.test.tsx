@@ -32,6 +32,7 @@ import {
 import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
+import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
 
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
@@ -5283,6 +5284,62 @@ describe('DesktopWorkbenchLayout', () => {
     })
 
     expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
+  })
+
+  test('workspace file preview stays mounted when equivalent dependencies get new references', async () => {
+    const user = userEvent.setup()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'README.md',
+          path: '/workspace/project/README.md',
+          isDirectory: false,
+          size: 12,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'stable preview content',
+      truncated: false,
+      size: 22,
+      modifiedAt: null,
+    })
+    const target = {
+      deviceId: 'workspace-cloud-device',
+      path: '/workspace/project',
+      source: 'project' as const,
+      workspaceSource: 'remote',
+    }
+    const { rerender } = render(
+      <FileWorkspacePanel
+        target={target}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await user.click(await screen.findByText('README.md'))
+    await waitFor(() => expect(getWorkspaceCodeViewText()).toContain('stable preview content'))
+
+    rerender(
+      <FileWorkspacePanel
+        target={{ ...target }}
+        workspaceFileApi={{ listWorkspaceEntries, readWorkspaceTextFile }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
+    expect(readWorkspaceTextFile).toHaveBeenCalledTimes(1)
   })
 
   test('workspace file preview renders file contents with Pierre file viewer', async () => {
