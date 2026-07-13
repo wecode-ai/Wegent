@@ -7,6 +7,7 @@ import {
 } from '@/features/model-settings/localModelConnectionTest'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import { closeMainWindowToTray } from '@/tauri/runtimeTaskCloseGuard'
+import { invoke } from '@tauri-apps/api/core'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -218,19 +219,41 @@ async function captureDesktopControlScreenshot(selector: string): Promise<string
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
 
-  const { default: html2canvas } = await import('html2canvas')
-  const canvas = await html2canvas(element, {
-    allowTaint: false,
-    backgroundColor: getComputedStyle(document.documentElement).backgroundColor,
-    height: element === document.body ? window.innerHeight : undefined,
-    logging: false,
-    scale: Math.min(window.devicePixelRatio, 2),
-    useCORS: true,
-    width: element === document.body ? window.innerWidth : undefined,
-    windowHeight: window.innerHeight,
-    windowWidth: window.innerWidth,
-  })
+  const snapshot = await invoke<string>('capture_main_webview')
+  if (element === document.body) return snapshot
+  return cropDesktopControlScreenshot(snapshot, element.getBoundingClientRect())
+}
+
+async function cropDesktopControlScreenshot(snapshot: string, rect: DOMRect): Promise<string> {
+  const image = await loadDesktopControlScreenshot(snapshot)
+  const scaleX = image.naturalWidth / window.innerWidth
+  const scaleY = image.naturalHeight / window.innerHeight
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(rect.width * scaleX))
+  canvas.height = Math.max(1, Math.round(rect.height * scaleY))
+  const context = canvas.getContext('2d')
+  if (!context) throw new Error('Unable to create screenshot canvas context')
+  context.drawImage(
+    image,
+    Math.round(rect.left * scaleX),
+    Math.round(rect.top * scaleY),
+    canvas.width,
+    canvas.height,
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  )
   return canvas.toDataURL('image/png')
+}
+
+function loadDesktopControlScreenshot(snapshot: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Unable to decode main webview snapshot'))
+    image.src = snapshot
+  })
 }
 
 function desktopControlElementEnabled(element: HTMLElement): boolean {

@@ -556,7 +556,8 @@ function splitShellWords(command: string): string[] {
 
   for (const char of command) {
     if (escaped) {
-      current += char
+      // A backslash followed by a newline continues the same shell command.
+      if (char !== '\n' && char !== '\r') current += char
       escaped = false
       continue
     }
@@ -577,6 +578,12 @@ function splitShellWords(command: string): string[] {
 
     if (char === '"' || char === "'") {
       quote = char
+      continue
+    }
+
+    if (char === '\n' || char === '\r') {
+      pushCurrent()
+      if (words.at(-1) !== ';') words.push(';')
       continue
     }
 

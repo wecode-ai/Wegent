@@ -1,3 +1,4 @@
+mod desktop_capture;
 mod embedded_browser;
 mod local_executor;
 mod local_terminal;
@@ -3485,6 +3486,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            desktop_capture::capture_main_webview,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_eval,
             embedded_browser::embedded_browser_eval_json,
