@@ -505,8 +505,15 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
     {
         return None;
     }
+    let status = tool_status(&item);
+    let status =
+        if matches!(item_type.as_str(), "websearch" | "websearchcall") && status == "pending" {
+            "done".to_owned()
+        } else {
+            status
+        };
     let mut updates = json!({
-        "status": tool_status(&item),
+        "status": status,
     });
     if let Some(object) = updates.as_object_mut() {
         insert_tool_output_fields(object, &item, TranscriptBuildOptions::truncated());
@@ -514,6 +521,11 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
     if let Some(input) = command_input_from_output(&item) {
         if let Some(object) = updates.as_object_mut() {
             object.insert("tool_input".to_owned(), input);
+        }
+    }
+    if matches!(item_type.as_str(), "websearch" | "websearchcall") {
+        if let Some(object) = updates.as_object_mut() {
+            object.insert("tool_input".to_owned(), tool_input(&item));
         }
     }
     Some((tool_call_id(&item), updates))
