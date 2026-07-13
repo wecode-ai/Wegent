@@ -19,6 +19,7 @@ Use `docs/en/` and `docs/zh/` for detailed architecture and guides. Keep this fi
 ## Scoped instructions
 
 - Before modifying `wework/**`, read and follow [`wework/AGENTS.md`](wework/AGENTS.md). It contains the desktop UI, local runtime, i18n, and Tauri verification rules.
+- Before modifying `frontend/**`, read and follow [`frontend/AGENTS.md`](frontend/AGENTS.md). It contains web-frontend state, responsive UI, and i18n rules.
 - Add module-specific instructions beside a module only when they cannot be expressed as a repository-wide rule.
 
 ## Domain model

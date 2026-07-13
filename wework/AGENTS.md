@@ -4,19 +4,14 @@ This directory implements the Wework desktop workbench: Tauri, Vite, React, Type
 
 ## UI and component rules
 
-- Use strict TypeScript, function components, `const`, single quotes, and no semicolons. Reuse existing components before creating new ones.
-- Preserve `data-testid` values and update their E2E coverage whenever they change. New interactive elements require descriptive `data-testid` values.
 - Mobile is `<=767px`, tablet `768px–1023px`, desktop `>=1024px`. Split mobile and desktop components when layout or interaction differs materially; otherwise use responsive classes. Mobile controls must be at least `44px × 44px`.
 - Follow the calm UI tokens: low contrast, sparse shadows, teal primary (`#14B8A6`), `bg-base`, `bg-surface`, `text-text-primary`, and `border-border`. Dialog primary actions use `variant="primary"`.
 - Desktop workbench controls use `h-8`; icon-only controls use `h-8 w-8`, standard icons use `h-4 w-4`, and toolbar gaps use `gap-1` or `gap-1.5`. Do not introduce other desktop button heights without a documented reason.
 
-## Chat, state, and i18n
+## i18n
 
-- Chat display and export must use `messages` from `useUnifiedMessages`; `selectedTaskDetail.subtasks` is stale backend cache only.
-- Import translations from `@/hooks/useTranslation`; direct `react-i18next` imports are limited to i18n infrastructure.
-- Feature text belongs in its feature namespace, not `common` merely because a nearby key exists. Add every key to both `src/i18n/locales/en/` and `src/i18n/locales/zh-CN/`.
-- Use one explicit primary namespace per component. Use a prefixed key or a named translation alias for cross-namespace copy; do not rely on namespace-array fallback or literal fallbacks.
-- A new namespace needs both locale files and registration in `src/i18n/index.ts`.
+- Use the local `@/hooks/useTranslation` wrapper for new Wework code.
+- Add new copy to the appropriate Wework namespace in both `src/i18n/locales/en/` and `src/i18n/locales/zh-CN/`; register a new namespace in `src/i18n/index.ts`.
 
 ## Testing
 
