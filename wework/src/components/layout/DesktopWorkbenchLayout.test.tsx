@@ -4306,10 +4306,14 @@ describe('DesktopWorkbenchLayout', () => {
       await userEvent.click(screen.getByTestId('right-workspace-file-option'))
 
       const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+      const sharedMainHeader = screen.getByTestId('workbench-main-header')
       expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
 
       rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
 
+      expect(screen.getAllByTestId('workbench-main-header')).toHaveLength(1)
+      expect(screen.getByTestId('workbench-main-header')).toBe(sharedMainHeader)
+      expect(sharedMainHeader).toHaveClass('h-[38px]', 'shrink-0')
       expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
     } finally {
       if (previousTauriInternals === undefined) {
