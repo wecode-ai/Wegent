@@ -142,6 +142,7 @@ describe('DesktopSidebar', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllEnvs()
   })
 
   test('keeps section header actions out of the flex layout while hidden', () => {
@@ -367,11 +368,62 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('settings-button')).not.toHaveClass('w-full', 'shrink-0')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice')
     expect(screen.getByTestId('settings-button')).toHaveTextContent('alice@example.com')
+    expect(screen.getByTestId('sidebar-account-avatar').querySelector('svg')).toHaveClass(
+      'lucide-user-round'
+    )
+    expect(screen.getByTestId('sidebar-account-avatar')).not.toHaveTextContent('AL')
     expect(screen.getByTestId('sidebar-global-im-notification-button')).toHaveClass(
       'h-8',
       'w-8',
       'shrink-0'
     )
+  })
+
+  test('shows cloud login in the account row when a default Backend is configured', async () => {
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'http://localhost:8000')
+    renderSidebar({}, { status: 'disconnected', isConnected: false, user: null })
+
+    const accountButton = screen.getByTestId('settings-button')
+    expect(accountButton).toHaveTextContent('点击登录')
+    expect(accountButton).toHaveTextContent('http://localhost:8000')
+    expect(accountButton).not.toHaveTextContent('alice@example.com')
+
+    await userEvent.click(accountButton)
+
+    expect(screen.getByTestId('cloud-connection-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-backend-url-input')).toHaveValue('http://localhost:8000')
+    expect(screen.queryByTestId('settings-menu')).not.toBeInTheDocument()
+  })
+
+  test('shows the cloud username and email after login', async () => {
+    vi.stubEnv('VITE_WEGENT_BACKEND_URL', 'http://localhost:8000')
+    const disconnect = vi.fn()
+    renderSidebar(
+      {},
+      {
+        status: 'connected',
+        isConnected: true,
+        backendUrl: 'http://localhost:8000',
+        user: { id: 7, user_name: 'cloud-user', email: 'cloud@example.com' },
+        disconnect,
+      }
+    )
+
+    const accountButton = screen.getByTestId('settings-button')
+    expect(accountButton).toHaveTextContent('cloud-user')
+    expect(accountButton).toHaveTextContent('cloud@example.com')
+    expect(accountButton).not.toHaveTextContent('alice@example.com')
+
+    await userEvent.click(accountButton)
+
+    expect(screen.getByTestId('settings-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('logout-menu-button')).toHaveTextContent('退出登录')
+    expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('logout-menu-button'))
+
+    expect(disconnect).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('settings-menu')).not.toBeInTheDocument()
   })
 
   test('shows an exposed update button in the account row when an app update is available', async () => {

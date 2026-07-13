@@ -2,6 +2,7 @@ import { AlertCircle, Cloud, Loader2, LogOut, Plus, Server, Settings, X } from '
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { getRuntimeConfig } from '@/config/runtime'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
@@ -34,7 +35,9 @@ export function CloudConnectionDialog({
 }: CloudConnectionDialogProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
-  const [backendUrl, setBackendUrl] = useState(cloud.backendUrl ?? '')
+  const [backendUrl, setBackendUrl] = useState(
+    () => cloud.backendUrl || getRuntimeConfig().wegentBackendUrl
+  )
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 

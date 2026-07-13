@@ -37,6 +37,7 @@ Environment:
   WEWORK_TAURI_BUNDLES     Default bundle list when --bundles is not provided.
   WEWORK_RELEASE_DEVTOOLS  Set to 1 to compile Tauri devtools into release builds.
   WEWORK_NO_SIGN           Set to 1 to pass --no-sign.
+  VITE_WEGENT_BACKEND_URL  Default Backend URL shown in Connect cloud.
 
 Examples:
   bash wework/scripts/build-mac-app.sh --profile dev --target aarch64-apple-darwin
@@ -144,6 +145,7 @@ echo "  RELEASE_DEVTOOLS=${RELEASE_DEVTOOLS:-0}"
 echo "  NO_SIGN=${NO_SIGN:-0}"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+echo "  VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then

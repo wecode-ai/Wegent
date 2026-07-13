@@ -84,6 +84,7 @@ iOS native builds have no Vite dev proxy, so backend URLs must be absolute. Each
 ```dotenv
 VITE_API_BASE_URL=https://wework.example.com/api
 VITE_SOCKET_BASE_URL=https://wework.example.com
+VITE_WEGENT_BACKEND_URL=https://wework.example.com
 APPLE_DEVELOPMENT_TEAM=XXXXXXXXXX
 ```
 

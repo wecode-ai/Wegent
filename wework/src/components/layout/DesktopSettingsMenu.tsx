@@ -45,11 +45,16 @@ interface DesktopSettingsMenuProps {
   user: UserProfile | null
   onOpenSettings: () => void
   onLogout: () => void
+  showLogout?: boolean
 }
 
-export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSettingsMenuProps) {
+export function DesktopSettingsMenu({
+  onOpenSettings,
+  onLogout,
+  showLogout,
+}: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
-  const showLogout = !isLocalFirstAppRuntime()
+  const shouldShowLogout = showLogout ?? !isLocalFirstAppRuntime()
   const [isUsageExpanded, setIsUsageExpanded] = useState(false)
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
   const [isQuotaLoading, setIsQuotaLoading] = useState(false)
@@ -232,7 +237,7 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
           ) : null}
         </div>
       ) : null}
-      {showLogout ? (
+      {shouldShowLogout ? (
         <SettingsMenuItem
           testId="logout-menu-button"
           icon={<LogOut className="h-4 w-4 shrink-0 text-text-secondary" />}

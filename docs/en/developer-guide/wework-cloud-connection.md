@@ -6,6 +6,8 @@ sidebar_position: 32
 
 Wework remains a complete local app by default. Local Codex, local model configs, the local executor, local workspaces, and local conversations do not require Backend login or cloud devices. Cloud connection is an optional capability layer: after the user enters a Backend URL from the sidebar and signs in with the WeWork login flow, server models, cloud devices, and cloud Codex auth sync join the same workbench.
 
+Set `VITE_WEGENT_BACKEND_URL` at build time to provide the default Backend URL in Connect cloud. This value only prefills the field and remains editable; an existing local connection address takes precedence over the build default. When configured, the desktop account area shows a sign-in entry while disconnected and the cloud username and email after connection; Log out in the account menu only disconnects the cloud connection.
+
 ## State Ownership
 
 Cloud connection state is owned by the frontend `cloud-connection` layer and is stored separately from the global `auth_token` used by the web login flow. It persists:
