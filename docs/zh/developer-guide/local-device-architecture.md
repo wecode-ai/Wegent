@@ -55,7 +55,7 @@ flowchart LR
     EX --> FS
 ```
 
-Tauri 会先连接 `~/.wegent-executor/app-ipc.sock`；如果本地 executor sidecar 尚未运行，再由 App 无参数启动 executor 并重试连接。App 自己启动的 sidecar 归 Tauri 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。没有远端 Backend 地址时，executor 默认只启动本地 socket，不连接 Backend；App 与 executor 之间只使用本机 socket 上的换行分隔 JSON 协议。executor 日志写入 `~/.wegent-executor/logs/executor.log`，不占用协议通道。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
+Tauri 会先连接 `~/.wegent-executor/app-ipc.sock`；如果本地 executor sidecar 尚未运行，再由 App 无参数启动 executor 并重试连接。连接每 250 毫秒重试一次，最长等待 60 秒；若超时或 sidecar 提前退出，App 会清理连接状态并将错误返回给所有待处理请求，不会无限等待。App 自己启动的 sidecar 归 Tauri 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。没有远端 Backend 地址时，executor 默认只启动本地 socket，不连接 Backend；App 与 executor 之间只使用本机 socket 上的换行分隔 JSON 协议。executor 日志写入 `~/.wegent-executor/logs/executor.log`，不占用协议通道。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend WebSocket 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本机 socket 服务 Wework App，一边通过 WebSocket 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
