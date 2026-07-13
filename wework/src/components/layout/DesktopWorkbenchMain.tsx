@@ -369,7 +369,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     pane,
     enableShellProjectActions: true,
   })
-  const paneEnvironment = useWorkbenchPaneEnvironment({ pane, projectWork })
+  const paneEnvironment = useWorkbenchPaneEnvironment({
+    pane,
+    projectWork,
+    environmentRefreshActive: Boolean(currentRuntimeTask && paneSession.status.isBusy),
+  })
   const {
     workspaceProject,
     workspaceTarget,

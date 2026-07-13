@@ -1,4 +1,4 @@
-import type { EnvironmentDiffMode } from '@/api/environment'
+import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
@@ -229,7 +229,8 @@ export interface WorkbenchContextValue {
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   loadEnvironmentInfo: (
     project: ProjectWithTasks | null,
-    workspaceTarget?: WorkspaceTarget | null
+    workspaceTarget?: WorkspaceTarget | null,
+    options?: EnvironmentInfoLoadOptions
   ) => Promise<EnvironmentInfo>
   loadEnvironmentDiff: (
     project: ProjectWithTasks | null,

@@ -399,6 +399,26 @@ describe('loadProjectEnvironment', () => {
         stdout: 'https://github.com/wecode-ai/Wegent.git\n',
         stderr: '',
       })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'human/narwhal-20260528-073440\n',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: ' 3 files changed, 13 insertions(+), 5 deletions(-)',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: '',
+        stderr: '',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        stdout: 'https://github.com/wecode-ai/Wegent.git\n',
+        stderr: '',
+      })
 
     const api = { executeCommand }
     const project = {
@@ -455,6 +475,11 @@ describe('loadProjectEnvironment', () => {
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
+
+    const refreshedInfo = await loadProjectEnvironment(api, project, undefined, { force: true })
+
+    expect(refreshedInfo).toMatchObject({ additions: '+13', deletions: '-5' })
+    expect(executeCommand).toHaveBeenCalledTimes(8)
   })
 
   test('uses git diff against HEAD for tracked uncommitted changes', async () => {
