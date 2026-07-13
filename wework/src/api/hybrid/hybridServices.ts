@@ -514,6 +514,9 @@ export function createHybridWorkbenchServices(
         data.limit
       )
     },
+    searchRuntimeWorkspace(data) {
+      return runtimeApi(data.deviceId).searchRuntimeWorkspace(data)
+    },
     revertRuntimeFileChanges(data: RuntimeFileChangesRevertRequest) {
       return routeByAddress(data.address).revertRuntimeFileChanges(data)
     },

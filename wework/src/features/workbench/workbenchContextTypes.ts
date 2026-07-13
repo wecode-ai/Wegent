@@ -308,6 +308,7 @@ export type WorkbenchPaneState = Pick<
   | 'devices'
   | 'runtimeWork'
   | 'standaloneDeviceId'
+  | 'standaloneWorkspacePath'
   | 'selectedDeviceWorkspaceId'
   | 'pendingProjectWorkspaceProjectId'
   | 'user'

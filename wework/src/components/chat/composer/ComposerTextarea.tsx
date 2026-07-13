@@ -1,10 +1,13 @@
 import { ClipboardList, Cpu, Package, Plug, Target } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { RefObject } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
-import type { LocalDeviceApp, LocalDeviceSkill, ModelOptions, UnifiedModel } from '@/types/api'
+import {
+  canOpenNativeWorkspacePathPicker,
+  openNativeWorkspacePathPicker,
+} from '@/lib/native-workspace-path-picker'
+import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import {
   ComposerProseMirrorEditor,
   type ComposerEditorHandle,
@@ -18,59 +21,26 @@ import {
   hasDraftTextForSlashCommands,
 } from './composerAutocomplete'
 import {
-  appReference,
-  canSelectSkillForModel,
-  dedupeLocalSkills,
-  displayAppName,
-  displaySkillName,
-  displaySkillSource,
-  skillReference,
   slashAppTestId,
   slashSkillTestId,
-  type ComposerAppMentionCandidate,
   type ComposerMentionCandidate,
-  type ComposerSkillMentionCandidate,
 } from './composerMentionCandidates'
 import {
+  createComposerPathReference,
   findComposerMentionDeletionRange,
-  localSkillTestId,
   replaceComposerMentionTrigger,
+  resolveComposerWorkspacePath,
 } from './composerMentions'
 import { createLongPastedTextAttachment } from './pastedTextAttachment'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
 import { debugComposerEvent, textMetrics } from './composerDebug'
+import { ComposerMentionMenu, type MentionMenuRow } from './ComposerMentionMenu'
+import { useWorkspaceMentionSearch } from './useWorkspaceMentionSearch'
+import { useComposerMentionCandidates } from './useComposerMentionCandidates'
+import type { ComposerTextareaProps } from './composerTextareaTypes'
 
-export interface ComposerSubmitOptions {
-  guideWhenBusy?: boolean
-}
-
-interface ComposerTextareaProps {
-  value: string
-  onChange: (value: string) => void
-  onSubmit: (submittedValue?: string, options?: ComposerSubmitOptions) => void
-  canSend: boolean
-  disabled?: boolean
-  placeholder: string
-  testId?: string
-  rows: number
-  textareaRef: RefObject<HTMLElement | null>
-  className: string
-  skillMenuClassName?: string
-  onPasteFiles?: (files: File[]) => void
-  onOpenSkillFile?: (path: string) => void
-  onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
-  onListLocalApps?: () => Promise<LocalDeviceApp[]>
-  models?: UnifiedModel[]
-  selectedModel?: UnifiedModel | null
-  selectedModelOptions?: ModelOptions
-  planModeActive?: boolean
-  onSetPlanMode?: () => void
-  onSetGoal?: () => void
-  onSelectModel?: (model: UnifiedModel | null) => void
-  onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
-  isModelSelectionReady?: boolean
-}
+export type { ComposerSubmitOptions } from './composerTextareaTypes'
 
 interface ActiveComposerMenu {
   kind: ComposerTextTrigger['kind']
@@ -91,6 +61,8 @@ export function ComposerTextarea({
   skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
   onPasteFiles,
   onOpenSkillFile,
+  workspaceTarget,
+  workspaceFileApi,
   onListLocalSkills,
   onListLocalApps,
   models = [],
@@ -135,69 +107,26 @@ export function ComposerTextarea({
   const [loadError, setLoadError] = useState(false)
   const [appsLoading, setAppsLoading] = useState(false)
   const [appsLoadError, setAppsLoadError] = useState(false)
+  const canPickNativeWorkspacePaths =
+    canOpenNativeWorkspacePathPicker() && workspaceTarget?.workspaceSource !== 'remote'
 
   useEffect(() => {
     valueRef.current = value
   }, [value])
 
-  const dedupedSkills = useMemo(() => dedupeLocalSkills(skills), [skills])
+  const { appCandidates, skillCandidates, mentionCandidates, filteredMentionCandidates } =
+    useComposerMentionCandidates(
+      apps,
+      skills,
+      selectedModel,
+      activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention' ? activeMenu.trigger.query : ''
+    )
 
-  const appCandidates = useMemo<ComposerAppMentionCandidate[]>(
-    () =>
-      apps.map(app => {
-        const pluginNames = app.pluginDisplayNames ?? []
-        return {
-          kind: 'app',
-          key: `app:${app.id}`,
-          title: displayAppName(app),
-          description: app.description ?? undefined,
-          metaLabel: pluginNames[0] ?? t('workbench.skill_scope_personal', 'Personal'),
-          testId: localSkillTestId(app.id),
-          enabled: app.isEnabled !== false && app.isAccessible !== false,
-          reference: appReference(app),
-          searchAliases: [app.id, app.name, app.description ?? '', ...pluginNames],
-          app,
-        }
-      }),
-    [apps, t]
+  const workspaceSearch = useWorkspaceMentionSearch(
+    activeMenu?.kind === 'mention' ? activeMenu.trigger.query : '',
+    workspaceTarget,
+    workspaceFileApi
   )
-
-  const skillCandidates = useMemo<ComposerSkillMentionCandidate[]>(() => {
-    return dedupedSkills.map(skill => {
-      const description = skill.short_description || skill.description || undefined
-      return {
-        kind: 'skill',
-        key: `skill:${skill.path}`,
-        title: displaySkillName(skill),
-        description,
-        metaLabel: displaySkillSource(skill, t),
-        testId: localSkillTestId(skill.name),
-        enabled: canSelectSkillForModel(skill, selectedModel),
-        reference: skillReference(skill),
-        searchAliases: [skill.name, skill.plugin_name ?? '', description ?? ''],
-        skill,
-      }
-    })
-  }, [dedupedSkills, selectedModel, t])
-
-  const mentionCandidates = useMemo(
-    () => [...skillCandidates, ...appCandidates],
-    [appCandidates, skillCandidates]
-  )
-
-  const filteredMentionCandidates = useMemo(() => {
-    const query = activeMenu?.kind === 'skill' ? activeMenu.trigger.query.trim().toLowerCase() : ''
-    if (!query) return mentionCandidates
-
-    return mentionCandidates.filter(candidate => {
-      const description = candidate.description || ''
-      return (
-        candidate.title.toLowerCase().includes(query) ||
-        description.toLowerCase().includes(query) ||
-        candidate.searchAliases.some(alias => alias.toLowerCase().includes(query))
-      )
-    })
-  }, [activeMenu, mentionCandidates])
 
   const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onSelectModel) && models.length > 0
   const openSlashModelMenu = useCallback(() => {
@@ -308,10 +237,43 @@ export function ComposerTextarea({
   }, [activeMenu, slashCommands, value])
 
   const showSkillMenu =
-    activeMenu?.kind === 'skill' && (Boolean(onListLocalSkills) || Boolean(onListLocalApps))
+    (activeMenu?.kind === 'skill' || activeMenu?.kind === 'mention') &&
+    (activeMenu.kind === 'mention' || Boolean(onListLocalSkills) || Boolean(onListLocalApps))
   const showSlashMenu = activeMenu?.kind === 'slash'
+  const mentionMenuRows = useMemo<MentionMenuRow[]>(() => {
+    if (!showSkillMenu) return []
+    if (activeMenu?.kind === 'skill') {
+      return filteredMentionCandidates.map(candidate => ({ kind: 'candidate', candidate }))
+    }
+    if (!activeMenu?.trigger.query.trim()) {
+      return [
+        { kind: 'files-action' },
+        ...(onSetGoal ? ([{ kind: 'goal-action' }] as MentionMenuRow[]) : []),
+        ...(!planModeActive && onSetPlanMode
+          ? ([{ kind: 'plan-action' }] as MentionMenuRow[])
+          : []),
+        ...filteredMentionCandidates.map(
+          candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
+        ),
+      ]
+    }
+    return [
+      ...filteredMentionCandidates.map(
+        candidate => ({ kind: 'candidate', candidate }) as MentionMenuRow
+      ),
+      ...workspaceSearch.matches.map(item => ({ kind: 'path', item }) as MentionMenuRow),
+    ]
+  }, [
+    activeMenu,
+    filteredMentionCandidates,
+    onSetGoal,
+    onSetPlanMode,
+    planModeActive,
+    showSkillMenu,
+    workspaceSearch.matches,
+  ])
   const activeOptionCount = showSkillMenu
-    ? filteredMentionCandidates.length
+    ? mentionMenuRows.length
     : showSlashMenu
       ? filteredSlashCommands.length
       : 0
@@ -455,6 +417,7 @@ export function ComposerTextarea({
       if (!current) return
 
       const nextTrigger = chooseNearestTrigger([
+        findStandaloneTrigger(current.value, current.selectionOffset, '@', 'mention'),
         onListLocalSkills
           ? findStandaloneTrigger(current.value, current.selectionOffset, '$', 'skill')
           : null,
@@ -480,7 +443,12 @@ export function ComposerTextarea({
           setSelectedIndex(0)
           highlightedIndexRef.current = 0
         }
-        if (nextTrigger.kind === 'skill' || onListLocalSkills || onListLocalApps) {
+        if (
+          nextTrigger.kind === 'skill' ||
+          nextTrigger.kind === 'mention' ||
+          onListLocalSkills ||
+          onListLocalApps
+        ) {
           loadLocalMentions()
         }
       }
@@ -576,11 +544,92 @@ export function ComposerTextarea({
     ]
   )
 
+  const selectMentionMenuRow = useCallback(
+    (row: MentionMenuRow) => {
+      const trigger = activeMenuRef.current?.trigger
+      const editor = editorRef.current
+      if (!trigger || !editor) return false
+      if (row.kind === 'candidate') {
+        if (!row.candidate.enabled) return false
+        return selectMentionCandidate(row.candidate)
+      }
+
+      const snapshot = editor.getSnapshot()
+      if (row.kind === 'path') {
+        const path = resolveComposerWorkspacePath(row.item.root, row.item.path)
+        const reference = createComposerPathReference(path, row.item.matchType === 'directory')
+        const replacement = replaceComposerMentionTrigger(
+          snapshot.value,
+          reference,
+          trigger.start,
+          snapshot.selectionEnd
+        )
+        commitEditorValue(replacement.value, replacement.cursor)
+        closeAutocompleteMenu()
+        editor.focus()
+        return true
+      }
+
+      const nextValue =
+        snapshot.value.slice(0, trigger.start) + snapshot.value.slice(snapshot.selectionEnd)
+      commitEditorValue(nextValue, trigger.start)
+      closeAutocompleteMenu()
+      if (row.kind === 'goal-action') onSetGoal?.()
+      if (row.kind === 'plan-action') onSetPlanMode?.()
+      if (row.kind === 'files-action') {
+        void openNativeWorkspacePathPicker(workspaceTarget?.path)
+          .then(entries => {
+            if (entries.length === 0) return
+            const currentEditor = editorRef.current
+            if (!currentEditor) return
+            const references = entries
+              .map(entry => createComposerPathReference(entry.path, entry.isDirectory))
+              .join(' ')
+            const current = currentEditor.getSnapshot()
+            const spacer = current.value && current.selectionOffset > 0 ? ' ' : ''
+            const nextValue =
+              current.value.slice(0, current.selectionOffset) +
+              spacer +
+              references +
+              ' ' +
+              current.value.slice(current.selectionOffset)
+            commitEditorValue(
+              nextValue,
+              current.selectionOffset + spacer.length + references.length + 1
+            )
+            currentEditor.focus()
+          })
+          .catch(error => {
+            console.warn('[Wework composer] native workspace picker failed', error)
+          })
+      }
+      editor.focus()
+      return true
+    },
+    [
+      closeAutocompleteMenu,
+      commitEditorValue,
+      onSetGoal,
+      onSetPlanMode,
+      selectMentionCandidate,
+      workspaceTarget?.path,
+    ]
+  )
+
   const selectHighlightedMention = useCallback(() => {
-    const candidate = filteredMentionCandidates[highlightedIndexRef.current]
-    if (!candidate || !candidate.enabled) return false
-    return selectMentionCandidate(candidate)
-  }, [filteredMentionCandidates, selectMentionCandidate])
+    const row = mentionMenuRows[highlightedIndexRef.current]
+    return row ? selectMentionMenuRow(row) : false
+  }, [mentionMenuRows, selectMentionMenuRow])
+
+  const handleMentionRowClick = useCallback(
+    (index: number) => {
+      const row = mentionMenuRows[index]
+      if (!row) return
+      setSelectedIndex(index)
+      selectMentionMenuRow(row)
+    },
+    [mentionMenuRows, selectMentionMenuRow]
+  )
 
   const selectHighlightedSlashCommand = useCallback(() => {
     const editor = editorRef.current
@@ -865,6 +914,7 @@ export function ComposerTextarea({
   return (
     <div className="relative min-w-0 flex-1 w-full">
       <ComposerProseMirrorEditor
+        key="composer-editor-path-casing-v2"
         ref={editorRef}
         value={value}
         onChange={nextValue => {
@@ -890,88 +940,19 @@ export function ComposerTextarea({
         className={className}
       />
       {showSkillMenu && (
-        <div
-          ref={menuRef}
-          data-testid="local-skill-autocomplete"
-          role="listbox"
-          className={[
-            'absolute bottom-[calc(100%+0.5rem)] z-popover max-h-64 overflow-y-auto rounded-xl border border-border bg-background px-1.5 py-1.5 text-text-primary shadow-[0_12px_34px_rgba(0,0,0,0.12)]',
-            skillMenuClassName,
-          ].join(' ')}
-        >
-          <div className="px-2 pb-1 pt-0.5 text-xs font-normal leading-4 text-text-muted">
-            {t('workbench.local_skills', '技能')}
-          </div>
-          {isMentionLoading ? (
-            <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
-              {t('workbench.loading_local_skills')}
-            </div>
-          ) : hasMentionLoadError ? (
-            <button
-              type="button"
-              data-testid="local-skill-load-error"
-              className="flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-5 text-text-muted hover:bg-muted"
-              onClick={() => loadLocalMentions({ force: true })}
-            >
-              <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-              <span className="min-w-0 flex-1 truncate">{t('workbench.local_skills_error')}</span>
-              <span
-                data-testid="local-skill-retry-label"
-                className="shrink-0 text-xs font-medium leading-5 text-text-secondary"
-              >
-                {t('workbench.retry_local_skills')}
-              </span>
-            </button>
-          ) : filteredMentionCandidates.length === 0 ? (
-            <div className="px-2.5 py-2 text-[13px] leading-[18px] text-text-muted">
-              {t('workbench.no_local_skills')}
-            </div>
-          ) : (
-            filteredMentionCandidates.map((candidate, index) => (
-              <button
-                key={candidate.key}
-                type="button"
-                data-testid={`${candidate.kind === 'app' ? 'local-app' : 'local-skill'}-option-${candidate.testId}`}
-                aria-selected={index === highlightedIndex}
-                role="option"
-                disabled={!candidate.enabled}
-                aria-disabled={!candidate.enabled}
-                onMouseEnter={() => {
-                  if (candidate.enabled) setSelectedIndex(index)
-                }}
-                onPointerEnter={() => {
-                  if (candidate.enabled) setSelectedIndex(index)
-                }}
-                onClick={() => {
-                  // eslint-disable-next-line react-hooks/refs -- refs are read when the click handler runs.
-                  if (candidate.enabled) selectMentionCandidate(candidate)
-                }}
-                className={[
-                  'flex h-8 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent',
-                  index === highlightedIndex ? 'bg-muted' : '',
-                ].join(' ')}
-              >
-                <Package className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
-                <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                  <span className="shrink-0 truncate text-[13px] font-medium leading-5 text-text-primary">
-                    {candidate.title}
-                  </span>
-                  {candidate.description && (
-                    <span className="min-w-0 truncate text-[13px] font-normal leading-5 text-text-muted">
-                      {candidate.description}
-                    </span>
-                  )}
-                </span>
-                <span
-                  data-testid={`local-skill-source-${candidate.testId}`}
-                  className="shrink-0 text-xs leading-5 text-text-muted"
-                >
-                  {candidate.metaLabel}
-                </span>
-              </button>
-            ))
-          )}
-        </div>
+        <ComposerMentionMenu
+          menuRef={menuRef}
+          rows={mentionMenuRows}
+          selectedIndex={highlightedIndex}
+          className={skillMenuClassName}
+          mentionMode={activeMenu?.kind === 'mention'}
+          loading={isMentionLoading || workspaceSearch.loading}
+          error={hasMentionLoadError || workspaceSearch.error}
+          canBrowseFiles={canPickNativeWorkspacePaths}
+          onRetry={() => loadLocalMentions({ force: true })}
+          onHighlight={setSelectedIndex}
+          onSelect={handleMentionRowClick}
+        />
       )}
       {showSlashMenu && (
         <div ref={menuRef}>

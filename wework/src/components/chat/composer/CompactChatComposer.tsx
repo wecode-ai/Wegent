@@ -19,7 +19,7 @@ import type {
   ModelOptions,
   UnifiedModel,
 } from '@/types/api'
-import type { CodeCommentContext } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { AttachmentBadges } from './AttachmentBadges'
 import { ComposerTextarea, type ComposerSubmitOptions } from './ComposerTextarea'
 import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
@@ -39,6 +39,8 @@ interface CompactChatComposerProps {
   attachmentErrors?: Map<string, string>
   onFileSelect?: (files: File | File[]) => void
   onOpenSkillFile?: (path: string) => void
+  workspaceTarget?: WorkspaceTarget | null
+  workspaceFileApi?: WorkspaceFileApi
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -72,6 +74,8 @@ export function CompactChatComposer({
   attachmentErrors = new Map(),
   onFileSelect,
   onOpenSkillFile,
+  workspaceTarget,
+  workspaceFileApi,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -234,6 +238,8 @@ export function CompactChatComposer({
             rows={1}
             onPasteFiles={files => onFileSelect?.(files)}
             onOpenSkillFile={onOpenSkillFile}
+            workspaceTarget={workspaceTarget}
+            workspaceFileApi={workspaceFileApi}
             className="scrollbar-none max-h-32 min-h-6 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-[14px] text-sm leading-5 text-text-secondary outline-none placeholder:text-text-muted"
             skillMenuClassName="left-[-1rem] right-[-3.5rem]"
             onListLocalSkills={onListLocalSkills}
@@ -363,6 +369,8 @@ export function CompactChatComposer({
               rows={8}
               onPasteFiles={files => onFileSelect?.(files)}
               onOpenSkillFile={onOpenSkillFile}
+              workspaceTarget={workspaceTarget}
+              workspaceFileApi={workspaceFileApi}
               className="h-full w-full overflow-y-auto rounded-2xl border border-border bg-background px-4 pb-4 pt-14 text-base leading-7 text-text-secondary outline-none"
               skillMenuClassName="left-4 right-4 bottom-[calc(100%+0.5rem)]"
               onListLocalSkills={onListLocalSkills}

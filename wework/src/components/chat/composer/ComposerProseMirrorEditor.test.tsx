@@ -56,6 +56,14 @@ describe('ComposerProseMirrorEditor', () => {
     expect(mention?.type.spec.selectable).toBe(false)
   })
 
+  test('renders path labels with the original filesystem casing', () => {
+    renderEditor('[$backend](folder://%2Fworkspace%2Fbackend) ')
+
+    const chip = screen.getByTestId('composer-path-chip-backend')
+    expect(chip).toHaveTextContent('backend')
+    expect(chip).toHaveAttribute('data-composer-skill-label', 'backend')
+  })
+
   test('serializes copied skill selections back to their markdown references', () => {
     const value = `before ${GMAIL_REFERENCE} after`
     const doc = createComposerDocument(value)

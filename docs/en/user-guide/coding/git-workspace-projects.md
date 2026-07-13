@@ -66,6 +66,14 @@ The worktree ID is the task ID. The task stores `git_worktree` as the execution 
 
 “New worktree” is available only for new conversations in projects bound to a local execution device, local directory, and a directory that is currently a Git repository. Existing tasks lock the execution directory so a task cannot switch workspaces midway. If the directory is not currently a Git repository, the composer still shows “Local mode”, but it does not show “New worktree” or the source branch selector. After the user manually turns that directory into a Git repository, no project configuration change is needed before selecting a new worktree again.
 
+## Reference Files, Folders, and Capabilities in the Composer
+
+Type `@` in the Wework composer to open the add menu. The menu can set a goal, enable plan mode, or reference skills and apps available to the selected model. Continue typing after `@` to search files and folders in the current task workspace. Selecting a result turns it into a blue tag that preserves the original casing of its file name and path.
+
+Select **Files and folders** to open the native system picker. The macOS desktop app supports selecting multiple files and folders at once, and each selected path becomes its own blue tag. When the message is sent, Wework restores each tag to its real path for Codex, so the reference both identifies the intended context and lets Codex read the full content when needed. Removing a tag does not delete the file from disk.
+
+Workspace search is restricted to the execution directory bound to the current task or project. The native picker can reference local paths outside that workspace, but those paths are useful only to a local execution device that can access them; remote and cloud tasks cannot rely on paths from the user's computer. Previously sent path references remain visible in message history.
+
 ## Commit and Push Changes
 
 In desktop Wework, open **Environment info** in the upper-right corner, then select **Commit or push** to run one of these actions in the current task or project's actual workspace directory:

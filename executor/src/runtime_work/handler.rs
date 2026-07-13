@@ -258,6 +258,7 @@ pub struct RuntimeWorkRpcHandler {
     thread_list_cache: CodexThreadListCache,
     worktrees: WorktreeManager,
     worktree_cleanup_generation: Arc<AtomicU64>,
+    opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 struct ActiveTurnCancellation {
@@ -316,6 +317,7 @@ impl RuntimeWorkRpcHandler {
             thread_list_cache: CodexThreadListCache::default(),
             worktrees: WorktreeManager::from_env(),
             worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
+            opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
         };
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
@@ -389,6 +391,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.workspaces.open" => self.open_workspace(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
+            "runtime.workspace.search" => self.search_workspace(payload).await,
             "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
             "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
             "runtime.sidebar.projects.appearance" => {
@@ -401,6 +404,96 @@ impl RuntimeWorkRpcHandler {
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
         }
+    }
+
+    async fn search_workspace(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let root = string_field(&payload, "root")
+            .ok_or_else(|| AppIpcError::new("bad_request", "root is required"))?;
+        let query = string_field(&payload, "query").unwrap_or_default();
+        if query.trim().is_empty() {
+            return Ok(json!({ "files": [] }));
+        }
+
+        let root = fs::canonicalize(&root)
+            .map_err(|error| AppIpcError::new("invalid_workspace_root", error.to_string()))?;
+        if !root.is_dir() {
+            return Err(AppIpcError::new(
+                "invalid_workspace_root",
+                "Workspace search root is not a directory",
+            ));
+        }
+        if !self.workspace_search_root_is_allowed(&root) {
+            return Err(AppIpcError::new(
+                "invalid_workspace_root",
+                "Workspace search root has not been opened",
+            ));
+        }
+
+        let cancellation_token = string_field(&payload, "cancellationToken")
+            .or_else(|| string_field(&payload, "cancellation_token"));
+        let response = self
+            .codex_app_server
+            .request(
+                "fuzzyFileSearch",
+                json!({
+                    "query": query,
+                    "roots": [root.to_string_lossy()],
+                    "cancellationToken": cancellation_token,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("workspace_search_failed", error))?;
+        let files = response
+            .get("files")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| {
+                        json!({
+                            "root": item.get("root").cloned().unwrap_or(Value::Null),
+                            "path": item.get("path").cloned().unwrap_or(Value::Null),
+                            "fileName": item.get("file_name").cloned().unwrap_or(Value::Null),
+                            "matchType": item.get("match_type").cloned().unwrap_or(Value::Null),
+                            "score": item.get("score").cloned().unwrap_or(Value::Null),
+                            "indices": item.get("indices").cloned().unwrap_or(Value::Null),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        Ok(json!({ "files": files }))
+    }
+
+    fn workspace_search_root_is_allowed(&self, root: &Path) -> bool {
+        if self
+            .opened_workspace_roots
+            .lock()
+            .map(|roots| {
+                roots
+                    .iter()
+                    .any(|allowed| root == allowed || root.starts_with(allowed))
+            })
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        let project_index = CodexGlobalProjectIndex::load();
+        let project_paths = project_index
+            .projects()
+            .iter()
+            .map(|project| project.workspace_path.as_str());
+        let task_paths = self
+            .store
+            .list_task_summaries(true)
+            .into_iter()
+            .map(|task| task.workspace_path)
+            .collect::<Vec<_>>();
+
+        project_paths
+            .chain(task_paths.iter().map(String::as_str))
+            .filter_map(|path| fs::canonicalize(path).ok())
+            .any(|allowed| root == allowed || root.starts_with(&allowed))
     }
 
     async fn get_worktree_settings(&self) -> Result<Value, AppIpcError> {
@@ -2307,8 +2400,23 @@ impl RuntimeWorkRpcHandler {
         let workspace_path = workspace_path(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
         let label = string_field(&payload, "label").or_else(|| string_field(&payload, "name"));
-        let project = open_codex_global_project(&workspace_path, label.as_deref())
-            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        let canonical = fs::canonicalize(&workspace_path).ok();
+        if let Some(canonical) = canonical.as_ref() {
+            if let Ok(mut roots) = self.opened_workspace_roots.lock() {
+                roots.insert(canonical.clone());
+            }
+        }
+        let project = match open_codex_global_project(&workspace_path, label.as_deref()) {
+            Ok(project) => project,
+            Err(error) => {
+                if let Some(canonical) = canonical.as_ref() {
+                    if let Ok(mut roots) = self.opened_workspace_roots.lock() {
+                        roots.remove(canonical);
+                    }
+                }
+                return Err(AppIpcError::new("codex_global_state_error", error));
+            }
+        };
 
         Ok(json!({
             "success": true,
@@ -2359,6 +2467,11 @@ impl RuntimeWorkRpcHandler {
         let workspace_path =
             remove_codex_global_project(project_key.as_deref(), &workspace_path)
                 .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        if let Ok(canonical) = fs::canonicalize(&workspace_path) {
+            if let Ok(mut roots) = self.opened_workspace_roots.lock() {
+                roots.remove(&canonical);
+            }
+        }
 
         Ok(json!({
             "success": true,

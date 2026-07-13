@@ -78,6 +78,8 @@ from app.schemas.runtime_work import (
     RuntimeWorkspaceOpenResponse,
     RuntimeWorkspaceRemoveRequest,
     RuntimeWorkspaceRenameRequest,
+    RuntimeWorkspaceSearchRequest,
+    RuntimeWorkspaceSearchResponse,
 )
 from app.schemas.turn_file_changes import TurnFileChangesSummary
 from app.services.device.command_service import execute_configured_device_command
@@ -1239,6 +1241,38 @@ async def remove_runtime_workspace(
         device_id=device_id,
         workspace_path=workspace_path,
     )
+
+
+async def search_runtime_workspace(
+    *,
+    db: Session,
+    user_id: int,
+    request: RuntimeWorkspaceSearchRequest,
+) -> RuntimeWorkspaceSearchResponse:
+    """Search one workspace through its owning online local executor."""
+
+    device_id = request.device_id.strip()
+    _ensure_owned_device(db, user_id, device_id)
+    payload: dict[str, Any] = {
+        "root": normalize_workspace_path(request.root),
+        "query": request.query.strip(),
+    }
+    if request.cancellation_token:
+        payload["cancellationToken"] = request.cancellation_token
+    try:
+        result = await runtime_rpc_service.call(
+            user_id=user_id,
+            device_id=device_id,
+            method="runtime.workspace.search",
+            payload=payload,
+            timeout_seconds=RUNTIME_SEARCH_TIMEOUT_SECONDS,
+        )
+    except RuntimeRpcError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+    return RuntimeWorkspaceSearchResponse.model_validate(result)
 
 
 async def fork_runtime_task(

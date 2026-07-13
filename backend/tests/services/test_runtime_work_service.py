@@ -2125,6 +2125,61 @@ async def test_open_runtime_workspace_dispatches_to_owned_device_without_task_ro
 
 
 @pytest.mark.asyncio
+async def test_search_runtime_workspace_dispatches_to_owned_device(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeWorkspaceSearchRequest
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "files": [
+                {
+                    "root": "/repo/Wegent",
+                    "path": "frontend/src/auth.ts",
+                    "fileName": "auth.ts",
+                    "matchType": "file",
+                    "score": 91,
+                    "indices": [0, 1, 2, 3],
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.search_runtime_workspace(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeWorkspaceSearchRequest(
+            deviceId="device-1",
+            root="/repo/Wegent/",
+            query="auth",
+            cancellationToken="composer-1",
+        ),
+    )
+
+    assert response.files[0].file_name == "auth.ts"
+    rpc.assert_awaited_once_with(
+        user_id=test_user.id,
+        device_id="device-1",
+        method="runtime.workspace.search",
+        payload={
+            "root": "/repo/Wegent",
+            "query": "auth",
+            "cancellationToken": "composer-1",
+        },
+        timeout_seconds=30,
+    )
+
+
+@pytest.mark.asyncio
 async def test_rename_runtime_workspace_dispatches_to_owned_device(
     test_db,
     test_user,

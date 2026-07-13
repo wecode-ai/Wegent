@@ -395,6 +395,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const runtimeTaskTitle = truncateRuntimeTaskTitle(
     findRuntimeTask(runtimeWork, currentRuntimeTask)?.title
   )
+  const runtimeTaskWorkspacePath = useMemo(() => {
+    if (!runtimeWork || !currentRuntimeTask) return null
+    const workspaces = [
+      ...runtimeWork.chats,
+      ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+    ]
+    const matches = workspaces.filter(workspace =>
+      workspace.tasks.some(task => task.taskId === currentRuntimeTask.taskId)
+    )
+    return (
+      matches.find(workspace => workspace.deviceId === currentRuntimeTask.deviceId)
+        ?.workspacePath ?? (matches.length === 1 ? matches[0].workspacePath : null)
+    )
+  }, [currentRuntimeTask, runtimeWork])
   const [rightPanelOpen, setRightPanelOpen] = useState(
     () => initialBlankBrowserMigration?.rightPanelOpen ?? false
   )
@@ -504,6 +518,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       currentProject,
       standaloneDeviceId: paneProjectWork.currentStandaloneDeviceId,
     })
+  const soleActiveDeviceWorkspacePath = useMemo(() => {
+    if (!runtimeWork || !activeDeviceId) return null
+    const workspaces = [
+      ...runtimeWork.chats,
+      ...runtimeWork.projects.flatMap(project => project.deviceWorkspaces),
+    ]
+    const matches = workspaces.filter(workspace => workspace.deviceId === activeDeviceId)
+    return matches.length === 1
+      ? matches[0].workspacePath
+      : workspaces.length === 1
+        ? workspaces[0].workspacePath
+        : null
+  }, [activeDeviceId, runtimeWork])
   const standaloneRootWorkspaceTarget = useMemo(
     () =>
       !workspaceProject && !workspaceTarget && activeDeviceId
@@ -517,6 +544,29 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [activeDeviceId, workspaceProject, workspaceTarget]
   )
   const effectiveWorkspaceTarget = workspaceTarget ?? standaloneRootWorkspaceTarget
+  const composerWorkspaceTarget =
+    workspaceTarget ??
+    (activeDeviceId && state.standaloneWorkspacePath
+      ? {
+          deviceId: activeDeviceId,
+          path: state.standaloneWorkspacePath,
+          source: 'runtime' as const,
+        }
+      : null) ??
+    (activeDeviceId && soleActiveDeviceWorkspacePath
+      ? {
+          deviceId: activeDeviceId,
+          path: soleActiveDeviceWorkspacePath,
+          source: 'runtime' as const,
+        }
+      : null) ??
+    (currentRuntimeTask && (currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath)
+      ? {
+          deviceId: currentRuntimeTask.deviceId,
+          path: currentRuntimeTask.workspacePath || runtimeTaskWorkspacePath!,
+          source: 'runtime' as const,
+        }
+      : null)
   const fileWorkspaceTarget = openFileRequest?.target ?? effectiveWorkspaceTarget
   const canBrowseFiles = Boolean(workspaceProject || openFileRequest?.target)
   const workspaceTargetDevice = effectiveWorkspaceTarget?.deviceId
@@ -1523,6 +1573,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                             onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
                             onClearCodeComments={paneSession.clearCodeComments}
                             onOpenSkillFile={openLocalSkillFile}
+                            workspaceTarget={composerWorkspaceTarget}
+                            workspaceFileApi={workspaceFileApi}
                           />
                         )}
                       </div>
@@ -1634,6 +1686,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                     onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
                     onClearCodeComments={paneSession.clearCodeComments}
                     onOpenSkillFile={openLocalSkillFile}
+                    workspaceTarget={composerWorkspaceTarget}
+                    workspaceFileApi={workspaceFileApi}
                   />
                 </>
               }

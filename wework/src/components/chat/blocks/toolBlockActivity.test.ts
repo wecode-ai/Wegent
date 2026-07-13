@@ -129,6 +129,12 @@ describe('toolBlockActivity', () => {
         )
       )
     ).toEqual(['wework/src/components/chat/blocks/toolBlockKinds.ts'])
+
+    expect(
+      getToolActivityFilePaths(
+        tool('sed-multiline', "sed -n '1222,1245p' Cargo.toml\nsed -n '1940,1955p' Cargo.toml")
+      )
+    ).toEqual(['Cargo.toml'])
   })
 
   test('extracts code search summaries from shell search commands', () => {

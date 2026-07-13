@@ -105,6 +105,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     createDeviceDirectory: onCreateDeviceDirectory,
     refreshWorkLists: onRefreshWorkLists,
     services,
+    workspaceFileApi,
   } = useWorkbenchPaneContext()
   const { t } = useTranslation('common')
   const activeItem = 'chat'
@@ -153,7 +154,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
       })
     : t('workbench.empty_title', '我们该做什么？')
   const baseProjectWork = useWorkbenchProjectWorkControls({ pane })
-  const { projectWork: effectiveProjectWork } = useWorkbenchPaneEnvironment({
+  const { projectWork: effectiveProjectWork, workspaceTarget } = useWorkbenchPaneEnvironment({
     pane,
     projectWork: baseProjectWork,
   })
@@ -393,6 +394,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
                     projectChat={projectChatWithModelSelectorSignal}
                     projectWork={effectiveProjectWork}
+                    workspaceTarget={workspaceTarget}
+                    workspaceFileApi={workspaceFileApi}
                     queuedMessages={paneQueuedMessages}
                     guidanceMessages={paneGuidanceMessages}
                     codeComments={paneSession.codeCommentContexts}
@@ -489,6 +492,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={effectiveProjectWork}
+                workspaceTarget={workspaceTarget}
+                workspaceFileApi={workspaceFileApi}
                 queuedMessages={paneQueuedMessages}
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}

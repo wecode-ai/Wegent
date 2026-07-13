@@ -32,6 +32,12 @@ export interface WorkspaceFileChunkResponse {
 
 export interface WorkspaceFileApi {
   listWorkspaceEntries: (deviceId: string, path: string) => Promise<WorkspaceTreeResponse>
+  searchWorkspaceEntries?: (
+    deviceId: string,
+    root: string,
+    query: string,
+    cancellationToken?: string
+  ) => Promise<import('./api').RuntimeWorkspaceSearchResponse>
   readWorkspaceTextFile: (deviceId: string, filePath: string) => Promise<WorkspaceTextFileResponse>
   readWorkspaceFileChunk?: (
     deviceId: string,
