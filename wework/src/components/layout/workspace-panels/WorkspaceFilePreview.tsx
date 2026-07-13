@@ -5,7 +5,7 @@ import engineeringRenderers from '@file-viewer/preset-engineering'
 import officeRenderers from '@file-viewer/preset-office'
 import liteRenderers from '@file-viewer/preset-lite'
 import { MessageSquare } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
@@ -120,7 +120,13 @@ function fileViewerTypeFromMime(mimeType: string): string | undefined {
   return FILE_VIEWER_TYPE_BY_MIME[mimeType.split(';', 1)[0].trim().toLowerCase()]
 }
 
-function WorkspaceBinaryFilePreview({
+const WORKSPACE_FILE_VIEWER_OPTIONS = {
+  preset: [officeRenderers, liteRenderers, engineeringRenderers],
+  spreadsheet: { worker: false },
+  theme: 'light' as const,
+}
+
+const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   file,
 }: {
   file: NonNullable<WorkspaceFilePreviewProps['binaryFile']>
@@ -143,15 +149,11 @@ function WorkspaceBinaryFilePreview({
         type={fileViewerTypeFromMime(file.file.type)}
         size={file.size}
         className="h-full w-full"
-        options={{
-          preset: [officeRenderers, liteRenderers, engineeringRenderers],
-          spreadsheet: { worker: false },
-          theme: 'light',
-        }}
+        options={WORKSPACE_FILE_VIEWER_OPTIONS}
       />
     </section>
   )
-}
+})
 
 interface SelectionState {
   filePath: string
