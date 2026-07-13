@@ -44,9 +44,26 @@ class OldTaskIdsExecutor:
         return {
             "status": "success",
             "pods": [
-                {"task_id": "100", "pod_name": "wegent-task-100-aaa"},
-                {"task_id": "200", "pod_name": "wegent-task-200-bbb"},
-                {"task_id": None, "pod_name": "sandbox-unlabeled-ccc"},
+                {
+                    "task_id": "100",
+                    "pod_name": "wegent-task-100-aaa",
+                    "runtime_type": "executor",
+                },
+                {
+                    "task_id": "200",
+                    "pod_name": "wegent-task-200-bbb",
+                    "runtime_type": "executor",
+                },
+                {
+                    "task_id": None,
+                    "pod_name": "sandbox-unlabeled-ccc",
+                    "runtime_type": "sandbox",
+                },
+                {
+                    "task_id": "300",
+                    "pod_name": "sandbox-300-xyz",
+                    "runtime_type": "sandbox",
+                },
             ],
         }
 
@@ -170,10 +187,13 @@ async def test_get_old_task_ids_returns_pods(mocker):
     )
 
     assert result["status"] == "success"
-    assert len(result["pods"]) == 3
+    assert len(result["pods"]) == 4
     assert result["pods"][0]["task_id"] == "100"
     assert result["pods"][0]["pod_name"] == "wegent-task-100-aaa"
+    assert result["pods"][0]["runtime_type"] == "executor"
     assert result["pods"][2]["task_id"] is None
+    assert result["pods"][2]["runtime_type"] == "sandbox"
+    assert result["pods"][3]["runtime_type"] == "sandbox"
 
 
 @pytest.mark.asyncio

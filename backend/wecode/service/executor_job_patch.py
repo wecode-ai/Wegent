@@ -126,6 +126,69 @@ async def _cleanup_orphan_pod(
     }
 
 
+async def _cleanup_orphan_sandbox(
+    self,
+    *,
+    task_id: int,
+    pod_name: str,
+) -> Dict[str, object]:
+    """Clean up a single orphan sandbox pod, archiving before deletion.
+
+    Routes to executor_manager's sandbox cleanup-by-task endpoint which
+    archives the sandbox workspace (best-effort) before terminating it,
+    mirroring the normal stale sandbox cleanup path. Archiving succeeds when
+    the sandbox metadata still exists; the pod is deleted regardless.
+    """
+    ek_service = _executor_job_mod.executor_kinds_service
+    try:
+        result = await ek_service.cleanup_sandbox_by_task_id_async(
+            task_id, archive_before_delete=True
+        )
+    except Exception as exc:
+        logger.warning(
+            "+++ [executor_job] Failed to clean up orphan sandbox "
+            "task_id=%s pod_name=%s error=%s",
+            task_id,
+            pod_name,
+            exc,
+        )
+        return {
+            "task_id": task_id,
+            "pod_name": pod_name,
+            "deleted": False,
+            "skipped": False,
+            "reason": "sandbox_cleanup_failed",
+        }
+
+    deleted = bool(result.get("deleted") or result.get("redis_cleared"))
+    logger.info(
+        "+++ [executor_job] Orphan sandbox cleanup task_id=%s pod_name=%s "
+        "archived=%s deleted=%s reason=%s",
+        task_id,
+        pod_name,
+        result.get("archived"),
+        deleted,
+        result.get("reason"),
+    )
+    if deleted:
+        return {
+            "task_id": task_id,
+            "pod_name": pod_name,
+            "deleted": True,
+            "skipped": False,
+            "reason": result.get("reason", "sandbox_deleted"),
+            "archived": result.get("archived", False),
+        }
+    return {
+        "task_id": task_id,
+        "pod_name": pod_name,
+        "deleted": False,
+        "skipped": True,
+        "reason": result.get("reason", "sandbox_cleanup_skipped"),
+        "archived": result.get("archived", False),
+    }
+
+
 async def cleanup_orphan_pods(
     self,
     db,
@@ -177,6 +240,7 @@ async def cleanup_orphan_pods(
     for pod_info in old_pods:
         pod_name: str = pod_info.get("pod_name", "")
         task_id_str: Optional[str] = pod_info.get("task_id")
+        runtime_type: Optional[str] = pod_info.get("runtime_type")
 
         if not pod_name or not task_id_str:
             logger.warning(
@@ -225,12 +289,18 @@ async def cleanup_orphan_pods(
             continue
 
         try:
-            cleanup_result = await self._cleanup_orphan_pod(
-                task_id=task_id,
-                pod_name=pod_name,
-                inactive_hours=stale_hours,
-                db=db,
-            )
+            if runtime_type == "sandbox":
+                cleanup_result = await self._cleanup_orphan_sandbox(
+                    task_id=task_id,
+                    pod_name=pod_name,
+                )
+            else:
+                cleanup_result = await self._cleanup_orphan_pod(
+                    task_id=task_id,
+                    pod_name=pod_name,
+                    inactive_hours=stale_hours,
+                    db=db,
+                )
         except HTTPException as exc:
             logger.error(
                 "+++ [executor_job] HTTPException cleaning orphan pod "
@@ -391,6 +461,7 @@ def apply_patch():
     _original_cleanup_stale_task_executor = JobService.cleanup_stale_task_executor
 
     JobService._cleanup_orphan_pod = _cleanup_orphan_pod
+    JobService._cleanup_orphan_sandbox = _cleanup_orphan_sandbox
     JobService.cleanup_orphan_pods = cleanup_orphan_pods
     JobService.cleanup_stale_task_executor = _cleanup_stale_task_executor_wecode
 

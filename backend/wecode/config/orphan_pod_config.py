@@ -20,6 +20,10 @@ EXECUTOR_OLD_TASK_IDS_URL = os.getenv(
     "EXECUTOR_OLD_TASK_IDS_URL",
     f"{_EXECUTOR_MANAGER_BASE}/executor-manager/executor/old-task-ids",
 )
+EXECUTOR_SANDBOX_CLEANUP_BY_TASK_URL = os.getenv(
+    "EXECUTOR_SANDBOX_CLEANUP_BY_TASK_URL",
+    f"{_EXECUTOR_MANAGER_BASE}/executor-manager/sandboxes/cleanup-by-task",
+)
 ORPHAN_POD_CLEANUP_ENABLED = (
     os.getenv("ORPHAN_POD_CLEANUP_ENABLED", "true").lower() == "true"
 )

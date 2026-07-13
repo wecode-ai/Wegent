@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -801,3 +801,157 @@ async def test_mark_orphan_cleanup_ran_writes_timestamp():
     value_arg = redis_client.set.call_args.args[1]
     assert key_arg == ORPHAN_POD_CLEANUP_LAST_RUN_KEY
     assert float(value_arg) == pytest.approx(datetime.now().timestamp(), abs=5)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_sandbox_deletes_and_archives():
+    """Sandbox cleanup delegates to cleanup_sandbox_by_task_id_async."""
+    job_service_instance = JobService(Mock())
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as ek_service:
+        ek_service.cleanup_sandbox_by_task_id_async = AsyncMock(
+            return_value={
+                "deleted": True,
+                "redis_cleared": True,
+                "archived": True,
+                "reason": "sandbox_deleted",
+            }
+        )
+
+        result = await job_service_instance._cleanup_orphan_sandbox(
+            task_id=5000,
+            pod_name="sandbox-5000-abc",
+        )
+
+    assert result["deleted"] is True
+    assert result["skipped"] is False
+    assert result["reason"] == "sandbox_deleted"
+    assert result["archived"] is True
+    ek_service.cleanup_sandbox_by_task_id_async.assert_awaited_once_with(
+        5000, archive_before_delete=True
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_sandbox_failed():
+    """When cleanup_sandbox_by_task_id_async raises, return sandbox_cleanup_failed."""
+    job_service_instance = JobService(Mock())
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as ek_service:
+        ek_service.cleanup_sandbox_by_task_id_async = AsyncMock(
+            side_effect=Exception("executor_manager unreachable")
+        )
+
+        result = await job_service_instance._cleanup_orphan_sandbox(
+            task_id=5001,
+            pod_name="sandbox-5001-xyz",
+        )
+
+    assert result["deleted"] is False
+    assert result["skipped"] is False
+    assert result["reason"] == "sandbox_cleanup_failed"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_sandbox_not_deleted():
+    """When sandbox cleanup result does not indicate deletion, it's skipped."""
+    job_service_instance = JobService(Mock())
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as ek_service:
+        ek_service.cleanup_sandbox_by_task_id_async = AsyncMock(
+            return_value={
+                "deleted": False,
+                "redis_cleared": False,
+                "archived": False,
+                "reason": "sandbox_not_found",
+            }
+        )
+
+        result = await job_service_instance._cleanup_orphan_sandbox(
+            task_id=5002,
+            pod_name="sandbox-5002-zzz",
+        )
+
+    assert result["deleted"] is False
+    assert result["skipped"] is True
+    assert result["reason"] == "sandbox_not_found"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_orphan_pods_routes_sandbox_to_cleanup_orphan_sandbox():
+    """Sandbox pods (runtime_type='sandbox') route to _cleanup_orphan_sandbox."""
+    job_service_instance = JobService(Mock())
+    old_pods = [
+        {
+            "task_id": "6001",
+            "pod_name": "sandbox-6001-abc",
+            "runtime_type": "sandbox",
+        },
+        {
+            "task_id": "6002",
+            "pod_name": "wegent-task-6002-xyz",
+            "runtime_type": "executor",
+        },
+    ]
+
+    with (
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as executor_service,
+        patch.object(
+            job_service_instance,
+            "_cleanup_orphan_sandbox",
+            new_callable=AsyncMock,
+            return_value={
+                "task_id": 6001,
+                "pod_name": "sandbox-6001-abc",
+                "deleted": True,
+                "skipped": False,
+                "reason": "sandbox_deleted",
+                "archived": True,
+            },
+        ) as mock_sandbox_cleanup,
+        patch.object(
+            job_service_instance,
+            "_cleanup_orphan_pod",
+            new_callable=AsyncMock,
+            return_value={
+                "task_id": 6002,
+                "pod_name": "wegent-task-6002-xyz",
+                "deleted": True,
+                "skipped": False,
+                "reason": "pod_deleted",
+            },
+        ) as mock_pod_cleanup,
+    ):
+        executor_service.get_old_pods_async = AsyncMock(return_value=old_pods)
+
+        result = await job_service_instance.cleanup_orphan_pods(
+            AsyncMock(spec=AsyncSession), older_than_hours=48
+        )
+
+    assert result["total_scanned"] == 2
+    assert len(result["deleted"]) == 2
+
+    # sandbox pod -> _cleanup_orphan_sandbox
+    mock_sandbox_cleanup.assert_awaited_once_with(
+        task_id=6001,
+        pod_name="sandbox-6001-abc",
+    )
+    # executor pod -> _cleanup_orphan_pod
+    mock_pod_cleanup.assert_awaited_once_with(
+        task_id=6002,
+        pod_name="wegent-task-6002-xyz",
+        inactive_hours=24,
+        db=ANY,
+    )
