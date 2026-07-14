@@ -33,7 +33,7 @@ class InternalTableQueryRequest(BaseModel):
 
     provider: str = Field(description="Table provider (e.g., 'dingtalk')")
     base_id: str = Field(description="Table base ID")
-    sheetsheet_id_or_name: str = Field(description="Sheet ID or name")
+    sheet_id_or_name: str = Field(description="Sheet ID or name")
     user_name: str = Field(description="User name for access control")
     max_records: int = Field(default=100, description="Maximum records to return")
     filters: dict | None = Field(default=None, description="Query filters")
@@ -60,7 +60,7 @@ async def queryTable(request: InternalTableQueryRequest):
         query_request = TableQueryRequest(
             provider=request.provider,
             base_id=request.base_id,
-            sheet_id_or_name=request.sheetsheet_id_or_name,
+            sheet_id_or_name=request.sheet_id_or_name,
             user_name=request.user_name,
             max_records=request.max_records,
             filters=request.filters,
