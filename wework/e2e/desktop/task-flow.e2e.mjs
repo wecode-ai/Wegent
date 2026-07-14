@@ -140,6 +140,16 @@ async function sendPrompt(control, selector, prompt) {
   })
 }
 
+async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (predicate(snapshot)) return snapshot
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
 async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
   let lastError
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -819,6 +829,48 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+
+    phase = 'project-folder-remove-immediately'
+    const openedProjectSnapshot = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+      'The newly opened folder project was not shown in the sidebar'
+    )
+    const projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
+      testId.startsWith('project-menu-')
+    )
+    assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
+    const projectId = projectMenuTestId.slice('project-menu-'.length)
+    await control.command('click', `[data-testid="${projectMenuTestId}"]`)
+    await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+    await control.command(
+      'click',
+      `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+    )
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes(projectMenuTestId),
+      'A folder project could not be removed immediately after it was opened'
+    )
+
+    phase = 'project-folder-reopen'
+    await control.command('click', '[data-testid="projects-create-button"]')
+    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: workspacePath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await control.command('click', '[data-testid="confirm-device-folder-picker-button"]')
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid^="project-menu-"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+
     await selectE2EModel(control)
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
