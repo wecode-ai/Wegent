@@ -18,6 +18,7 @@ const defaultPreferences: AppPreferences = {
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
@@ -47,6 +48,7 @@ vi.mock('@/tauri/appPreferences', () => ({
     browserLocalLinkTarget: 'wework',
     browserDownloadDirectory: null,
     browserAskBeforeDownload: false,
+    appshotsPlaySound: true,
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,

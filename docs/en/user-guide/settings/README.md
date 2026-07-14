@@ -76,6 +76,8 @@ Desktop Wework settings can show archived Project and Conversation chats. Deleti
 
 Desktop Wework's **General** settings control the interface language, whether the main window is shown after launch, and whether the app keeps running after the main window is closed. When background running is enabled, closing the main window releases the main WebView resources without stopping running tasks. Users can click the system tray icon to reopen the main window.
 
+Desktop Wework's **Integrations → Appshots** settings show macOS Appshots status and sound preference. The default `⌘⇧2` shortcut captures the frontmost application window and adds the PNG snapshot to the current Wework composer.
+
 ### Wework Context Settings
 
 In desktop Wework, the left settings menu groups **General**, **Cloud connection**, **Appearance**, **Context**, **Models**, **Proxy**, **Keyboard shortcuts**, and **About** under **Personal**. On mobile, the settings home keeps a **Personal** entry; opening it provides General, Appearance, Context, Models, and About.
