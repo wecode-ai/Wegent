@@ -26,11 +26,22 @@ sidebar_position: 8
 3. 配置分块设置（可选）
 4. 点击 **上传**
 
-支持的格式：
-- `.txt` - 纯文本文件
-- `.md` - Markdown 文件
-- `.pdf` - PDF 文档
-- `.doc`, `.docx` - Word 文档
+支持的格式由后端配置下发到上传组件。默认支持：
+
+| 类型 | 格式 | 处理方式 |
+|------|------|----------|
+| **文档/演示/表格** | `.pdf`, `.doc`, `.docx`, `.ppt`, `.pptx`, `.xls`, `.xlsx` | 转换为 Markdown 后索引 |
+| **结构化文本** | `.epub`, `.eml`, `.html`, `.htm`, `.xml` | 在转换服务中本地转换为 Markdown |
+| **纯文本与 Markdown** | `.txt`, `.md`, `.markdown`, `.csv` | 直接索引 |
+| **代码与配置** | `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.vue`, `.css`, `.java`, `.go`, `.rs`, `.cpp`, `.c`, `.json`, `.yaml`, `.yml`, `.toml`, `.env`, `.conf`, `.log` 等 | 按文本内容直接索引 |
+| **思维导图** | `.xmind` | 使用内置解析能力索引 |
+| **图片/视频** | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, `.flv`, `.wmv`, `.m4v` | 仅在知识库多模态分析启用时可上传 |
+
+`.doc`、`.ppt`、`.xls` 属于旧版 Office 格式，需要转换服务所在环境安装 LibreOffice，系统会先转换为 `.docx`、`.pptx`、`.xlsx` 再继续处理。
+
+管理员可以通过 `KNOWLEDGE_UPLOAD_FILE_TYPES` 缩小允许上传的格式范围；未配置时使用系统默认格式注册表。
+
+如果环境中仍显式设置了旧的 `KNOWLEDGE_CONVERSION_FILE_TYPES`，请把 `.doc`、`.ppt`、`.xls`、`.epub`、`.eml`、`.html`、`.htm`、`.xml` 等新转换格式加入该配置，或清空该配置以使用默认转换注册表。
 
 ### 文本粘贴
 
@@ -81,6 +92,8 @@ sidebar_position: 8
 | **转换中** | 文档正在转换为 Markdown |
 | **索引中** | 文档正在进行 RAG 索引 |
 | **错误** | 索引失败 |
+
+如果文档长时间停留在 **待转换**，通常表示转换任务已排队但转换服务没有消费或回调失败。请检查 `knowledge_doc_converter` worker 是否运行、它连接的 Redis 队列是否与后端一致，并确认 `BACKEND_INTERNAL_TOKEN` 与后端的 `INTERNAL_SERVICE_TOKEN` 相同。
 
 ---
 

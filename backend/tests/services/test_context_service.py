@@ -10,6 +10,8 @@ Uses mocks to avoid database dependencies.
 """
 
 import importlib
+import io
+import zipfile
 from unittest.mock import Mock, patch
 
 import pytest
@@ -928,6 +930,45 @@ class TestContextStatusEnum:
 
 class TestContextServiceUpload:
     """Test attachment upload functionality"""
+
+    @staticmethod
+    def _minimal_epub_bytes() -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("mimetype", "application/epub+zip")
+            z.writestr("META-INF/container.xml", "<container />")
+        return buf.getvalue()
+
+    def test_knowledge_raw_validation_accepts_epub(self):
+        """Knowledge uploads use the KB format registry instead of chat parsers."""
+        from app.services.context.context_service import ContextService
+
+        service = ContextService()
+
+        extension, file_size, mime_type = service._validate_attachment_input(
+            "book.epub",
+            self._minimal_epub_bytes(),
+            parse_mode="knowledge_raw",
+        )
+
+        assert extension == ".epub"
+        assert file_size > 0
+        assert mime_type == "application/epub+zip"
+
+    def test_chat_validation_uses_plain_attachment_mime_for_epub(self):
+        """Default chat validation does not use the KB format registry."""
+        from app.services.context.context_service import ContextService
+
+        service = ContextService()
+
+        extension, file_size, mime_type = service._validate_attachment_input(
+            "book.epub",
+            self._minimal_epub_bytes(),
+        )
+
+        assert extension == ".epub"
+        assert file_size > 0
+        assert mime_type == "application/octet-stream"
 
     def test_upload_unsupported_file_type(self):
         """Test upload fails for binary files with unknown extensions via MIME detection"""

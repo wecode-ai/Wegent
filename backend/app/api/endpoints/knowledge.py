@@ -292,8 +292,30 @@ def get_knowledge_config():
     Returns system-level configuration for knowledge base features.
     This is used by frontend to determine which features are enabled.
     """
+    document_upload_extensions = settings.knowledge_upload_extensions(
+        include_multimodal=False
+    )
+    document_upload_extension_set = set(document_upload_extensions)
+    all_upload_extensions = settings.knowledge_upload_extensions(
+        include_multimodal=True
+    )
+    multimodal_upload_extensions = tuple(
+        extension
+        for extension in all_upload_extensions
+        if extension not in document_upload_extension_set
+    )
+
     return {
         "chunk_storage_enabled": settings.CHUNK_STORAGE_ENABLED,
+        "document_upload_accept": ",".join(
+            f".{extension}" for extension in document_upload_extensions
+        ),
+        "multimodal_upload_accept": ",".join(
+            f".{extension}" for extension in multimodal_upload_extensions
+        ),
+        "knowledge_upload_file_types_configured": bool(
+            settings.KNOWLEDGE_UPLOAD_FILE_TYPES.strip()
+        ),
     }
 
 

@@ -400,6 +400,9 @@ export async function resetKnowledgeBaseSummary(
  */
 export interface KnowledgeConfig {
   chunk_storage_enabled: boolean
+  document_upload_accept?: string
+  multimodal_upload_accept?: string
+  knowledge_upload_file_types_configured?: boolean
 }
 
 /**

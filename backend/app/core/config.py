@@ -43,6 +43,7 @@ class NoInterpolationDotEnvSettingsSource(DotEnvSettingsSource):
 
 
 VALID_RAG_RUNTIME_MODES = {"local", "remote"}
+_UPLOAD_FORMATS_ALL_MARKERS = {"*", "all", "default"}
 
 
 def _normalize_rag_runtime_mode_value(value: Any, *, label: str) -> str:
@@ -66,6 +67,16 @@ def _normalize_rag_runtime_mode_mapping(value: Mapping[Any, Any]) -> dict[str, s
             label=f"operation {normalized_key!r}",
         )
     return normalized_mapping
+
+
+def _parse_extension_csv(value: str) -> tuple[str, ...]:
+    """Parse comma-separated extensions to lower-case dotless tokens."""
+
+    return tuple(
+        token.strip().lstrip(".").lower()
+        for token in value.split(",")
+        if token.strip().lstrip(".")
+    )
 
 
 def _parse_json_object_setting(value: Any, setting_name: str) -> dict[str, Any]:
@@ -395,6 +406,9 @@ class Settings(BaseSettings):
     KNOWLEDGE_CONVERSION_ENABLED: bool = False
     # [Retained] Comma-separated file extensions requiring conversion
     KNOWLEDGE_CONVERSION_FILE_TYPES: str = ""
+    # Optional KB upload allow-list. Empty means use the knowledge format
+    # registry; configured values narrow upload/accept to registered formats.
+    KNOWLEDGE_UPLOAD_FILE_TYPES: str = ""
     # [Retained] Celery queue name for conversion tasks
     KNOWLEDGE_CONVERSION_QUEUE: str = "knowledge_conversion"
     # [Retained, value adjusted] Stale detection for CONVERTING status
@@ -734,15 +748,70 @@ class Settings(BaseSettings):
         """Check if a file extension requires conversion before indexing."""
         if not self.KNOWLEDGE_CONVERSION_ENABLED:
             return False
-        if not self.KNOWLEDGE_CONVERSION_FILE_TYPES:
-            return False
         ext = file_extension.lstrip(".").lower()
-        types = [
-            t.strip().lower()
-            for t in self.KNOWLEDGE_CONVERSION_FILE_TYPES.split(",")
-            if t.strip()
-        ]
-        return ext in types
+        types = _parse_extension_csv(self.KNOWLEDGE_CONVERSION_FILE_TYPES)
+        if types:
+            return ext in types
+
+        from knowledge_engine.conversion.formats import conversion_required
+
+        return conversion_required(ext)
+
+    def knowledge_upload_extensions(
+        self,
+        *,
+        include_multimodal: bool = True,
+    ) -> tuple[str, ...]:
+        """Return KB upload extensions after applying optional configuration."""
+
+        from knowledge_engine.conversion.formats import (
+            KnowledgeFormatPipeline,
+            get_knowledge_format,
+            list_knowledge_formats,
+        )
+
+        configured = _parse_extension_csv(self.KNOWLEDGE_UPLOAD_FILE_TYPES)
+        use_registry_default = not configured or bool(
+            set(configured) & _UPLOAD_FORMATS_ALL_MARKERS
+        )
+
+        if use_registry_default:
+            formats = list_knowledge_formats()
+        else:
+            formats = tuple(
+                fmt
+                for ext in configured
+                if (fmt := get_knowledge_format(ext)) is not None
+            )
+
+        if not include_multimodal:
+            formats = tuple(
+                fmt
+                for fmt in formats
+                if fmt.pipeline != KnowledgeFormatPipeline.MULTIMODAL
+            )
+
+        return tuple(sorted({fmt.extension for fmt in formats}))
+
+    def knowledge_upload_accept(
+        self,
+        *,
+        include_multimodal: bool = True,
+    ) -> str:
+        """Return a file input accept string for KB uploads."""
+
+        return ",".join(
+            f".{extension}"
+            for extension in self.knowledge_upload_extensions(
+                include_multimodal=include_multimodal
+            )
+        )
+
+    def is_knowledge_upload_extension_allowed(self, file_extension: str) -> bool:
+        """Return whether a KB raw upload is allowed by registry/config."""
+
+        ext = file_extension.lstrip(".").lower()
+        return ext in self.knowledge_upload_extensions(include_multimodal=True)
 
     def get_rag_runtime_mode(self, operation: str) -> str:
         """Resolve the effective RAG runtime mode for an operation."""

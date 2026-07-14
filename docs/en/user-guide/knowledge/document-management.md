@@ -26,11 +26,22 @@ Document management is a core feature of Knowledge Base, supporting multiple doc
 3. Configure chunking settings (optional)
 4. Click **Upload**
 
-Supported formats:
-- `.txt` - Plain text files
-- `.md` - Markdown files
-- `.pdf` - PDF documents
-- `.doc`, `.docx` - Word documents
+Supported formats are delivered from the backend to the upload component. By default, Wegent supports:
+
+| Type | Formats | Processing |
+|------|---------|------------|
+| **Documents, presentations, spreadsheets** | `.pdf`, `.doc`, `.docx`, `.ppt`, `.pptx`, `.xls`, `.xlsx` | Converted to Markdown before indexing |
+| **Structured text** | `.epub`, `.eml`, `.html`, `.htm`, `.xml` | Locally converted to Markdown by the converter service |
+| **Plain text and Markdown** | `.txt`, `.md`, `.markdown`, `.csv` | Indexed directly |
+| **Code and configuration** | `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.vue`, `.css`, `.java`, `.go`, `.rs`, `.cpp`, `.c`, `.json`, `.yaml`, `.yml`, `.toml`, `.env`, `.conf`, `.log`, and similar text formats | Indexed directly as text |
+| **Mind maps** | `.xmind` | Indexed with the built-in parser |
+| **Images and videos** | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`, `.flv`, `.wmv`, `.m4v` | Uploadable only when multimodal analysis is enabled for the knowledge base |
+
+Legacy Office files (`.doc`, `.ppt`, `.xls`) require LibreOffice in the converter runtime. Wegent converts them to `.docx`, `.pptx`, or `.xlsx` before continuing.
+
+Administrators can use `KNOWLEDGE_UPLOAD_FILE_TYPES` to narrow the upload allow-list. When it is not configured, Wegent uses the default format registry.
+
+If your environment still sets the legacy `KNOWLEDGE_CONVERSION_FILE_TYPES`, add the new conversion formats such as `.doc`, `.ppt`, `.xls`, `.epub`, `.eml`, `.html`, `.htm`, and `.xml`, or clear the setting to use the default conversion registry.
 
 ### Text Paste
 
@@ -81,6 +92,8 @@ Web documents support re-scraping for updates. When webpage content changes, use
 | **Converting** | Document being converted to Markdown |
 | **Indexing** | Document being indexed for RAG |
 | **Error** | Indexing failed |
+
+If a document stays in **Pending Conversion** for a long time, the conversion task is queued but the converter service is not consuming it or cannot call back to the backend. Check that the `knowledge_doc_converter` worker is running, that it uses the same Redis queue as the backend, and that `BACKEND_INTERNAL_TOKEN` matches the backend `INTERNAL_SERVICE_TOKEN`.
 
 ---
 

@@ -385,16 +385,24 @@ export function getAttachmentPreviewUrl(attachmentId: number, shareToken?: strin
   return baseUrl
 }
 
+export type AttachmentUploadPurpose = 'chat' | 'knowledge'
+
+export interface UploadAttachmentOptions {
+  purpose?: AttachmentUploadPurpose
+}
+
 /**
  * Upload a file attachment
  *
  * @param file - File to upload
  * @param onProgress - Optional progress callback (0-100)
+ * @param options - Optional upload behavior controls
  * @returns Attachment response
  */
 export async function uploadAttachment(
   file: File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  options: UploadAttachmentOptions = {}
 ): Promise<AttachmentResponse> {
   const token = getToken()
 
@@ -453,7 +461,12 @@ export async function uploadAttachment(
       reject(new Error('Upload cancelled'))
     })
 
-    xhr.open('POST', `${API_BASE_URL}/api/attachments/upload`)
+    let uploadUrl = `${API_BASE_URL}/api/attachments/upload`
+    if (options.purpose) {
+      uploadUrl += `?purpose=${encodeURIComponent(options.purpose)}`
+    }
+
+    xhr.open('POST', uploadUrl)
     if (token) {
       xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     }

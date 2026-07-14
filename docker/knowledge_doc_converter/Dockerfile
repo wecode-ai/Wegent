@@ -8,6 +8,13 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:latest
 
 WORKDIR /app
 
+# LibreOffice is required by the converter worker to normalize legacy Office
+# files (.doc/.xls/.ppt) before sending them to the document conversion backend.
+RUN dnf install -y \
+    libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf/*
+
 # Copy and install shared module first
 COPY shared /app/shared
 RUN uv pip install --system --no-cache /app/shared

@@ -15,6 +15,7 @@ import {
   isVideoFileName,
   isValidFileSize,
   getErrorMessageFromCode,
+  type AttachmentUploadPurpose,
 } from '@/apis/attachments'
 import { getVideoUploader } from '@/features/knowledge/multimodal/video-upload-registry'
 import type { Attachment } from '@/types/api'
@@ -76,13 +77,20 @@ interface UseBatchAttachmentReturn {
   getSuccessfulAttachments: () => { attachment: Attachment; file: File }[]
 }
 
+interface UseBatchAttachmentOptions {
+  uploadPurpose?: AttachmentUploadPurpose
+}
+
 /** Generate unique ID for file tracking */
 function generateFileId(): string {
   return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
 }
 
-export function useBatchAttachment(): UseBatchAttachmentReturn {
+export function useBatchAttachment(
+  options: UseBatchAttachmentOptions = {}
+): UseBatchAttachmentReturn {
   const { t } = useTranslation()
+  const uploadPurpose = options.uploadPurpose ?? 'chat'
   const [state, setState] = useState<BatchUploadState>({
     files: [],
     isUploading: false,
@@ -210,6 +218,8 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
             files: prev.files.map(f => (f.id === fileItem.id ? { ...f, progress } : f)),
           }))
         }
+        const uploadOptions =
+          uploadPurpose === 'knowledge' ? ({ purpose: 'knowledge' } as const) : {}
 
         const attachment = videoUploader
           ? await (async () => {
@@ -227,7 +237,7 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
                 truncation_info: null,
               }
             })()
-          : await uploadAttachment(fileItem.file, onProgress)
+          : await uploadAttachment(fileItem.file, onProgress, uploadOptions)
 
         // Check if parsing succeeded (only meaningful for the generic path;
         // video attachments are always 'ready' here).
@@ -284,7 +294,7 @@ export function useBatchAttachment(): UseBatchAttachmentReturn {
         }
       }
     },
-    [t]
+    [t, uploadPurpose]
   )
 
   const startUpload = useCallback(async () => {

@@ -13,7 +13,7 @@ switch; when False, files are never classified as multimodal so no
 dispatch/Gemini runs anywhere, and these helpers reduce to no-ops/mineru-only.
 
 Helpers:
-- ``conversion_pipeline``: classify a file (multimodal / mineru / None)
+- ``conversion_pipeline``: classify a file (multimodal / mineru / local_markdown / None)
 - ``resolve_dispatch_or_none``: pre-flight gate for a not-yet-created document
 - ``resolve_dispatch_for_document_or_none``: pre-flight gate for an existing document
 - ``schedule_multimodal_indexing_or_none``: enqueue the Gemini conversion task
@@ -32,6 +32,10 @@ from app.core.config import settings
 from app.models.kind import Kind
 from app.models.knowledge import DocumentIndexStatus
 from app.models.user import User
+from knowledge_engine.conversion.formats import (
+    KnowledgeFormatPipeline,
+    get_knowledge_pipeline,
+)
 from shared.utils.multimodal_ext import (
     _MULTIMODAL_EXTENSIONS,
 )
@@ -43,7 +47,8 @@ def conversion_pipeline(file_extension: Optional[str], app_settings) -> Optional
     """Return the conversion pipeline for a file type.
 
     Returns ``"multimodal"`` for video/image files (Gemini analysis), ``"mineru"``
-    for files that need MinerU conversion, or ``None`` for direct indexing.
+    or ``"local_markdown"`` for files that need document conversion, or ``None``
+    for direct indexing.
 
     The multimodal branch is gated by the global ``KNOWLEDGE_MULTIMODAL_ENABLED``
     switch — when False, video/image files are never classified as multimodal so
@@ -52,10 +57,20 @@ def conversion_pipeline(file_extension: Optional[str], app_settings) -> Optional
     from app.services.knowledge.orchestrator import _normalize_file_extension
 
     ext = _normalize_file_extension(file_extension).lower()
-    if ext in _MULTIMODAL_EXTENSIONS and settings.KNOWLEDGE_MULTIMODAL_ENABLED:
+    multimodal_enabled = getattr(
+        app_settings,
+        "KNOWLEDGE_MULTIMODAL_ENABLED",
+        settings.KNOWLEDGE_MULTIMODAL_ENABLED,
+    )
+    if ext in _MULTIMODAL_EXTENSIONS and multimodal_enabled:
         return "multimodal"
-    if app_settings.needs_conversion(ext):
+    if not app_settings.needs_conversion(ext):
+        return None
+    pipeline = get_knowledge_pipeline(ext)
+    if pipeline == KnowledgeFormatPipeline.MINERU:
         return "mineru"
+    if pipeline == KnowledgeFormatPipeline.LOCAL_MARKDOWN:
+        return "local_markdown"
     return None
 
 

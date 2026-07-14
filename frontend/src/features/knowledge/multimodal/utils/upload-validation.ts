@@ -12,19 +12,32 @@
 import { VIDEO_EXTENSIONS } from '@/apis/attachments'
 
 /**
+ * Fallback document/code extensions selectable in the KB upload file picker.
+ * The runtime value comes from /knowledge-bases/config so backend registry and
+ * optional deployment configuration remain the source of truth.
+ */
+export const DEFAULT_KB_DOCUMENT_ACCEPT =
+  '.adoc,.asciidoc,.asm,.bat,.c,.cc,.conf,.config,.cpp,.css,.csv,.dart,.doc,.docx,.eml,.env,.epub,.go,.gradle,.groovy,.h,.htm,.html,.ini,.java,.js,.json,.jsx,.kotlin,.kt,.kts,.less,.license,.lock,.log,.lua,.markdown,.md,.mjs,.pdf,.php,.pl,.ppt,.pptx,.properties,.ps1,.py,.rb,.readme,.rs,.rst,.rust,.sass,.scala,.scss,.sh,.sql,.srt,.styl,.svg,.swift,.textile,.toml,.ts,.tsv,.tsx,.txt,.vue,.wiki,.xls,.xlsx,.xmind,.xml,.yaml,.yml'
+
+/**
+ * Fallback multimodal extensions accepted by the KB upload file picker when
+ * multimodal analysis is enabled for the current KB.
+ */
+export const DEFAULT_KB_MULTIMODAL_ACCEPT = [
+  ...VIDEO_EXTENSIONS,
+  '.bmp',
+  '.gif',
+  '.jpeg',
+  '.jpg',
+  '.png',
+  '.webp',
+].join(',')
+
+/**
  * Image extensions. Unsupported for RAG UNLESS the KB has multimodal analysis
  * enabled (video+image). When disabled, they get a friendly upload error.
  */
 export const KB_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
-
-/**
- * Document/code extensions selectable in the KB upload file picker.
- * Multimodal extensions (video+image) are appended conditionally when the KB
- * has multimodal analysis enabled (MULTIMODAL_EXTENSIONS from
- * @/apis/attachments — the set the upload path routes to the converter).
- */
-export const KB_DOCUMENT_ACCEPT =
-  '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.markdown,.adoc,.asciidoc,.asm,.bat,.c,.cc,.cpp,.css,.conf,.config,.dart,.env,.go,.gradle,.groovy,.h,.html,.ini,.java,.js,.json,.jsx,.kotlin,.less,.license,.log,.lua,.mjs,.php,.pl,.properties,.ps1,.py,.rb,.readme,.rst,.rust,.sass,.scala,.scss,.sh,.sql,.srt,.styl,.svg,.swift,.textile,.toml,.ts,.tsx,.tsv,.vue,.wiki,.xml,.yaml,.yml'
 
 /**
  * Check if a file extension is unsupported. Image extensions are unsupported

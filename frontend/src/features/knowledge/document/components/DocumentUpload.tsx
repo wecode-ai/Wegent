@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useRef, useCallback, useState, useEffect } from 'react'
+import { useRef, useCallback, useState, useEffect, useMemo } from 'react'
 import {
   Upload,
   X,
@@ -48,10 +48,9 @@ import {
 } from '@/hooks/useBatchAttachment'
 import { MAX_FILE_SIZE } from '@/apis/attachments'
 import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection'
-import { MULTIMODAL_EXTENSIONS } from '@/features/knowledge/multimodal/constants'
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
-import { validateTableUrl } from '@/apis/knowledge'
+import { getKnowledgeConfig, validateTableUrl } from '@/apis/knowledge'
 import { DEFAULT_FLAT_CHUNK_CONFIG, DEFAULT_SPLITTER_CONFIG } from '@/types/knowledge'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 import {
@@ -59,7 +58,8 @@ import {
   type UploadMultimodalPrompts,
 } from '@/features/knowledge/multimodal/components/UploadMultimodalPromptSettings'
 import {
-  KB_DOCUMENT_ACCEPT,
+  DEFAULT_KB_DOCUMENT_ACCEPT,
+  DEFAULT_KB_MULTIMODAL_ACCEPT,
   isKBUnsupportedExtension,
   isVideoModelBlock,
 } from '@/features/knowledge/multimodal/utils/upload-validation'
@@ -144,7 +144,7 @@ export function DocumentUpload({
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { state, addFiles, removeFile, clearFiles, startUpload, retryFile, renameFile, reset } =
-    useBatchAttachment()
+    useBatchAttachment({ uploadPurpose: 'knowledge' })
   const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>(
     buildDefaultSplitterConfig
   )
@@ -154,6 +154,8 @@ export function DocumentUpload({
   // a disabled pipeline.
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
   const multimodalAnalysisEnabled = multimodalAnalysisEnabledProp && multimodalFeatureEnabled
+  const [documentUploadAccept, setDocumentUploadAccept] = useState(DEFAULT_KB_DOCUMENT_ACCEPT)
+  const [multimodalUploadAccept, setMultimodalUploadAccept] = useState(DEFAULT_KB_MULTIMODAL_ACCEPT)
   const [isDragOver, setIsDragOver] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [isConfirming, setIsConfirming] = useState(false)
@@ -195,6 +197,34 @@ export function DocumentUpload({
 
   // Track pending files count to auto-start upload
   const pendingCount = state.files.filter(f => f.status === 'pending').length
+  const fileInputAccept = useMemo(
+    () =>
+      [documentUploadAccept, multimodalAnalysisEnabled ? multimodalUploadAccept : '']
+        .filter(Boolean)
+        .join(','),
+    [documentUploadAccept, multimodalAnalysisEnabled, multimodalUploadAccept]
+  )
+
+  useEffect(() => {
+    if (!open) return
+
+    let cancelled = false
+    getKnowledgeConfig()
+      .then(config => {
+        if (cancelled) return
+        setDocumentUploadAccept(config.document_upload_accept || DEFAULT_KB_DOCUMENT_ACCEPT)
+        setMultimodalUploadAccept(config.multimodal_upload_accept || DEFAULT_KB_MULTIMODAL_ACCEPT)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setDocumentUploadAccept(DEFAULT_KB_DOCUMENT_ACCEPT)
+        setMultimodalUploadAccept(DEFAULT_KB_MULTIMODAL_ACCEPT)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   // Auto-start upload when there are pending files and not currently uploading
   useEffect(() => {
@@ -829,11 +859,7 @@ export function DocumentUpload({
             type="file"
             className="hidden"
             multiple
-            accept={
-              multimodalAnalysisEnabled
-                ? `${KB_DOCUMENT_ACCEPT},${MULTIMODAL_EXTENSIONS.join(',')}`
-                : KB_DOCUMENT_ACCEPT
-            }
+            accept={fileInputAccept}
             onChange={handleFileChange}
             disabled={state.isUploading}
           />

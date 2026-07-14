@@ -6,6 +6,7 @@ import '@testing-library/jest-dom'
 import { renderHook, act } from '@testing-library/react'
 
 import { useBatchAttachment } from '@/hooks/useBatchAttachment'
+import { uploadAttachment } from '@/apis/attachments'
 import {
   registerVideoUploader,
   getVideoUploader,
@@ -29,6 +30,7 @@ jest.mock('@/apis/attachments', () => {
 })
 
 const MB = 1024 * 1024
+const mockUploadAttachment = uploadAttachment as jest.MockedFunction<typeof uploadAttachment>
 
 function makeVideoFile(name: string, sizeMb: number): File {
   return new File([new Uint8Array(sizeMb * MB)], name, { type: 'video/mp4' })
@@ -42,6 +44,7 @@ describe('useBatchAttachment — KB video queue gate', () => {
   afterEach(() => {
     // Reset provider registry between tests for isolation.
     registerVideoUploader(null)
+    jest.clearAllMocks()
   })
 
   it('rejects a video when no provider is registered (open-source default)', () => {
@@ -139,5 +142,32 @@ describe('useBatchAttachment — KB video queue gate', () => {
 
     expect(outcome!.added).toBe(1)
     expect(result.current.state.files).toHaveLength(1)
+  })
+
+  it('passes the knowledge upload purpose for KB batch uploads', async () => {
+    mockUploadAttachment.mockResolvedValue({
+      id: 123,
+      filename: 'doc.txt',
+      file_size: 1,
+      mime_type: 'text/plain',
+      status: 'ready',
+      text_length: null,
+      error_message: null,
+      error_code: null,
+      truncation_info: null,
+    })
+
+    const { result } = renderHook(() => useBatchAttachment({ uploadPurpose: 'knowledge' }))
+
+    act(() => {
+      result.current.addFiles([makeTextFile('doc.txt', 1)])
+    })
+    await act(async () => {
+      await result.current.startUpload()
+    })
+
+    expect(mockUploadAttachment).toHaveBeenCalledWith(expect.any(File), expect.any(Function), {
+      purpose: 'knowledge',
+    })
   })
 })

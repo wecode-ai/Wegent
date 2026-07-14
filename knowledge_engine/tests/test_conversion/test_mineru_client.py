@@ -35,10 +35,11 @@ def test_is_supported_extension_docx():
 def test_is_supported_extension_unsupported():
     assert is_supported_extension("txt") is False
     assert is_supported_extension("jpg") is False
+    assert is_supported_extension("doc") is False
 
 
 def test_supported_mime_types_count():
-    assert len(SUPPORTED_MIME_TYPES) == 7
+    assert len(SUPPORTED_MIME_TYPES) == 4
 
 
 def test_mineru_config_defaults():
