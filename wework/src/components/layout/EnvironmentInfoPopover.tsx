@@ -255,6 +255,7 @@ export function EnvironmentInfoPopover({
         createPortal(
           <div
             ref={popoverRef}
+            data-environment-info-popover
             data-testid="environment-info-popover"
             style={docked ? undefined : floatingPopoverStyle}
             className={cn(
