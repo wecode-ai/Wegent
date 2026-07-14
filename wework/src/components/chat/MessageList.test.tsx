@@ -15,6 +15,41 @@ const tauriCoreMock = vi.hoisted(() => ({
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
 
 describe('MessageList', () => {
+  test('renders generated image artifacts from image generation blocks', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-image',
+            role: 'assistant',
+            content: 'Choose a direction.',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:01Z',
+            blocks: [
+              {
+                id: 'ig-1',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'image_generation',
+                renderPayload: {
+                  kind: 'image_generation',
+                  imageBase64: 'aW1hZ2U=',
+                  revisedPrompt: 'Minimal dashboard concept',
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    const image = screen.getByTestId('generated-image')
+    expect(image).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+    expect(image).toHaveAttribute('alt', 'Minimal dashboard concept')
+  })
+
   test('marks message rows for offscreen rendering containment with intrinsic sizes', () => {
     render(
       <MessageList

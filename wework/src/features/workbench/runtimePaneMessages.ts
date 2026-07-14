@@ -211,6 +211,7 @@ export function createRuntimeTaskStreamHandlers(
         hasToolOutput: payload.toolOutput !== undefined,
         hasToolOutputDelta: payload.toolOutputDelta !== undefined,
         hasToolOutputTruncated: payload.toolOutputTruncated !== undefined,
+        hasRenderPayload: payload.renderPayload !== undefined,
         hasFileChanges: payload.fileChanges !== undefined,
       })
       handlers.onMessageAction({
@@ -226,6 +227,9 @@ export function createRuntimeTaskStreamHandlers(
           }),
           ...(payload.toolOutputTruncated !== undefined && {
             toolOutputTruncated: payload.toolOutputTruncated,
+          }),
+          ...(payload.renderPayload !== undefined && {
+            renderPayload: payload.renderPayload,
           }),
           ...(payload.fileChanges !== undefined && {
             fileChanges: normalizeTurnFileChanges(payload.fileChanges),
@@ -659,6 +663,25 @@ function normalizeProcessingBlock(
             ? block.tool_output_original_bytes
             : undefined,
       renderPayload: normalizeToolRenderPayload(block),
+      status,
+      createdAt: timestamp,
+    }
+  }
+
+  if (block.type === 'image_generation_call') {
+    const id = typeof block.id === 'string' ? block.id : null
+    if (!id) return warnAndDropRuntimeTranscriptBlock(subtaskId, block, index)
+    return {
+      id,
+      subtaskId,
+      type: 'tool',
+      toolName: 'image_generation',
+      renderPayload: {
+        kind: 'image_generation',
+        ...(typeof block.result === 'string' && { imageBase64: block.result }),
+        ...(typeof block.revised_prompt === 'string' && { revisedPrompt: block.revised_prompt }),
+        ...(typeof block.saved_path === 'string' && { savedPath: block.saved_path }),
+      },
       status,
       createdAt: timestamp,
     }

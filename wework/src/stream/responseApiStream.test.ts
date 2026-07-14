@@ -444,4 +444,81 @@ describe('emitResponseApiEvent', () => {
       toolOutput: { exit_code: 2, message: 'tool failed' },
     })
   })
+
+  test('maps image generation lifecycle events to renderable tool blocks', () => {
+    const onBlockCreated = vi.fn()
+    const onBlockUpdated = vi.fn()
+    const state = createResponseApiStreamState()
+
+    emitResponseApiEvent(
+      { onBlockCreated, onBlockUpdated },
+      'response.output_item.added',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        data: {
+          item: { id: 'ig-1', type: 'image_generation_call', status: 'in_progress' },
+        },
+      },
+      state
+    )
+    emitResponseApiEvent(
+      { onBlockCreated, onBlockUpdated },
+      'image_generation.partial_image',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        data: { item_id: 'ig-1', partial_image_b64: 'cGFydGlhbA==' },
+      },
+      state
+    )
+    emitResponseApiEvent(
+      { onBlockCreated, onBlockUpdated },
+      'response.output_item.done',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        data: {
+          item: {
+            id: 'ig-1',
+            type: 'image_generation_call',
+            status: 'completed',
+            revised_prompt: 'A finished image',
+            result: 'ZmluYWw=',
+          },
+        },
+      },
+      state
+    )
+
+    expect(onBlockCreated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        block: expect.objectContaining({
+          id: 'ig-1',
+          type: 'tool',
+          tool_name: 'image_generation',
+        }),
+      })
+    )
+    expect(onBlockUpdated).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        blockId: 'ig-1',
+        status: 'streaming',
+        renderPayload: { kind: 'image_generation', imageBase64: 'cGFydGlhbA==' },
+      })
+    )
+    expect(onBlockUpdated).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        blockId: 'ig-1',
+        status: 'done',
+        renderPayload: {
+          kind: 'image_generation',
+          imageBase64: 'ZmluYWw=',
+          revisedPrompt: 'A finished image',
+        },
+      })
+    )
+  })
 })
