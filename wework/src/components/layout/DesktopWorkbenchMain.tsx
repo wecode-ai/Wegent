@@ -1695,7 +1695,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )}
           <aside
             data-testid="environment-info-panel-container"
-            className="sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[[data-testid=environment-info-popover]]:w-[320px]"
+            className="sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none has-[[data-testid=environment-info-popover]]:w-[320px] has-[[data-testid=environment-info-popover]]:overflow-visible"
           >
             <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
             {environmentInfoDocked && hasSubagentStatuses && (

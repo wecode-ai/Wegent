@@ -5470,6 +5470,10 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-workbench-content')).toContainElement(
       screen.getByTestId('environment-info-panel-container')
     )
+    expect(screen.getByTestId('environment-info-panel-container')).toHaveClass(
+      'overflow-hidden',
+      'has-[[data-testid=environment-info-popover]]:overflow-visible'
+    )
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[300px]',
       'bg-background',
