@@ -1062,6 +1062,7 @@ fn process_physical_footprint_kib(pid: u32) -> Option<u64> {
     (result == 0).then_some(usage.ri_phys_footprint / 1024)
 }
 
+#[cfg(target_os = "macos")]
 fn classify_process(
     process: &RawProcessInfo,
     main_pid: u32,
@@ -3060,15 +3061,15 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        can_replace_wework_cli_path, classify_process, collect_descendant_pids,
-        executor_home_attachment_root, install_wework_cli_impl, local_workspace_opener_app_name,
-        parse_local_workspace_open_request, parse_process_snapshot_line, tray_template_pixel,
-        tray_usage_icon, wework_cli_launcher_content, RawProcessInfo,
+        can_replace_wework_cli_path, executor_home_attachment_root, install_wework_cli_impl,
+        local_workspace_opener_app_name, parse_local_workspace_open_request, tray_template_pixel,
+        tray_usage_icon, wework_cli_launcher_content,
     };
     #[cfg(target_os = "macos")]
     use super::{
-        parse_launch_services_processes, process_physical_footprint_kib,
-        related_macos_webkit_process_ids, LaunchServicesProcess,
+        classify_process, collect_descendant_pids, parse_launch_services_processes,
+        parse_process_snapshot_line, process_physical_footprint_kib,
+        related_macos_webkit_process_ids, LaunchServicesProcess, RawProcessInfo,
     };
     use std::collections::HashSet;
 
@@ -3359,6 +3360,7 @@ mod tests {
         assert!(process_physical_footprint_kib(std::process::id()).is_some_and(|value| value > 0));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn classifies_wework_process_groups() {
         let terminal_roots = HashSet::from([3]);
@@ -3411,6 +3413,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     fn raw_process(pid: u32, ppid: u32, command: &str) -> RawProcessInfo {
         RawProcessInfo {
             pid,
