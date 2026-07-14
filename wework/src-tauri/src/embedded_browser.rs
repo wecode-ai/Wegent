@@ -4,10 +4,11 @@ use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::PathBuf,
-    process::Command,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -429,6 +430,7 @@ fn screenshot_embedded_browser(
     Err("Embedded browser screenshots are currently supported on macOS only".to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn screenshot_path() -> Result<PathBuf, String> {
     let directory = std::env::temp_dir().join("wework-embedded-browser");
     std::fs::create_dir_all(&directory).map_err(|error| {

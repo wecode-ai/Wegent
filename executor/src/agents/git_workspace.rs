@@ -430,7 +430,7 @@ fn workspace_root() -> PathBuf {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    env::var_os("HOME").map(PathBuf::from)
+    dirs::home_dir()
 }
 
 #[cfg(test)]

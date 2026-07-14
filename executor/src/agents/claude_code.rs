@@ -845,8 +845,7 @@ fn user_selected_skills(request: &ExecutionRequest) -> Vec<String> {
 }
 
 fn home_claude_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
+    dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("~"))
         .join(".claude")
 }

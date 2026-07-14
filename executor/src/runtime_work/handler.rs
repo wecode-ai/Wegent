@@ -150,9 +150,7 @@ fn workspace_segment(value: &str) -> String {
 }
 
 fn home_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(env::temp_dir)
+    dirs::home_dir().unwrap_or_else(env::temp_dir)
 }
 
 #[derive(Clone)]

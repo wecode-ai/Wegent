@@ -624,7 +624,7 @@ fn non_empty(value: &str) -> Option<&str> {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    env::var_os("HOME").map(PathBuf::from)
+    dirs::home_dir()
 }
 
 #[cfg(test)]

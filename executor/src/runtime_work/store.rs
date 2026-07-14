@@ -342,10 +342,7 @@ fn expand_home(value: impl AsRef<str>) -> PathBuf {
 }
 
 fn home_dir() -> PathBuf {
-    env::var("HOME")
-        .ok()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(test)]
