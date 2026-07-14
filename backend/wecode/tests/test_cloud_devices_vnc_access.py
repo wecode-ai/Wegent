@@ -145,7 +145,7 @@ def test_admin_can_access_other_users_file_config(
 
 
 @pytest.mark.asyncio
-async def test_vnc_websocket_middleware_forwards_user_id(mocker):
+async def test_vnc_websocket_middleware_handles_vnc_proxy_path(mocker):
     mock_proxy = mocker.patch(
         "wecode.api.cloud_devices.vnc_websocket_proxy",
         new=AsyncMock(),
@@ -160,7 +160,7 @@ async def test_vnc_websocket_middleware_forwards_user_id(mocker):
     await _handle_vnc_ws(
         {
             "type": "websocket",
-            "path": "/api/cloud-devices/device-3/vnc-ws",
+            "path": "/vnc-proxy/device-3",
             "query_string": b"token=test-token&user_id=42",
             "headers": [],
         },
