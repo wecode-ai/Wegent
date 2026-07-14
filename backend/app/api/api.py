@@ -72,6 +72,9 @@ from app.api.endpoints.adapter import (
     teams,
     templates,
 )
+from app.api.endpoints.internal import (
+    api_keys_internal_router,
+)
 from app.api.endpoints.internal import attachments_router as internal_attachments_router
 from app.api.endpoints.internal import bots_router as internal_bots_router
 from app.api.endpoints.internal import (
@@ -329,4 +332,9 @@ api_router.include_router(
     internal_model_config_router,
     prefix="/internal",
     tags=["internal-model-config"],
+)
+api_router.include_router(
+    api_keys_internal_router,
+    prefix="/internal",
+    tags=["internal-api-keys"],
 )
