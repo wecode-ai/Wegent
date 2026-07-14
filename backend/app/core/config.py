@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -605,25 +605,6 @@ class Settings(BaseSettings):
     #          chat_shell/knowledge_runtime -> Backend internal API
     # Generate using: openssl rand -hex 32
     INTERNAL_SERVICE_TOKEN: str = ""
-    # Fernet key for encrypting LLM proxy tokens.
-    # Used by WeWork local executors to authenticate to the backend proxy gateway
-    # without receiving the raw provider API key.
-    # If not set, the backend automatically generates and persists a key in the
-    # system_configs table on first use. Set this explicitly when you want to
-    # manage the key yourself (e.g., rotation or multi-region deployments).
-    # Generate with:
-    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    LLM_PROXY_TOKEN_KEY: str = Field(
-        default="",
-        validation_alias=AliasChoices("LLM_PROXY_TOKEN_KEY", "CODEX_PROXY_TOKEN_KEY"),
-    )
-    # Lifetime of LLM proxy tokens in seconds.
-    LLM_PROXY_TOKEN_TTL_SECONDS: int = Field(
-        default=24 * 60 * 60,
-        validation_alias=AliasChoices(
-            "LLM_PROXY_TOKEN_TTL_SECONDS", "CODEX_PROXY_TOKEN_TTL_SECONDS"
-        ),
-    )
     # Knowledge runtime service URL for remote RAG execution
     KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
     # RAG data-plane execution mode

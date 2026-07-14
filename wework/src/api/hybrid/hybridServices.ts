@@ -47,7 +47,6 @@ import type {
 const LOCAL_DEVICE_ID = 'local-device'
 
 export interface HybridWorkbenchServicesOptions {
-  backendUrl: string
   apiBaseUrl: string
   socketBaseUrl: string
   socketPath: string
@@ -121,6 +120,8 @@ function annotateHybridModel(
       source,
       modelName: model.name,
       modelType: model.type,
+      modelNamespace: model.namespace,
+      resourceUserId: model.resourceUserId,
     }
   )
 }
@@ -130,7 +131,13 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
     if (!isRuntimeCodexModel(model)) {
       return withModelExecutionOverride(
         { ...model, name: `local:${model.type}:${model.name}` },
-        { source: 'local', modelName: model.name, modelType: model.type }
+        {
+          source: 'local',
+          modelName: model.name,
+          modelType: model.type,
+          modelNamespace: model.namespace,
+          resourceUserId: model.resourceUserId,
+        }
       )
     }
 
@@ -151,6 +158,8 @@ function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
         source: 'cloud',
         modelName: model.name,
         modelType: model.type,
+        modelNamespace: model.namespace,
+        resourceUserId: model.resourceUserId,
       })
     }
 
@@ -304,16 +313,9 @@ export function createHybridWorkbenchServices(
     transportKind: 'backend-relay',
   })
   const localServices = createLocalAppServices({
-    resolveCloudModelConfig: async (modelId, modelType, modelOptions) => {
-      if (!cloudServices.runtimeWorkApi) {
-        throw new Error('Cloud runtime work API is unavailable')
-      }
-      const response = await cloudServices.runtimeWorkApi.resolveModelConfig({
-        modelId,
-        modelType,
-        modelOptions,
-      })
-      return response.modelConfig
+    cloudModelGateway: {
+      baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
+      apiKey: options.token,
     },
   })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
@@ -693,12 +695,6 @@ export function createHybridWorkbenchServices(
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest) {
       return runtimeApi(data.target.deviceId).forkRuntimeTask(data)
-    },
-    resolveModelConfig(data) {
-      if (!cloudServices.runtimeWorkApi) {
-        throw new Error('Cloud runtime work API is unavailable')
-      }
-      return cloudServices.runtimeWorkApi.resolveModelConfig(data)
     },
   }
 
