@@ -517,6 +517,7 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
     });
     if let Some(object) = updates.as_object_mut() {
         insert_tool_output_fields(object, &item, TranscriptBuildOptions::truncated());
+        insert_image_generation_render_payload(object, &item);
     }
     if let Some(input) = command_input_from_output(&item) {
         if let Some(object) = updates.as_object_mut() {
@@ -1344,6 +1345,7 @@ fn command_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) 
     });
     if let Some(object) = block.as_object_mut() {
         insert_tool_output_fields(object, item, options);
+        insert_image_generation_render_payload(object, item);
     }
     block
 }
@@ -1366,6 +1368,7 @@ fn tool_block(item: &Value, timestamp: i64, options: TranscriptBuildOptions) -> 
     });
     if let Some(object) = block.as_object_mut() {
         insert_tool_output_fields(object, item, options);
+        insert_image_generation_render_payload(object, item);
     }
     block
 }
@@ -1386,6 +1389,7 @@ fn merge_tool_output(
         if let Some(object) = block.as_object_mut() {
             merge_tool_input(object, command_input_from_output(item));
             insert_tool_output_fields(object, item, options);
+            insert_image_generation_render_payload(object, item);
             object.insert("status".to_owned(), Value::String(tool_status(item)));
         }
         return;
@@ -1400,6 +1404,7 @@ fn merge_tool_output(
     });
     if let Some(object) = block.as_object_mut() {
         insert_tool_output_fields(object, item, options);
+        insert_image_generation_render_payload(object, item);
     }
     if let Some(input) = command_input_from_output(item) {
         if let Some(object) = block.as_object_mut() {
@@ -1426,6 +1431,29 @@ fn insert_tool_output_fields(
         object.remove("tool_output_truncated");
         object.remove("tool_output_original_bytes");
     }
+}
+
+fn insert_image_generation_render_payload(object: &mut Map<String, Value>, item: &Value) {
+    if item_type(item) != "imagegeneration" {
+        return;
+    }
+    let mut payload = Map::from_iter([(
+        "kind".to_owned(),
+        Value::String("image_generation".to_owned()),
+    )]);
+    if let Some(result) = raw_string_field(item, "result").filter(|result| !result.is_empty()) {
+        payload.insert("imageBase64".to_owned(), Value::String(result));
+    }
+    if let Some(prompt) =
+        string_field(item, "revisedPrompt").or_else(|| string_field(item, "revised_prompt"))
+    {
+        payload.insert("revisedPrompt".to_owned(), Value::String(prompt));
+    }
+    if let Some(path) = string_field(item, "savedPath").or_else(|| string_field(item, "saved_path"))
+    {
+        payload.insert("savedPath".to_owned(), Value::String(path));
+    }
+    object.insert("render_payload".to_owned(), Value::Object(payload));
 }
 
 fn command_input(item: &Value) -> Value {
@@ -2472,6 +2500,36 @@ mod tests {
             assert_eq!(updates["status"], "done");
             assert_eq!(updates["tool_input"], action);
         }
+    }
+
+    #[test]
+    fn image_generation_blocks_preserve_renderable_image_data() {
+        let item = json!({
+            "id": "ig-1",
+            "type": "imageGeneration",
+            "status": "completed",
+            "result": "aW1hZ2U=",
+            "revisedPrompt": "A minimal blue circle",
+            "savedPath": "/tmp/ig-1.png"
+        });
+
+        let block = workbench_block_from_codex_item(
+            &item,
+            "turn-1",
+            "device-1",
+            "/tmp",
+            1,
+            TranscriptBuildOptions::truncated(),
+        )
+        .expect("image generation should produce a workbench block");
+
+        assert_eq!(block["tool_name"], "image_generation");
+        assert_eq!(block["render_payload"]["kind"], "image_generation");
+        assert_eq!(block["render_payload"]["imageBase64"], "aW1hZ2U=");
+        assert_eq!(
+            block["render_payload"]["revisedPrompt"],
+            "A minimal blue circle"
+        );
     }
 
     #[test]

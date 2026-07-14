@@ -15,6 +15,9 @@ const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
 const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
 const RESPONSES_API_FORMAT = 'responses'
 const MODEL_EXECUTION_CONFIG_KEY = 'weworkExecution'
+export const CLOUD_MODEL_NAMESPACE_OPTION = 'weworkCloudModelNamespace'
+export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUserId'
+export const CLOUD_MODEL_CONTEXT_WINDOW_OPTION = 'weworkCloudModelContextWindow'
 
 function getStringConfigValue(
   config: Record<string, unknown> | null | undefined,
@@ -132,6 +135,28 @@ export function selectedModelExecutionFields(
   if (codexProviderId) modelOptions.codexProviderId = codexProviderId
   if (codexProviderName) modelOptions.codexProviderName = codexProviderName
   const executionModel = resolveModelExecutionSelection(selectedModel)
+  if (
+    executionModel.modelType === 'public' ||
+    executionModel.modelType === 'user' ||
+    executionModel.modelType === 'group'
+  ) {
+    if (executionModel.modelNamespace) {
+      modelOptions[CLOUD_MODEL_NAMESPACE_OPTION] = executionModel.modelNamespace
+    }
+    if (typeof executionModel.resourceUserId === 'number') {
+      modelOptions[CLOUD_MODEL_RESOURCE_USER_ID_OPTION] = String(executionModel.resourceUserId)
+    }
+    const contextWindow =
+      selectedModel.config?.model_context_window ??
+      selectedModel.config?.context_window ??
+      selectedModel.config?.contextWindow
+    if (
+      (typeof contextWindow === 'number' && contextWindow > 0) ||
+      (typeof contextWindow === 'string' && Number(contextWindow) > 0)
+    ) {
+      modelOptions[CLOUD_MODEL_CONTEXT_WINDOW_OPTION] = String(contextWindow)
+    }
+  }
   return {
     modelId: executionModel.modelName,
     modelType: executionModel.modelType,

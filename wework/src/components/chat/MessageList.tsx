@@ -1532,6 +1532,7 @@ function AssistantMessage({
     ? []
     : getWebSearchSourceItems(getWebSearchToolBlocks(displayBlocks))
   const memoryCitations = message.memoryCitations ?? []
+  const generatedImages = getGeneratedImages(displayBlocks)
   const [areHoverActionsVisible, setAreHoverActionsVisible] = useState(false)
 
   const openFileFromLink = (path: string, options?: WorkspaceFileOpenOptions) => {
@@ -1588,6 +1589,7 @@ function AssistantMessage({
             />
           )}
           {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
+          {generatedImages.length > 0 ? <GeneratedImageGallery images={generatedImages} /> : null}
           {message.contentTruncated ? (
             <ContentTruncatedNotice
               originalChars={message.contentOriginalChars}
@@ -1649,6 +1651,52 @@ function AssistantMessage({
             <MessageHoverActions message={message} align="left" visible={areHoverActionsVisible} />
           )}
       </div>
+    </div>
+  )
+}
+
+interface GeneratedImageArtifact {
+  id: string
+  src: string
+  alt: string
+}
+
+function getGeneratedImages(blocks: ProcessingBlock[]): GeneratedImageArtifact[] {
+  return blocks.flatMap(block => {
+    if (block.type !== 'tool' || block.toolName !== 'image_generation') return []
+    const payload = block.renderPayload
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return []
+    const imageBase64 = Reflect.get(payload, 'imageBase64')
+    if (typeof imageBase64 !== 'string' || !imageBase64.trim()) return []
+    const revisedPrompt = Reflect.get(payload, 'revisedPrompt')
+    return [
+      {
+        id: block.id,
+        src: imageBase64.startsWith('data:') ? imageBase64 : `data:image/png;base64,${imageBase64}`,
+        alt:
+          typeof revisedPrompt === 'string' && revisedPrompt.trim()
+            ? revisedPrompt
+            : 'Generated image',
+      },
+    ]
+  })
+}
+
+function GeneratedImageGallery({ images }: { images: GeneratedImageArtifact[] }) {
+  return (
+    <div
+      className="mb-3 grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2"
+      data-testid="generated-image-gallery"
+    >
+      {images.map(image => (
+        <img
+          key={image.id}
+          src={image.src}
+          alt={image.alt}
+          className="h-auto w-full rounded-lg border border-border bg-surface object-contain"
+          data-testid="generated-image"
+        />
+      ))}
     </div>
   )
 }

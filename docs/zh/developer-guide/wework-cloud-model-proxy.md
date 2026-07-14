@@ -4,54 +4,34 @@ sidebar_position: 39
 
 # Wework 云端模型代理网关
 
-Wework 桌面端与 Wegent 后端可能运行在不同机器上。当桌面端使用配置了真实云端 provider 凭证的 Model CRD 时，必须避免把 `api_key` 明文下发到本地，同时保证 Codex 能够正常调用云端模型。
-
-## 问题背景
-
-- Model CRD 的 `spec.modelConfig.env` 中保存了真实的 `base_url`、`api_key` 和 `model_id`。
-- Wework 桌面端通过 `/runtime-work/resolve-model-config` 获取运行时模型配置。
-- 如果后端直接把真实凭证返回给桌面端，敏感信息会离开受控的服务器环境，存在泄露风险。
-- 之前的修复逐步让 executor 和 Wework 能够识别云端模型配置，但仍未彻底解决凭证隔离问题。
+Wework 桌面端与 Wegent 后端可能运行在不同机器上。当桌面端使用配置了真实云端 provider 凭证的 Model CRD 时，必须避免把 provider `api_key` 明文下发到本地，同时保证 Codex 能够正常调用云端模型。
 
 ## 解决方案
 
-引入后端 LLM 代理网关：Wework 只把用户输入和模型选择发给 Wegent，由 Wegent 代替 Wework 调用真实 provider。
+Wework 使用已配置的云端地址和登录 token 直接构造代理模型配置，由 Wegent 代替 Wework 调用真实 provider。
 
 ### 核心组件
 
-- `app/services/llm_proxy_service.py`：代理网关核心服务。
-- `POST /api/runtime-work/llm-responses-proxy/responses`：代理端点。加密的代理 token 通过 `Authorization: Bearer` 请求头传递。
-- `app/services/chat/trigger/unified.py` 与 `runtime_work_service.py`：根据模型配置决定是否走代理模式。
+- `app/services/llm_proxy_service.py`：解析模型身份、校验权限并转发 provider 请求。
+- `POST /api/runtime-work/llm-responses-proxy/responses`：使用用户登录 token 鉴权的代理端点。
+- `/models/unified`：下发模型名称、类型、namespace 和资源 owner ID，供代理精确定位 Model CRD。
 
 ### 请求流程
 
-1. Wework 调用 `/runtime-work/resolve-model-config` 获取模型配置。
-2. 如果模型带有真实 provider 凭证，后端：
-   - 生成一个加密的 Fernet 代理 token，token 中只包含用户 ID、模型 namespace/name、签发与过期时间。
-   - 返回 `base_url` 为后端代理端点，`api_key` 为代理 token，`codex_responses_compat_proxy: true`。
-3. Wework/executor 的 Codex compat proxy 把请求发到该 `base_url`。
-4. 后端解密 token，解析 Model CRD，取出真实 `base_url`、`api_key`、`model_id`。
-5. 后端把请求转发到真实 provider，并将响应流式返回给 Wework。
-
-## 密钥管理
-
-代理 token 使用 Fernet 对称加密。密钥获取优先级：
-
-1. 环境变量 `LLM_PROXY_TOKEN_KEY`。
-2. `SystemConfig` 表中 `llm_proxy_token_key` 配置项；不存在时自动生成并持久化。
-3. 无数据库的测试/开发环境使用基于现有设置派生的确定性密钥。
-
-生产环境无需手动配置 `LLM_PROXY_TOKEN_KEY`，后端会在首次使用时自动生成并持久化密钥。
+1. Wework 从 `/models/unified` 获取不含 provider 凭证的模型元数据。
+2. Wework 直接构造代理配置：`base_url` 为所配置云端地址下的 `/api/runtime-work/llm-responses-proxy`，`api_key` 为当前云端登录 token。
+3. executor 的 Codex compat proxy 使用登录 token 请求 backend，并携带模型类型、namespace 和资源 owner ID。
+4. backend 验证登录 token 和模型访问权限，按 `user_id + namespace + name` 精确解析 Model CRD。
+5. backend 取出真实 provider 配置，将请求中的模型名称改写为 provider `model_id`，再流式转发请求和响应。
 
 ## 安全收益
 
-- Wework 桌面端和本地 executor 永远不会拿到真实 `api_key`。
-- 代理 token 与用户和模型 CRD 绑定，并有过期时间。
-- 真实 provider 凭证只留在后端内存和数据库中。
+- Wework 桌面端和本地 executor 永远不会拿到真实 provider `api_key`。
+- 模型代理与其他 backend API 共用登录 token 的过期和鉴权策略。
+- 真实 provider 凭证只留在 backend 内存和数据库中。
 
-## 相关改动
+## 相关实现
 
-- executor 把第三方 Model CRD 配置传入本地 Codex binary，并从 CRD env 解析 `model_id`。
-- 后端为桌面 runtime tasks 解析云端模型配置并修正返回字段 key。
-- 后端新增加密的 Codex responses 代理网关与配套测试。
-- Wework 侧对接运行时模型解析和云端授权流程。
+- executor 的 Codex compat proxy 将登录 token 放入 backend 请求的 `Authorization: Bearer` 头。
+- backend 使用完整资源身份解析模型，避免个人、公共和群组模型重名时串用配置。
+- Wework 创建任务、继续对话和回滚时都直接使用同一代理配置，不再请求单独的模型配置解析接口。

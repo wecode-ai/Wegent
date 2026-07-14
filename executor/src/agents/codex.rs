@@ -50,6 +50,8 @@ const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
 const CODEX_HOME_ENV: &str = "CODEX_HOME";
 const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
+const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
+const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
@@ -3043,7 +3045,13 @@ fn global_mcp_config_overrides() -> Vec<String> {
 }
 
 fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
-    let command = executor_home().join("bin/browser-mcp-server");
+    let command =
+        env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
+    let bridge_addr = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR.to_owned());
+    let bridge_url = format!("http://{bridge_addr}");
     let mut overrides = vec![
         format!(
             "skills.config={}",
@@ -3064,6 +3072,11 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             "{}={}",
             toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "command"]),
             toml_value(&command.display().to_string())
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "args"]),
+            toml_json_value(&json!(["browser-mcp-server"]))
         ),
         format!(
             "{}={}",
@@ -3089,19 +3102,9 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
                 "mcp_servers",
                 WEWORK_BROWSER_MCP_SERVER_NAME,
                 "env",
-                "WEWORK_BROWSER_MCP_TARGET"
-            ]),
-            toml_value("embedded")
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "env",
                 "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
             ]),
-            toml_value("http://127.0.0.1:9231")
+            toml_value(&bridge_url)
         ),
     ];
 
@@ -4928,7 +4931,9 @@ mod tests {
         let _lock = crate::test_env::lock();
         let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
         let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
+        let old_bridge_addr = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
         env::set_var("WEGENT_EXECUTOR_HOME", &home);
+        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, "127.0.0.1:43127");
         let request = ExecutionRequest {
             task_id: "task:123".to_owned(),
             ..ExecutionRequest::default()
@@ -4957,17 +4962,17 @@ mod tests {
         assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
         assert_eq!(
             config["mcp_servers.wework_browser.command"],
-            home.join("bin/browser-mcp-server").display().to_string()
+            env::current_exe().unwrap().display().to_string()
+        );
+        assert_eq!(
+            config["mcp_servers.wework_browser.args"],
+            json!(["browser-mcp-server"])
         );
         assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
         assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
         assert_eq!(
-            config["mcp_servers.wework_browser.env.WEWORK_BROWSER_MCP_TARGET"],
-            "embedded"
-        );
-        assert_eq!(
             config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
-            "http://127.0.0.1:9231"
+            "http://127.0.0.1:43127"
         );
         assert_eq!(
             config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
@@ -4978,6 +4983,11 @@ mod tests {
             env::set_var("WEGENT_EXECUTOR_HOME", old_home);
         } else {
             env::remove_var("WEGENT_EXECUTOR_HOME");
+        }
+        if let Some(old_bridge_addr) = old_bridge_addr {
+            env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, old_bridge_addr);
+        } else {
+            env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
         }
     }
 

@@ -102,6 +102,11 @@ import { createLocalChatStream } from './localChatStream'
 import { createLocalAttachmentApi } from './localAttachments'
 import { LOCAL_USER, saveLocalUserPreferences } from './localSession'
 import type { KeybindingOverride } from '@/lib/keybindings'
+import {
+  CLOUD_MODEL_CONTEXT_WINDOW_OPTION,
+  CLOUD_MODEL_NAMESPACE_OPTION,
+  CLOUD_MODEL_RESOURCE_USER_ID_OPTION,
+} from '@/features/workbench/runtimeModelSelection'
 
 const LOCAL_DEVICE_ID = 'local-device'
 
@@ -258,22 +263,19 @@ interface LocalAppServicesDeps {
   ensure?: () => Promise<LocalExecutorStatus>
   request?: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
   subscribe?: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
-  resolveCloudModelConfig?: (
-    modelId: string,
-    modelType: string,
-    modelOptions?: Record<string, string>
-  ) => Promise<Record<string, unknown> | null>
+  cloudModelGateway?: CloudModelGateway
+}
+
+interface CloudModelGateway {
+  baseUrl: string
+  apiKey: string
 }
 
 interface RuntimeWorkIpcOptions {
   resolveDeviceId?: (data?: Record<string, unknown>) => Promise<string>
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
   adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
-  resolveCloudModelConfig?: (
-    modelId: string,
-    modelType: string,
-    modelOptions?: Record<string, string>
-  ) => Promise<Record<string, unknown> | null>
+  cloudModelGateway?: CloudModelGateway
 }
 
 function cloudConnectionRequired(name: string): never {
@@ -625,13 +627,10 @@ function providerIdFromLocalConfig(config: LocalModelConfig): string {
 
 function localRuntimeModelConfig(
   modelName?: string,
+  modelType?: string | null,
   modelOptions?: Record<string, string>,
-  resolvedModelConfig?: Record<string, unknown> | null
+  cloudModelGateway?: CloudModelGateway
 ): Record<string, unknown> {
-  if (resolvedModelConfig) {
-    return applyRuntimeModelOptions(resolvedModelConfig, modelOptions)
-  }
-
   const localModel = findLocalModelConfigByModelName(modelName)
   if (localModel) {
     if (!localModel.enabled) {
@@ -668,6 +667,41 @@ function localRuntimeModelConfig(
 
   if (modelName?.startsWith(STALE_CODEX_PROVIDER_MODEL_PREFIX)) {
     throw new Error('Codex config.toml provider is no longer configured')
+  }
+
+  if (isCloudModelType(modelType)) {
+    if (!modelName || !cloudModelGateway) {
+      throw new Error('Cloud model gateway is not configured')
+    }
+    const namespace = modelOptions?.[CLOUD_MODEL_NAMESPACE_OPTION]
+    const resourceUserId = modelOptions?.[CLOUD_MODEL_RESOURCE_USER_ID_OPTION]
+    if (!namespace || !resourceUserId || !/^\d+$/.test(resourceUserId)) {
+      throw new Error('Cloud model identity is incomplete')
+    }
+    const contextWindow = Number(modelOptions?.[CLOUD_MODEL_CONTEXT_WINDOW_OPTION])
+    return {
+      model: 'openai',
+      model_id: modelName,
+      api_format: RESPONSES_API_FORMAT,
+      protocol: OPENAI_RESPONSES_PROTOCOL,
+      base_url: cloudModelGateway.baseUrl,
+      api_key: cloudModelGateway.apiKey,
+      default_headers: {
+        'X-Wegent-Model-Type': modelType,
+        'X-Wegent-Model-Namespace': namespace,
+        'X-Wegent-Model-User-Id': resourceUserId,
+      },
+      ...(Number.isFinite(contextWindow) && contextWindow > 0
+        ? { model_context_window: contextWindow }
+        : {}),
+      codex_responses_compat_proxy: true,
+      runtime_config: {
+        codex: {
+          use_user_config: false,
+          configured: true,
+        },
+      },
+    }
   }
 
   const codexProviderId = modelOptions?.codexProviderId || modelOptions?.codex_model_provider
@@ -980,8 +1014,9 @@ interface BuildLocalRuntimeExecutionRequestInput {
   message: string
   turnSeed: number
   modelId?: string
+  modelType?: string | null
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
-  resolvedModelConfig?: Record<string, unknown> | null
+  cloudModelGateway?: CloudModelGateway
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
   attachments?: RuntimeTaskCreateRequest['attachments']
   localDeviceId: string
@@ -1001,7 +1036,12 @@ function buildLocalRuntimeExecutionRequest(
   )
   const taskId = input.taskId || derivedTaskId
   const modelConfig = applyRuntimeModelOptions(
-    localRuntimeModelConfig(input.modelId, input.modelOptions, input.resolvedModelConfig),
+    localRuntimeModelConfig(
+      input.modelId,
+      input.modelType,
+      input.modelOptions,
+      input.cloudModelGateway
+    ),
     input.modelOptions
   )
   const reasoning = runtimeReasoning(input.modelOptions)
@@ -1152,11 +1192,7 @@ async function createLocalRuntimeTaskPayload(
   data: RuntimeTaskCreateRequest,
   localDeviceId: string,
   requestWithLocalDevice: RequestWithLocalDevice,
-  resolveCloudModelConfig?: (
-    modelId: string,
-    modelType: string,
-    modelOptions?: Record<string, string>
-  ) => Promise<Record<string, unknown> | null>
+  cloudModelGateway?: CloudModelGateway
 ): Promise<Record<string, unknown>> {
   const runtimeWorkspace = await prepareLocalRuntimeWorkspace(data, requestWithLocalDevice)
   const execution = executionWithWorkspace(data, runtimeWorkspace)
@@ -1171,27 +1207,6 @@ async function createLocalRuntimeTaskPayload(
   const turnSeed = createRuntimeTurnSeed()
   const payload = { ...normalizedData } as Record<string, unknown>
 
-  let resolvedModelConfig: Record<string, unknown> | null = null
-  if (
-    isCloudModelType(normalizedData.modelType) &&
-    normalizedData.modelId &&
-    resolveCloudModelConfig
-  ) {
-    try {
-      resolvedModelConfig = await resolveCloudModelConfig(
-        normalizedData.modelId,
-        normalizedData.modelType,
-        normalizedData.modelOptions
-      )
-    } catch (error) {
-      console.error('[Wework] Failed to resolve cloud model config', {
-        modelId: normalizedData.modelId,
-        modelType: normalizedData.modelType,
-        error,
-      })
-    }
-  }
-
   return {
     ...payload,
     ...(collaborationMode ? { collaborationMode } : {}),
@@ -1204,8 +1219,9 @@ async function createLocalRuntimeTaskPayload(
       message: normalizedData.message,
       turnSeed,
       modelId: normalizedData.modelId,
+      modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
-      resolvedModelConfig,
+      cloudModelGateway,
       additionalSkills: normalizedData.additionalSkills,
       attachments: normalizedData.attachments,
       localDeviceId,
@@ -1218,15 +1234,11 @@ async function createLocalRuntimeTaskPayload(
   } as unknown as Record<string, unknown>
 }
 
-async function createLocalRuntimeSendPayload(
+function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string,
-  resolveCloudModelConfig?: (
-    modelId: string,
-    modelType: string,
-    modelOptions?: Record<string, string>
-  ) => Promise<Record<string, unknown> | null>
-): Promise<Record<string, unknown>> {
+  cloudModelGateway?: CloudModelGateway
+): Record<string, unknown> {
   const turnSeed = createRuntimeTurnSeed()
   const normalizedData: RuntimeSendRequest = {
     ...data,
@@ -1251,27 +1263,6 @@ async function createLocalRuntimeSendPayload(
     ...(workspacePath ? { workspacePath } : {}),
   }
 
-  let resolvedModelConfig: Record<string, unknown> | null = null
-  if (
-    isCloudModelType(normalizedData.modelType) &&
-    normalizedData.modelId &&
-    resolveCloudModelConfig
-  ) {
-    try {
-      resolvedModelConfig = await resolveCloudModelConfig(
-        normalizedData.modelId,
-        normalizedData.modelType,
-        normalizedData.modelOptions
-      )
-    } catch (error) {
-      console.error('[Wework] Failed to resolve cloud model config for send', {
-        modelId: normalizedData.modelId,
-        modelType: normalizedData.modelType,
-        error,
-      })
-    }
-  }
-
   if (normalizedData.requestUserInputResponse || normalizedData.request_user_input_response) {
     const payload = { ...normalizedData } as Record<string, unknown>
     delete payload.modelId
@@ -1289,8 +1280,9 @@ async function createLocalRuntimeSendPayload(
         message: normalizedData.message,
         turnSeed,
         modelId: normalizedData.modelId,
+        modelType: normalizedData.modelType,
         modelOptions: normalizedData.modelOptions,
-        resolvedModelConfig,
+        cloudModelGateway,
         attachments: normalizedData.attachments,
         localDeviceId,
         workspacePath,
@@ -1317,8 +1309,9 @@ async function createLocalRuntimeSendPayload(
       message: normalizedData.message,
       turnSeed,
       modelId: normalizedData.modelId,
+      modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
-      resolvedModelConfig,
+      cloudModelGateway,
       attachments: normalizedData.attachments,
       localDeviceId,
       workspacePath,
@@ -1666,11 +1659,7 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = await createLocalRuntimeSendPayload(
-        data,
-        localDeviceId,
-        options.resolveCloudModelConfig
-      )
+      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime send payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1688,11 +1677,7 @@ export function createRuntimeWorkApiFromIpc(
     },
     async rollbackRuntimeTask(data: RuntimeRollbackRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      const payload = await createLocalRuntimeSendPayload(
-        data,
-        localDeviceId,
-        options.resolveCloudModelConfig
-      )
+      const payload = createLocalRuntimeSendPayload(data, localDeviceId, options.cloudModelGateway)
       if (!payload.executionRequest) {
         console.warn('[Wework] Local runtime rollback payload missing executionRequest', {
           taskId: payload.taskId,
@@ -1875,7 +1860,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         requestWithLocalDevice,
-        options.resolveCloudModelConfig
+        options.cloudModelGateway
       )
       debugLocalRuntimeCreatePayload(data, payload)
       const response = await request<Partial<RuntimeTaskCreateResponse>>(
@@ -2084,7 +2069,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     (method, params) => request(method, params),
     getLocalDeviceId,
     {
-      resolveCloudModelConfig: deps.resolveCloudModelConfig,
+      cloudModelGateway: deps.cloudModelGateway,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
 

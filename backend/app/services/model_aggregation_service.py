@@ -105,6 +105,7 @@ class UnifiedModel:
         is_advanced: bool = False,
         model_group: Optional[str] = None,
         model_sub_group: Optional[str] = None,
+        resource_user_id: Optional[int] = None,
         runtime_family: Optional[str] = None,
         created_at: Optional[Any] = None,
         updated_at: Optional[Any] = None,
@@ -123,6 +124,7 @@ class UnifiedModel:
         self.is_advanced = is_advanced
         self.model_group = model_group
         self.model_sub_group = model_sub_group
+        self.resource_user_id = resource_user_id
         self.created_at = created_at
         self.updated_at = updated_at
         self.runtime_family = runtime_family or build_model_runtime_family(
@@ -142,7 +144,7 @@ class UnifiedModel:
         safe_config = (
             {k: v for k, v in self.config.items() if k != "env"} if self.config else {}
         )
-        return {
+        result = {
             "name": self.name,
             "type": self.type.value,
             "displayName": self.display_name,
@@ -158,6 +160,9 @@ class UnifiedModel:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+        if self.resource_user_id is not None:
+            result["resourceUserId"] = self.resource_user_id
+        return result
 
     def to_full_dict(self) -> Dict[str, Any]:
         """Convert to full dictionary without exposing sensitive env values."""
@@ -581,6 +586,7 @@ class ModelAggregationService:
                     is_advanced=info.get("is_advanced", False),
                     model_group=info.get("model_group"),
                     model_sub_group=info.get("model_sub_group"),
+                    resource_user_id=resource.user_id,
                     created_at=resource.created_at,
                     updated_at=resource.updated_at,
                 )
@@ -635,6 +641,7 @@ class ModelAggregationService:
                 or model_dict.get("model_group"),
                 model_sub_group=model_dict.get("modelSubGroup")
                 or model_dict.get("model_sub_group"),
+                resource_user_id=0,
                 created_at=model_dict.get("created_at"),
                 updated_at=model_dict.get("updated_at"),
             )
@@ -709,6 +716,7 @@ class ModelAggregationService:
                     is_active=resource.is_active,
                     model_group=info.get("model_group"),
                     model_sub_group=info.get("model_sub_group"),
+                    resource_user_id=resource.user_id,
                     created_at=resource.created_at,
                     updated_at=resource.updated_at,
                 ).to_full_dict()
@@ -737,6 +745,7 @@ class ModelAggregationService:
                         or model_dict.get("model_group"),
                         model_sub_group=model_dict.get("modelSubGroup")
                         or model_dict.get("model_sub_group"),
+                        resource_user_id=0,
                         created_at=model_dict.get("created_at"),
                         updated_at=model_dict.get("updated_at"),
                     ).to_full_dict()

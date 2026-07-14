@@ -261,13 +261,6 @@ export function createRuntimeWorkApi(client: HttpClient) {
     createRuntimeTask(data: RuntimeTaskCreateRequest): Promise<RuntimeTaskCreateResponse> {
       return client.post('/runtime-work/create', data)
     },
-    resolveModelConfig(data: {
-      modelId: string
-      modelType?: string | null
-      modelOptions?: Record<string, string>
-    }): Promise<{ modelConfig: Record<string, unknown> }> {
-      return client.post('/runtime-work/resolve-model-config', data)
-    },
     forkRuntimeTask(data: RuntimeTaskForkRequest): Promise<RuntimeTaskForkResponse> {
       return client.post('/runtime-work/fork', data)
     },

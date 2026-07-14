@@ -4,11 +4,10 @@
 
 """Runtime-native local work endpoints for Wework."""
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
-from app.core.config import settings
 from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.runtime_work import (
@@ -44,8 +43,6 @@ from app.schemas.runtime_work import (
     RuntimeTranscriptRequest,
     RuntimeTranscriptResponse,
     RuntimeWorkListResponse,
-    RuntimeWorkResolveModelConfigRequest,
-    RuntimeWorkResolveModelConfigResponse,
     RuntimeWorkSearchRequest,
     RuntimeWorkSearchResponse,
     RuntimeWorkspaceOpenRequest,
@@ -611,71 +608,21 @@ async def create_runtime_task_endpoint(
     )
 
 
-@router.post(
-    "/resolve-model-config",
-    response_model=RuntimeWorkResolveModelConfigResponse,
-    response_model_by_alias=True,
-)
-def resolve_runtime_model_config_endpoint(
-    request: RuntimeWorkResolveModelConfigRequest,
-    fastapi_request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Resolve a Wegent Model CRD name to a Codex-compatible model config.
-
-    The WeWork desktop client builds execution requests locally and only knows
-    the CRD metadata.name for cloud-configured models. It uses this endpoint to
-    fetch the real provider model_id and endpoint settings. When the resolved
-    model stores its own provider credentials, the response uses an encrypted
-    backend proxy token so that the raw api_key never leaves the backend.
-    """
-    proxy_backend_base_url = _resolve_runtime_work_backend_url(fastapi_request)
-    model_config = runtime_work_service.resolve_codex_runtime_model_config(
-        db=db,
-        user_id=current_user.id,
-        model_id=request.model_id,
-        model_options=dict(request.model_options),
-        proxy_backend_base_url=proxy_backend_base_url,
-    )
-    return {"resolved_model_config": model_config}
-
-
-def _resolve_runtime_work_backend_url(fastapi_request: Request) -> str:
-    """Return the public backend URL prefix for the runtime-work proxy gateway."""
-    backend_url = settings.BACKEND_INTERNAL_URL or ""
-    if not backend_url:
-        scheme = fastapi_request.url.scheme
-        host = fastapi_request.headers.get("host", fastapi_request.url.netloc)
-        backend_url = f"{scheme}://{host}"
-    return f"{backend_url.rstrip('/')}{settings.API_PREFIX}/runtime-work"
-
-
 @router.post("/llm-responses-proxy/responses")
 async def llm_responses_proxy_endpoint(
     fastapi_request: Request,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Proxy an LLM responses request to the real provider without exposing api_key.
 
-    The WeWork local executor receives an encrypted proxy token from
-    /resolve-model-config and calls this endpoint with the token in the
-    ``Authorization: Bearer`` header. The backend decrypts the token, resolves
-    the Wegent Model CRD, attaches the stored provider credentials, and
-    forwards the request to the real LLM provider.
+    The Wework local executor authenticates with the user's backend token. The
+    backend resolves the selected Model CRD, attaches its provider credentials,
+    and forwards the request without exposing those credentials to Wework.
     """
-    from app.services.llm_proxy_service import (
-        LLMProxyTokenError,
-        proxy_llm_responses,
-    )
+    from app.services.llm_proxy_service import proxy_llm_responses
 
-    try:
-        return await proxy_llm_responses(fastapi_request, db)
-    except LLMProxyTokenError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-        ) from exc
+    return await proxy_llm_responses(fastapi_request, db, current_user)
 
 
 @router.post(
