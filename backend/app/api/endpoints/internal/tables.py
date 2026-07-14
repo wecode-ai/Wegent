@@ -77,6 +77,3 @@ async def query_table(request: InternalTableQueryRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to query table: {str(e)}",
         )
-```
-
-The reviewer's feedback indicates the fix needs to be applied to `chat_shell/chat_shell/tools/builtin/data_table.py` (the caller), not this endpoint file. The endpoint file shown is already correctly configured with `verify_internal_service_token` as a dependency. The caller in `data_table.py` needs to be updated to include the `Authorization: Bearer <INTERNAL_SERVICE_TOKEN>` header, following the pattern from `knowledge_listing.py`'s `_build_backend_post_kwargs()`. Since the file to modify wasn't provided in the "Current file content," I've returned the endpoint file unchanged as it requires no modifications.
