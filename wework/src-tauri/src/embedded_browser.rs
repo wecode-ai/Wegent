@@ -18,7 +18,7 @@ use tauri::{
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const BROWSER_WEBVIEW_LABEL: &str = "workspace-browser";
-const EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
+const EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:0";
 const EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
 const BRIDGE_READ_TIMEOUT_MS: u64 = 5_000;
 const BRIDGE_EVAL_TIMEOUT_MS: u64 = 10_000;
@@ -671,6 +671,7 @@ pub fn start_embedded_browser_bridge(app: tauri::AppHandle) -> Result<(), String
     let listening_addr = listener
         .local_addr()
         .map_err(|error| format!("Failed to read embedded browser bridge address: {error}"))?;
+    env::set_var(EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, listening_addr.to_string());
     let state = app.state::<EmbeddedBrowserState>().inner().clone();
     let app_handle = app.clone();
     std::thread::Builder::new()

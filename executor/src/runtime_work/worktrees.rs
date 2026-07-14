@@ -652,14 +652,29 @@ fn resolve_worktree_root(configured: &str) -> PathBuf {
 }
 
 fn default_worktree_root() -> PathBuf {
-    if let Some(projects) = env::var_os("WEGENT_EXECUTOR_PROJECTS_DIR").map(PathBuf::from) {
+    default_worktree_root_from_paths(
+        env::var_os("WEGENT_EXECUTOR_PROJECTS_DIR").map(PathBuf::from),
+        env::var_os("WEGENT_EXECUTOR_HOME").map(PathBuf::from),
+        env::var_os("WECODE_HOME").map(PathBuf::from),
+        home_dir(),
+    )
+}
+
+fn default_worktree_root_from_paths(
+    projects: Option<PathBuf>,
+    executor_home: Option<PathBuf>,
+    wecode_home: Option<PathBuf>,
+    home: PathBuf,
+) -> PathBuf {
+    if let Some(projects) = projects {
         if let Some(parent) = projects.parent() {
             return parent.join("worktrees");
         }
     }
-    let base = env::var_os("WECODE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join(".wecode"));
+    if let Some(executor_home) = executor_home {
+        return executor_home.join("workspace").join("worktrees");
+    }
+    let base = wecode_home.unwrap_or_else(|| home.join(".wecode"));
     base.join("wegent-executor")
         .join("workspace")
         .join("worktrees")
@@ -690,7 +705,9 @@ fn same_path(left: &str, right: &str) -> bool {
 }
 
 fn is_auto_prune_candidate(record: &ManagedWorktree, linked_tasks: &[RuntimeTaskLink]) -> bool {
-    record.state == "active" && linked_tasks.iter().all(|task| task.status == "archived")
+    record.state == "active"
+        && !linked_tasks.is_empty()
+        && linked_tasks.iter().all(|task| task.status == "archived")
 }
 
 fn now_ms() -> i64 {
@@ -715,6 +732,33 @@ mod tests {
         assert!(settings.auto_cleanup_enabled);
         assert_eq!(settings.keep_count, 15);
         assert!(settings.worktree_root.is_empty());
+    }
+
+    #[test]
+    fn isolated_executor_home_owns_its_default_worktree_root() {
+        let root = default_worktree_root_from_paths(
+            None,
+            Some(PathBuf::from("/tmp/isolated-executor")),
+            Some(PathBuf::from("/tmp/shared-wecode")),
+            PathBuf::from("/tmp/home"),
+        );
+
+        assert_eq!(
+            root,
+            PathBuf::from("/tmp/isolated-executor/workspace/worktrees")
+        );
+    }
+
+    #[test]
+    fn explicit_projects_directory_has_highest_worktree_root_precedence() {
+        let root = default_worktree_root_from_paths(
+            Some(PathBuf::from("/tmp/verification/workspace/projects")),
+            Some(PathBuf::from("/tmp/isolated-executor")),
+            Some(PathBuf::from("/tmp/shared-wecode")),
+            PathBuf::from("/tmp/home"),
+        );
+
+        assert_eq!(root, PathBuf::from("/tmp/verification/workspace/worktrees"));
     }
 
     #[test]
@@ -773,7 +817,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_prune_only_selects_archived_or_unlinked_worktrees() {
+    fn auto_prune_only_selects_worktrees_linked_exclusively_to_archived_tasks() {
         let record = ManagedWorktree::default();
         let mut active_task = task_link("active");
         active_task.status = "active".to_owned();
@@ -782,7 +826,7 @@ mod tests {
 
         assert!(!is_auto_prune_candidate(&record, &[active_task]));
         assert!(is_auto_prune_candidate(&record, &[archived_task]));
-        assert!(is_auto_prune_candidate(&record, &[]));
+        assert!(!is_auto_prune_candidate(&record, &[]));
     }
 
     #[test]

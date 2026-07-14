@@ -220,7 +220,6 @@ const codexModel = {
 
 function createServices() {
   return createHybridWorkbenchServices({
-    backendUrl: 'https://cloud.example.com',
     apiBaseUrl: 'https://cloud.example.com/api',
     socketBaseUrl: 'https://cloud.example.com',
     socketPath: '/socket.io',

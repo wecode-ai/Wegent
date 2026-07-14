@@ -8,6 +8,8 @@ export interface ModelExecutionOverride {
   source: HybridModelSource
   modelName: string
   modelType: ModelType
+  modelNamespace?: string
+  resourceUserId?: number
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
@@ -47,6 +49,12 @@ export function getModelExecutionOverride(
       source: override.source,
       modelName: override.modelName,
       modelType: override.modelType,
+      ...(typeof override.modelNamespace === 'string'
+        ? { modelNamespace: override.modelNamespace }
+        : {}),
+      ...(typeof override.resourceUserId === 'number'
+        ? { resourceUserId: override.resourceUserId }
+        : {}),
     }
   }
   return null
@@ -55,16 +63,22 @@ export function getModelExecutionOverride(
 export function resolveModelExecutionSelection(model: UnifiedModel): {
   modelName: string
   modelType: ModelType
+  modelNamespace?: string
+  resourceUserId?: number
 } {
   const override = getModelExecutionOverride(model)
   if (override) {
     return {
       modelName: override.modelName,
       modelType: override.modelType,
+      modelNamespace: override.modelNamespace,
+      resourceUserId: override.resourceUserId,
     }
   }
   return {
     modelName: model.name,
     modelType: model.type,
+    modelNamespace: model.namespace,
+    resourceUserId: model.resourceUserId,
   }
 }
