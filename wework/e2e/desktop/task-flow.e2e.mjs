@@ -659,6 +659,17 @@ async function buildExecutor() {
   return binaryPath
 }
 
+async function readTauriMainBinaryName() {
+  const configPath = join(weworkDir, 'src-tauri', 'tauri.conf.json')
+  try {
+    const raw = await readFile(configPath, 'utf8')
+    const config = JSON.parse(raw)
+    return config.mainBinaryName || 'app'
+  } catch {
+    return 'app'
+  }
+}
+
 async function buildDesktopApp(controlUrl, appIdentifier) {
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) return resolveExecutable(configured, 'app', 'Configured Wework desktop app')
@@ -684,7 +695,8 @@ async function buildDesktopApp(controlUrl, appIdentifier) {
       },
     }
   )
-  const binaryName = process.platform === 'win32' ? 'app.exe' : 'app'
+  const mainBinaryName = await readTauriMainBinaryName()
+  const binaryName = process.platform === 'win32' ? `${mainBinaryName}.exe` : mainBinaryName
   const candidates = [
     join(weworkDir, 'src-tauri', 'target', 'debug', binaryName),
     join(
