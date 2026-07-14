@@ -57,6 +57,31 @@ const completedWebSearchBlocks: ProcessingBlock[] = [
     status: 'done',
     createdAt: 1770000002000,
   },
+  {
+    id: 'web-open-2',
+    subtaskId: 1,
+    type: 'tool',
+    toolName: 'web_search',
+    toolInput: {
+      type: 'openPage',
+      url: 'https://docs.wegent.ai/guide',
+    },
+    status: 'done',
+    createdAt: 1770000003000,
+  },
+  {
+    id: 'web-find-1',
+    subtaskId: 1,
+    type: 'tool',
+    toolName: 'web_search',
+    toolInput: {
+      type: 'findInPage',
+      url: 'https://docs.wegent.ai/guide',
+      pattern: 'install',
+    },
+    status: 'done',
+    createdAt: 1770000004000,
+  },
 ]
 
 const completedFileChangesBlock: ProcessingBlock = {
@@ -205,6 +230,13 @@ describe('ToolBlocksDisplay', () => {
     )
     expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
       'https://www.weather.com/weather/today/l/Beijing+China'
+    )
+    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
+      'https://docs.wegent.ai/guide'
+    )
+    expect(screen.getByText('https://docs.wegent.ai/guide')).toBeInTheDocument()
+    expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
+      "'install' in https://docs.wegent.ai/guide"
     )
     expect(screen.getByTestId('web-search-activity-results')).toHaveTextContent(
       'weather today Beijing China | weather.com'

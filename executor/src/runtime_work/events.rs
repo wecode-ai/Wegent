@@ -1951,6 +1951,79 @@ mod tests {
     }
 
     #[test]
+    fn updates_codex_web_search_input_when_the_action_completes() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "search-1",
+                        "type": "webSearch",
+                        "query": ""
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "search-1",
+                        "type": "webSearch",
+                        "query": "Wegent documentation",
+                        "action": {
+                            "type": "search",
+                            "query": "Wegent documentation"
+                        }
+                    }
+                }
+            }),
+        );
+
+        let created = event_rx
+            .try_recv()
+            .expect("web search start should create a block");
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(
+            created["payload"]["data"]["block"]["tool_input"]["query"],
+            ""
+        );
+
+        let updated = event_rx
+            .try_recv()
+            .expect("web search completion should update the block");
+        assert_eq!(updated["event"], "response.block.updated");
+        assert_eq!(updated["payload"]["data"]["block_id"], "search-1");
+        assert_eq!(updated["payload"]["data"]["updates"]["status"], "done");
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["tool_input"]["type"],
+            "search"
+        );
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["tool_input"]["query"],
+            "Wegent documentation"
+        );
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
     fn maps_codex_started_final_agent_message_deltas_to_output_text() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
