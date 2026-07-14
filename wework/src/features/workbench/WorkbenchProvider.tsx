@@ -961,6 +961,7 @@ export function WorkbenchProvider({
       listWorkspaceEntries: executorClient.files.listWorkspaceEntries,
       searchWorkspaceEntries: executorClient.files.searchWorkspaceEntries,
       readWorkspaceTextFile: executorClient.files.readWorkspaceTextFile,
+      writeWorkspaceTextFile: executorClient.files.writeWorkspaceTextFile,
       readWorkspaceFileChunk: executorClient.files.readWorkspaceFileChunk,
     }),
     [executorClient]

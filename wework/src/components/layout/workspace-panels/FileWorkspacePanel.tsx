@@ -1,4 +1,4 @@
-import { AppWindow, ChevronDown, FileOutput, Folders, Loader2 } from 'lucide-react'
+import { AppWindow, ChevronDown, FileOutput, Folders, Loader2, Pencil, Save, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
@@ -153,6 +153,7 @@ export function FileWorkspacePanel({
   const listWorkspaceEntries = workspaceFileApi.listWorkspaceEntries
   const readWorkspaceTextFile = workspaceFileApi.readWorkspaceTextFile
   const readWorkspaceFileChunk = workspaceFileApi.readWorkspaceFileChunk
+  const writeWorkspaceTextFile = workspaceFileApi.writeWorkspaceTextFile
   const [activeDirectoryPath, setActiveDirectoryPath] = useState(target?.path ?? '')
   const [entriesByPath, setEntriesByPath] = useState<Record<string, WorkspaceFileEntry[]>>({})
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
@@ -167,6 +168,11 @@ export function FileWorkspacePanel({
   const [previewLoadingProgress, setPreviewLoadingProgress] =
     useState<FilePreviewLoadingProgress | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [editedContent, setEditedContent] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
   const [openingWorkspace, setOpeningWorkspace] = useState(false)
   const [directoryTreeVisible, setDirectoryTreeVisible] = useState(true)
   const [fileOpeners, setFileOpeners] = useState<(LocalFileOpeners & { filePath: string }) | null>(
@@ -295,6 +301,9 @@ export function FileWorkspacePanel({
       setPreviewLoadingProgress(null)
       setPreviewError(null)
       setPreview(null)
+      setEditing(false)
+      setEditedContent('')
+      setSaveError(null)
       setBinaryPreview(null)
       if (stableTarget.workspaceSource !== 'remote') {
         void loadFileOpeners(entry.path)
@@ -341,6 +350,9 @@ export function FileWorkspacePanel({
       } catch (error) {
         if (fileRequestSequence.current !== requestId) return
         setPreview(null)
+        setEditing(false)
+        setEditedContent('')
+        setSaveError(null)
         setBinaryPreview(null)
         setPreviewLineTarget(null)
         setPreviewError(
@@ -377,6 +389,43 @@ export function FileWorkspacePanel({
     [openFile, stableTarget]
   )
 
+  const dirty = editing && preview !== null && editedContent !== preview.content
+
+  const saveFile = useCallback(async () => {
+    if (!stableTarget || !preview || !writeWorkspaceTextFile || !dirty || saving) return !dirty
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const saved = await writeWorkspaceTextFile(
+        stableTarget.deviceId,
+        preview.path,
+        editedContent,
+        preview.revision
+      )
+      setPreview(saved)
+      setEditedContent(saved.content)
+      return true
+    } catch (error) {
+      setSaveError(
+        error instanceof Error ? error.message : t('workbench.workspace_file_save_failed')
+      )
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }, [dirty, editedContent, preview, saving, stableTarget, t, writeWorkspaceTextFile])
+
+  const navigateWithDirtyGuard = useCallback(
+    (action: () => void) => {
+      if (dirty) {
+        setPendingNavigation(() => action)
+        return
+      }
+      action()
+    },
+    [dirty]
+  )
+
   useEffect(() => {
     if (!stableTarget) return
     directoryLoadedAtByPath.current.clear()
@@ -389,6 +438,9 @@ export function FileWorkspacePanel({
         setActiveDirectoryPath(stableTarget.path)
         setSelectedFilePath(null)
         setPreview(null)
+        setEditing(false)
+        setEditedContent('')
+        setSaveError(null)
         setBinaryPreview(null)
         setPreviewLineTarget(null)
         setTreeError(null)
@@ -406,10 +458,12 @@ export function FileWorkspacePanel({
     let cancelled = false
     void Promise.resolve().then(() => {
       if (!cancelled) {
-        setDirectoryTreeVisible(false)
-        openFilePath(openFileRequest.path, {
-          lineStart: openFileRequest.lineStart,
-          lineEnd: openFileRequest.lineEnd,
+        navigateWithDirtyGuard(() => {
+          setDirectoryTreeVisible(false)
+          openFilePath(openFileRequest.path, {
+            lineStart: openFileRequest.lineStart,
+            lineEnd: openFileRequest.lineEnd,
+          })
         })
       }
     })
@@ -417,12 +471,25 @@ export function FileWorkspacePanel({
       cancelled = true
     }
   }, [
+    navigateWithDirtyGuard,
     openFilePath,
     openFileRequest?.id,
     openFileRequest?.lineEnd,
     openFileRequest?.lineStart,
     openFileRequest?.path,
   ])
+
+  useEffect(() => {
+    if (!dirty) return
+
+    const preventUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', preventUnload)
+    return () => window.removeEventListener('beforeunload', preventUnload)
+  }, [dirty])
 
   useEffect(() => {
     if (!fileOpenerMenuOpen) return
@@ -514,6 +581,53 @@ export function FileWorkspacePanel({
           {displayPath}
         </p>
         <div className="flex shrink-0 items-center gap-1">
+          {preview?.editable && writeWorkspaceTextFile && !editing && (
+            <button
+              type="button"
+              data-testid="workspace-file-edit-button"
+              onClick={() => {
+                setEditedContent(preview.content)
+                setSaveError(null)
+                setEditing(true)
+              }}
+              className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+            >
+              <Pencil className="h-4 w-4" />
+              {t('workbench.workspace_file_edit')}
+            </button>
+          )}
+          {editing && (
+            <>
+              <button
+                type="button"
+                data-testid="workspace-file-cancel-edit-button"
+                onClick={() =>
+                  navigateWithDirtyGuard(() => {
+                    setEditing(false)
+                    setEditedContent(preview?.content ?? '')
+                  })
+                }
+                className="flex h-8 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-muted"
+              >
+                <X className="h-4 w-4" />
+                {t('workbench.cancel')}
+              </button>
+              <button
+                type="button"
+                data-testid="workspace-file-save-button"
+                disabled={!dirty || saving}
+                onClick={() => void saveFile()}
+                className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm text-white disabled:opacity-50"
+              >
+                {saving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                {t('workbench.workspace_file_save')}
+              </button>
+            </>
+          )}
           {canOpenFile && (
             <div
               ref={fileOpenerMenuRef}
@@ -609,6 +723,10 @@ export function FileWorkspacePanel({
           targetLineStart={activePreviewLineTarget?.lineStart}
           targetLineEnd={activePreviewLineTarget?.lineEnd}
           onAddCodeComment={onAddCodeComment}
+          editing={editing}
+          editedContent={editedContent}
+          onEditedContentChange={setEditedContent}
+          onSave={() => void saveFile()}
         />
         <div
           data-testid="workspace-file-tree-container"
@@ -626,11 +744,96 @@ export function FileWorkspacePanel({
             loadingPaths={loadingPaths}
             error={treeError}
             onOpenDirectory={openDirectory}
-            onOpenFile={entry => void openFile(entry)}
-            onRefresh={() => void loadTree(treeRetryPath ?? activeDirectoryPath, true)}
+            onOpenFile={entry => navigateWithDirtyGuard(() => void openFile(entry))}
+            onRefresh={() =>
+              navigateWithDirtyGuard(
+                () => void loadTree(treeRetryPath ?? activeDirectoryPath, true)
+              )
+            }
           />
         </div>
       </div>
+      {saveError && (
+        <div
+          data-testid="workspace-file-save-error"
+          className="flex items-center justify-between gap-3 border-t border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
+        >
+          <span>{saveError}</span>
+          {saveError.toLowerCase().includes('changed on disk') && selectedFilePath && (
+            <button
+              type="button"
+              data-testid="workspace-file-conflict-reload-button"
+              className="shrink-0 underline"
+              onClick={() => {
+                setEditing(false)
+                setEditedContent('')
+                setSaveError(null)
+                openFilePath(selectedFilePath)
+              }}
+            >
+              {t('workbench.workspace_file_reload')}
+            </button>
+          )}
+        </div>
+      )}
+      {pendingNavigation && (
+        <div className="fixed inset-0 z-system-modal flex items-center justify-center bg-black/35 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            data-testid="workspace-file-unsaved-dialog"
+            className="w-full max-w-sm rounded-xl border border-border bg-background p-4 shadow-xl"
+          >
+            <h2 className="text-base font-semibold text-text-primary">
+              {t('workbench.workspace_file_unsaved_title')}
+            </h2>
+            <p className="mt-2 text-sm text-text-secondary">
+              {t('workbench.workspace_file_unsaved_description')}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                data-testid="workspace-file-unsaved-cancel"
+                className="h-8 rounded-md px-3 text-sm hover:bg-muted"
+                onClick={() => setPendingNavigation(null)}
+              >
+                {t('workbench.cancel')}
+              </button>
+              <button
+                type="button"
+                data-testid="workspace-file-unsaved-discard"
+                className="h-8 rounded-md px-3 text-sm text-red-600 hover:bg-muted"
+                onClick={() => {
+                  const action = pendingNavigation
+                  setPendingNavigation(null)
+                  setEditing(false)
+                  action()
+                }}
+              >
+                {t('workbench.workspace_file_discard')}
+              </button>
+              <button
+                type="button"
+                data-testid="workspace-file-unsaved-save"
+                disabled={saving}
+                className="h-8 rounded-md bg-primary px-3 text-sm text-white disabled:opacity-50"
+                onClick={() =>
+                  void (async () => {
+                    if (await saveFile()) {
+                      const action = pendingNavigation
+                      setPendingNavigation(null)
+                      setEditing(false)
+                      action()
+                    }
+                  })()
+                }
+              >
+                {t('workbench.workspace_file_save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

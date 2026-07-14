@@ -21,7 +21,9 @@ use crate::{
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
-    local::workspace_files::{execute_workspace_file_command, is_workspace_file_command},
+    local::workspace_files::{
+        execute_workspace_file_command_with_input, is_workspace_file_command,
+    },
     logging::{format_executor_log, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     version::get_version,
@@ -595,11 +597,12 @@ impl AppIpcServer {
         let env = string_env(params.get("env"))?;
         if is_workspace_file_command(command_key) {
             return serde_json::to_value(
-                execute_workspace_file_command(
+                execute_workspace_file_command_with_input(
                     command_key,
                     string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
                     args,
                     env,
+                    string_field(&params, "stdin"),
                 )
                 .await,
             )

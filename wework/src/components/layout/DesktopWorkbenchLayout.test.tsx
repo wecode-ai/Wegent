@@ -5428,6 +5428,83 @@ describe('DesktopWorkbenchLayout', () => {
     expect(readWorkspaceTextFile).toHaveBeenCalledTimes(1)
   })
 
+  test('workspace file panel edits and saves an editable text file', async () => {
+    const user = userEvent.setup()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'README.md',
+          path: '/workspace/project/README.md',
+          isDirectory: false,
+          size: 5,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'hello',
+      editable: true,
+      revision: 'sha256:old',
+      truncated: false,
+      size: 5,
+      modifiedAt: null,
+    })
+    const writeWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'hello world',
+      editable: true,
+      revision: 'sha256:new',
+      truncated: false,
+      size: 11,
+      modifiedAt: null,
+    })
+
+    render(
+      <FileWorkspacePanel
+        target={{
+          deviceId: 'workspace-cloud-device',
+          path: '/workspace/project',
+          source: 'project',
+          workspaceSource: 'remote',
+        }}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          writeWorkspaceTextFile,
+        }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await user.click(await screen.findByText('README.md'))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
+    )
+
+    await user.click(screen.getByTestId('workspace-file-edit-button'))
+    const editor = screen.getByTestId('workspace-file-editor')
+    const codeMirrorContent = editor.querySelector('.cm-content')
+    expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
+
+    await user.click(codeMirrorContent as HTMLElement)
+    await user.keyboard('{Control>}a{/Control}hello world')
+    await user.click(screen.getByTestId('workspace-file-save-button'))
+
+    await waitFor(() =>
+      expect(writeWorkspaceTextFile).toHaveBeenCalledWith(
+        'workspace-cloud-device',
+        '/workspace/project/README.md',
+        'hello world',
+        'sha256:old'
+      )
+    )
+    await waitFor(() => expect(screen.getByTestId('workspace-file-save-button')).toBeDisabled())
+  })
+
   test('workspace file preview renders file contents with Pierre file viewer', async () => {
     render(
       <WorkspaceFilePreview
