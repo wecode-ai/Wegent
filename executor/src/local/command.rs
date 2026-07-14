@@ -128,7 +128,7 @@ impl CommandResult {
         }
     }
 
-    fn error(message: String, duration: f64, timed_out: bool) -> Self {
+    pub fn error(message: String, duration: f64, timed_out: bool) -> Self {
         Self {
             success: false,
             exit_code: None,

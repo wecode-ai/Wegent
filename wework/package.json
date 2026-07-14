@@ -10,6 +10,8 @@
     "prepare:codex": "node scripts/prepare-codex-binary.mjs",
     "build": "tsc -b && vite build",
     "build:mac": "bash scripts/build-mac-app.sh",
+    "build:windows": "bash scripts/build-windows-app.sh",
+    "build:windows:sidecar": "bash scripts/build-windows-sidecar.sh",
     "build:mac:devtools": "WEWORK_RELEASE_DEVTOOLS=1 bash scripts/build-mac-app.sh",
     "ios:init": "tauri ios init",
     "dev:ios": "bash scripts/dev-ios-app.sh",

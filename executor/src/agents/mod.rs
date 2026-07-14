@@ -52,6 +52,9 @@ const MACOS_CODEX_APP_BINARIES: [&str; 2] = [
 ];
 const CLAUDE_USER_BINARY_SUFFIX: &str = ".local/bin/claude";
 
+#[cfg(target_os = "windows")]
+const WINDOWS_EXECUTABLE_EXTENSIONS: [&str; 4] = [".exe", ".cmd", ".bat", ".com"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentCommandPlanner {
     claude_binary: String,
@@ -96,9 +99,10 @@ pub fn resolve_codex_binary_path(value: &str) -> String {
     } else {
         Vec::new()
     };
-    let search_paths = env::var_os("PATH")
+    let mut search_paths = env::var_os("PATH")
         .map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
         .unwrap_or_default();
+    search_paths.extend(windows_fallback_search_paths());
 
     resolve_codex_binary_path_from_candidates(value, &app_candidates, &search_paths)
 }
@@ -119,10 +123,7 @@ fn resolve_codex_binary_path_from_candidates(
         }
     }
 
-    search_paths
-        .iter()
-        .map(|path| path.join(trimmed))
-        .find(|path| path.is_file())
+    find_executable_in_paths(trimmed, search_paths)
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| trimmed.to_owned())
 }
@@ -142,12 +143,11 @@ fn resolve_claude_binary() -> String {
 /// `~/.local/bin` is a common user-level Claude Code installation location,
 /// so check it before falling back to PATH lookup.
 pub fn resolve_claude_binary_path(value: &str) -> String {
-    let user_binary = env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(CLAUDE_USER_BINARY_SUFFIX));
-    let search_paths = env::var_os("PATH")
+    let user_binary = dirs::home_dir().map(|home| home.join(CLAUDE_USER_BINARY_SUFFIX));
+    let mut search_paths = env::var_os("PATH")
         .map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
         .unwrap_or_default();
+    search_paths.extend(windows_fallback_search_paths());
 
     resolve_claude_binary_path_from_candidates(value, user_binary.as_ref(), &search_paths)
 }
@@ -168,10 +168,7 @@ fn resolve_claude_binary_path_from_candidates(
         }
     }
 
-    search_paths
-        .iter()
-        .map(|path| path.join(trimmed))
-        .find(|path| path.is_file())
+    find_executable_in_paths(trimmed, search_paths)
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| trimmed.to_owned())
 }
@@ -183,6 +180,51 @@ fn read_binary(primary: &str, secondary: &str, default: &str) -> String {
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default.to_owned())
+}
+
+/// Returns common user-level binary directories that GUI-launched processes may
+/// not have on PATH.
+#[cfg(target_os = "windows")]
+fn windows_fallback_search_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join("AppData").join("Roaming").join("npm"));
+        paths.push(home.join(".cargo").join("bin"));
+    }
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+        paths.push(PathBuf::from(local_app_data).join("npm"));
+    }
+    paths
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_fallback_search_paths() -> Vec<PathBuf> {
+    Vec::new()
+}
+
+/// Looks for `name` in `search_paths`, respecting Windows executable
+/// extensions when no extension is provided.
+fn find_executable_in_paths(name: &str, search_paths: &[PathBuf]) -> Option<PathBuf> {
+    search_paths
+        .iter()
+        .flat_map(|path| executable_candidates(path.join(name)))
+        .find(|path| path.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn executable_candidates(path: PathBuf) -> Vec<PathBuf> {
+    if path.extension().is_some() {
+        return vec![path];
+    }
+    WINDOWS_EXECUTABLE_EXTENSIONS
+        .iter()
+        .map(|ext| path.with_extension(&ext[1..]))
+        .collect()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn executable_candidates(path: PathBuf) -> Vec<PathBuf> {
+    vec![path]
 }
 
 fn claude_code_process_timeout_seconds() -> u64 {

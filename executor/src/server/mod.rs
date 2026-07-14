@@ -1922,9 +1922,7 @@ fn runtime_home_path(mode: ArchiveMode) -> PathBuf {
 }
 
 fn home_path() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/home/user"))
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/home/user"))
 }
 
 fn parse_archive_mode(value: &str) -> Result<ArchiveMode, HttpError> {

@@ -134,6 +134,13 @@ const TRAY_MENU_TASK_PREFIX: &str = "task:";
 const TRAY_ID: &str = "wework-main";
 #[cfg(desktop)]
 const TRAY_USAGE_ICON_HEIGHT: u32 = 22;
+#[cfg(all(desktop, target_os = "macos"))]
+const TRAY_STATUS_ICON_SIZE: u32 = TRAY_USAGE_ICON_HEIGHT;
+#[cfg(all(desktop, not(target_os = "macos")))]
+const TRAY_STATUS_ICON_SIZE: u32 = 32;
+#[cfg(all(desktop, target_os = "windows"))]
+const WINDOWS_TRAY_ICON_BYTES: &[u8] =
+    include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/icons/128x128.png"));
 #[cfg(desktop)]
 const TRAY_USAGE_ICON_LEFT_PADDING: u32 = 0;
 #[cfg(desktop)]
@@ -890,6 +897,7 @@ struct ProcessDiagnosticsSnapshot {
     processes: Vec<ProcessDiagnosticsProcess>,
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Clone)]
 struct RawProcessInfo {
     pid: u32,
@@ -899,6 +907,7 @@ struct RawProcessInfo {
     command: String,
 }
 
+#[cfg(target_os = "macos")]
 fn parse_process_snapshot_line(line: &str) -> Option<RawProcessInfo> {
     let mut parts = line.split_whitespace();
     let pid = parts.next()?.parse::<u32>().ok()?;
@@ -919,6 +928,7 @@ fn parse_process_snapshot_line(line: &str) -> Option<RawProcessInfo> {
     })
 }
 
+#[cfg(target_os = "macos")]
 fn collect_descendant_pids(processes: &[RawProcessInfo], roots: &[u32]) -> HashSet<u32> {
     let mut children_by_parent = HashMap::<u32, Vec<u32>>::new();
     for process in processes {
@@ -1052,6 +1062,7 @@ fn process_physical_footprint_kib(pid: u32) -> Option<u64> {
     (result == 0).then_some(usage.ri_phys_footprint / 1024)
 }
 
+#[cfg(target_os = "macos")]
 fn classify_process(
     process: &RawProcessInfo,
     main_pid: u32,
@@ -1089,6 +1100,7 @@ fn classify_process(
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
+#[cfg(target_os = "macos")]
 fn get_wework_process_snapshot(
     local_terminal_state: tauri::State<'_, local_terminal::LocalTerminalState>,
 ) -> Result<ProcessDiagnosticsSnapshot, String> {
@@ -1555,6 +1567,7 @@ fn open_local_file_with_application(application_path: String, path: String) -> R
     open_local_workspace_with_app(&application_path, &path)
 }
 
+#[cfg(target_os = "macos")]
 fn encode_base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -1875,8 +1888,7 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
         }
         candidates.push(executor_home.join("device_id"));
     }
-    if let Ok(home) = std::env::var("HOME") {
-        let home = std::path::PathBuf::from(home);
+    if let Some(home) = dirs::home_dir() {
         if let Some(device_id) = read_device_config(
             home.join(".wecode")
                 .join("wegent-executor")
@@ -2847,17 +2859,21 @@ fn tray_status_icon(
     unread_count: usize,
 ) -> Option<tauri::image::Image<'static>> {
     let base_icon = base_icon?;
-    let icon_size = base_icon
-        .width()
-        .min(base_icon.height())
-        .min(TRAY_USAGE_ICON_HEIGHT);
-    let meter_width = TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP;
-    let width = icon_size + meter_width;
-    let height = TRAY_USAGE_ICON_HEIGHT.max(icon_size);
-    let mut buffer = vec![0; (width * height * 4) as usize];
     let source_width = base_icon.width();
     let source_height = base_icon.height();
     let source_size = source_width.min(source_height);
+    let icon_size = source_size.min(TRAY_STATUS_ICON_SIZE);
+    let meter_width = if show_running_status {
+        TRAY_STATUS_METER_WIDTH + TRAY_STATUS_METER_GAP
+    } else {
+        0
+    };
+    let (width, height) = if cfg!(target_os = "macos") {
+        (icon_size + meter_width, TRAY_USAGE_ICON_HEIGHT.max(icon_size))
+    } else {
+        (icon_size + meter_width, icon_size)
+    };
+    let mut buffer = vec![0; (width * height * 4) as usize];
     let source_x = (source_width - source_size) / 2;
     let source_y = (source_height - source_size) / 2;
     let icon_y = (height - icon_size) / 2;
@@ -2926,11 +2942,31 @@ fn setup_system_tray(app: &mut tauri::App) -> tauri::Result<()> {
             }
         });
 
-    if cfg!(target_os = "macos") {
+    #[cfg(target_os = "macos")]
+    {
         tray = tray.icon_as_template(true);
+        if let Some(icon) = tray_status_icon(app.default_window_icon(), 0, false, 0) {
+            tray = tray.icon(icon);
+        }
     }
-    if let Some(icon) = tray_status_icon(app.default_window_icon(), 0, false, 0) {
-        tray = tray.icon(icon);
+    #[cfg(target_os = "windows")]
+    {
+        let icon = match tauri::image::Image::from_bytes(WINDOWS_TRAY_ICON_BYTES) {
+            Ok(icon) => Some(icon),
+            Err(error) => {
+                log::warn!("Failed to load embedded Windows tray icon: {error}");
+                app.default_window_icon().map(|icon| icon.to_owned())
+            }
+        };
+        if let Some(icon) = icon {
+            tray = tray.icon(icon);
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        if let Some(icon) = tray_status_icon(app.default_window_icon(), 0, false, 0) {
+            tray = tray.icon(icon);
+        }
     }
 
     tray.build(app)?;
@@ -2953,6 +2989,7 @@ fn update_tray_visual<R: tauri::Runtime>(
         return Ok(());
     }
 
+    #[cfg(target_os = "macos")]
     let icon = state
         .usage_title
         .as_deref()
@@ -2973,6 +3010,21 @@ fn update_tray_visual<R: tauri::Runtime>(
                 state.unread_count,
             )
         });
+    #[cfg(target_os = "windows")]
+    let icon = match tauri::image::Image::from_bytes(WINDOWS_TRAY_ICON_BYTES) {
+        Ok(icon) => Some(icon),
+        Err(error) => {
+            log::warn!("Failed to load embedded Windows tray icon: {error}");
+            app.default_window_icon().map(|icon| icon.to_owned())
+        }
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let icon = tray_status_icon(
+        app.default_window_icon(),
+        state.running_count,
+        state.show_running_status,
+        state.unread_count,
+    );
     if let Some(icon) = icon {
         tray.set_icon_with_as_template(Some(icon), cfg!(target_os = "macos"))
             .map_err(|error| format!("Failed to update tray icon: {error}"))?;
@@ -3009,15 +3061,15 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        can_replace_wework_cli_path, classify_process, collect_descendant_pids,
-        executor_home_attachment_root, install_wework_cli_impl, local_workspace_opener_app_name,
-        parse_local_workspace_open_request, parse_process_snapshot_line, tray_template_pixel,
-        tray_usage_icon, wework_cli_launcher_content, RawProcessInfo,
+        can_replace_wework_cli_path, executor_home_attachment_root, install_wework_cli_impl,
+        local_workspace_opener_app_name, parse_local_workspace_open_request, tray_template_pixel,
+        tray_usage_icon, wework_cli_launcher_content,
     };
     #[cfg(target_os = "macos")]
     use super::{
-        parse_launch_services_processes, process_physical_footprint_kib,
-        related_macos_webkit_process_ids, LaunchServicesProcess,
+        classify_process, collect_descendant_pids, parse_launch_services_processes,
+        parse_process_snapshot_line, process_physical_footprint_kib,
+        related_macos_webkit_process_ids, LaunchServicesProcess, RawProcessInfo,
     };
     use std::collections::HashSet;
 
@@ -3103,6 +3155,7 @@ mod tests {
         .is_none());
     }
 
+    #[cfg(all(desktop, target_os = "macos"))]
     #[test]
     fn renders_wework_cli_launcher_for_app_bundle() {
         let content = wework_cli_launcher_content(
@@ -3118,6 +3171,7 @@ mod tests {
         assert!(content.contains("exec open \"$APP_BUNDLE\" --args --open-workspace"));
     }
 
+    #[cfg(all(desktop, target_os = "macos"))]
     #[test]
     fn bakes_configured_executor_sidecar_into_cli_launcher() {
         let previous = std::env::var_os("WEWORK_EXECUTOR_SIDECAR");
@@ -3138,6 +3192,7 @@ mod tests {
         }
     }
 
+    #[cfg(all(desktop, target_os = "macos"))]
     #[test]
     fn installs_wework_cli_launcher_and_replaces_managed_files() {
         let temp_dir = test_temp_dir("install");
@@ -3163,6 +3218,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 
+    #[cfg(all(desktop, target_os = "macos"))]
     #[test]
     fn refuses_to_replace_unmanaged_wework_cli_file() {
         let temp_dir = test_temp_dir("unmanaged");
@@ -3183,6 +3239,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn parses_process_snapshot_lines_with_spaced_commands() {
         let process =
@@ -3196,6 +3253,7 @@ mod tests {
         assert_eq!(process.command, "/Applications/WeWork.app/a b c");
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn collects_descendant_processes() {
         let processes = vec![
@@ -3302,6 +3360,7 @@ mod tests {
         assert!(process_physical_footprint_kib(std::process::id()).is_some_and(|value| value > 0));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn classifies_wework_process_groups() {
         let terminal_roots = HashSet::from([3]);
@@ -3354,6 +3413,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     fn raw_process(pid: u32, ppid: u32, command: &str) -> RawProcessInfo {
         RawProcessInfo {
             pid,

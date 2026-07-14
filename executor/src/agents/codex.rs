@@ -1635,12 +1635,7 @@ fn user_codex_auth_path() -> Option<PathBuf> {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .map(|home| home.join("auth.json"))
-        .or_else(|| {
-            env::var_os("HOME")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .map(|home| home.join(".codex").join("auth.json"))
-        })
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))
 }
 
 #[cfg(test)]
@@ -3723,7 +3718,7 @@ fn parse_config_override_value(value: &str) -> Value {
 fn executor_home() -> PathBuf {
     env::var_os("WEGENT_EXECUTOR_HOME")
         .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".wegent-executor")))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
         .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
 }
 
