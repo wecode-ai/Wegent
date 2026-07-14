@@ -139,7 +139,7 @@ describe('GeneralSettingsPage', () => {
     render(<GeneralSettingsPage />)
 
     expect(
-      await screen.findByText('workbench.general_settings_system_tray_title')
+      await screen.findByText('workbench.general_settings_tray_display_content')
     ).toBeInTheDocument()
     const notificationToggle = screen.getByTestId('general-task-completion-notifications-toggle')
     await waitFor(() => expect(notificationToggle).toBeEnabled())
