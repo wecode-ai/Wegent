@@ -171,6 +171,13 @@ the local device currently registers and handles:
 - `device:upgrade`
 - `device:run_extension`
 
+The `extension_scope` field of `device:run_extension` accepts `task` or
+`global` and defaults to `task` when omitted. Task-scoped extensions run from
+the current task's `.claude/skills/<extension>` directory; global extensions
+run from `~/.claude/skills/<extension>` for the user running the executor. The
+script path must remain inside the selected extension directory, and other
+scope values are rejected.
+
 The migration coverage matrix is tracked in
 `executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`. When adding a local
 device event, add coverage to

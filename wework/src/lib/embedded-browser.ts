@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { isTauriRuntime } from './runtime-environment'
 
-const DEFAULT_BROWSER_LABEL = 'workspace-browser'
+export const DEFAULT_EMBEDDED_BROWSER_LABEL = 'workspace-browser'
 const transferredBrowserLabels = new Set<string>()
 const embeddedBrowserOpenRequestHandlers = new Set<(request: EmbeddedBrowserOpenRequest) => void>()
 let embeddedBrowserOpenRequestUnlistenPromise: Promise<UnlistenFn> | null = null
@@ -52,15 +52,17 @@ export function setEmbeddedBrowserOcclusion(id: string, occluded: boolean): void
   )
 }
 
-function browserArgs(label = DEFAULT_BROWSER_LABEL) {
+function browserArgs(label = DEFAULT_EMBEDDED_BROWSER_LABEL) {
   return { label }
 }
 
-export function markEmbeddedBrowserLabelTransferred(label = DEFAULT_BROWSER_LABEL): void {
+export function markEmbeddedBrowserLabelTransferred(label = DEFAULT_EMBEDDED_BROWSER_LABEL): void {
   transferredBrowserLabels.add(label)
 }
 
-export function consumeEmbeddedBrowserLabelTransfer(label = DEFAULT_BROWSER_LABEL): boolean {
+export function consumeEmbeddedBrowserLabelTransfer(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): boolean {
   if (!transferredBrowserLabels.has(label)) return false
   transferredBrowserLabels.delete(label)
   return true
@@ -69,7 +71,7 @@ export function consumeEmbeddedBrowserLabelTransfer(label = DEFAULT_BROWSER_LABE
 export async function openEmbeddedBrowser(
   url: string,
   bounds: EmbeddedBrowserBounds,
-  label = DEFAULT_BROWSER_LABEL
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<EmbeddedBrowserPageState> {
   return invoke<EmbeddedBrowserPageState>('embedded_browser_open', {
     ...browserArgs(label),
@@ -81,7 +83,7 @@ export async function openEmbeddedBrowser(
 export async function setEmbeddedBrowserBounds(
   bounds: EmbeddedBrowserBounds,
   visible: boolean,
-  label = DEFAULT_BROWSER_LABEL
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invoke('embedded_browser_set_bounds', {
     ...browserArgs(label),
@@ -92,7 +94,7 @@ export async function setEmbeddedBrowserBounds(
 
 export async function navigateEmbeddedBrowser(
   url: string,
-  label = DEFAULT_BROWSER_LABEL
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invoke('embedded_browser_navigate', {
     ...browserArgs(label),
@@ -100,21 +102,23 @@ export async function navigateEmbeddedBrowser(
   })
 }
 
-export async function reloadEmbeddedBrowser(label = DEFAULT_BROWSER_LABEL): Promise<void> {
+export async function reloadEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABEL): Promise<void> {
   await invoke('embedded_browser_reload', browserArgs(label))
 }
 
-export async function goBackEmbeddedBrowser(label = DEFAULT_BROWSER_LABEL): Promise<void> {
+export async function goBackEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABEL): Promise<void> {
   await invoke('embedded_browser_go_back', browserArgs(label))
 }
 
-export async function goForwardEmbeddedBrowser(label = DEFAULT_BROWSER_LABEL): Promise<void> {
+export async function goForwardEmbeddedBrowser(
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<void> {
   await invoke('embedded_browser_go_forward', browserArgs(label))
 }
 
 export async function evalEmbeddedBrowser(
   script: string,
-  label = DEFAULT_BROWSER_LABEL
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invoke('embedded_browser_eval', {
     ...browserArgs(label),
@@ -124,7 +128,7 @@ export async function evalEmbeddedBrowser(
 
 export async function evalEmbeddedBrowserJson<T = unknown>(
   expression: string,
-  label = DEFAULT_BROWSER_LABEL
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<T> {
   const result = await invoke<EmbeddedBrowserEvalResult | T>('embedded_browser_eval_json', {
     ...browserArgs(label),
@@ -149,14 +153,14 @@ function isEmbeddedBrowserEvalResult(value: unknown): value is EmbeddedBrowserEv
 }
 
 export async function readEmbeddedBrowserPageState(
-  label = DEFAULT_BROWSER_LABEL
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<EmbeddedBrowserPageState> {
   return invoke<EmbeddedBrowserPageState>('embedded_browser_page_state', browserArgs(label))
 }
 
 export async function relabelEmbeddedBrowser(
   fromLabel: string,
-  toLabel = DEFAULT_BROWSER_LABEL
+  toLabel = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invoke('embedded_browser_relabel', {
     fromLabel,
@@ -164,7 +168,7 @@ export async function relabelEmbeddedBrowser(
   })
 }
 
-export async function closeEmbeddedBrowser(label = DEFAULT_BROWSER_LABEL): Promise<void> {
+export async function closeEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABEL): Promise<void> {
   await invoke('embedded_browser_close', browserArgs(label))
 }
 

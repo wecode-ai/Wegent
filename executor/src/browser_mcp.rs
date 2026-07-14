@@ -190,7 +190,7 @@ fn tools() -> Vec<Value> {
     vec![
         tool(
             "browser_navigate",
-            "Navigate the Wework built-in browser to a URL.",
+            "Navigate the built-in browser in Wegent's Wework desktop app to a URL.",
             &["url"],
         ),
         tool(
@@ -234,7 +234,7 @@ fn tools() -> Vec<Value> {
         tool("browser_evaluate", "Evaluate JavaScript in the page.", &[]),
         tool(
             "browser_tab_list",
-            "List Wework built-in browser tabs.",
+            "List browser tabs in Wegent's Wework desktop app.",
             &[],
         ),
         tool(

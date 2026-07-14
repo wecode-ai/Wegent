@@ -56,7 +56,11 @@ import {
 } from '@/lib/device-capabilities'
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+  standaloneRuntimeProjectKey,
+} from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
   DeviceInfo,
@@ -311,7 +315,8 @@ function standaloneRuntimeProjectWork(
   const deviceStatus = deviceState?.status ?? 'unavailable'
   return {
     project: {
-      key: `${resolvedDeviceId}:${normalizedWorkspacePath}`,
+      key: standaloneRuntimeProjectKey(normalizedWorkspacePath),
+      stateDeviceId: resolvedDeviceId,
       name: getSidebarPathBasename(normalizedWorkspacePath),
       description: normalizedWorkspacePath,
       color: null,
@@ -2047,6 +2052,8 @@ function ProjectItem({
     try {
       await onRemoveProject(project.id)
       setRemoveConfirmOpen(false)
+    } catch (error) {
+      console.error('[Wework project removal] failed', error)
     } finally {
       setRemovingProject(false)
     }

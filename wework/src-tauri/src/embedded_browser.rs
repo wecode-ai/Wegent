@@ -25,6 +25,8 @@ const BRIDGE_EVAL_TIMEOUT_MS: u64 = 10_000;
 const BRIDGE_OPEN_WAIT_TIMEOUT_MS: u64 = 15_000;
 const BRIDGE_OPEN_WAIT_INTERVAL_MS: u64 = 100;
 const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT: &str = "wework:embedded-browser-open-request";
+const EMBEDDED_BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
 
 #[derive(Clone, Default)]
 pub struct EmbeddedBrowserState {
@@ -149,15 +151,9 @@ fn page_state_for_label(
     label: &str,
 ) -> Result<EmbeddedBrowserPageState, String> {
     let entry = get_entry(state, label)?;
-    let url = entry
-        .webview
-        .url()
-        .ok()
-        .map(|url| url.to_string())
-        .or(entry.url);
     Ok(EmbeddedBrowserPageState {
         title: entry.title,
-        url,
+        url: entry.url,
     })
 }
 
@@ -662,11 +658,7 @@ fn handle_bridge_connection(
 }
 
 pub fn start_embedded_browser_bridge(app: tauri::AppHandle) -> Result<(), String> {
-    let requested_addr = env::var(EMBEDDED_BROWSER_BRIDGE_ADDR_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| EMBEDDED_BROWSER_BRIDGE_ADDR.to_owned());
-    let listener = TcpListener::bind(&requested_addr)
+    let listener = TcpListener::bind(EMBEDDED_BROWSER_BRIDGE_ADDR)
         .map_err(|error| format!("Failed to bind embedded browser bridge: {error}"))?;
     let listening_addr = listener
         .local_addr()
@@ -741,11 +733,15 @@ pub async fn embedded_browser_open(
     let label_for_title = label.clone();
 
     let builder = tauri::webview::WebviewBuilder::new(&label, WebviewUrl::External(parsed_url))
+        .user_agent(EMBEDDED_BROWSER_USER_AGENT)
         .accept_first_mouse(true)
-        .on_page_load(move |webview, payload| {
+        .on_page_load(move |_webview, payload| {
             if matches!(payload.event(), PageLoadEvent::Finished) {
-                let current_url = webview.url().ok().map(|url| url.to_string());
-                let _ = set_entry_url(&load_state_handle, &label_for_load, current_url);
+                let _ = set_entry_url(
+                    &load_state_handle,
+                    &label_for_load,
+                    Some(payload.url().to_string()),
+                );
             }
         })
         .on_document_title_changed(move |_webview, title| {

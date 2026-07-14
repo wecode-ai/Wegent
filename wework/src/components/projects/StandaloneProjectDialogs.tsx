@@ -393,6 +393,7 @@ export function StandaloneFolderProjectDialog({
     isLocalDevice(activeDevice) &&
     preferNativeLocalPicker &&
     !nativePickerFallback
+  const nativePickerDeviceId = activeDevice?.device_id ?? null
 
   useEffect(() => {
     if (!open || !showStartupCommand || startupCommand || startupCommandError) return undefined
@@ -433,27 +434,22 @@ export function StandaloneFolderProjectDialog({
       nativePickerStartedRef.current = false
       return undefined
     }
-    if (!shouldUseNativeLocalPicker || !activeDevice) return undefined
+    if (!shouldUseNativeLocalPicker || !nativePickerDeviceId) return undefined
     if (nativePickerStartedRef.current) return undefined
 
-    nativePickerStartedRef.current = true
-    let cancelled = false
-
-    void (async () => {
-      try {
-        await Promise.resolve()
-        if (cancelled) return
-        setNativePickerError(null)
-        const selectedPath = await openNativeProjectDirectoryPicker()
-        if (cancelled) return
-        if (!selectedPath) {
+    const timer = window.setTimeout(() => {
+      nativePickerStartedRef.current = true
+      void (async () => {
+        try {
+          setNativePickerError(null)
+          const selectedPath = await openNativeProjectDirectoryPicker()
+          if (!selectedPath) {
+            closeDialog()
+            return
+          }
+          await onOpenStandaloneWorkspace?.(nativePickerDeviceId, selectedPath)
           closeDialog()
-          return
-        }
-        await onOpenStandaloneWorkspace?.(activeDevice.device_id, selectedPath)
-        if (!cancelled) closeDialog()
-      } catch (error) {
-        if (!cancelled) {
+        } catch (error) {
           console.error('[Wework project] native picker failed', error)
           setNativePickerError(
             error instanceof Error
@@ -461,19 +457,17 @@ export function StandaloneFolderProjectDialog({
               : t('workbench.project_directory_select_failed', '项目打开失败')
           )
         }
-      }
-    })()
+      })()
+    }, 0)
 
     return () => {
-      cancelled = true
+      window.clearTimeout(timer)
     }
   }, [
-    activeDevice,
     closeDialog,
-    mode,
+    nativePickerDeviceId,
     onOpenStandaloneWorkspace,
     open,
-    preferNativeLocalPicker,
     shouldUseNativeLocalPicker,
     t,
   ])

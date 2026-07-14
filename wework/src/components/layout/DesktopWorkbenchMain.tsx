@@ -47,6 +47,7 @@ import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
+  DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
   markEmbeddedBrowserLabelTransferred,
   relabelEmbeddedBrowser,
@@ -636,6 +637,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     migratedEmbeddedBrowserLabel,
   ])
 
+  useEffect(() => {
+    if (paneActive || migratedEmbeddedBrowserLabel !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
+
+    void relabelEmbeddedBrowser(DEFAULT_EMBEDDED_BROWSER_LABEL, defaultEmbeddedBrowserLabel)
+      .then(() => {
+        markEmbeddedBrowserLabelTransferred(DEFAULT_EMBEDDED_BROWSER_LABEL)
+        setMigratedEmbeddedBrowserLabel(null)
+      })
+      .catch(error => {
+        console.error('Failed to preserve embedded browser for inactive task:', error)
+      })
+  }, [defaultEmbeddedBrowserLabel, migratedEmbeddedBrowserLabel, paneActive])
+
   const bottomPanelWorkspaceKey = createBottomPanelWorkspaceKey({
     currentRuntimeTask,
     workspaceProjectId: workspaceProject?.id,
@@ -823,20 +837,37 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     temporaryChatTabSequence.current += 1
     openRightPanelTab(`chat:${Date.now()}-${temporaryChatTabSequence.current}`)
   }, [openRightPanelTab])
+  const embeddedBrowserListenerStateRef = useRef({
+    embeddedBrowserLabel,
+    openRightPanelTab,
+    paneActive,
+  })
+  useEffect(() => {
+    embeddedBrowserListenerStateRef.current = {
+      embeddedBrowserLabel,
+      openRightPanelTab,
+      paneActive,
+    }
+  }, [embeddedBrowserLabel, openRightPanelTab, paneActive])
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {
-      if (request.label && request.label !== embeddedBrowserLabel) return
-      setEmbeddedBrowserOpenRequest(current => ({
+      const current = embeddedBrowserListenerStateRef.current
+      if (request.label === DEFAULT_EMBEDDED_BROWSER_LABEL && !current.paneActive) return
+      if (request.label && request.label !== current.embeddedBrowserLabel) {
+        if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
+        setMigratedEmbeddedBrowserLabel(request.label)
+      }
+      setEmbeddedBrowserOpenRequest(previous => ({
         ...request,
-        id: (current?.id ?? 0) + 1,
+        id: (previous?.id ?? 0) + 1,
       }))
-      openRightPanelTab('browser')
+      current.openRightPanelTab('browser')
     })
 
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [embeddedBrowserLabel, openRightPanelTab])
+  }, [])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({

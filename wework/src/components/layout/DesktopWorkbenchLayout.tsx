@@ -187,6 +187,12 @@ export function DesktopWorkbenchLayout() {
     [onRefreshDevices]
   )
 
+  const closeStandaloneFolderProject = useCallback(() => {
+    setStandaloneWorkspaceDialogMode(null)
+    setStandaloneRemoteDialogIntent('project')
+    setStandalonePreferNativeLocalPicker(true)
+  }, [])
+
   const openProjectFromWorkMenu = useCallback(
     (mode: ProjectCreateMode) => {
       if (mode === 'scratch') {
@@ -611,11 +617,7 @@ export function DesktopWorkbenchLayout() {
         preferredDeviceId={
           state.standaloneDeviceId ?? state.user?.preferences?.default_execution_target
         }
-        onClose={() => {
-          setStandaloneWorkspaceDialogMode(null)
-          setStandaloneRemoteDialogIntent('project')
-          setStandalonePreferNativeLocalPicker(true)
-        }}
+        onClose={closeStandaloneFolderProject}
         onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         onListDeviceDirectories={onListDeviceDirectories}
         onCreateDeviceDirectory={onCreateDeviceDirectory}

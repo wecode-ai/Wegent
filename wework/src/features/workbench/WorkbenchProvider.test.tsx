@@ -14,6 +14,7 @@ import { MessageList } from '@/components/chat/MessageList'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
 import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
+import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
 import { modelSelectionFromRuntimeHandle } from './runtimeContextUsage'
 import { createResponseApiStreamState, emitResponseApiEvent } from '@/stream/responseApiStream'
@@ -644,6 +645,23 @@ function ProjectSendProbe() {
         }
       >
         open standalone workspace
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const deviceId = workbench.state.standaloneDeviceId
+          const workspacePath = workbench.state.standaloneWorkspacePath
+          if (!deviceId || !workspacePath) return
+          void workbench.removeProject(
+            runtimeProjectUiId({
+              key: standaloneRuntimeProjectKey(workspacePath),
+              stateDeviceId: deviceId,
+              name: workspacePath,
+            })
+          )
+        }}
+      >
+        remove standalone workspace
       </button>
       <button
         type="button"
@@ -3602,6 +3620,37 @@ describe('WorkbenchProvider runtime tasks', () => {
       )
     )
     expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('removes a standalone workspace through the local runtime when its list is stale', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(createRuntimeWork()),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<ProjectSendProbe />, services)
+
+    await userEvent.click(screen.getByText('open standalone workspace'))
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent(
+        '/workspace/direct-codex'
+      )
+    )
+    await userEvent.click(screen.getByText('remove standalone workspace'))
+
+    await waitFor(() => expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledTimes(1))
+    expect(runtimeWorkApi.removeRuntimeWorkspace).toHaveBeenCalledWith({
+      deviceId: 'device-1',
+      projectKey: '/workspace/direct-codex',
+      workspacePath: '/workspace/direct-codex',
+      runtime: 'codex',
+    })
+    expect(services.projectApi.deleteProject).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(screen.getByTestId('standalone-workspace-path')).toHaveTextContent('none')
+    )
   })
 
   test('creates a device workspace project first without refreshing the runtime list', async () => {

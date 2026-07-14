@@ -14,6 +14,16 @@ export function runtimeProjectWorkKey(projectWork: RuntimeProjectWork): string {
   return `${stateDeviceId}\0${runtimeProjectKey(projectWork.project)}`
 }
 
+export function normalizeRuntimeWorkspacePath(path: string): string {
+  const trimmedPath = path.trim()
+  if (trimmedPath === '/') return trimmedPath
+  return trimmedPath.replace(/\/+$/, '')
+}
+
+export function standaloneRuntimeProjectKey(workspacePath: string): string {
+  return normalizeRuntimeWorkspacePath(workspacePath)
+}
+
 export function runtimeProjectUiId(project: RuntimeProjectRef): number {
   if (project.id != null) return project.id
 
