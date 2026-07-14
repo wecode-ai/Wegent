@@ -5,6 +5,7 @@ import type { ProjectWithTasks } from '@/types/api'
 import type { EnvironmentDiffMode } from '@/api/environment'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { WorkspaceTarget } from '@/types/workspace-files'
+import { isGitWorkspaceProject } from '@/lib/projectClassification'
 import {
   resolveProjectRuntimeWorkspaceTarget,
   resolveRuntimeWorkspaceContext,
@@ -21,6 +22,8 @@ export interface WorkbenchPaneEnvironment {
   projectWork: ProjectWorkControls
   refreshEnvironmentInfo: () => Promise<void>
   commitEnvironmentChanges: (message: string) => Promise<void>
+  commitAndPushEnvironmentChanges: (message: string) => Promise<void>
+  pushEnvironmentChanges: () => Promise<void>
   loadEnvironmentDiff?: (
     workspaceTarget: WorkspaceTarget,
     mode?: EnvironmentDiffMode
@@ -33,9 +36,11 @@ export interface WorkbenchPaneEnvironment {
 export function useWorkbenchPaneEnvironment({
   pane,
   projectWork,
+  environmentRefreshActive = false,
 }: {
   pane: WorkbenchPaneIdentity
   projectWork: ProjectWorkControls
+  environmentRefreshActive?: boolean
 }): WorkbenchPaneEnvironment {
   const {
     state,
@@ -43,6 +48,8 @@ export function useWorkbenchPaneEnvironment({
     loadEnvironmentInfo,
     loadEnvironmentDiff,
     commitEnvironmentChanges,
+    commitAndPushEnvironmentChanges,
+    pushEnvironmentChanges,
     listEnvironmentBranches,
     checkoutEnvironmentBranch,
     createEnvironmentBranch,
@@ -56,6 +63,7 @@ export function useWorkbenchPaneEnvironment({
   const [workspaceTargetError, setWorkspaceTargetError] = useState<string | null>(null)
   const [workspaceTargetResolving, setWorkspaceTargetResolving] = useState(false)
   const environmentInfoRequestSequence = useRef(0)
+  const previousEnvironmentRefreshActive = useRef(false)
   const currentRuntimeTask = pane.currentRuntimeTask
   const currentProject = pane.currentProject
   const runtimeWorkspaceContext = useMemo(
@@ -112,6 +120,14 @@ export function useWorkbenchPaneEnvironment({
     ? runtimeWorkspaceTarget
     : (projectRuntimeWorkspaceTarget ?? workspaceTarget)
   const activeWorkspaceTargetKey = workspaceTargetKey(activeWorkspaceTarget)
+  const environmentMatchesActiveWorkspace = Boolean(
+    activeWorkspaceTarget &&
+    environmentInfo.workspacePath === activeWorkspaceTarget.path &&
+    environmentInfo.deviceId === activeWorkspaceTarget.deviceId
+  )
+  const isGitProject = environmentMatchesActiveWorkspace
+    ? !environmentInfo.error && environmentInfo.branchName !== undefined
+    : Boolean(workspaceProject && isGitWorkspaceProject(workspaceProject))
   const workspaceProjectKey = workspaceProject ? String(workspaceProject.id) : ''
   const activeConversationProjectKey = activeConversationProject
     ? String(activeConversationProject.id)
@@ -194,60 +210,88 @@ export function useWorkbenchPaneEnvironment({
     workspaceTargetResolverApi,
   ])
 
-  const refreshEnvironmentInfo = useCallback(async () => {
-    const requestId = environmentInfoRequestSequence.current + 1
-    environmentInfoRequestSequence.current = requestId
+  const loadCurrentEnvironmentInfo = useCallback(
+    async ({ force, showLoading }: { force: boolean; showLoading: boolean }) => {
+      const requestId = environmentInfoRequestSequence.current + 1
+      environmentInfoRequestSequence.current = requestId
 
-    if (workspaceTargetResolving) {
-      setEnvironmentInfo(info => ({ ...info, loading: true }))
-      return
-    }
-
-    if (!environmentWorkspaceReady) {
-      setEnvironmentInfo(info => ({
-        ...info,
-        loading: false,
-        error: workspaceTargetError ?? 'Workspace is not ready',
-      }))
-      return
-    }
-
-    setEnvironmentInfo(info => ({ ...info, loading: true }))
-    try {
-      const {
-        workspaceProject: latestWorkspaceProject,
-        activeWorkspaceTarget: latestActiveWorkspaceTarget,
-      } = environmentContextRef.current
-      const info = await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget)
-      if (environmentInfoRequestSequence.current === requestId) {
-        setEnvironmentInfo({ ...info, loading: false })
+      if (workspaceTargetResolving) {
+        if (showLoading) {
+          setEnvironmentInfo(info => ({ ...info, loading: true }))
+        }
+        return
       }
-    } catch (error) {
-      if (environmentInfoRequestSequence.current === requestId) {
+
+      if (!environmentWorkspaceReady) {
         setEnvironmentInfo(info => ({
           ...info,
           loading: false,
-          error: error instanceof Error ? error.message : 'Failed to load environment info',
+          error: workspaceTargetError ?? 'Workspace is not ready',
         }))
+        return
       }
-    }
-  }, [
-    environmentWorkspaceReady,
-    loadEnvironmentInfo,
-    workspaceTargetError,
-    workspaceTargetResolving,
-  ])
+
+      if (showLoading) {
+        setEnvironmentInfo(info => ({ ...info, loading: true }))
+      }
+      try {
+        const {
+          workspaceProject: latestWorkspaceProject,
+          activeWorkspaceTarget: latestActiveWorkspaceTarget,
+        } = environmentContextRef.current
+        const info = force
+          ? await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget, {
+              force: true,
+            })
+          : await loadEnvironmentInfo(latestWorkspaceProject, latestActiveWorkspaceTarget)
+        if (environmentInfoRequestSequence.current === requestId) {
+          setEnvironmentInfo({ ...info, loading: false })
+        }
+      } catch (error) {
+        if (environmentInfoRequestSequence.current === requestId) {
+          setEnvironmentInfo(info => ({
+            ...info,
+            loading: false,
+            error: error instanceof Error ? error.message : 'Failed to load environment info',
+          }))
+        }
+      }
+    },
+    [environmentWorkspaceReady, loadEnvironmentInfo, workspaceTargetError, workspaceTargetResolving]
+  )
+
+  const refreshEnvironmentInfo = useCallback(
+    () => loadCurrentEnvironmentInfo({ force: true, showLoading: true }),
+    [loadCurrentEnvironmentInfo]
+  )
 
   useEffect(() => {
     if (!activeConversationProjectKey && !currentRuntimeTaskKey) return
-    void refreshEnvironmentInfo()
+    void loadCurrentEnvironmentInfo({ force: false, showLoading: true })
   }, [
     activeConversationProjectKey,
     activeWorkspaceTargetKey,
     currentRuntimeTaskKey,
-    refreshEnvironmentInfo,
+    loadCurrentEnvironmentInfo,
     workspaceProjectKey,
   ])
+
+  useEffect(() => {
+    const wasRefreshActive = previousEnvironmentRefreshActive.current
+    previousEnvironmentRefreshActive.current = environmentRefreshActive
+
+    if (!environmentRefreshActive) {
+      if (wasRefreshActive) {
+        void loadCurrentEnvironmentInfo({ force: true, showLoading: false })
+      }
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void loadCurrentEnvironmentInfo({ force: true, showLoading: false })
+    }, 5000)
+    return () => window.clearInterval(intervalId)
+  }, [environmentRefreshActive, loadCurrentEnvironmentInfo])
 
   const commitPaneEnvironmentChanges = useCallback(
     async (message: string) => {
@@ -259,6 +303,24 @@ export function useWorkbenchPaneEnvironment({
     },
     [activeWorkspaceTarget, commitEnvironmentChanges, workspaceProject, workspaceTargetError]
   )
+
+  const commitAndPushPaneEnvironmentChanges = useCallback(
+    async (message: string) => {
+      if (!activeWorkspaceTarget) {
+        throw new Error(workspaceTargetError ?? 'Workspace is not ready')
+      }
+      await commitAndPushEnvironmentChanges(workspaceProject, message, activeWorkspaceTarget)
+      setEnvironmentInfo(info => ({ ...info, additions: '', deletions: '' }))
+    },
+    [activeWorkspaceTarget, commitAndPushEnvironmentChanges, workspaceProject, workspaceTargetError]
+  )
+
+  const pushPaneEnvironmentChanges = useCallback(async () => {
+    if (!activeWorkspaceTarget) {
+      throw new Error(workspaceTargetError ?? 'Workspace is not ready')
+    }
+    await pushEnvironmentChanges(workspaceProject, activeWorkspaceTarget)
+  }, [activeWorkspaceTarget, pushEnvironmentChanges, workspaceProject, workspaceTargetError])
 
   const listPaneEnvironmentBranches = useCallback(() => {
     const {
@@ -312,6 +374,7 @@ export function useWorkbenchPaneEnvironment({
     environmentInfo,
     projectWork: {
       ...projectWork,
+      isGitProject,
       branchName: environmentInfo.branchName,
       branchLoading: environmentInfo.loading,
       onRefreshBranch: undefined,
@@ -321,6 +384,8 @@ export function useWorkbenchPaneEnvironment({
     },
     refreshEnvironmentInfo,
     commitEnvironmentChanges: commitPaneEnvironmentChanges,
+    commitAndPushEnvironmentChanges: commitAndPushPaneEnvironmentChanges,
+    pushEnvironmentChanges: pushPaneEnvironmentChanges,
     loadEnvironmentDiff: activeWorkspaceTarget
       ? (target, mode) => loadEnvironmentDiff(workspaceProject, target, mode)
       : undefined,

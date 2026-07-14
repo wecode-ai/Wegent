@@ -1,6 +1,7 @@
 import './i18n'
 import { Profiler, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import 'prosemirror-view/style/prosemirror.css'
 import './styles/globals.css'
 import App from './App.tsx'
 import { installAppLogging } from './lib/app-logging'

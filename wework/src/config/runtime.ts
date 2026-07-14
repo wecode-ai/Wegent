@@ -5,6 +5,7 @@ export interface RuntimeConfig {
   apiBaseUrl: string
   socketBaseUrl: string
   socketPath: string
+  wegentBackendUrl: string
   runtimeMode: RuntimeMode
   loginMode: 'password' | 'oidc' | 'all'
   oidcLoginText: string
@@ -167,6 +168,10 @@ export function getRuntimeConfig(): RuntimeConfig {
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
     socketBaseUrl: trimTrailingSlash(socketBaseUrl),
     socketPath,
+    wegentBackendUrl:
+      runtimeString(overrides, 'wegentBackendUrl') ||
+      import.meta.env.VITE_WEGENT_BACKEND_URL?.trim() ||
+      '',
     runtimeMode: resolveRuntimeMode(overrides),
     loginMode: resolveLoginMode(overrides),
     oidcLoginText: resolveRuntimeString(

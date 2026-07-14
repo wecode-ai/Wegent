@@ -131,7 +131,7 @@ export function AddCloudDeviceDialog({
         )}
 
         <div className="mt-5 max-h-[calc(100vh-176px)] space-y-3 overflow-y-auto px-5 pb-1">
-          <div className="flex items-start gap-3 rounded-lg border border-border bg-surface p-3">
+          <div className="flex items-start gap-3 rounded-lg border border-border bg-background p-3">
             <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background text-text-secondary">
               <Cloud className="h-4 w-4" />
             </div>
@@ -158,7 +158,7 @@ export function AddCloudDeviceDialog({
             </div>
           </div>
 
-          <div className="flex items-start gap-3 rounded-lg border border-border bg-surface p-3">
+          <div className="flex items-start gap-3 rounded-lg border border-border bg-background p-3">
             <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background text-text-secondary">
               <Server className="h-4 w-4" />
             </div>

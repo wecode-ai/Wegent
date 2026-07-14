@@ -49,6 +49,7 @@ POST /api/v1/responses
 | `input` | string \| array | 是 | 用户输入提示或对话历史 |
 | `stream` | boolean | 否 | 启用流式输出（默认：`false`） |
 | `previous_response_id` | string | 否 | 用于后续对话的前一个响应 ID |
+| `reasoning` | object | 否 | 模型推理配置，包含 `effort` 和可选的 `summary` |
 | `tools` | array | 否 | Wegent 自定义工具配置 |
 
 #### Model 格式
@@ -81,6 +82,21 @@ POST /api/v1/responses
     {"type": "message", "role": "assistant", "content": "2+2 等于 4。"},
     {"type": "message", "role": "user", "content": "那 3+3 呢？"}
   ]
+}
+```
+
+#### 推理配置
+
+`reasoning.effort` 支持 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max` 和 `ultra`。实际可用级别取决于所选模型；客户端应使用模型运行时返回的能力列表，不应为不支持的模型构造级别。
+
+`reasoning.summary` 可选值为 `auto`、`concise` 或 `detailed`。
+
+```json
+{
+  "reasoning": {
+    "effort": "ultra",
+    "summary": "auto"
+  }
 }
 ```
 

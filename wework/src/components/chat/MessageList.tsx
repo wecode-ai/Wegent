@@ -14,6 +14,7 @@ import {
   Copy,
   File as FileIcon,
   FileText,
+  Folder,
   MessageSquare,
   Package,
   Pencil,
@@ -53,6 +54,7 @@ import { getWebSearchSourceItems } from './blocks/webSearchActivity'
 import { CodexMemoryCitations, CodexReferenceList } from './CodexTurnArtifacts'
 import { getAssistantReferences } from './codexReferences'
 import { FileChangesCard } from './FileChangesCard'
+import { composerPathReference, composerSkillFilePath } from './composer/composerMentions'
 import { getMessagePretextIntrinsicHeight } from './messagePretextLayout'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
@@ -82,6 +84,7 @@ interface MessageListProps {
   }) => void
   fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenLocalSkillFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
@@ -90,6 +93,8 @@ interface MessageListProps {
     content: string
   ) => Promise<boolean | void> | boolean | void
   canEditLastUserMessage?: boolean
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
   renderGapAfterMessage?: (
@@ -134,11 +139,14 @@ export const MessageList = memo(function MessageList({
   onOpenFileChangesReview,
   fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
+  onOpenLocalSkillFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
   onEditLastUserMessage,
   canEditLastUserMessage = false,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
   renderGapAfterMessage,
@@ -287,6 +295,7 @@ export const MessageList = memo(function MessageList({
                 <UserMessage
                   message={message}
                   onOpenWorkspaceFile={onOpenWorkspaceFile}
+                  onOpenLocalSkillFile={onOpenLocalSkillFile}
                   editable={message.id === editableLastUserMessageId}
                   editing={message.id === activeEditingMessageId}
                   editSubmitting={message.id === activeSubmittingEditMessageId}
@@ -323,6 +332,8 @@ export const MessageList = memo(function MessageList({
                   onRequestUserInputSubmit={onRequestUserInputSubmit}
                   onRequestUserInputIgnore={onRequestUserInputIgnore}
                   onOpenAssistantPlan={onOpenAssistantPlan}
+                  onLoadFullTranscript={onLoadFullTranscript}
+                  loadingFullTranscript={loadingFullTranscript}
                   hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                   hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 />
@@ -381,6 +392,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
       ? 'fileChangesDiffPreviewDisabledSubtaskId'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
+    previous.onOpenLocalSkillFile !== next.onOpenLocalSkillFile ? 'onOpenLocalSkillFile' : null,
     previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
       ? 'onRequestUserInputSubmit'
       : null,
@@ -392,6 +404,8 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.canEditLastUserMessage !== next.canEditLastUserMessage
       ? 'canEditLastUserMessage'
       : null,
+    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
+    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.hideRequestUserInputBlocks !== next.hideRequestUserInputBlocks
       ? 'hideRequestUserInputBlocks'
       : null,
@@ -577,6 +591,7 @@ async function copyText(text: string) {
 function UserMessage({
   message,
   onOpenWorkspaceFile,
+  onOpenLocalSkillFile,
   editable = false,
   editing = false,
   editSubmitting = false,
@@ -586,6 +601,7 @@ function UserMessage({
 }: {
   message: WorkbenchMessage
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenLocalSkillFile?: (path: string) => void
   editable?: boolean
   editing?: boolean
   editSubmitting?: boolean
@@ -745,7 +761,7 @@ function UserMessage({
                 shouldCollapse && !isExpanded ? 'max-h-44' : '',
               ].join(' ')}
             >
-              {renderUserContent(displayContent)}
+              {renderUserContent(displayContent, onOpenLocalSkillFile, onOpenWorkspaceFile)}
               {showGoalRequestBadge && (
                 <div className="mt-1.5 flex">
                   <span
@@ -1303,13 +1319,14 @@ function MessageHoverActions({
   )
 }
 
-const LOCAL_SKILL_LINK_PATTERN = /\[\$([^\]]+)]\((skill:\/\/[^)]+SKILL\.md)\)/g
+const CODEX_MENTION_LINK_PATTERN =
+  /\[([@$])([^\]]+)]\(((?:skill:\/\/[^)]+SKILL\.md)|(?:\/[^)\n]*SKILL\.md)|(?:app:\/\/[^)]+)|(?:plugin:\/\/[^)]+)|(?:file:\/\/[^)]+)|(?:folder:\/\/[^)]+))\)/g
 
-function localSkillTokenTestId(name: string): string {
+function codexMentionTokenTestId(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '-')
 }
 
-function displayLocalSkillName(name: string): string {
+function displayCodexMentionName(name: string): string {
   return name
     .split(/[-_\s]+/)
     .filter(Boolean)
@@ -1317,32 +1334,67 @@ function displayLocalSkillName(name: string): string {
     .join(' ')
 }
 
-function renderUserContent(content: string) {
+function codexMentionKind(href: string): 'skill' | 'app' | 'plugin' | 'file' | 'folder' {
+  if (href.startsWith('app://')) return 'app'
+  if (href.startsWith('plugin://')) return 'plugin'
+  if (href.startsWith('file://')) return 'file'
+  if (href.startsWith('folder://')) return 'folder'
+  return 'skill'
+}
+
+function renderUserContent(
+  content: string,
+  onOpenLocalSkillFile?: (path: string) => void,
+  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+) {
   const parts: ReactNode[] = []
   let offset = 0
 
-  for (const match of content.matchAll(LOCAL_SKILL_LINK_PATTERN)) {
+  for (const match of content.matchAll(CODEX_MENTION_LINK_PATTERN)) {
     const start = match.index ?? 0
     const text = content.slice(offset, start)
     if (text) {
       parts.push(<span key={`text-${offset}`}>{text}</span>)
     }
 
-    const skillName = match[1]
-    const href = match[2]
+    const mentionName = match[2]
+    const href = match[3]
+    const skillFilePath = composerSkillFilePath(match[0])
+    const pathReference = composerPathReference(match[0])
+    const mentionKind = codexMentionKind(href)
+    const tokenTestId = codexMentionTokenTestId(mentionName)
+    const testId =
+      mentionKind === 'skill'
+        ? `sent-local-skill-token-${tokenTestId}`
+        : `sent-${mentionKind}-token-${tokenTestId}`
+    const iconTestId =
+      mentionKind === 'skill'
+        ? `sent-local-skill-icon-${tokenTestId}`
+        : `sent-${mentionKind}-icon-${tokenTestId}`
     parts.push(
       <a
-        key={`skill-${start}`}
+        key={`${mentionKind}-${start}`}
         href={href}
-        data-testid={`sent-local-skill-token-${localSkillTokenTestId(skillName)}`}
+        data-testid={testId}
         className="inline-flex h-7 max-w-full items-center gap-1 rounded-xl bg-muted px-2 align-baseline text-[13px] font-medium leading-none text-blue-600 no-underline"
-        onClick={event => event.preventDefault()}
+        onClick={event => {
+          event.preventDefault()
+          if (skillFilePath) onOpenLocalSkillFile?.(skillFilePath)
+          if (pathReference && !pathReference.directory) onOpenWorkspaceFile?.(pathReference.path)
+        }}
       >
-        <Package
-          data-testid={`sent-local-skill-icon-${localSkillTokenTestId(skillName)}`}
-          className="h-3.5 w-3.5 shrink-0 text-blue-600"
-        />
-        <span className="min-w-0 truncate">{displayLocalSkillName(skillName)}</span>
+        {mentionKind === 'folder' ? (
+          <Folder data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        ) : mentionKind === 'file' ? (
+          <FileIcon data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        ) : (
+          <Package data-testid={iconTestId} className="h-3.5 w-3.5 shrink-0 text-blue-600" />
+        )}
+        <span className="min-w-0 truncate">
+          {mentionKind === 'file' || mentionKind === 'folder'
+            ? mentionName
+            : displayCodexMentionName(mentionName)}
+        </span>
       </a>
     )
     offset = start + match[0].length
@@ -1376,14 +1428,23 @@ function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
   return RAW_FAILED_MESSAGE_PATTERNS.some(pattern => pattern.test(content))
 }
 
-function getDisplayProcessingBlocks(blocks: ProcessingBlock[] | undefined): ProcessingBlock[] {
+function getDisplayProcessingBlocks(
+  blocks: ProcessingBlock[] | undefined,
+  settleForCancelledTurn = false
+): ProcessingBlock[] {
   if (!blocks?.length) return []
 
-  return blocks.filter(block => {
-    if (block.type !== 'text') return true
+  return blocks
+    .filter(block => {
+      if (block.type !== 'text') return true
 
-    return Boolean(block.content.trim())
-  })
+      return Boolean(block.content.trim())
+    })
+    .map(block =>
+      settleForCancelledTurn && block.status !== 'done' && block.status !== 'error'
+        ? { ...block, status: 'done' as const }
+        : block
+    )
 }
 
 function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
@@ -1407,6 +1468,8 @@ function AssistantMessage({
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
+  onLoadFullTranscript,
+  loadingFullTranscript,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
 }: {
@@ -1435,6 +1498,8 @@ function AssistantMessage({
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
 }) {
@@ -1449,10 +1514,10 @@ function AssistantMessage({
   const visibleContent = shouldHideContent ? '' : message.content
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
-  const displayBlocks = getDisplayProcessingBlocks(message.blocks)
+  const displayBlocks = getDisplayProcessingBlocks(message.blocks, isCancelled)
   const hasBlocks = displayBlocks.length > 0
   const hasVisibleContent = Boolean(visibleContent.trim())
-  const isStreaming = message.status === 'streaming'
+  const isStreaming = !isCancelled && message.status === 'streaming'
   const hasRunningBlocks = hasRunningProcessingBlocks(displayBlocks)
   const isAssistantRunning = isStreaming || hasRunningBlocks
   const canShowFinalArtifacts = !isAssistantRunning
@@ -1504,7 +1569,11 @@ function AssistantMessage({
               blocks={displayBlocks}
               isStreaming={isStreaming}
               startedAt={getProcessingSummaryStartMs(message, displayBlocks, isStreaming)}
-              forceExpanded={isCancelled || message.runtimeGuidanceSplitBefore === true}
+              forceExpanded={
+                isCancelled ||
+                message.runtimeGuidanceSplitBefore === true ||
+                message.runtimeGuidanceContinuation === true
+              }
               hasFinalContent={hasVisibleContent}
               showSummary={!isCancelled}
               stateKey={getMessageDisplayStateKey(conversationKey, message)}
@@ -1512,11 +1581,20 @@ function AssistantMessage({
               onRequestUserInputSubmit={onRequestUserInputSubmit}
               onRequestUserInputIgnore={onRequestUserInputIgnore}
               onOpenAssistantPlan={onOpenAssistantPlan}
+              onLoadFullTranscript={onLoadFullTranscript}
+              loadingFullTranscript={loadingFullTranscript}
               hideRequestUserInputBlocks={hideRequestUserInputBlocks}
               hiddenRequestUserInputIds={hiddenRequestUserInputIds}
             />
           )}
           {shouldShowThinking && !hasVisibleContent && <AssistantThinkingIndicator />}
+          {message.contentTruncated ? (
+            <ContentTruncatedNotice
+              originalChars={message.contentOriginalChars}
+              onLoadFullTranscript={onLoadFullTranscript}
+              loadingFullTranscript={loadingFullTranscript}
+            />
+          ) : null}
           {hasVisibleContent ? (
             <AssistantMarkdown
               content={visibleContent}
@@ -1571,6 +1649,36 @@ function AssistantMessage({
             <MessageHoverActions message={message} align="left" visible={areHoverActionsVisible} />
           )}
       </div>
+    </div>
+  )
+}
+
+function ContentTruncatedNotice({
+  originalChars,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
+}: {
+  originalChars?: number
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
+}) {
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs text-text-muted">
+      <span>
+        早期内容已从当前视图卸载
+        {typeof originalChars === 'number' ? `，原始约 ${originalChars.toLocaleString()} 字` : ''}。
+      </span>
+      {onLoadFullTranscript ? (
+        <button
+          type="button"
+          data-testid="load-full-runtime-transcript-button"
+          onClick={() => void onLoadFullTranscript()}
+          disabled={loadingFullTranscript}
+          className="h-8 rounded border border-border bg-base px-2 text-xs font-medium text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-60"
+        >
+          {loadingFullTranscript ? '正在加载完整输出' : '加载完整输出'}
+        </button>
+      ) : null}
     </div>
   )
 }
@@ -1631,6 +1739,7 @@ function AssistantErrorCard({
 }) {
   const { t } = useTranslation('chat')
   const [isDetailExpanded, setIsDetailExpanded] = useState(false)
+  const [isDismissed, setIsDismissed] = useState(false)
   const displayError = rawError || error
   const hasErrorDetails = Boolean(displayError)
   const parsedError = parseChatError(displayError ?? '', errorType)
@@ -1655,6 +1764,10 @@ function AssistantErrorCard({
             ),
           })
 
+  if (isDismissed) {
+    return null
+  }
+
   return (
     <div
       data-testid="assistant-error-card"
@@ -1678,7 +1791,10 @@ function AssistantErrorCard({
           <button
             type="button"
             data-testid="assistant-error-retry"
-            onClick={() => onRetry?.(message)}
+            onClick={() => {
+              setIsDismissed(true)
+              onRetry?.(message)
+            }}
             className="h-8 rounded-lg border border-border bg-base px-3 text-xs font-semibold text-text-secondary hover:bg-muted hover:text-text-primary"
           >
             {t('assistant_error.actions.retry', '重试')}

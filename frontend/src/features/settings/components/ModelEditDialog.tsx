@@ -33,11 +33,11 @@ import {
   modelApis,
   ModelCRD,
   ModelCategoryType,
+  ModelCapabilities,
   TTSConfig,
   STTConfig,
   EmbeddingConfig,
   RerankConfig,
-  ModelCapabilities,
   VideoGenerationConfig,
   AvailableModel,
 } from '@/apis/models'
@@ -1608,6 +1608,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             </div>
           )}
 
+          {/* Multimodal capabilities (LLM models only) */}
           {modelCategoryType === 'llm' && (
             <div className="space-y-3 rounded-lg bg-muted p-4">
               <div className="flex items-start space-x-3">

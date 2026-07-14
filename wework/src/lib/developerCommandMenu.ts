@@ -16,6 +16,7 @@ import {
 } from './performanceDiagnostics'
 import { isTauriRuntime } from './runtime-environment'
 import { setEmbeddedBrowserOcclusion } from './embedded-browser'
+import { APP_UPDATE_SIMULATE_EVENT } from '@/features/app-update/app-update-context'
 
 const MENU_ID = 'wework-developer-command-menu'
 const DEBUG_PANEL_ID = 'wework-debug-panel'
@@ -151,6 +152,12 @@ function getDeveloperCommands(): DeveloperCommand[] {
       label: 'Debug Panel',
       description: 'Inspect the active runtime task state and recent console.debug logs.',
       run: () => openDebugPanel(),
+    },
+    {
+      id: 'simulate-app-update',
+      label: 'Simulate App Update',
+      description: 'Simulate an update download and installation without changing the app.',
+      run: () => window.dispatchEvent(new Event(APP_UPDATE_SIMULATE_EVENT)),
     },
     {
       id: 'reload',

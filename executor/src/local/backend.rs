@@ -20,6 +20,7 @@ use crate::{
         app_ipc::{serve_app_ipc_sidecar, AppIpcError, RuntimeWorkHandler},
         command::{CommandHandler, CommandRequest, DeviceCommandHandler},
         session::{LocalSessionHandler, SessionType},
+        workspace_files::{execute_workspace_file_command, is_workspace_file_command},
     },
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
     protocol::ExecutionRequest,
@@ -425,6 +426,43 @@ where
         Arc::new(move |payload| {
             let command_handler = Arc::clone(&command_handler);
             Box::pin(async move {
+                if let Some(command_key) = payload.get("command_key").and_then(Value::as_str) {
+                    if is_workspace_file_command(command_key) {
+                        let path = payload
+                            .get("cwd")
+                            .or_else(|| payload.get("path"))
+                            .and_then(Value::as_str)
+                            .map(str::to_owned);
+                        let args = payload
+                            .get("args")
+                            .and_then(Value::as_array)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_owned)
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let env = payload
+                            .get("env")
+                            .and_then(Value::as_object)
+                            .map(|items| {
+                                items
+                                    .iter()
+                                    .filter_map(|(key, value)| {
+                                        value.as_str().map(|value| (key.clone(), value.to_owned()))
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let result =
+                            execute_workspace_file_command(command_key, path, args, env).await;
+                        return Some(serde_json::to_value(result).unwrap_or_else(
+                            |error| json!({"success": false, "error": error.to_string()}),
+                        ));
+                    }
+                }
                 let result = command_handler
                     .handle_execute_command(CommandRequest::from_value(payload))
                     .await;

@@ -19,6 +19,15 @@
     "stopped": "Stopped",
     "stopped_after": "You stopped after {{duration}}"
   },
+  "queue": {
+    "paused": "Queue paused",
+    "resume": "Resume sending",
+    "send_with_paused_title": "Resume the paused queue?",
+    "send_with_paused_description": "Choose whether to keep the queued messages before sending your new message.",
+    "send_with_paused_cancel": "Cancel",
+    "send_with_paused_clear": "Clear queue",
+    "send_with_paused_preserve": "Keep and resume"
+  },
   "request_user_input": {
     "asked_count": "Asked {{count}} question(s)",
     "ignore": "Cancel",

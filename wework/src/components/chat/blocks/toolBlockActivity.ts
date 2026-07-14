@@ -70,6 +70,17 @@ export function buildProcessingDisplayRows(
     completedTools = []
   }
 
+  const appendCompletedTool = (block: ToolBlock) => {
+    const previousBlock = completedTools.at(-1)
+    if (
+      previousBlock &&
+      getToolActivityGroupKey(previousBlock) !== getToolActivityGroupKey(block)
+    ) {
+      flushCompletedTools()
+    }
+    completedTools.push(block)
+  }
+
   const flushFileChanges = () => {
     if (consecutiveFileChanges.length === 0) return
     const block =
@@ -104,7 +115,7 @@ export function buildProcessingDisplayRows(
 
     if (groupCompletedTools && block.type === 'tool' && isCompletedToolBlock(block)) {
       flushFileChanges()
-      completedTools.push(block)
+      appendCompletedTool(block)
       continue
     }
 
@@ -116,6 +127,12 @@ export function buildProcessingDisplayRows(
   flushCompletedTools()
   flushFileChanges()
   return rows
+}
+
+function getToolActivityGroupKey(block: ToolBlock): string {
+  const name = block.toolName.toLowerCase()
+  if (isWebSearchToolName(name)) return 'web-search'
+  return getToolActivityKind(block)
 }
 
 function mergeConsecutiveFileChanges(blocks: FileChangesBlock[]): FileChangesBlock {
@@ -539,7 +556,8 @@ function splitShellWords(command: string): string[] {
 
   for (const char of command) {
     if (escaped) {
-      current += char
+      // A backslash followed by a newline continues the same shell command.
+      if (char !== '\n' && char !== '\r') current += char
       escaped = false
       continue
     }
@@ -560,6 +578,12 @@ function splitShellWords(command: string): string[] {
 
     if (char === '"' || char === "'") {
       quote = char
+      continue
+    }
+
+    if (char === '\n' || char === '\r') {
+      pushCurrent()
+      if (words.at(-1) !== ';') words.push(';')
       continue
     }
 

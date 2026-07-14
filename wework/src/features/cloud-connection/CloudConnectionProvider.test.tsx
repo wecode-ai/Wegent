@@ -92,7 +92,7 @@ describe('CloudConnectionProvider', () => {
     httpMocks.post.mockResolvedValueOnce({
       session_id: 'session-1',
       poll_token: 'poll-1',
-      authorize_url: 'https://cloud.example.com/wework/authorize?session_id=session-1',
+      authorize_url: 'https://cloud.example.com/auth/wework/authorize?session_id=session-1',
       expires_at: Math.floor(Date.now() / 1000) + 30,
       poll_interval_seconds: 0.001,
     })
@@ -137,7 +137,7 @@ describe('CloudConnectionProvider', () => {
     httpMocks.post.mockResolvedValueOnce({
       session_id: 'session-1',
       poll_token: 'poll-1',
-      authorize_url: 'https://cloud.example.com/wework/authorize?session_id=session-1',
+      authorize_url: 'https://cloud.example.com/auth/wework/authorize?session_id=session-1',
       expires_at: Math.floor(Date.now() / 1000) + 30,
       poll_interval_seconds: 0.001,
     })
@@ -181,7 +181,7 @@ describe('CloudConnectionProvider', () => {
     httpMocks.post.mockResolvedValueOnce({
       session_id: 'session-1',
       poll_token: 'poll-1',
-      authorize_url: 'https://cloud.example.com/wework/authorize?session_id=session-1',
+      authorize_url: 'https://cloud.example.com/auth/wework/authorize?session_id=session-1',
       expires_at: Math.floor(Date.now() / 1000) + 30,
       poll_interval_seconds: 30,
     })

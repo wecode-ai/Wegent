@@ -8,7 +8,10 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -20,11 +23,13 @@ use tokio::time::sleep;
 
 use crate::{
     agents::{
-        CodexActiveTurnCallback, CodexAppServerClient, CodexAppServerTurnOptions,
-        CodexRequestUserInputReceiver, CodexThreadStartedCallback, CODEX_APP_SERVER_TURN_CANCELLED,
+        combined_codex_developer_instructions, strip_wework_browser_instructions,
+        CodexActiveTurnCallback, CodexActiveTurnFinishedCallback, CodexAppServerClient,
+        CodexAppServerTurnOptions, CodexRequestUserInputReceiver, CodexThreadStartedCallback,
+        CODEX_APP_SERVER_TURN_CANCELLED,
     },
     local::app_ipc::{AppIpcError, RuntimeWorkHandler},
-    logging::log_executor_event,
+    logging::{log_executor_event, wework_debug_log},
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
 };
@@ -32,7 +37,10 @@ use crate::{
 use super::{
     codex_global_state::{
         open_codex_global_project, register_codex_global_thread_workspace_root,
-        remove_codex_global_project, rename_codex_global_project, CodexGlobalProjectIndex,
+        remove_codex_global_project, rename_codex_global_project,
+        reorder_codex_global_project_thread, reorder_codex_global_projects,
+        set_codex_global_project_appearance, set_codex_global_project_pinned,
+        set_codex_global_thread_pinned, CodexGlobalProjectIndex,
     },
     codex_notifications::codex_notification,
     codex_rollout::{
@@ -51,7 +59,7 @@ use super::{
         CodexNotificationCacheMapper,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
-    transcript::transcript_messages,
+    transcript::{full_transcript_messages, transcript_messages},
     transcript_cache::{CachedTranscript, TranscriptCache, TranscriptSourceSignature},
     transcript_page::transcript_page,
     util::{
@@ -59,6 +67,7 @@ use super::{
         infer_workspace_kind, integer_field, normalize_device_id, normalize_workspace_path, now_ms,
         prompt_text, runtime_task_id, string_field, workspace_group_path, workspace_path,
     },
+    worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
 
 const CODEX_THREAD_LIST_PAGE_SIZE: usize = 100;
@@ -73,6 +82,7 @@ const SEARCH_SNIPPET_CONTEXT_CHARS: usize = 80;
 const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const ARCHIVED_BACKGROUND_THREAD_DELETE_SLOW_THRESHOLD: Duration = Duration::from_secs(5);
 const ARCHIVED_BACKGROUND_DELETE_INTERVAL: Duration = Duration::from_millis(250);
+const WORKTREE_AUTO_CLEANUP_IDLE_DELAY: Duration = Duration::from_secs(5 * 60);
 const CODEX_OFFICIAL_PROVIDER_ID: &str = "openai";
 const CODEX_OFFICIAL_PROVIDER_NAME: &str = "CodeX";
 
@@ -246,6 +256,9 @@ pub struct RuntimeWorkRpcHandler {
     store: RuntimeWorkStore,
     transcript_cache: TranscriptCache,
     thread_list_cache: CodexThreadListCache,
+    worktrees: WorktreeManager,
+    worktree_cleanup_generation: Arc<AtomicU64>,
+    opened_workspace_roots: Arc<Mutex<HashSet<PathBuf>>>,
 }
 
 struct ActiveTurnCancellation {
@@ -302,6 +315,9 @@ impl RuntimeWorkRpcHandler {
             store: RuntimeWorkStore::from_env(),
             transcript_cache: TranscriptCache::default(),
             thread_list_cache: CodexThreadListCache::default(),
+            worktrees: WorktreeManager::from_env(),
+            worktree_cleanup_generation: Arc::new(AtomicU64::new(0)),
+            opened_workspace_roots: Arc::new(Mutex::new(HashSet::new())),
         };
         handler.spawn_archived_delete_worker(archived_delete_rx);
         handler
@@ -339,6 +355,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.keybindings.get" => self.get_keybindings().await,
             "runtime.keybindings.update" => self.update_keybindings(payload).await,
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
+            "runtime.codex.instructions.read" => self.read_codex_instructions().await,
+            "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
+            "runtime.codex.personality.read" => self.read_codex_personality().await,
+            "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.app_server.restart" => self.restart_codex_app_server().await,
             "runtime.codex.stream_debug.get" => self.get_codex_stream_debug().await,
@@ -361,14 +381,295 @@ impl RuntimeWorkRpcHandler {
                 self.archive_project_conversations(payload).await
             }
             "runtime.archived_conversations.archive_all" => self.archive_all_conversations().await,
+            "runtime.worktrees.settings.get" => self.get_worktree_settings().await,
+            "runtime.worktrees.settings.update" => self.update_worktree_settings(payload).await,
+            "runtime.worktrees.prepare" => self.prepare_worktree(payload).await,
+            "runtime.worktrees.list" => self.list_worktrees().await,
+            "runtime.worktrees.delete" => self.delete_worktree(payload).await,
+            "runtime.worktrees.restore" => self.restore_worktree(payload).await,
+            "runtime.worktrees.prune" => self.prune_worktrees().await,
             "runtime.workspaces.open" => self.open_workspace(payload).await,
             "runtime.workspaces.rename" => self.rename_workspace(payload).await,
             "runtime.workspaces.remove" => self.remove_workspace(payload).await,
+            "runtime.workspace.search" => self.search_workspace(payload).await,
+            "runtime.sidebar.projects.reorder" => self.reorder_sidebar_projects(payload).await,
+            "runtime.sidebar.projects.pin" => self.pin_sidebar_project(payload).await,
+            "runtime.sidebar.projects.appearance" => {
+                self.set_sidebar_project_appearance(payload).await
+            }
+            "runtime.sidebar.tasks.reorder" => self.reorder_sidebar_project_task(payload).await,
+            "runtime.sidebar.tasks.pin" => self.pin_sidebar_task(payload).await,
             unsupported => Err(AppIpcError::new(
                 "unsupported_method",
                 format!("Unsupported runtime RPC method: {unsupported}"),
             )),
         }
+    }
+
+    async fn search_workspace(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let root = string_field(&payload, "root")
+            .ok_or_else(|| AppIpcError::new("bad_request", "root is required"))?;
+        let query = string_field(&payload, "query").unwrap_or_default();
+        if query.trim().is_empty() {
+            return Ok(json!({ "files": [] }));
+        }
+
+        let root = fs::canonicalize(&root)
+            .map_err(|error| AppIpcError::new("invalid_workspace_root", error.to_string()))?;
+        if !root.is_dir() {
+            return Err(AppIpcError::new(
+                "invalid_workspace_root",
+                "Workspace search root is not a directory",
+            ));
+        }
+        if !self.workspace_search_root_is_allowed(&root) {
+            return Err(AppIpcError::new(
+                "invalid_workspace_root",
+                "Workspace search root has not been opened",
+            ));
+        }
+
+        let cancellation_token = string_field(&payload, "cancellationToken")
+            .or_else(|| string_field(&payload, "cancellation_token"));
+        let response = self
+            .codex_app_server
+            .request(
+                "fuzzyFileSearch",
+                json!({
+                    "query": query,
+                    "roots": [root.to_string_lossy()],
+                    "cancellationToken": cancellation_token,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("workspace_search_failed", error))?;
+        let files = response
+            .get("files")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| {
+                        json!({
+                            "root": item.get("root").cloned().unwrap_or(Value::Null),
+                            "path": item.get("path").cloned().unwrap_or(Value::Null),
+                            "fileName": item.get("file_name").cloned().unwrap_or(Value::Null),
+                            "matchType": item.get("match_type").cloned().unwrap_or(Value::Null),
+                            "score": item.get("score").cloned().unwrap_or(Value::Null),
+                            "indices": item.get("indices").cloned().unwrap_or(Value::Null),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        Ok(json!({ "files": files }))
+    }
+
+    fn workspace_search_root_is_allowed(&self, root: &Path) -> bool {
+        if self
+            .opened_workspace_roots
+            .lock()
+            .map(|roots| {
+                roots
+                    .iter()
+                    .any(|allowed| root == allowed || root.starts_with(allowed))
+            })
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        let project_index = CodexGlobalProjectIndex::load();
+        let project_paths = project_index
+            .projects()
+            .iter()
+            .map(|project| project.workspace_path.as_str());
+        let task_paths = self
+            .store
+            .list_task_summaries(true)
+            .into_iter()
+            .map(|task| task.workspace_path)
+            .collect::<Vec<_>>();
+
+        project_paths
+            .chain(task_paths.iter().map(String::as_str))
+            .filter_map(|path| fs::canonicalize(path).ok())
+            .any(|allowed| root == allowed || root.starts_with(&allowed))
+    }
+
+    async fn get_worktree_settings(&self) -> Result<Value, AppIpcError> {
+        let settings = self.worktrees.settings();
+        let mut value = serde_json::to_value(settings)
+            .map_err(|error| AppIpcError::new("worktree_settings_failed", error.to_string()))?;
+        value["deviceId"] = Value::String(self.device_id.clone());
+        Ok(value)
+    }
+
+    async fn update_worktree_settings(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let patch = serde_json::from_value::<WorktreeSettingsPatch>(payload)
+            .map_err(|error| AppIpcError::new("invalid_worktree_settings", error.to_string()))?;
+        let settings = self
+            .worktrees
+            .update_settings(patch)
+            .map_err(|error| AppIpcError::new("worktree_settings_failed", error))?;
+        let _ = self.worktrees.prune(&self.store.list_task_summaries(true));
+        let mut value = serde_json::to_value(settings)
+            .map_err(|error| AppIpcError::new("worktree_settings_failed", error.to_string()))?;
+        value["deviceId"] = Value::String(self.device_id.clone());
+        Ok(value)
+    }
+
+    async fn prepare_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let source_path = string_field(&payload, "sourcePath")
+            .or_else(|| string_field(&payload, "source_path"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "sourcePath is required"))?;
+        let worktree_id = string_field(&payload, "worktreeId")
+            .or_else(|| string_field(&payload, "worktree_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "worktreeId is required"))?;
+        let git_ref = string_field(&payload, "ref");
+        let record = self
+            .worktrees
+            .prepare(Path::new(&source_path), &worktree_id, git_ref.as_deref())
+            .map_err(|error| AppIpcError::new("worktree_prepare_failed", error))?;
+        self.schedule_worktree_prune();
+        Ok(json!({
+            "success": true,
+            "deviceId": self.device_id,
+            "worktree": record,
+            "path": record.path,
+        }))
+    }
+
+    fn schedule_worktree_prune(&self) {
+        let generation = self
+            .worktree_cleanup_generation
+            .fetch_add(1, Ordering::SeqCst)
+            + 1;
+        let cleanup_generation = self.worktree_cleanup_generation.clone();
+        let worktrees = self.worktrees.clone();
+        let store = self.store.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(WORKTREE_AUTO_CLEANUP_IDLE_DELAY).await;
+                if cleanup_generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+
+                let tasks = store.list_task_summaries(true);
+                if tasks.iter().any(|task| task.running) {
+                    continue;
+                }
+
+                let result = tokio::task::spawn_blocking(move || worktrees.prune(&tasks)).await;
+                match result {
+                    Ok(Err(error)) => {
+                        wework_debug_log(&format!("background worktree cleanup failed: {error}"));
+                    }
+                    Err(error) => {
+                        wework_debug_log(&format!(
+                            "background worktree cleanup task failed: {error}"
+                        ));
+                    }
+                    Ok(Ok(_)) => {}
+                }
+                return;
+            }
+        });
+    }
+
+    async fn list_worktrees(&self) -> Result<Value, AppIpcError> {
+        let entries = self
+            .worktrees
+            .list(&self.store.list_task_summaries(true))
+            .map_err(|error| AppIpcError::new("worktree_list_failed", error))?;
+        let items = entries
+            .into_iter()
+            .map(|(record, tasks)| {
+                json!({
+                    "deviceId": self.device_id,
+                    "worktreeId": record.worktree_id,
+                    "path": record.path,
+                    "repositoryName": record.repository_name,
+                    "sourcePath": record.source_path,
+                    "createdAt": record.created_at,
+                    "updatedAt": record.updated_at,
+                    "state": record.state,
+                    "snapshotAt": record.snapshot_at,
+                    "lastError": record.last_error,
+                    "conversations": tasks.into_iter().map(|task| json!({
+                        "deviceId": self.device_id,
+                        "taskId": task.local_task_id,
+                        "threadId": task.thread_id,
+                        "workspacePath": task.workspace_path,
+                        "title": task.title,
+                        "status": task.status,
+                        "running": task.running,
+                        "updatedAt": task.updated_at,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"success": true, "deviceId": self.device_id, "items": items}))
+    }
+
+    async fn delete_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let path = string_field(&payload, "path")
+            .ok_or_else(|| AppIpcError::new("bad_request", "path is required"))?;
+        let preserve_snapshot = bool_field(&payload, "preserveSnapshot")
+            .or_else(|| bool_field(&payload, "preserve_snapshot"))
+            .unwrap_or(true);
+        let linked = self
+            .store
+            .list_task_summaries(true)
+            .into_iter()
+            .filter(|task| {
+                normalize_workspace_path(&task.workspace_path) == normalize_workspace_path(&path)
+            })
+            .collect::<Vec<_>>();
+        for task in linked.iter().filter(|task| task.status != "archived") {
+            let result = self
+                .archive_task(
+                    json!({"taskId": task.local_task_id, "workspacePath": task.workspace_path}),
+                )
+                .await?;
+            if result["accepted"] != true {
+                return Err(AppIpcError::new(
+                    "worktree_archive_failed",
+                    result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Failed to archive linked task"),
+                ));
+            }
+        }
+        let record = self
+            .worktrees
+            .delete(Path::new(&path), preserve_snapshot)
+            .map_err(|error| AppIpcError::new("worktree_delete_failed", error))?;
+        Ok(json!({
+            "success": true,
+            "deviceId": self.device_id,
+            "worktree": record,
+            "archivedTaskCount": linked.iter().filter(|task| task.status != "archived").count(),
+        }))
+    }
+
+    async fn restore_worktree(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let path = string_field(&payload, "path")
+            .or_else(|| workspace_path(&payload))
+            .ok_or_else(|| AppIpcError::new("bad_request", "path is required"))?;
+        let record = self
+            .worktrees
+            .restore(Path::new(&path))
+            .map_err(|error| AppIpcError::new("worktree_restore_failed", error))?;
+        Ok(json!({"success": true, "deviceId": self.device_id, "worktree": record}))
+    }
+
+    async fn prune_worktrees(&self) -> Result<Value, AppIpcError> {
+        let removed = self
+            .worktrees
+            .prune(&self.store.list_task_summaries(true))
+            .map_err(|error| AppIpcError::new("worktree_prune_failed", error))?;
+        Ok(json!({"success": true, "deviceId": self.device_id, "removed": removed}))
     }
 
     async fn get_keybindings(&self) -> Result<Value, AppIpcError> {
@@ -498,6 +799,146 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({
             "data": models,
             "providers": provider_results,
+        }))
+    }
+
+    async fn read_codex_instructions(&self) -> Result<Value, AppIpcError> {
+        let response = self
+            .codex_app_server
+            .request(
+                "config/read",
+                json!({
+                    "includeLayers": false,
+                    "cwd": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_instructions_read_failed", error))?;
+        let config = response.get("config").unwrap_or(&Value::Null);
+        let developer_instructions = config
+            .get("developer_instructions")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let user_developer_instructions = strip_wework_browser_instructions(developer_instructions);
+        let legacy_instructions = config
+            .get("instructions")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let instructions =
+            if user_developer_instructions.is_empty() && !legacy_instructions.trim().is_empty() {
+                self.write_codex_developer_instructions(legacy_instructions)
+                    .await?;
+                legacy_instructions
+            } else {
+                user_developer_instructions
+            };
+        Ok(json!({ "instructions": instructions }))
+    }
+
+    async fn write_codex_instructions(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let Some(instructions) = payload.get("instructions") else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "instructions must be a string",
+            ));
+        };
+        let Some(instructions) = instructions.as_str() else {
+            return Err(AppIpcError::new(
+                "invalid_request",
+                "instructions must be a string",
+            ));
+        };
+        let response = self
+            .write_codex_developer_instructions(instructions)
+            .await?;
+        Ok(json!({
+            "instructions": instructions.trim(),
+            "configPath": response.get("filePath").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    async fn write_codex_developer_instructions(
+        &self,
+        instructions: &str,
+    ) -> Result<Value, AppIpcError> {
+        let value = Value::String(combined_codex_developer_instructions(instructions));
+        self.codex_app_server
+            .request(
+                "config/batchWrite",
+                json!({
+                    "edits": [
+                        {
+                            "keyPath": "developer_instructions",
+                            "value": value,
+                            "mergeStrategy": "replace",
+                        },
+                        {
+                            "keyPath": "instructions",
+                            "value": Value::Null,
+                            "mergeStrategy": "replace",
+                        }
+                    ],
+                    "filePath": Value::Null,
+                    "expectedVersion": Value::Null,
+                    "reloadUserConfig": true,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_instructions_write_failed", error))
+    }
+
+    async fn read_codex_personality(&self) -> Result<Value, AppIpcError> {
+        let response = self
+            .codex_app_server
+            .request(
+                "config/read",
+                json!({
+                    "includeLayers": false,
+                    "cwd": Value::Null,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_personality_read_failed", error))?;
+        let personality = response
+            .get("config")
+            .and_then(|config| config.get("personality"))
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "friendly" | "pragmatic"))
+            .unwrap_or("pragmatic");
+        Ok(json!({ "personality": personality }))
+    }
+
+    async fn write_codex_personality(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let personality = payload
+            .get("personality")
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "friendly" | "pragmatic"))
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "invalid_request",
+                    "personality must be friendly or pragmatic",
+                )
+            })?;
+        let response = self
+            .codex_app_server
+            .request(
+                "config/batchWrite",
+                json!({
+                    "edits": [{
+                        "keyPath": "personality",
+                        "value": personality,
+                        "mergeStrategy": "replace",
+                    }],
+                    "filePath": Value::Null,
+                    "expectedVersion": Value::Null,
+                    "reloadUserConfig": true,
+                }),
+            )
+            .await
+            .map_err(|error| AppIpcError::new("codex_personality_write_failed", error))?;
+        Ok(json!({
+            "personality": personality,
+            "configPath": response.get("filePath").cloned().unwrap_or(Value::Null),
         }))
     }
 
@@ -668,6 +1109,9 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "before_cursor"));
         let after_cursor = string_field(&payload, "afterCursor")
             .or_else(|| string_field(&payload, "after_cursor"));
+        let include_full_content = bool_field(&payload, "includeFullContent")
+            .or_else(|| bool_field(&payload, "include_full_content"))
+            .unwrap_or(false);
         let refresh = bool_field(&payload, "refresh")
             .or_else(|| bool_field(&payload, "forceRefresh"))
             .unwrap_or(false);
@@ -729,47 +1173,51 @@ impl RuntimeWorkRpcHandler {
                 limit,
                 before_cursor,
                 after_cursor,
+                full_content: include_full_content,
             }));
         };
 
-        if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
-            let messages = local_link
-                .as_ref()
-                .map(|link| {
-                    merge_cached_messages(
-                        cached.messages.clone(),
-                        cached_runtime_transcript_messages_for_provider(link, &cached.messages),
-                    )
-                })
-                .unwrap_or_else(|| cached.messages.clone());
-            let running = transcript_running(
-                local_link.as_ref(),
-                running_hint || cached.running,
-                &messages,
-            );
-            log_runtime_transcript_finished(RuntimeTranscriptLog {
-                started_at,
-                local_task_id: &local_task_id,
-                thread_id: &thread_id,
-                source: "transcript_cache",
-                refresh,
-                running_hint,
-                limit,
-                before_cursor: before_cursor.as_deref(),
-                after_cursor: after_cursor.as_deref(),
-                message_count: messages.len(),
-                running,
-            });
-            return Ok(transcript_response(TranscriptResponseInput {
-                local_task_id,
-                workspace_path: cached.workspace_path,
-                runtime: cached.runtime,
-                messages,
-                context_usage: cached.context_usage,
-                limit,
-                before_cursor,
-                after_cursor,
-            }));
+        if !include_full_content {
+            if let Some(cached) = self.transcript_cache.get(&thread_id, running_hint, refresh) {
+                let messages = local_link
+                    .as_ref()
+                    .map(|link| {
+                        merge_cached_messages(
+                            cached.messages.clone(),
+                            cached_runtime_transcript_messages_for_provider(link, &cached.messages),
+                        )
+                    })
+                    .unwrap_or_else(|| cached.messages.clone());
+                let running = transcript_running(
+                    local_link.as_ref(),
+                    running_hint || cached.running,
+                    &messages,
+                );
+                log_runtime_transcript_finished(RuntimeTranscriptLog {
+                    started_at,
+                    local_task_id: &local_task_id,
+                    thread_id: &thread_id,
+                    source: "transcript_cache",
+                    refresh,
+                    running_hint,
+                    limit,
+                    before_cursor: before_cursor.as_deref(),
+                    after_cursor: after_cursor.as_deref(),
+                    message_count: messages.len(),
+                    running,
+                });
+                return Ok(transcript_response(TranscriptResponseInput {
+                    local_task_id,
+                    workspace_path: cached.workspace_path,
+                    runtime: cached.runtime,
+                    messages,
+                    context_usage: cached.context_usage,
+                    limit,
+                    before_cursor,
+                    after_cursor,
+                    full_content: false,
+                }));
+            }
         }
 
         let mut source = "thread_read";
@@ -795,7 +1243,7 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "workspace_path"))
             .unwrap_or_default();
 
-        if refresh {
+        if refresh && !include_full_content {
             if let Some(cached) = self.transcript_cache.peek(&thread_id) {
                 if let Some(updated) = self.incremental_cached_transcript(
                     cached,
@@ -830,6 +1278,7 @@ impl RuntimeWorkRpcHandler {
                         limit,
                         before_cursor,
                         after_cursor,
+                        full_content: false,
                     }));
                 }
             }
@@ -837,7 +1286,11 @@ impl RuntimeWorkRpcHandler {
 
         let transcript_thread = codex_thread_state(&thread);
         let context_usage = transcript_context_usage(&transcript_thread);
-        let transcript_messages = transcript_messages(&transcript_thread, &self.device_id);
+        let transcript_messages = if include_full_content {
+            full_transcript_messages(&transcript_thread, &self.device_id)
+        } else {
+            transcript_messages(&transcript_thread, &self.device_id)
+        };
         let messages = local_link
             .as_ref()
             .map(|link| {
@@ -849,18 +1302,20 @@ impl RuntimeWorkRpcHandler {
             .unwrap_or(transcript_messages);
         let running = transcript_running(local_link.as_ref(), running_hint, &messages);
         let message_count = messages.len();
-        self.transcript_cache.insert(
-            thread_id.clone(),
-            CachedTranscript::new(
-                workspace_path.clone(),
-                "codex".to_owned(),
-                messages.clone(),
-                running,
-                transcript_source_signature(&thread),
-            )
-            .with_context_usage(context_usage.clone())
-            .with_rollout_turns(rollout_turns(&transcript_thread)),
-        );
+        if !include_full_content {
+            self.transcript_cache.insert(
+                thread_id.clone(),
+                CachedTranscript::new(
+                    workspace_path.clone(),
+                    "codex".to_owned(),
+                    messages.clone(),
+                    running,
+                    transcript_source_signature(&thread),
+                )
+                .with_context_usage(context_usage.clone())
+                .with_rollout_turns(rollout_turns(&transcript_thread)),
+            );
+        }
         log_runtime_transcript_finished(RuntimeTranscriptLog {
             started_at,
             local_task_id: &local_task_id,
@@ -881,9 +1336,18 @@ impl RuntimeWorkRpcHandler {
             runtime: "codex".to_owned(),
             messages,
             context_usage,
-            limit,
-            before_cursor,
-            after_cursor,
+            limit: if include_full_content { None } else { limit },
+            before_cursor: if include_full_content {
+                None
+            } else {
+                before_cursor
+            },
+            after_cursor: if include_full_content {
+                None
+            } else {
+                after_cursor
+            },
+            full_content: include_full_content,
         }))
     }
 
@@ -1056,6 +1520,12 @@ impl RuntimeWorkRpcHandler {
 
     async fn unarchive_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let mut link = self.task_link_from_payload(&payload, true).await?;
+        if let Err(error) = self
+            .worktrees
+            .restore_if_known(Path::new(&link.workspace_path))
+        {
+            return Ok(task_action_failure(&link, error));
+        }
         if let Some(thread_id) = link.thread_id.as_deref() {
             if let Err(error) = self
                 .call_codex_thread_method("thread/unarchive", json!({"threadId": thread_id}))
@@ -1099,7 +1569,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn get_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let Some(thread_id) = runtime_session_id_from_link(&link) else {
+        let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
 
@@ -1108,6 +1578,12 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                self.sync_runtime_task_goal_status(
+                    &link.local_task_id,
+                    result
+                        .get("goal")
+                        .and_then(|goal| string_field(goal, "status")),
+                );
                 let mut response = task_action_success(&link);
                 response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
                 Ok(response)
@@ -1118,7 +1594,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn set_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let Some(thread_id) = runtime_session_id_from_link(&link) else {
+        let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
 
@@ -1143,6 +1619,12 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                self.sync_runtime_task_goal_status(
+                    &link.local_task_id,
+                    result
+                        .get("goal")
+                        .and_then(|goal| string_field(goal, "status")),
+                );
                 let mut response = task_action_success(&link);
                 response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
                 Ok(response)
@@ -1153,7 +1635,7 @@ impl RuntimeWorkRpcHandler {
 
     async fn clear_task_goal(&self, payload: Value) -> Result<Value, AppIpcError> {
         let link = self.task_link_from_payload(&payload, false).await?;
-        let Some(thread_id) = runtime_session_id_from_link(&link) else {
+        let Some(thread_id) = codex_thread_id_from_link(&link) else {
             return Ok(task_goal_missing_session(&link));
         };
 
@@ -1162,6 +1644,7 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                self.sync_runtime_task_goal_status(&link.local_task_id, None);
                 let mut response = task_action_success(&link);
                 response["cleared"] = result.get("cleared").cloned().unwrap_or(Value::Bool(false));
                 Ok(response)
@@ -1280,6 +1763,21 @@ impl RuntimeWorkRpcHandler {
                 ),
             ],
         );
+        let has_other_link = self.store.list_task_summaries(true).iter().any(|task| {
+            normalize_workspace_path(&task.workspace_path)
+                == normalize_workspace_path(&link.workspace_path)
+        });
+        if !has_other_link {
+            if let Err(error) = self
+                .worktrees
+                .forget_if_known(Path::new(&link.workspace_path))
+            {
+                log_executor_event(
+                    "runtime archived conversation worktree snapshot cleanup failed",
+                    &[("local_task_id", link.local_task_id), ("error", error)],
+                );
+            }
+        }
     }
 
     async fn delete_archived_tasks_bulk(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1339,6 +1837,7 @@ impl RuntimeWorkRpcHandler {
         let mut request = execution_request(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
+        Self::log_execution_request_summary("runtime.tasks.create", &request);
         let workspace_path = payload_workspace_path
             .or_else(|| request.cwd().map(str::to_owned))
             .or_else(|| standalone_chat_workspace_path(&local_task_id, &request))
@@ -1359,6 +1858,7 @@ impl RuntimeWorkRpcHandler {
         }
         let runtime_handle = runtime_handle_json(&link);
         self.upsert_local_task(link);
+        self.schedule_worktree_prune();
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
         let mut side_source = side_source_thread(&payload);
         if let Some(source) = &mut side_source {
@@ -1386,6 +1886,39 @@ impl RuntimeWorkRpcHandler {
             "runtime": "codex",
             "runtimeHandle": runtime_handle,
         }))
+    }
+
+    fn log_execution_request_summary(method: &str, request: &ExecutionRequest) {
+        let model_config = &request.model_config;
+        let base_url = model_config
+            .get("base_url")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let api_key_present = model_config
+            .get("api_key")
+            .and_then(Value::as_str)
+            .map(|value| !value.is_empty())
+            .unwrap_or(false);
+        let use_user_config = model_config
+            .get("runtime_config")
+            .and_then(Value::as_object)
+            .and_then(|config| config.get("codex"))
+            .and_then(Value::as_object)
+            .and_then(|codex| codex.get("use_user_config"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let model_id = model_config
+            .get("model_id")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let keys: Vec<String> = model_config
+            .as_object()
+            .map(|object| object.keys().cloned().collect())
+            .unwrap_or_default();
+        wework_debug_log(&format!(
+            "{method} task_id={} model_id={} base_url={} api_key_present={} use_user_config={} model_config_keys={:?}",
+            request.task_id, model_id, base_url, api_key_present, use_user_config, keys
+        ));
     }
 
     async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -1416,18 +1949,39 @@ impl RuntimeWorkRpcHandler {
                     .map(|link| link.workspace_path.clone())
             })
             .unwrap_or_default();
+        if let Err(error) = self.worktrees.restore_if_known(Path::new(&workspace_path)) {
+            return Ok(json!({
+                "success": false,
+                "accepted": false,
+                "error": error,
+                "code": "worktree_restore_required",
+                "taskId": local_task_id,
+                "workspacePath": workspace_path,
+            }));
+        }
         let mut request = payload_execution_request
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         request.new_session = false;
+        Self::log_execution_request_summary("runtime.tasks.send", &request);
         if request.project_workspace_path.is_none() && !workspace_path.is_empty() {
             request.project_workspace_path = Some(workspace_path.clone());
         }
-        let Some(thread_id) = runtime_session_id_from_payload(&payload).or_else(|| {
-            existing_link
-                .as_ref()
-                .and_then(runtime_session_id_from_link)
-        }) else {
+        let recovered_link = self
+            .recover_send_task_link(&payload, &local_task_id, existing_link.as_ref())
+            .await;
+        let Some(thread_id) = runtime_session_id_from_payload(&payload)
+            .or_else(|| {
+                existing_link
+                    .as_ref()
+                    .and_then(runtime_session_id_from_link)
+            })
+            .or_else(|| {
+                recovered_link
+                    .as_ref()
+                    .and_then(runtime_session_id_from_link)
+            })
+        else {
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -1461,8 +2015,9 @@ impl RuntimeWorkRpcHandler {
             &request,
             &payload,
         );
-        let ephemeral =
-            request.ephemeral || existing_link.as_ref().is_some_and(|link| link.ephemeral);
+        self.schedule_worktree_prune();
+        let link_for_send = existing_link.as_ref().or(recovered_link.as_ref());
+        let ephemeral = request.ephemeral || link_for_send.is_some_and(|link| link.ephemeral);
         let direct_thread_id = ephemeral.then(|| thread_id.clone());
         let resume_thread_id = (!ephemeral).then_some(thread_id);
 
@@ -1577,8 +2132,14 @@ impl RuntimeWorkRpcHandler {
         let message = string_field(&payload, "message")
             .or_else(|| string_field(&payload, "guidance"))
             .map(|value| value.trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| AppIpcError::new("bad_request", "message is required"))?;
+            .unwrap_or_default();
+        let steer_input = guidance_input_items(&message, payload.get("attachments"));
+        if steer_input.is_empty() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "message or image attachment is required",
+            ));
+        }
         let Some(active_turn) = self.wait_for_active_codex_turn(&local_task_id).await else {
             return Ok(json!({
                 "success": false,
@@ -1593,15 +2154,19 @@ impl RuntimeWorkRpcHandler {
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
-        let steer_input = json!([
-            {
-                "type": "text",
-                "text": message,
-            }
-        ]);
+        let additional_context = payload
+            .get("additionalContext")
+            .or_else(|| payload.get("additional_context"))
+            .filter(|value| value.is_object())
+            .cloned();
         match self
             .codex_app_server
-            .steer_turn(&active_turn.thread_id, &active_turn.turn_id, steer_input)
+            .steer_turn(
+                &active_turn.thread_id,
+                &active_turn.turn_id,
+                Value::Array(steer_input),
+                additional_context,
+            )
             .await
         {
             Ok(turn_id) => Ok(json!({
@@ -1835,8 +2400,23 @@ impl RuntimeWorkRpcHandler {
         let workspace_path = workspace_path(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
         let label = string_field(&payload, "label").or_else(|| string_field(&payload, "name"));
-        let project = open_codex_global_project(&workspace_path, label.as_deref())
-            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        let canonical = fs::canonicalize(&workspace_path).ok();
+        if let Some(canonical) = canonical.as_ref() {
+            if let Ok(mut roots) = self.opened_workspace_roots.lock() {
+                roots.insert(canonical.clone());
+            }
+        }
+        let project = match open_codex_global_project(&workspace_path, label.as_deref()) {
+            Ok(project) => project,
+            Err(error) => {
+                if let Some(canonical) = canonical.as_ref() {
+                    if let Ok(mut roots) = self.opened_workspace_roots.lock() {
+                        roots.remove(canonical);
+                    }
+                }
+                return Err(AppIpcError::new("codex_global_state_error", error));
+            }
+        };
 
         Ok(json!({
             "success": true,
@@ -1859,7 +2439,9 @@ impl RuntimeWorkRpcHandler {
         let label = string_field(&payload, "label")
             .or_else(|| string_field(&payload, "name"))
             .ok_or_else(|| AppIpcError::new("bad_request", "label is required"))?;
-        let project = rename_codex_global_project(&workspace_path, &label)
+        let project_key =
+            string_field(&payload, "projectKey").or_else(|| string_field(&payload, "project_key"));
+        let project = rename_codex_global_project(project_key.as_deref(), &workspace_path, &label)
             .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
 
         Ok(json!({
@@ -1880,8 +2462,16 @@ impl RuntimeWorkRpcHandler {
         }
         let workspace_path = workspace_path(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
-        let workspace_path = remove_codex_global_project(&workspace_path)
-            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        let project_key =
+            string_field(&payload, "projectKey").or_else(|| string_field(&payload, "project_key"));
+        let workspace_path =
+            remove_codex_global_project(project_key.as_deref(), &workspace_path)
+                .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        if let Ok(canonical) = fs::canonicalize(&workspace_path) {
+            if let Ok(mut roots) = self.opened_workspace_roots.lock() {
+                roots.remove(&canonical);
+            }
+        }
 
         Ok(json!({
             "success": true,
@@ -1889,6 +2479,78 @@ impl RuntimeWorkRpcHandler {
             "workspacePath": workspace_path,
             "runtime": "codex",
         }))
+    }
+
+    async fn reorder_sidebar_projects(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let before_project_key = string_field(&payload, "beforeProjectKey")
+            .or_else(|| string_field(&payload, "before_project_key"));
+        let insert_at_end = bool_field(&payload, "insertAtEnd")
+            .or_else(|| bool_field(&payload, "insert_at_end"))
+            .unwrap_or(false);
+        reorder_codex_global_projects(&project_key, before_project_key.as_deref(), insert_at_end)
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn pin_sidebar_project(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let pinned = bool_field(&payload, "pinned")
+            .ok_or_else(|| AppIpcError::new("bad_request", "pinned is required"))?;
+        let before_project_key = string_field(&payload, "beforeProjectKey")
+            .or_else(|| string_field(&payload, "before_project_key"));
+        set_codex_global_project_pinned(&project_key, pinned, before_project_key.as_deref())
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn set_sidebar_project_appearance(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let appearance = payload.get("appearance").cloned().filter(Value::is_object);
+        set_codex_global_project_appearance(&project_key, appearance)
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn reorder_sidebar_project_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let thread_id = string_field(&payload, "threadId")
+            .or_else(|| string_field(&payload, "thread_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?;
+        let before_thread_id = string_field(&payload, "beforeThreadId")
+            .or_else(|| string_field(&payload, "before_thread_id"));
+        let insert_at_end = bool_field(&payload, "insertAtEnd")
+            .or_else(|| bool_field(&payload, "insert_at_end"))
+            .unwrap_or(false);
+        reorder_codex_global_project_thread(
+            &project_key,
+            &thread_id,
+            before_thread_id.as_deref(),
+            insert_at_end,
+        )
+        .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn pin_sidebar_task(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let thread_id = string_field(&payload, "threadId")
+            .or_else(|| string_field(&payload, "thread_id"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "threadId is required"))?;
+        let pinned = bool_field(&payload, "pinned")
+            .ok_or_else(|| AppIpcError::new("bad_request", "pinned is required"))?;
+        let before_thread_id = string_field(&payload, "beforeThreadId")
+            .or_else(|| string_field(&payload, "before_thread_id"));
+        set_codex_global_thread_pinned(&thread_id, pinned, before_thread_id.as_deref())
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
     }
 
     async fn prepare_fork_transfer(&self, payload: Value) -> Result<Value, AppIpcError> {
@@ -2041,6 +2703,8 @@ impl RuntimeWorkRpcHandler {
                 let mut event_mapper = CodexNotificationEventMapper::default();
                 let mut cache_mapper = CodexNotificationCacheMapper::default();
                 while let Some(message) = notification_rx.recv().await {
+                    mapper_handler
+                        .sync_runtime_task_goal_from_notification(&mapper_local_task_id, &message);
                     cache_mapper.map(
                         &mapper_handler.store,
                         &mapper_local_task_id,
@@ -2071,6 +2735,11 @@ impl RuntimeWorkRpcHandler {
                         turn_id,
                     );
                 });
+            let finished_turn_handler = handler.clone();
+            let finished_turn_local_task_id = turn_local_task_id.clone();
+            let active_turn_finished: CodexActiveTurnFinishedCallback = Box::new(move || {
+                finished_turn_handler.clear_active_codex_turn(&finished_turn_local_task_id);
+            });
             let result = handler
                 .codex_app_server
                 .run_turn_with_cancel(
@@ -2087,11 +2756,23 @@ impl RuntimeWorkRpcHandler {
                         request_user_input_answers: Some(request_user_input_rx),
                         thread_started: Some(thread_started),
                         active_turn_started: Some(active_turn_started),
+                        active_turn_finished: Some(active_turn_finished),
                     },
                 )
                 .await;
 
             if matches!(result.as_ref(), Err(error) if error == CODEX_APP_SERVER_TURN_CANCELLED) {
+                emit_response_event(
+                    &handler.event_tx,
+                    &handler.device_id,
+                    "response.incomplete",
+                    &turn_local_task_id,
+                    &request,
+                    json!({
+                        "type": "cancelled",
+                        "error": {"message": "cancelled"},
+                    }),
+                );
                 let _ = mapper_handle.await;
                 handler.clear_active_turn_cancellation(&turn_local_task_id);
                 handler.clear_active_codex_turn(&turn_local_task_id);
@@ -2325,7 +3006,6 @@ impl RuntimeWorkRpcHandler {
         if self.is_active_local_task(&route.local_task_id) {
             return;
         }
-
         if let Some(started_thread_id) = codex_started_thread_id(&message) {
             self.register_codex_thread_workspace_root(&started_thread_id, &route.request);
         }
@@ -2737,6 +3417,27 @@ impl RuntimeWorkRpcHandler {
         links: Vec<RuntimeTaskLink>,
         project_index: &CodexGlobalProjectIndex,
     ) -> Vec<RuntimeTaskLink> {
+        let links = links
+            .into_iter()
+            .map(|mut link| {
+                if !is_codex_runtime(&link.runtime) {
+                    return link;
+                }
+
+                if let Some(thread_id) = link.thread_id.as_deref() {
+                    link.pinned = project_index.is_pinned_thread(thread_id);
+                    link.pinned_order = project_index.pinned_thread_order(thread_id);
+                    if infer_workspace_kind(&link.workspace_path) == "chat" {
+                        link.list_order = Some(project_index.thread_sort_order(
+                            "chats",
+                            thread_id,
+                            link.list_order.unwrap_or(usize::MAX / 2),
+                        ));
+                    }
+                }
+                link
+            })
+            .collect::<Vec<_>>();
         let input_count = links.len();
         let project_count = project_index.projects().len();
         let project_roots = project_index
@@ -2879,8 +3580,17 @@ impl RuntimeWorkRpcHandler {
                 "group_path"
             };
             let project_workspace_path = project.workspace_path.clone();
+            let project_key = project.key.clone();
             let project_name = project.name.clone();
             link.group_workspace_path = Some(project_workspace_path.clone());
+            link.group_project_key = Some(project_key.clone());
+            if let Some(thread_id) = link.thread_id.as_deref() {
+                link.list_order = Some(project_index.thread_sort_order(
+                    &project_key,
+                    thread_id,
+                    link.list_order.unwrap_or(usize::MAX / 2),
+                ));
+            }
             kept_project += 1;
             log_runtime_project_filter_item(
                 &link,
@@ -2963,13 +3673,51 @@ impl RuntimeWorkRpcHandler {
 
         let workspace_path = workspace_path(payload)
             .ok_or_else(|| AppIpcError::new("not_found", "runtime task was not found"))?;
+        // A local task ID identifies Wework's persisted task record; it is not a
+        // Codex thread ID. Keep this unresolved until a provider thread is known.
         let mut link =
             RuntimeTaskLink::new_pending(local_task_id.clone(), workspace_path, local_task_id);
-        link.thread_id = Some(link.local_task_id.clone());
         link.status = if archived { "archived" } else { "active" }.to_owned();
         link.running = false;
         log_runtime_archive_link("runtime task payload created pending link", &link, archived);
         Ok(link)
+    }
+
+    async fn recover_send_task_link(
+        &self,
+        payload: &Value,
+        local_task_id: &str,
+        existing_link: Option<&RuntimeTaskLink>,
+    ) -> Option<RuntimeTaskLink> {
+        if existing_link
+            .and_then(runtime_session_id_from_link)
+            .is_some()
+        {
+            return existing_link.cloned();
+        }
+
+        let workspace_path = workspace_path(payload).unwrap_or_default();
+        let mut workspace_matches = Vec::new();
+        for link in self.collect_links(false).await {
+            if link.local_task_id == local_task_id
+                || link.thread_id.as_deref() == Some(local_task_id)
+            {
+                return Some(link);
+            }
+
+            if !workspace_path.is_empty()
+                && link.workspace_path == workspace_path
+                && runtime_session_id_from_link(&link).is_some()
+            {
+                workspace_matches.push(link);
+            }
+        }
+
+        if workspace_matches.len() == 1 {
+            workspace_matches.pop()
+        } else {
+            None
+        }
     }
 
     async fn thread_messages(&self, thread_id: &str) -> Vec<Value> {
@@ -3331,6 +4079,29 @@ impl RuntimeWorkRpcHandler {
         }
         self.thread_list_cache.invalidate();
     }
+
+    fn sync_runtime_task_goal_from_notification(&self, local_task_id: &str, message: &Value) {
+        let notification = codex_notification(message);
+        let goal_status = match notification.method.as_str() {
+            "thread/goal/updated" => notification
+                .params
+                .get("goal")
+                .and_then(|goal| string_field(goal, "status")),
+            "thread/goal/cleared" => None,
+            _ => return,
+        };
+        self.sync_runtime_task_goal_status(local_task_id, goal_status);
+    }
+
+    fn sync_runtime_task_goal_status(&self, local_task_id: &str, goal_status: Option<String>) {
+        let updated = self.store.update_task(local_task_id, |link| {
+            link.goal_status = goal_status.clone();
+            link.updated_at = now_ms();
+        });
+        if updated.is_some() {
+            self.thread_list_cache.invalidate();
+        }
+    }
 }
 
 fn is_unmapped_pending_codex_shadow(
@@ -3522,14 +4293,27 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
     project_index
         .projects()
         .iter()
-        .map(|project| RuntimeWorkspaceLink {
-            workspace_path: project.workspace_path.clone(),
-            title: project.name.clone(),
-            runtime: "codex".to_owned(),
-            created_at: now,
-            updated_at: now,
-            workspace_source: project.source.clone(),
-            remote_host_id: project.remote_host_id.clone(),
+        .flat_map(|project| {
+            let roots = if project.roots.is_empty() {
+                vec![project.workspace_path.clone()]
+            } else {
+                project.roots.clone()
+            };
+            roots.into_iter().map(|root| RuntimeWorkspaceLink {
+                workspace_path: root,
+                title: project.name.clone(),
+                runtime: "codex".to_owned(),
+                created_at: now,
+                updated_at: now,
+                workspace_source: project.kind.clone(),
+                remote_host_id: project.remote_host_id.clone(),
+                project_key: project.key.clone(),
+                project_kind: project.kind.clone(),
+                project_source: project.source.clone(),
+                project_roots: project.roots.clone(),
+                project_pinned: project.pinned,
+                project_appearance: project.appearance.clone(),
+            })
         })
         .collect()
 }
@@ -3699,7 +4483,7 @@ impl CodexThreadListCache {
 fn codex_thread_list_params(archived: bool, cursor: Option<&str>) -> Value {
     let mut params = json!({
         "limit": CODEX_THREAD_LIST_PAGE_SIZE,
-        "sortKey": "recency_at",
+        "sortKey": "updated_at",
         "sortDirection": "desc",
         "sourceKinds": CODEX_THREAD_SOURCE_KINDS,
         "archived": archived,
@@ -3862,6 +4646,7 @@ fn cached_transcript_response(
         limit,
         before_cursor: before_cursor.map(ToOwned::to_owned),
         after_cursor: after_cursor.map(ToOwned::to_owned),
+        full_content: false,
     })
 }
 
@@ -3874,6 +4659,7 @@ struct TranscriptResponseInput {
     limit: Option<usize>,
     before_cursor: Option<String>,
     after_cursor: Option<String>,
+    full_content: bool,
 }
 
 fn transcript_response(input: TranscriptResponseInput) -> Value {
@@ -3886,6 +4672,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         limit,
         before_cursor,
         after_cursor,
+        full_content,
     } = input;
     let turn_navigation = transcript_turn_navigation(&messages);
     let page = transcript_page(
@@ -3900,6 +4687,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         "workspacePath": workspace_path,
         "runtime": runtime,
         "messages": page.messages,
+        "fullContent": full_content,
         "contextUsage": context_usage.unwrap_or(Value::Null),
         "turnNavigation": turn_navigation,
         "rangeStart": page.range_start,
@@ -4159,6 +4947,33 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
         .collect()
 }
 
+fn guidance_image_inputs(value: Option<&Value>) -> Vec<Value> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|attachment| {
+            let mime_type = string_field(attachment, "mime_type")
+                .or_else(|| string_field(attachment, "mimeType"))?;
+            if !mime_type.starts_with("image/") {
+                return None;
+            }
+            let path = string_field(attachment, "local_path")
+                .or_else(|| string_field(attachment, "localPath"))?;
+            Some(json!({ "type": "localImage", "path": path }))
+        })
+        .collect()
+}
+
+fn guidance_input_items(message: &str, attachments: Option<&Value>) -> Vec<Value> {
+    let mut inputs = Vec::new();
+    if !message.trim().is_empty() {
+        inputs.push(json!({ "type": "text", "text": message }));
+    }
+    inputs.extend(guidance_image_inputs(attachments));
+    inputs
+}
+
 fn copy_attachment_field(source: &Map<String, Value>, target: &mut Map<String, Value>, key: &str) {
     if let Some(value) = source.get(key).cloned() {
         target.insert(key.to_owned(), value);
@@ -4229,6 +5044,22 @@ fn runtime_session_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
     link.thread_id
         .clone()
         .or_else(|| runtime_session_id_from_handle(&link.runtime_handle))
+}
+
+fn codex_thread_id_from_link(link: &RuntimeTaskLink) -> Option<String> {
+    runtime_session_id_from_link(link).filter(|thread_id| is_codex_thread_id(thread_id))
+}
+
+fn is_codex_thread_id(thread_id: &str) -> bool {
+    let thread_id = thread_id.strip_prefix("urn:uuid:").unwrap_or(thread_id);
+    thread_id.len() == 36
+        && thread_id
+            .chars()
+            .enumerate()
+            .all(|(index, character)| match index {
+                8 | 13 | 18 | 23 => character == '-',
+                _ => character.is_ascii_hexdigit(),
+            })
 }
 
 fn runtime_thread_path_from_link(link: &RuntimeTaskLink) -> Option<String> {
@@ -4702,6 +5533,14 @@ fn task_action_success(link: &RuntimeTaskLink) -> Value {
     })
 }
 
+fn sidebar_mutation_response(device_id: &str) -> Value {
+    json!({
+        "success": true,
+        "accepted": true,
+        "deviceId": device_id,
+    })
+}
+
 fn task_action_failure(link: &RuntimeTaskLink, error: String) -> Value {
     json!({
         "success": false,
@@ -4747,6 +5586,49 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
             self.dispatch(&method, payload).await
         })
     }
+
+    fn handle_codex_app_server_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            let method = string_field(&data, "method")
+                .ok_or_else(|| AppIpcError::new("bad_request", "method is required"))?;
+            if !is_allowed_plugin_app_server_method(&method) {
+                return Err(AppIpcError::new(
+                    "unsupported_codex_app_server_method",
+                    format!("Unsupported Codex app-server method: {method}"),
+                ));
+            }
+            let params = data
+                .get("params")
+                .cloned()
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({}));
+            self.codex_app_server
+                .request(&method, params)
+                .await
+                .map_err(|error| AppIpcError::new("codex_app_server_request_failed", error))
+        })
+    }
+}
+
+fn is_allowed_plugin_app_server_method(method: &str) -> bool {
+    matches!(
+        method,
+        "marketplace/add"
+            | "marketplace/remove"
+            | "marketplace/upgrade"
+            | "plugin/list"
+            | "plugin/installed"
+            | "plugin/read"
+            | "plugin/skill/read"
+            | "plugin/install"
+            | "plugin/uninstall"
+            | "skills/list"
+            | "skills/config/write"
+            | "app/list"
+    )
 }
 
 #[cfg(debug_assertions)]
@@ -4907,6 +5789,49 @@ mod tests {
     use super::*;
 
     #[test]
+    fn finishing_an_active_goal_keeps_the_task_idle() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.goal_status = Some("active".to_owned());
+        handler.upsert_local_task(link);
+
+        handler.finish_local_task("task-1", Some("thread-1".to_owned()), "done");
+
+        let task = handler
+            .local_task_link("task-1")
+            .expect("task should remain stored");
+        assert_eq!(task.status, "done");
+        assert!(!task.running);
+        assert_eq!(task.goal_status.as_deref(), Some("active"));
+    }
+
+    #[test]
+    fn syncing_an_active_goal_does_not_start_an_idle_task() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+        let mut link = RuntimeTaskLink::new_pending(
+            "task-1".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.status = "done".to_owned();
+        link.running = false;
+        handler.upsert_local_task(link);
+
+        handler.sync_runtime_task_goal_status("task-1", Some("active".to_owned()));
+
+        let task = handler
+            .local_task_link("task-1")
+            .expect("task should remain stored");
+        assert_eq!(task.status, "done");
+        assert!(!task.running);
+        assert_eq!(task.goal_status.as_deref(), Some("active"));
+    }
+
+    #[test]
     fn current_codex_model_provider_reads_configured_provider_name() {
         let provider = current_codex_model_provider_from_config(&json!({
             "config": {
@@ -4936,6 +5861,54 @@ mod tests {
         assert_eq!(provider.display_name, "CodeX");
         assert_eq!(provider.kind, "official");
         assert!(provider.current);
+    }
+
+    #[test]
+    fn runtime_session_ids_only_accept_codex_uuid_thread_ids() {
+        assert!(is_codex_thread_id("019f4c0d-b036-78f3-b879-7e5ed203ad61"));
+        assert!(is_codex_thread_id(
+            "urn:uuid:019f4c0d-b036-78f3-b879-7e5ed203ad61"
+        ));
+        assert!(!is_codex_thread_id("runtime-481327491"));
+        assert!(!is_codex_thread_id("thread-1"));
+
+        let mut link = RuntimeTaskLink::new_pending(
+            "runtime-481327491".to_owned(),
+            "/tmp/project".to_owned(),
+            "Task".to_owned(),
+        );
+        link.thread_id = Some(link.local_task_id.clone());
+        assert_eq!(
+            runtime_session_id_from_link(&link).as_deref(),
+            Some("runtime-481327491")
+        );
+        assert_eq!(codex_thread_id_from_link(&link), None);
+    }
+
+    #[test]
+    fn plugin_app_server_method_allowlist_covers_wework_plugin_runtime_surface() {
+        for method in [
+            "marketplace/add",
+            "marketplace/remove",
+            "marketplace/upgrade",
+            "plugin/list",
+            "plugin/installed",
+            "plugin/read",
+            "plugin/skill/read",
+            "plugin/install",
+            "plugin/uninstall",
+            "skills/list",
+            "skills/config/write",
+            "app/list",
+        ] {
+            assert!(
+                is_allowed_plugin_app_server_method(method),
+                "{method} should be allowed"
+            );
+        }
+
+        assert!(!is_allowed_plugin_app_server_method("thread/new"));
+        assert!(!is_allowed_plugin_app_server_method("plugin/share/save"));
     }
 
     #[test]
@@ -5169,6 +6142,45 @@ mod tests {
             .expect("restart should return success");
 
         assert_eq!(result["restarted"], true);
+    }
+
+    #[tokio::test]
+    async fn codex_instructions_write_rejects_non_string_payload() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.instructions.write",
+                "payload": {"instructions": 1}
+            }))
+            .await;
+
+        let error = result.expect_err("non-string instructions should be rejected");
+        assert_eq!(error.code, "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn codex_personality_write_rejects_unsupported_value() {
+        let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+
+        let result = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.codex.personality.write",
+                "payload": {"personality": "default"}
+            }))
+            .await;
+
+        let error = result.expect_err("unsupported personality should be rejected");
+        assert_eq!(error.code, "invalid_request");
+    }
+
+    #[test]
+    fn codex_developer_instructions_preserve_user_copy_and_browser_routing() {
+        let combined = combined_codex_developer_instructions("用中文回复");
+
+        assert!(combined.contains("用中文回复"));
+        assert!(combined.contains("browser_navigate"));
+        assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
     }
 
     #[tokio::test]
@@ -5552,6 +6564,39 @@ mod tests {
         assert!(target_paths.contains(
             &"/Users/me/.wegent-executor/workspace/attachments/draft/1/photo.png".to_owned()
         ));
+    }
+
+    #[test]
+    fn guidance_inputs_include_only_local_images() {
+        let attachments = json!([
+            {
+                "mime_type": "image/png",
+                "local_path": "/tmp/screenshot.png"
+            },
+            {
+                "mime_type": "text/plain",
+                "local_path": "/tmp/notes.txt"
+            },
+            {
+                "mime_type": "image/jpeg"
+            }
+        ]);
+
+        assert_eq!(
+            guidance_image_inputs(Some(&attachments)),
+            vec![json!({
+                "type": "localImage",
+                "path": "/tmp/screenshot.png"
+            })]
+        );
+        assert_eq!(
+            guidance_input_items("", Some(&attachments)),
+            vec![json!({
+                "type": "localImage",
+                "path": "/tmp/screenshot.png"
+            })]
+        );
+        assert!(guidance_input_items("", None).is_empty());
     }
 
     #[test]

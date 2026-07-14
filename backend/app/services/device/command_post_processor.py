@@ -73,6 +73,8 @@ def _json_processor(result: CommandResult) -> CommandResult:
         return result
 
     stdout = result.get("stdout") or ""
+    if isinstance(stdout, (dict, list)):
+        return result
     try:
         parsed_stdout = json.loads(str(stdout))
     except json.JSONDecodeError as exc:

@@ -104,6 +104,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     listDeviceDirectories: onListDeviceDirectories,
     createDeviceDirectory: onCreateDeviceDirectory,
     refreshWorkLists: onRefreshWorkLists,
+    services,
+    workspaceFileApi,
   } = useWorkbenchPaneContext()
   const { t } = useTranslation('common')
   const activeItem = 'chat'
@@ -152,7 +154,7 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
       })
     : t('workbench.empty_title', '我们该做什么？')
   const baseProjectWork = useWorkbenchProjectWorkControls({ pane })
-  const { projectWork: effectiveProjectWork } = useWorkbenchPaneEnvironment({
+  const { projectWork: effectiveProjectWork, workspaceTarget } = useWorkbenchPaneEnvironment({
     pane,
     projectWork: baseProjectWork,
   })
@@ -211,6 +213,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
   if (settingsOpen) {
     return (
       <MobileSettingsPage
+        services={services}
+        devices={state.devices}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+        onRefreshWorkLists={onRefreshWorkLists}
         onBack={() => {
           setSettingsOpen(false)
           navigateTo('/')
@@ -306,6 +312,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
               turnNavigation={paneSession.turnNavigation}
               onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
+              onLoadFullTranscript={paneSession.loadFullTranscript}
+              loadingFullTranscript={paneSession.transcriptLoadingFullContent}
               onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
               onLoadTranscriptGap={paneSession.loadTranscriptGap}
               conversationKey={
@@ -386,13 +394,21 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                     placeholder={t('workbench.follow_up_placeholder', '要求后续变更')}
                     projectChat={projectChatWithModelSelectorSignal}
                     projectWork={effectiveProjectWork}
+                    workspaceTarget={workspaceTarget}
+                    workspaceFileApi={workspaceFileApi}
                     queuedMessages={paneQueuedMessages}
                     guidanceMessages={paneGuidanceMessages}
                     codeComments={paneSession.codeCommentContexts}
                     isStreaming={paneIsResponseStreaming}
                     onPause={() => void paneSession.pauseCurrentResponse()}
                     onCompactContext={() => void paneSession.compactContext()}
+                    taskPlan={paneSession.taskPlan}
                     onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                    onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                    queuePaused={paneSession.queuedMessagesPaused}
+                    onResumeQueue={paneSession.resumeQueuedMessages}
+                    onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                    onClearQueue={paneSession.clearQueuedMessages}
                     onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                     onEditQueuedMessage={paneSession.editQueuedMessage}
                     onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
@@ -476,13 +492,21 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
                 placeholder={t('workbench.mobile_input_placeholder', '询问 Wework')}
                 projectChat={projectChatWithModelSelectorSignal}
                 projectWork={effectiveProjectWork}
+                workspaceTarget={workspaceTarget}
+                workspaceFileApi={workspaceFileApi}
                 queuedMessages={paneQueuedMessages}
                 guidanceMessages={paneGuidanceMessages}
                 codeComments={paneSession.codeCommentContexts}
                 isStreaming={paneIsResponseStreaming}
                 onPause={() => void paneSession.pauseCurrentResponse()}
                 onCompactContext={() => void paneSession.compactContext()}
+                taskPlan={paneSession.taskPlan}
                 onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                queuePaused={paneSession.queuedMessagesPaused}
+                onResumeQueue={paneSession.resumeQueuedMessages}
+                onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                onClearQueue={paneSession.clearQueuedMessages}
                 onSendQueuedAsGuidance={paneSession.sendQueuedAsGuidance}
                 onEditQueuedMessage={paneSession.editQueuedMessage}
                 onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}

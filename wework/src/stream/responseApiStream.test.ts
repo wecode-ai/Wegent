@@ -1,7 +1,118 @@
 import { describe, expect, test, vi } from 'vitest'
-import { createResponseApiStreamState, emitResponseApiEvent } from './responseApiStream'
+import {
+  createResponseApiStreamState,
+  emitResponseApiEvent,
+  getCachedRuntimeTaskPlan,
+} from './responseApiStream'
 
 describe('emitResponseApiEvent', () => {
+  test('preserves the Codex turn identifier on runtime goal updates', () => {
+    const onRuntimeGoalUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onRuntimeGoalUpdated },
+      'runtime.goal.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          goal: { status: 'active' },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onRuntimeGoalUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      goal: { status: 'active' },
+    })
+  })
+
+  test('maps root goal turn lifecycle events', () => {
+    const onRuntimeGoalContinuation = vi.fn()
+    const state = createResponseApiStreamState()
+
+    for (const status of ['started', 'settled'] as const) {
+      emitResponseApiEvent(
+        { onRuntimeGoalContinuation },
+        'runtime.goal.continuation',
+        {
+          taskId: 'task-1',
+          subtaskId: '2',
+          deviceId: 'device-1',
+          data: { thread_id: 'thread-1', turn_id: 'turn-2', status },
+        },
+        state
+      )
+    }
+
+    expect(onRuntimeGoalContinuation).toHaveBeenNthCalledWith(1, {
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-2',
+      status: 'started',
+    })
+    expect(onRuntimeGoalContinuation).toHaveBeenNthCalledWith(2, {
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-2',
+      status: 'settled',
+    })
+  })
+
+  test('maps structured Codex task-plan updates without treating them as plan text', () => {
+    const onRuntimePlanUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onRuntimePlanUpdated },
+      'runtime.plan.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          explanation: 'Working through the repository.',
+          plan: [
+            { step: 'Inspect the workspace', status: 'completed' },
+            { step: 'Implement the UI', status: 'inProgress' },
+            { step: 'Run tests', status: 'pending' },
+          ],
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onRuntimePlanUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      explanation: 'Working through the repository.',
+      plan: [
+        { step: 'Inspect the workspace', status: 'completed' },
+        { step: 'Implement the UI', status: 'inProgress' },
+        { step: 'Run tests', status: 'pending' },
+      ],
+    })
+    expect(getCachedRuntimeTaskPlan({ deviceId: 'device-1', taskId: 'task-1' })).toEqual(
+      onRuntimePlanUpdated.mock.calls[0]?.[0]
+    )
+  })
+
   test('reads text delta offsets from response data', () => {
     const onChatChunk = vi.fn()
 

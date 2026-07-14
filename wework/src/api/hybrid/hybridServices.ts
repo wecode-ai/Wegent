@@ -295,7 +295,6 @@ function mergeBulkResponses(
 export function createHybridWorkbenchServices(
   options: HybridWorkbenchServicesOptions
 ): WorkbenchServices {
-  const localServices = createLocalAppServices()
   const cloudServices = createBackendWorkbenchServices({
     apiBaseUrl: options.apiBaseUrl,
     socketBaseUrl: options.socketBaseUrl,
@@ -303,6 +302,19 @@ export function createHybridWorkbenchServices(
     getToken: () => options.token,
     redirectOnUnauthorized: false,
     transportKind: 'backend-relay',
+  })
+  const localServices = createLocalAppServices({
+    resolveCloudModelConfig: async (modelId, modelType, modelOptions) => {
+      if (!cloudServices.runtimeWorkApi) {
+        throw new Error('Cloud runtime work API is unavailable')
+      }
+      const response = await cloudServices.runtimeWorkApi.resolveModelConfig({
+        modelId,
+        modelType,
+        modelOptions,
+      })
+      return response.modelConfig
+    },
   })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
@@ -437,6 +449,9 @@ export function createHybridWorkbenchServices(
     readWorkspaceTextFile(deviceId, filePath) {
       return deviceApi(deviceId).readWorkspaceTextFile(deviceId, filePath)
     },
+    readWorkspaceFileChunk(deviceId, filePath, offset) {
+      return deviceApi(deviceId).readWorkspaceFileChunk(deviceId, filePath, offset)
+    },
     createDockerRemoteDeviceCommand(data) {
       if (!cloudServices.deviceApi.createDockerRemoteDeviceCommand) {
         throw new Error('Remote device startup command is unavailable')
@@ -499,6 +514,9 @@ export function createHybridWorkbenchServices(
         data.limit
       )
     },
+    searchRuntimeWorkspace(data) {
+      return runtimeApi(data.deviceId).searchRuntimeWorkspace(data)
+    },
     revertRuntimeFileChanges(data: RuntimeFileChangesRevertRequest) {
       return routeByAddress(data.address).revertRuntimeFileChanges(data)
     },
@@ -531,6 +549,39 @@ export function createHybridWorkbenchServices(
     },
     removeRuntimeWorkspace(data: RuntimeWorkspaceRemoveRequest) {
       return runtimeApi(data.deviceId).removeRuntimeWorkspace(data)
+    },
+    reorderRuntimeProjects(data) {
+      return runtimeApi(data.deviceId).reorderRuntimeProjects(data)
+    },
+    setRuntimeProjectPinned(data) {
+      return runtimeApi(data.deviceId).setRuntimeProjectPinned(data)
+    },
+    setRuntimeProjectAppearance(data) {
+      return runtimeApi(data.deviceId).setRuntimeProjectAppearance(data)
+    },
+    reorderRuntimeProjectTasks(data) {
+      return runtimeApi(data.deviceId).reorderRuntimeProjectTasks(data)
+    },
+    setRuntimeTaskPinned(data) {
+      return runtimeApi(data.deviceId).setRuntimeTaskPinned(data)
+    },
+    getWorktreeSettings(data) {
+      return runtimeApi(data.deviceId).getWorktreeSettings(data)
+    },
+    updateWorktreeSettings(data) {
+      return runtimeApi(data.deviceId).updateWorktreeSettings(data)
+    },
+    listWorktrees(data) {
+      return runtimeApi(data.deviceId).listWorktrees(data)
+    },
+    prepareWorktree(data) {
+      return runtimeApi(data.deviceId).prepareWorktree(data)
+    },
+    deleteWorktree(data) {
+      return runtimeApi(data.deviceId).deleteWorktree(data)
+    },
+    restoreWorktree(data) {
+      return runtimeApi(data.deviceId).restoreWorktree(data)
     },
     bindRuntimeTaskImSessions(data) {
       return routeByAddress(data.address).bindRuntimeTaskImSessions(data)
@@ -642,6 +693,12 @@ export function createHybridWorkbenchServices(
     },
     forkRuntimeTask(data: RuntimeTaskForkRequest) {
       return runtimeApi(data.target.deviceId).forkRuntimeTask(data)
+    },
+    resolveModelConfig(data) {
+      if (!cloudServices.runtimeWorkApi) {
+        throw new Error('Cloud runtime work API is unavailable')
+      }
+      return cloudServices.runtimeWorkApi.resolveModelConfig(data)
     },
   }
 

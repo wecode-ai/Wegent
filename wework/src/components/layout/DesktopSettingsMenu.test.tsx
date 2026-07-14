@@ -11,6 +11,7 @@ const runtimeModeMock = vi.hoisted(() => ({
 let mockUpdateState = {
   availableUpdate: null as null | { currentVersion: string; version: string },
   status: 'idle',
+  downloadProgress: null as null | { downloadedBytes: number; totalBytes: number | null },
   error: null as string | null,
   checkNow: mockCheckNow,
   installUpdate: mockInstallUpdate,
@@ -41,12 +42,18 @@ vi.mock('@/api/local/codexUsage', () => ({
   }),
 }))
 
-function renderMenu() {
+function renderMenu({
+  showLogout,
+  onLogout = vi.fn(),
+  onLogin,
+}: { showLogout?: boolean; onLogout?: () => void; onLogin?: () => void } = {}) {
   render(
     <DesktopSettingsMenu
       user={{ id: 1, email: 'user@example.com', user_name: 'User' }}
       onOpenSettings={vi.fn()}
-      onLogout={vi.fn()}
+      onLogout={onLogout}
+      onLogin={onLogin}
+      showLogout={showLogout}
     />
   )
 }
@@ -57,6 +64,7 @@ describe('DesktopSettingsMenu', () => {
     mockUpdateState = {
       availableUpdate: null,
       status: 'idle',
+      downloadProgress: null,
       error: null,
       checkNow: mockCheckNow,
       installUpdate: mockInstallUpdate,
@@ -91,6 +99,32 @@ describe('DesktopSettingsMenu', () => {
     expect(screen.queryByText('退出登录')).not.toBeInTheDocument()
   })
 
+  test('shows logout for a connected cloud account in local-first app runtime', async () => {
+    runtimeModeMock.isLocalFirstAppRuntime.mockReturnValue(true)
+    const onLogout = vi.fn()
+
+    renderMenu({ showLogout: true, onLogout })
+
+    await userEvent.click(screen.getByTestId('logout-menu-button'))
+
+    expect(onLogout).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows a descriptive login action for a disconnected cloud account', async () => {
+    const onLogin = vi.fn()
+
+    renderMenu({ showLogout: false, onLogin })
+
+    const loginButton = screen.getByTestId('login-menu-button')
+    expect(loginButton).toHaveTextContent('登录 Wegent')
+    expect(loginButton).toHaveTextContent('连接云端模型、设备和同步')
+    expect(screen.queryByTestId('logout-menu-button')).not.toBeInTheDocument()
+
+    await userEvent.click(loginButton)
+
+    expect(onLogin).toHaveBeenCalledTimes(1)
+  })
+
   test('installs a discovered app update', async () => {
     mockUpdateState = {
       ...mockUpdateState,
@@ -109,6 +143,29 @@ describe('DesktopSettingsMenu', () => {
 
     await userEvent.click(updateButton)
     expect(mockInstallUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  test('shows download progress in the update icon and menu item', () => {
+    mockUpdateState = {
+      ...mockUpdateState,
+      availableUpdate: {
+        currentVersion: '0.1.0',
+        version: '0.1.1',
+      },
+      status: 'installing',
+      downloadProgress: {
+        downloadedBytes: 50,
+        totalBytes: 100,
+      },
+    }
+
+    renderMenu()
+
+    expect(screen.getByTestId('app-update-download-icon-progress')).toHaveAttribute(
+      'aria-label',
+      '50%'
+    )
+    expect(screen.getByTestId('app-update-download-progress')).toHaveTextContent('正在下载更新 50%')
   })
 
   test('shows usage reset times in the expanded usage panel', async () => {

@@ -137,4 +137,18 @@ describe('messagePretextLayout', () => {
 
     expect(getMessagePretextIntrinsicHeight(message, 140)).toBe(272)
   })
+
+  test('uses a stable intrinsic height without measuring streaming messages', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-streaming',
+      role: 'assistant',
+      content: 'x'.repeat(20_000),
+      status: 'streaming',
+      createdAt: '2026-07-10T10:00:00Z',
+    }
+
+    expect(getMessagePretextIntrinsicHeight(message, 500)).toBe(220)
+    expect(mockedPrepare).not.toHaveBeenCalled()
+    expect(mockedLayout).not.toHaveBeenCalled()
+  })
 })

@@ -15,6 +15,26 @@ describe('runtimeModelSelection', () => {
     })
   })
 
+  test('sends the runtime model name instead of its picker label', () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      modelId: 'gpt-5.6-sol',
+      displayName: 'GPT 5.6 Sol',
+      type: 'runtime',
+      provider: 'local',
+      config: {
+        weworkModelKind: 'codex-official',
+        ui: { family: 'codex-official', modelLabel: 'GPT 5.6 Sol' },
+      },
+    }
+
+    expect(selectedModelExecutionFields(model, { reasoning: 'medium' })).toMatchObject({
+      modelId: 'gpt-5.6-sol',
+      modelType: 'runtime',
+      modelOptions: { reasoning: 'medium' },
+    })
+  })
+
   test('chooses default new chat model by Codex priority', () => {
     const officialWithoutAuth: UnifiedModel = {
       name: 'gpt-5.5',
