@@ -175,7 +175,7 @@ executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unar
 
 Worktree 设置是设备级状态，持久化在 `$WEGENT_EXECUTOR_HOME/runtime-work/worktrees.json`，不能写入浏览器偏好或 Backend 用户设置。默认根目录为空值，解析到当前 Executor workspace 下的 `worktrees`；自动清理默认开启，默认保留 15 个。修改根目录只影响后续创建，旧根目录会保留在 `knownRoots` 中，以便继续列出、恢复和安全清理已有 worktree。
 
-Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.worktrees.prepare/list/delete/restore/prune` 管理工作树。创建目标固定为 `<resolvedRoot>/<worktreeId>/<repositoryName>`；列表按仓库分组并附带关联 LocalTask。删除前先归档关联任务并保存快照。自动清理在创建和设置更新后触发，保护运行中或刚活动的工作树，并优先清理超过保留数量的最久未使用项；后续继续任务时会按需恢复。
+Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.worktrees.prepare/list/delete/restore/prune` 管理工作树。创建目标固定为 `<resolvedRoot>/<worktreeId>/<repositoryName>`；列表按仓库分组并附带关联 LocalTask。删除前先归档关联任务并保存快照。自动清理在创建和设置更新后触发，只会清理明确关联到已归档任务且超过保留数量的最久未使用工作树；没有当前 Executor 任务记录的工作树不会被自动清理。后续继续任务时会按需恢复。隔离运行的 Executor 会从自己的 `WEGENT_EXECUTOR_HOME` 派生默认工作树目录，避免测试或开发实例管理正式实例的工作树。
 
 在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到 executor home 的附件草稿目录（配置 `WEGENT_EXECUTOR_HOME` 时为 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`，未配置时为 `~/.wegent-executor/workspace/attachments/draft`），并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 Tauri asset protocol 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Tauri App 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
@@ -224,6 +224,7 @@ Wework 在调用 create 前先生成客户端侧 `localTaskId`，并在请求体
 - Codex 创建时仍通过 LocalTask Responses 事件通道流式返回 `response.created`、文本/tool 增量和 `response.completed`/`error`，这些事件使用 create 返回的 `localTaskId`，前端不需要等待下一次列表刷新才能显示运行中的回复。
 - Codex app-server 输入支持 `input_text`、`input_image` 和 `localImage` prompt block 映射。Backend 附件 id 下载与沙箱路径重写仍和 local-first 附件分离：本地 App 模式通过 executor IPC 发送同设备附件记录，云端/Backend 路径继续使用上传后的附件 ID。
 - Codex 回复完成时如果 Responses `response.completed` 中带有 `file_changes` 或 `fileChanges`，executor 会把它保存到当前 assistant message 的 `fileChanges` 字段，后续 transcript 刷新继续展示同一张文件变更卡片。
+- Codex app-server 的 `imageGeneration` item 不能作为普通文本工具输出处理。executor 将完整图片结果保存到 tool block 的 `render_payload`，同时保留提示词和生成文件路径；Wework 使用该载荷直接展示图片。图片数据不能经过普通工具输出的截断窗口，否则实时消息或 transcript 恢复后会得到损坏的 base64。
 
 Project 场景使用运行时 workspace 引用：
 

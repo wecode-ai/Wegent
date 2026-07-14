@@ -1895,6 +1895,7 @@ export interface ChatBlockUpdatedPayload {
   tool_output_truncated?: boolean
   tool_output_original_bytes?: number
   toolInput?: Record<string, unknown>
+  renderPayload?: unknown
   fileChanges?: TurnFileChangesSummary
   status?: ChatBlock['status'] | 'running'
   deviceId?: string
@@ -2005,6 +2006,7 @@ export interface UnifiedModel {
   provider?: string | null
   modelId?: string | null
   namespace?: string
+  resourceUserId?: number
   config?: Record<string, unknown>
   runtime?: ModelRuntime | null
   isActive?: boolean
