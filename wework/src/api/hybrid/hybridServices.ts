@@ -12,6 +12,7 @@ import {
   mergeRuntimeWorkLists as mergeRuntimeWorkPair,
 } from '@/features/workbench/workbenchCloudStatus'
 import {
+  supportsResponsesApi,
   withModelExecutionOverride,
   type HybridModelSource,
 } from '@/features/cloud-connection/modelExecution'
@@ -152,7 +153,7 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
 }
 
 function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models.map(model => {
+  return models.filter(supportsResponsesApi).map(model => {
     if (!isRuntimeCodexModel(model)) {
       return withModelExecutionOverride(model, {
         source: 'cloud',

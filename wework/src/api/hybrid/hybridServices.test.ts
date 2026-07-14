@@ -218,6 +218,24 @@ const codexModel = {
   isActive: true,
 }
 
+const chatCompletionsModel = {
+  name: 'chat-completions-model',
+  type: 'public',
+  displayName: 'Chat Completions Model',
+  config: { protocol: 'openai-chat-completions' },
+  runtime: { family: 'openai.openai-chat-completions' },
+  isActive: true,
+}
+
+const responsesModel = {
+  name: 'responses-model',
+  type: 'public',
+  displayName: 'Responses Model',
+  config: { wire_api: 'responses' },
+  runtime: { family: 'openai' },
+  isActive: true,
+}
+
 function createServices() {
   return createHybridWorkbenchServices({
     apiBaseUrl: 'https://cloud.example.com/api',
@@ -324,6 +342,22 @@ describe('createHybridWorkbenchServices', () => {
       'gpt-5.5',
       'gpt-5.5',
     ])
+  })
+
+  it('only displays Backend models that explicitly support the Responses API', async () => {
+    mocks.localListModels.mockResolvedValue({ data: [chatCompletionsModel] })
+    mocks.cloudListModels.mockResolvedValue({
+      data: [chatCompletionsModel, responsesModel],
+    })
+    const services = createServices()
+
+    const response = await services.modelApi.listModels()
+
+    expect(response.data.map(model => model.name)).toEqual([
+      'local:public:chat-completions-model',
+      'responses-model',
+    ])
+    expect(getModelExecutionOverride(response.data[1])?.source).toBe('cloud')
   })
 
   it('keeps default team and skills on the local services', async () => {
