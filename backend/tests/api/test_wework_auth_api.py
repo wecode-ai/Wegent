@@ -37,7 +37,9 @@ def test_create_wework_auth_session_uses_dedicated_authorize_base_url(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["authorize_url"].startswith("https://app.example.com/wework/authorize?")
+    assert data["authorize_url"].startswith(
+        "https://app.example.com/auth/wework/authorize?"
+    )
     assert data["session_id"]
     assert data["poll_token"]
     assert data["poll_interval_seconds"] > 0
@@ -56,7 +58,7 @@ def test_wework_auth_session_approve_and_poll_returns_token_once(
     assert session_response.status_code == 200
     session = session_response.json()
     assert session["authorize_url"].startswith(
-        "https://frontend.example.com/wework/authorize?"
+        "https://frontend.example.com/auth/wework/authorize?"
     )
 
     approve_response = test_client.post(

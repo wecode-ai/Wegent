@@ -35,9 +35,7 @@ export function PluginUploadDialog({
       return
     }
     if (nextFile.size > MAX_PLUGIN_PACKAGE_SIZE_BYTES) {
-      setError(
-        t('workbench.plugins_plugin_upload_size_error', '插件安装包不能超过 50MB'),
-      )
+      setError(t('workbench.plugins_plugin_upload_size_error', '插件安装包不能超过 50MB'))
       setFile(null)
       return
     }
@@ -48,19 +46,17 @@ export function PluginUploadDialog({
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
       <form
         className="w-full max-w-[480px] rounded-2xl border border-border bg-background p-5 shadow-xl"
-        onSubmit={(event) => {
+        onSubmit={event => {
           event.preventDefault()
           if (!file) {
-            setError(
-              t('workbench.plugins_plugin_upload_select_file', '请先选择插件包'),
-            )
+            setError(t('workbench.plugins_plugin_upload_select_file', '请先选择插件包'))
             return
           }
           onUpload(file).catch(uploadError => {
             setError(
               uploadError instanceof Error
                 ? uploadError.message
-                : t('workbench.plugins_plugin_upload_failed', '插件上传失败'),
+                : t('workbench.plugins_plugin_upload_failed', '插件上传失败')
             )
           })
         }}
@@ -73,7 +69,7 @@ export function PluginUploadDialog({
             <p className="mt-1 text-sm text-text-secondary">
               {t(
                 'workbench.plugins_plugin_upload_description',
-                '选择包含 .claude-plugin/plugin.json 的 ZIP 包。',
+                '选择包含 .codex-plugin/plugin.json 的 ZIP 包。'
               )}
             </p>
           </div>
@@ -90,28 +86,21 @@ export function PluginUploadDialog({
         <label className="mt-5 flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface px-4 text-center hover:border-primary">
           <Upload className="h-8 w-8 text-text-secondary" />
           <span className="mt-3 text-sm font-semibold">
-            {file
-              ? file.name
-              : t('workbench.plugins_plugin_upload_drop_title', '选择插件 ZIP 包')}
+            {file ? file.name : t('workbench.plugins_plugin_upload_drop_title', '选择插件 ZIP 包')}
           </span>
           <span className="mt-1 text-xs text-text-muted">
-            {t(
-              'workbench.plugins_plugin_upload_hint',
-              '支持 Claude Code 插件 ZIP，最大 50MB',
-            )}
+            {t('workbench.plugins_plugin_upload_hint', '支持 Claude Code 插件 ZIP，最大 50MB')}
           </span>
           <input
             type="file"
             accept=".zip,application/zip"
             data-testid="plugin-upload-file-input"
             className="sr-only"
-            onChange={(event) => selectFile(event.target.files?.[0] ?? null)}
+            onChange={event => selectFile(event.target.files?.[0] ?? null)}
           />
         </label>
 
-        {visibleError && (
-          <p className="mt-3 text-sm font-semibold text-red-500">{visibleError}</p>
-        )}
+        {visibleError && <p className="mt-3 text-sm font-semibold text-red-500">{visibleError}</p>}
 
         <div className="mt-5 flex justify-end gap-3">
           <button

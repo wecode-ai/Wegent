@@ -1,5 +1,5 @@
 import { SquareTerminal, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -23,6 +23,7 @@ interface BottomWorkspacePanelProps {
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
   preferLocalTerminal?: boolean
+  terminalContextTitle?: string | null
   onRequestClose: () => void
   onTerminalTabsEmpty?: () => void
 }
@@ -31,7 +32,7 @@ function createTerminalTab(index: number): BottomWorkspacePanelTab {
   return { id: `terminal-${index}`, title: `Terminal ${index}` }
 }
 
-export function BottomWorkspacePanel({
+export const BottomWorkspacePanel = memo(function BottomWorkspacePanel({
   open,
   active = true,
   preserveContent = false,
@@ -40,6 +41,7 @@ export function BottomWorkspacePanel({
   devices,
   workspaceTarget,
   preferLocalTerminal = false,
+  terminalContextTitle,
   onRequestClose,
   onTerminalTabsEmpty,
 }: BottomWorkspacePanelProps) {
@@ -180,6 +182,7 @@ export function BottomWorkspacePanel({
                   onRequestClose={() => closeTab(tab.id)}
                   hideTerminalChrome
                   preferLocalTerminal={preferLocalTerminal}
+                  terminalContextTitle={terminalContextTitle}
                   panelActive={panelActive}
                   testIdsEnabled={contentTestIdsEnabled}
                   onTerminalTitleChange={title => updateTabTitle(tab.id, title)}
@@ -191,7 +194,7 @@ export function BottomWorkspacePanel({
       )}
     </section>
   )
-}
+})
 
 function BottomWorkspaceTitleTab({
   testIdsEnabled,

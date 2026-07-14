@@ -1,11 +1,12 @@
 import type {
   Attachment,
+  LocalDeviceApp,
   LocalDeviceSkill,
   ModelOptions,
   RuntimeContextUsage,
   UnifiedModel,
 } from '@/types/api'
-import type { CodeCommentContext } from '@/types/workspace-files'
+import type { CodeCommentContext, WorkspaceFileApi, WorkspaceTarget } from '@/types/workspace-files'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { DragDropEvent } from '@tauri-apps/api/webview'
@@ -40,9 +41,13 @@ interface ProjectChatComposerProps {
   attachmentErrors: Map<string, string>
   contextUsage?: RuntimeContextUsage
   onSelectModel: (model: UnifiedModel | null) => void
+  onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   onFileSelect: (files: File | File[]) => void
+  onOpenSkillFile?: (path: string) => void
+  workspaceTarget?: WorkspaceTarget | null
+  workspaceFileApi?: WorkspaceFileApi
   planModeActive?: boolean
   onSetPlanMode?: () => void
   onClearPlanMode?: () => void
@@ -53,6 +58,7 @@ interface ProjectChatComposerProps {
   onRemoveAttachment: (attachmentId: number) => void
   onClearCodeComments?: () => void
   onListLocalSkills?: () => Promise<LocalDeviceSkill[]>
+  onListLocalApps?: () => Promise<LocalDeviceApp[]>
   projectWork: ProjectWorkControls
   showProjectWorkBar?: boolean
   isStreaming?: boolean
@@ -157,9 +163,13 @@ export function ProjectChatComposer({
   attachmentErrors,
   contextUsage,
   onSelectModel,
+  onSelectModelAndOptions,
   onSelectModelOption,
   onBlockedModelSelect,
   onFileSelect,
+  onOpenSkillFile,
+  workspaceTarget,
+  workspaceFileApi,
   planModeActive = false,
   onSetPlanMode,
   onClearPlanMode,
@@ -170,6 +180,7 @@ export function ProjectChatComposer({
   onRemoveAttachment,
   onClearCodeComments,
   onListLocalSkills,
+  onListLocalApps,
   projectWork,
   showProjectWorkBar = true,
   isStreaming = false,
@@ -241,28 +252,59 @@ export function ProjectChatComposer({
 
   return (
     <div className="relative w-full rounded-[26px] bg-surface shadow-[0_18px_44px_rgba(0,0,0,0.09)]">
+      {showProjectWorkBar && (
+        <ProjectWorkBar
+          projects={projectWork.projects}
+          devices={projectWork.devices}
+          runtimeWork={projectWork.runtimeWork}
+          currentProject={projectWork.currentProject}
+          currentProjectId={projectWork.currentProjectId}
+          currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
+          selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
+          pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
+          executionMode={projectWork.executionMode}
+          executionModeLocked={projectWork.executionModeLocked}
+          isGitProject={projectWork.isGitProject}
+          onSelectProject={projectWork.onSelectProject}
+          onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
+          onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
+          onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
+          onExecutionModeChange={projectWork.onExecutionModeChange}
+          onCreateProjectMode={projectWork.onCreateProjectMode}
+          branchName={projectWork.branchName}
+          branchLoading={projectWork.branchLoading}
+          onRefreshBranch={projectWork.onRefreshBranch}
+          onListBranches={projectWork.onListBranches}
+          onCheckoutBranch={projectWork.onCheckoutBranch}
+          onCreateBranch={projectWork.onCreateBranch}
+          worktreeBranch={projectWork.worktreeBranch}
+          onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
+          projectMenuOpenSignal={projectWork.projectMenuOpenSignal}
+          projectMenuAnchorElement={projectWork.projectMenuAnchorElement}
+          className="min-h-10 rounded-t-[26px] bg-surface px-4"
+          buttonClassName="text-[13px] leading-[18px] text-text-secondary hover:bg-background/70 hover:text-text-primary"
+        />
+      )}
       <form
         ref={formRef}
         data-testid="project-chat-composer-form"
         className={cn(
-          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border border-border/45 bg-background px-4 pb-1.5 pt-2',
-          showProjectWorkBar && 'border-b-border/35'
+          'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border border-border/45 bg-background px-4 pb-1.5 pt-2'
         )}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
         onSubmit={event => {
           event.preventDefault()
-          const submittedValue = event.currentTarget.querySelector('textarea')?.value
           debugComposerEvent('project-form-submit', {
             canSend,
             propValue: textMetrics(value),
-            submittedValue: textMetrics(submittedValue),
+            submittedValue: textMetrics(value),
             attachmentsCount: attachments.length,
             codeCommentsCount: codeComments.length,
             disabled,
             isStreaming,
           })
-          if (canSend) onSubmit(submittedValue)
+          if (canSend) onSubmit(value)
         }}
       >
         <AttachmentBadges
@@ -292,9 +334,13 @@ export function ProjectChatComposer({
           placeholder={placeholder}
           rows={2}
           onPasteFiles={onFileSelect}
-          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-6 text-text-primary outline-none placeholder:text-text-muted/55"
+          onOpenSkillFile={onOpenSkillFile}
+          workspaceTarget={workspaceTarget}
+          workspaceFileApi={workspaceFileApi}
+          className="max-h-[112px] min-h-[48px] w-full resize-none overflow-y-auto bg-transparent px-0 pb-0 pt-1 text-[15px] leading-[18px] text-text-secondary outline-none placeholder:text-text-muted/55"
           skillMenuClassName="left-[-1rem] right-[-0.5rem]"
           onListLocalSkills={onListLocalSkills}
+          onListLocalApps={onListLocalApps}
           models={models}
           selectedModel={selectedModel}
           selectedModelOptions={selectedModelOptions}
@@ -314,6 +360,7 @@ export function ProjectChatComposer({
           modelSelectorOpenSignal={modelSelectorOpenSignal}
           isModelSelectionReady={isModelSelectionReady}
           onSelectModel={onSelectModel}
+          onSelectModelAndOptions={onSelectModelAndOptions}
           onSelectModelOption={onSelectModelOption}
           onBlockedModelSelect={onBlockedModelSelect}
           contextUsage={contextUsage}
@@ -329,36 +376,6 @@ export function ProjectChatComposer({
           onPause={onPause}
         />
       </form>
-      {showProjectWorkBar && (
-        <ProjectWorkBar
-          projects={projectWork.projects}
-          devices={projectWork.devices}
-          runtimeWork={projectWork.runtimeWork}
-          currentProject={projectWork.currentProject}
-          currentProjectId={projectWork.currentProjectId}
-          currentStandaloneDeviceId={projectWork.currentStandaloneDeviceId}
-          selectedDeviceWorkspaceId={projectWork.selectedDeviceWorkspaceId}
-          pendingProjectWorkspaceProjectId={projectWork.pendingProjectWorkspaceProjectId}
-          executionMode={projectWork.executionMode}
-          executionModeLocked={projectWork.executionModeLocked}
-          onSelectProject={projectWork.onSelectProject}
-          onSelectStandaloneDevice={projectWork.onSelectStandaloneDevice}
-          onSelectProjectWorkspace={projectWork.onSelectProjectWorkspace}
-          onBindProjectWorkspace={projectWork.onBindProjectWorkspace}
-          onExecutionModeChange={projectWork.onExecutionModeChange}
-          onCreateProjectMode={projectWork.onCreateProjectMode}
-          branchName={projectWork.branchName}
-          branchLoading={projectWork.branchLoading}
-          onRefreshBranch={projectWork.onRefreshBranch}
-          onListBranches={projectWork.onListBranches}
-          onCheckoutBranch={projectWork.onCheckoutBranch}
-          onCreateBranch={projectWork.onCreateBranch}
-          worktreeBranch={projectWork.worktreeBranch}
-          onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
-          className="min-h-10 rounded-b-[26px] bg-surface px-4"
-          buttonClassName="h-9 px-2.5 text-[13px] leading-[18px] text-text-secondary hover:bg-surface/70 hover:text-text-primary"
-        />
-      )}
     </div>
   )
 }

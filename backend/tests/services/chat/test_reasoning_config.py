@@ -35,6 +35,8 @@ class TestReasoningConfigSchema:
         ReasoningConfig(effort="medium")
         ReasoningConfig(effort="high")
         ReasoningConfig(effort="xhigh")
+        ReasoningConfig(effort="max")
+        ReasoningConfig(effort="ultra")
         ReasoningConfig(summary="auto")
         ReasoningConfig(summary="concise")
         ReasoningConfig(summary="detailed")

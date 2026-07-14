@@ -7,6 +7,27 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 
+const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
+  ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
+  ['gpt-5.6-terra', 'GPT-5.6-Terra', 'medium', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
+  ['gpt-5.6-luna', 'GPT-5.6-Luna', 'medium', ['low', 'medium', 'high', 'xhigh', 'max']],
+  ['gpt-5.5', 'GPT-5.5', 'medium', ['low', 'medium', 'high', 'xhigh']],
+  ['gpt-5.4', 'GPT-5.4', 'medium', ['low', 'medium', 'high', 'xhigh']],
+  ['gpt-5.4-mini', 'GPT-5.4-Mini', 'medium', ['low', 'medium', 'high', 'xhigh']],
+  ['gpt-5.3-codex-spark', 'GPT-5.3-Codex-Spark', 'high', ['low', 'medium', 'high', 'xhigh']],
+]
+
+const OFFICIAL_CODEX_MODELS = OFFICIAL_CODEX_MODEL_DEFINITIONS.map(
+  ([model, displayName, defaultReasoningEffort, efforts], index) => ({
+    id: model,
+    model,
+    displayName,
+    isDefault: index === 0,
+    defaultReasoningEffort,
+    supportedReasoningEfforts: efforts.map(reasoningEffort => ({ reasoningEffort })),
+  })
+)
+
 describe('createLocalAppServices', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -32,28 +53,10 @@ describe('createLocalAppServices', () => {
               current: true,
               available: true,
               error: null,
-              data: [
-                {
-                  id: 'gpt-5.5',
-                  model: 'gpt-5.5',
-                  displayName: 'GPT 5.5',
-                  isDefault: true,
-                },
-              ],
+              data: OFFICIAL_CODEX_MODELS,
             },
           ],
-          data: [
-            {
-              id: 'gpt-5.5',
-              model: 'gpt-5.5',
-              displayName: 'GPT 5.5',
-              isDefault: true,
-              providerId: 'openai',
-              providerName: 'CodeX',
-              providerType: 'official',
-              providerCurrent: true,
-            },
-          ],
+          data: OFFICIAL_CODEX_MODELS,
         }
       }
       return { projects: [], chats: [], totalTasks: 0 }
@@ -75,7 +78,9 @@ describe('createLocalAppServices', () => {
       name: 'local-wework',
       is_active: true,
     })
-    await expect(services.modelApi.listModels()).resolves.toEqual({
+    const models = await services.modelApi.listModels()
+
+    expect(models).toEqual({
       data: expect.arrayContaining([
         expect.objectContaining({
           name: 'gpt-5.5',
@@ -96,23 +101,12 @@ describe('createLocalAppServices', () => {
           }),
           runtime: { family: 'openai.openai-responses', provider: 'local' },
         }),
-        expect.objectContaining({
-          name: 'Sol',
-          type: 'runtime',
-          modelId: 'Sol',
-        }),
-        expect.objectContaining({
-          name: 'Terra',
-          type: 'runtime',
-          modelId: 'Terra',
-        }),
-        expect.objectContaining({
-          name: 'Luna',
-          type: 'runtime',
-          modelId: 'Luna',
-        }),
       ]),
     })
+    const modelIds = models.data.map(model => model.modelId)
+    expect(modelIds).not.toContain('Sol')
+    expect(modelIds).not.toContain('Terra')
+    expect(modelIds).not.toContain('Luna')
     await expect(services.deviceApi.listDevices()).resolves.toEqual([
       expect.objectContaining({
         device_id: 'local-device',
@@ -524,17 +518,10 @@ describe('createLocalAppServices', () => {
           if (data.command_key === 'git_is_worktree') {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
-          if (data.command_key === 'project_workspace_root') {
-            return {
-              success: true,
-              stdout: '/Users/me/.wegent-executor/workspace/projects',
-              stderr: '',
-              exit_code: 0,
-            }
-          }
-          if (data.command_key === 'git_worktree_add') {
-            return { success: true, stdout: '', stderr: '', exit_code: 0 }
-          }
+        }
+        if (method === 'runtime.worktrees.prepare') {
+          const path = `/Users/me/.wegent-executor/workspace/worktrees/${data.worktreeId}/project`
+          return { success: true, path, worktree: { path } }
         }
         if (method === 'runtime.tasks.create') {
           return {
@@ -592,12 +579,10 @@ describe('createLocalAppServices', () => {
       args: ['/Users/me/project'],
       timeout_seconds: 15,
     })
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
+    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
       deviceId: 'device-uuid',
-      command_key: 'git_worktree_add',
-      args: ['/Users/me/project', worktreePath],
-      timeout_seconds: 120,
-      max_output_bytes: 1024 * 1024,
+      sourcePath: '/Users/me/project',
+      worktreeId: expect.stringMatching(/^runtime-\d+$/),
     })
     expect(createPayload).toEqual(
       expect.objectContaining({
@@ -631,17 +616,10 @@ describe('createLocalAppServices', () => {
           if (data.command_key === 'git_is_worktree') {
             return { success: true, stdout: 'true', stderr: '', exit_code: 0 }
           }
-          if (data.command_key === 'project_workspace_root') {
-            return {
-              success: true,
-              stdout: '/Users/me/.wegent-executor/workspace/projects',
-              stderr: '',
-              exit_code: 0,
-            }
-          }
-          if (data.command_key === 'git_worktree_add') {
-            return { success: true, stdout: '', stderr: '', exit_code: 0 }
-          }
+        }
+        if (method === 'runtime.worktrees.prepare') {
+          const path = `/Users/me/.wegent-executor/workspace/worktrees/${data.worktreeId}/project`
+          return { success: true, path, worktree: { path } }
         }
         if (method === 'runtime.tasks.create') {
           return {
@@ -678,12 +656,11 @@ describe('createLocalAppServices', () => {
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
     const worktreePath = String(createPayload.workspacePath)
-    expect(request).toHaveBeenCalledWith('device.execute_command', {
+    expect(request).toHaveBeenCalledWith('runtime.worktrees.prepare', {
       deviceId: 'device-uuid',
-      command_key: 'git_worktree_add',
-      args: ['/Users/me/project', worktreePath, 'develop'],
-      timeout_seconds: 120,
-      max_output_bytes: 1024 * 1024,
+      sourcePath: '/Users/me/project',
+      worktreeId: expect.stringMatching(/^runtime-\d+$/),
+      ref: 'develop',
     })
     expect(createPayload).toEqual(
       expect.objectContaining({
@@ -1272,6 +1249,12 @@ describe('createLocalAppServices', () => {
             key: 'local:/Users/me/project',
             id: expect.any(Number),
             name: 'Project',
+            kind: 'local',
+            source: 'legacy_root',
+            stateDeviceId: 'device-uuid',
+            roots: [{ kind: 'local', path: '/Users/me/project' }],
+            pinned: false,
+            appearance: null,
           },
           deviceWorkspaces: [
             expect.objectContaining({

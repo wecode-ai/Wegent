@@ -989,6 +989,7 @@ class KnowledgeOrchestrator:
         guided_questions: Optional[List[str]] = None,
         max_calls_per_conversation: Optional[int] = None,
         exempt_calls_before_check: Optional[int] = None,
+        multimodal_update_fields: Optional[Dict[str, Any]] = None,
     ) -> KnowledgeBaseResponse:
         """
         Update a knowledge base.
@@ -1005,6 +1006,9 @@ class KnowledgeOrchestrator:
             guided_questions: New guided questions list (optional)
             max_calls_per_conversation: Max calls per conversation (optional)
             exempt_calls_before_check: Exempt calls before check (optional)
+            multimodal_update_fields: Explicitly-set multimodal spec fields (only
+                keys the client sent are present; a ``None`` value means clear).
+                When None the multimodal spec is left untouched.
 
         Returns:
             KnowledgeBaseResponse
@@ -1041,6 +1045,7 @@ class KnowledgeOrchestrator:
             knowledge_base_id=knowledge_base_id,
             user_id=user.id,
             data=update_data,
+            multimodal_update_fields=multimodal_update_fields,
         )
 
         if not knowledge_base:
@@ -1068,8 +1073,14 @@ class KnowledgeOrchestrator:
         embedding_model_name: Optional[str] = None,
         embedding_model_namespace: Optional[str] = None,
         summary_model_ref: Optional[Dict[str, str]] = None,
-        # MCP context: for getting task's model as summary_model
+        # MCP context: for getting task's model as summary model
         task_id: Optional[int] = None,
+        # Multimodal analysis config (KB create). Defaults: enabled=False when
+        # unset, prompts=None (system default).
+        multimodal_analysis_enabled: Optional[bool] = None,
+        multimodal_analysis_model_ref: Optional[Dict[str, str]] = None,
+        multimodal_analysis_video_prompt: Optional[str] = None,
+        multimodal_analysis_image_prompt: Optional[str] = None,
     ) -> KnowledgeBaseResponse:
         """
         Create a knowledge base with auto-configuration support.
@@ -1179,6 +1190,14 @@ class KnowledgeOrchestrator:
             retrieval_config=resolved_retrieval_config,
             summary_enabled=summary_enabled,
             summary_model_ref=resolved_summary_model_ref,
+            multimodal_analysis_enabled=(
+                multimodal_analysis_enabled
+                if multimodal_analysis_enabled is not None
+                else False
+            ),
+            multimodal_analysis_model_ref=multimodal_analysis_model_ref,
+            multimodal_analysis_video_prompt=multimodal_analysis_video_prompt,
+            multimodal_analysis_image_prompt=multimodal_analysis_image_prompt,
         )
 
         kb_id = KnowledgeService.create_knowledge_base(
@@ -1482,6 +1501,25 @@ class KnowledgeOrchestrator:
         """
         from app.schemas.knowledge import DocumentSourceType
         from app.services.knowledge.indexing import get_rag_indexing_skip_reason
+        from app.services.knowledge.multimodal_pipeline import (
+            resolve_dispatch_or_none,
+        )
+
+        # Multimodal pre-flight gate: resolves dispatch ctx for video/image files
+        # (model/api_key/download path) BEFORE document creation so a failure
+        # leaves no orphan. No-op for non-multimodal files (normal path proceeds).
+        # Skip when indexing is disabled — callers may store a video/image
+        # document without analyzing it immediately; the gate runs on reindex.
+        multimodal_dispatch_ctx = None
+        if trigger_indexing:
+            multimodal_dispatch_ctx = resolve_dispatch_or_none(
+                db,
+                knowledge_base,
+                settings,
+                file_extension=data.file_extension,
+                attachment_id=data.attachment_id,
+                uploader=user,
+            )
 
         # Create document
         document = KnowledgeService.create_document(
@@ -1513,6 +1551,7 @@ class KnowledgeOrchestrator:
                 user=user,
                 trigger_summary=trigger_summary,
                 splitter_config=splitter_config,
+                multimodal_dispatch_ctx=multimodal_dispatch_ctx,
             )
         elif trigger_indexing and skip_reason:
             logger.info(
@@ -1607,6 +1646,17 @@ class KnowledgeOrchestrator:
 
         # Schedule re-indexing via Celery if enabled
         if trigger_reindex and kb and has_access:
+            # Multimodal re-index gate: resolve dispatch preconditions (model/
+            # api_key, and for video the fid/download URL) before re-dispatch,
+            # so a content update on a multimodal document re-enters the
+            # multimodal pipeline. No-op for non-multimodal files.
+            from app.services.knowledge.multimodal_pipeline import (
+                resolve_dispatch_for_document_or_none,
+            )
+
+            multimodal_dispatch_ctx = resolve_dispatch_for_document_or_none(
+                db, kb, document, settings
+            )
             self._schedule_indexing_celery(
                 db=db,
                 knowledge_base=kb,
@@ -1615,6 +1665,7 @@ class KnowledgeOrchestrator:
                 trigger_summary=False,  # Don't re-generate summary on update
                 allow_if_success=True,
                 replace_active=True,
+                multimodal_dispatch_ctx=multimodal_dispatch_ctx,
             )
 
         return {
@@ -1668,6 +1719,8 @@ class KnowledgeOrchestrator:
         splitter_config: Optional[Dict[str, Any]] = None,
         allow_if_success: bool = False,
         replace_active: bool = False,
+        multimodal_dispatch_ctx: Optional[Any] = None,
+        force_reconvert: bool = False,
     ) -> Dict[str, Any]:
         """
         Schedule RAG indexing for a document via Celery.
@@ -1684,6 +1737,15 @@ class KnowledgeOrchestrator:
             splitter_config: Optional splitter configuration dict
             allow_if_success: Whether to re-queue a document that already succeeded
             replace_active: Whether to supersede an in-flight indexing generation
+            multimodal_dispatch_ctx: Pre-resolved multimodal dispatch context
+                produced by resolve_dispatch_for_document_or_none before dispatch.
+                Required when the document is video/image.
+            force_reconvert: When True, a multimodal (video/image) document that
+                already has a converted Markdown attachment is re-converted
+                (re-analyzed via Gemini) instead of re-indexing the stale
+                Markdown. Used by the "modify prompt & re-analyze" flow so a
+                changed prompt actually takes effect. The conversion callback
+                swaps in the new Markdown attachment and deletes the old one.
         """
         from app.services.knowledge.index_runtime import get_kb_index_info_by_record
         from app.services.knowledge.index_state_machine import (
@@ -1770,16 +1832,26 @@ class KnowledgeOrchestrator:
             raise RuntimeError(message)
 
         try:
+            from app.services.knowledge.multimodal_pipeline import (
+                conversion_pipeline,
+            )
+
             normalized_extension = _normalize_file_extension(document.file_extension)
             converted_id = document.converted_attachment_id
             # Actual attachment dispatched to the index/conversion task. Defaults
             # to the source attachment; the converted branch overrides it so the
             # enqueue log reflects what really enters the RAG pipeline.
             dispatched_attachment_id = document.attachment_id
+            pipeline = conversion_pipeline(normalized_extension, settings)
 
-            if converted_id:
+            if converted_id and not (force_reconvert and pipeline == "multimodal"):
                 # Already converted — index directly using the converted attachment,
                 # skip re-conversion even if the file type normally requires it.
+                # Exception: a multimodal doc being force-reconverted (e.g. the
+                # "modify prompt & re-analyze" action) must fall through to the
+                # multimodal branch so Gemini re-runs with the new prompt; the
+                # conversion callback will swap in the fresh Markdown and delete
+                # the stale one.
                 async_result = index_document_task.delay(
                     knowledge_base_id=str(knowledge_base.id),
                     attachment_id=converted_id,
@@ -1795,6 +1867,42 @@ class KnowledgeOrchestrator:
                     trigger_summary=trigger_summary,
                 )
                 dispatched_attachment_id = converted_id
+
+            elif pipeline == "multimodal":
+                # Multimodal (video/image → Gemini) conversion dispatch. The
+                # dispatch context is pre-resolved by the caller (create_document
+                # resolves before persist; reindex_document resolves before
+                # re-dispatch) and passed in as multimodal_dispatch_ctx.
+                from app.services.knowledge.multimodal_pipeline import (
+                    schedule_multimodal_indexing_or_none as _schedule_mm,
+                )
+
+                index_dispatch_payload = {
+                    "knowledge_base_id": str(knowledge_base.id),
+                    "attachment_id": document.attachment_id,
+                    "retriever_name": retriever_name,
+                    "retriever_namespace": retriever_namespace,
+                    "embedding_model_name": embedding_model_name,
+                    "embedding_model_namespace": embedding_model_namespace,
+                    "user_id": index_owner_user_id,
+                    "user_name": user.user_name,
+                    "document_id": document.id,
+                    "index_generation": generation,
+                    "splitter_config_dict": splitter_config,
+                    "trigger_summary": trigger_summary,
+                }
+                async_result = _schedule_mm(
+                    db=db,
+                    knowledge_base=knowledge_base,
+                    document=document,
+                    user=user,
+                    multimodal_dispatch_ctx=multimodal_dispatch_ctx,
+                    normalized_extension=normalized_extension,
+                    generation=generation,
+                    index_dispatch_payload=index_dispatch_payload,
+                    app_settings=settings,
+                )
+                dispatched_attachment_id = document.attachment_id
 
             elif settings.needs_conversion(normalized_extension):
                 # File type requires conversion before indexing
@@ -1908,6 +2016,14 @@ class KnowledgeOrchestrator:
         user: User,
         document_id: int,
         trigger_summary: bool = False,
+        # Optional multimodal prompt override for the "modify prompt & re-analyze"
+        # flow. Apply semantics (see DocumentReindexRequest): a non-blank string
+        # persists a per-document override; a blank string clears it (revert to
+        # KB default); None = leave the stored prompt unchanged. The write happens
+        # AFTER the access check below so an unauthorized caller cannot poison
+        # the stored prompt (the prompt is only persisted once management access
+        # is confirmed).
+        multimodal_prompt_override: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Trigger re-indexing for a document via Celery.
@@ -1968,6 +2084,15 @@ class KnowledgeOrchestrator:
                 "You do not have permission to manage this document in this knowledge base"
             )
 
+        # Apply an optional multimodal prompt override AFTER the access check so
+        # an unauthorized caller cannot poison the stored prompt. Powers the
+        # "modify prompt & re-analyze" action (non-multimodal docs ignore it).
+        from app.services.knowledge.multimodal_pipeline import (
+            apply_multimodal_prompt_override,
+        )
+
+        apply_multimodal_prompt_override(document, multimodal_prompt_override, db)
+
         # Extract RAG config using shared helper
         rag_params = extract_rag_config_from_knowledge_base(db, knowledge_base, user.id)
 
@@ -1976,14 +2101,36 @@ class KnowledgeOrchestrator:
                 "Knowledge base has no or incomplete retrieval configuration"
             )
 
+        # Multimodal re-index gate: re-validate dispatch preconditions
+        # (model/api_key) before re-dispatch, avoiding a task guaranteed to fail
+        # (e.g. the model config was removed since the first attempt). No-op for
+        # non-multimodal files.
+        from app.services.knowledge.multimodal_pipeline import (
+            resolve_dispatch_for_document_or_none,
+        )
+
+        multimodal_dispatch_ctx = resolve_dispatch_for_document_or_none(
+            db, knowledge_base, document, settings
+        )
+
         schedule_result = self._schedule_indexing_celery(
             db=db,
             knowledge_base=knowledge_base,
             document=document,
             user=user,
-            trigger_summary=trigger_summary,
+            # A multimodal re-analyze (force_reconvert) regenerates the document
+            # content via Gemini, so the summary must be regenerated too — the old
+            # summary no longer matches the new Markdown. The indexing task still
+            # gates on (SUMMARY_ENABLED and kb summary_enabled), so KBs with
+            # summaries disabled are unaffected. Plain (non-multimodal) reindex
+            # keeps trigger_summary=False (content unchanged).
+            trigger_summary=trigger_summary or multimodal_dispatch_ctx is not None,
             splitter_config=document.splitter_config,
             allow_if_success=True,
+            multimodal_dispatch_ctx=multimodal_dispatch_ctx,
+            # A multimodal re-index always re-analyzes via Gemini (e.g. after a
+            # prompt change) rather than re-indexing the stale converted Markdown.
+            force_reconvert=multimodal_dispatch_ctx is not None,
         )
         if not schedule_result["scheduled"]:
             reason = schedule_result["reason"]
@@ -1993,10 +2140,6 @@ class KnowledgeOrchestrator:
                 "document_not_found": "Document not found",
             }
             message = reason_messages.get(reason, f"Reindex skipped: {reason}")
-            logger.info(
-                f"[Orchestrator] Reindex skipped for document {document.id}: "
-                f"reason={reason}, message={message}"
-            )
             return {
                 "success": True,
                 "document_id": document.id,
@@ -2004,12 +2147,6 @@ class KnowledgeOrchestrator:
                 "skipped": True,
                 "reason": reason,
             }
-
-        logger.info(
-            f"[Orchestrator] Scheduled reindex via Celery for document {document.id}: "
-            f"celery_task_id={schedule_result['task_id']}, attachment_id={document.attachment_id}, "
-            f"kb_id={document.kind_id}, index_generation={schedule_result['index_generation']}"
-        )
 
         return {
             "success": True,

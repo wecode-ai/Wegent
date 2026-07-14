@@ -7,10 +7,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{json, Map, Value};
 use tokio::sync::broadcast;
 
-use crate::{codex_phase::CodexAgentMessagePhaseTracker, protocol::ExecutionRequest};
+use crate::{
+    codex_phase::CodexAgentMessagePhaseTracker, logging::log_executor_event,
+    protocol::ExecutionRequest,
+};
 
 use super::{
-    codex_notifications::{codex_notification, debug_ignored_codex_notification},
+    codex_notifications::{
+        codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
+    },
     notification_mapping::{
         log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
         map_tool_output_delta, notification_item_id, TextChunkMapping,
@@ -20,7 +25,10 @@ use super::{
         file_changes_update_from_patch_updated, tool_update_from_notification,
         workbench_block_from_notification,
     },
-    util::{extract_text, is_completed_plan_item, item_id, now_ms, raw_string_field, string_field},
+    util::{
+        extract_text, is_completed_plan_item, item_id, item_type, now_ms, raw_string_field,
+        string_field,
+    },
 };
 
 const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
@@ -91,6 +99,8 @@ pub(crate) struct CodexNotificationEventMapper {
     final_text_offset: usize,
     plan_blocks: BTreeMap<String, String>,
     tool_output_deltas: BTreeMap<String, String>,
+    completed_user_message_count: usize,
+    goal_status: Option<String>,
 }
 
 struct ProcessTextStream {
@@ -187,6 +197,15 @@ impl CodexNotificationEventMapper {
                     notification.params,
                 );
             }
+            "turn/plan/updated" => {
+                self.emit_turn_plan_updated(
+                    event_tx,
+                    device_id,
+                    local_task_id,
+                    request,
+                    notification.params,
+                );
+            }
             "item/fileChange/patchUpdated" => {
                 self.emit_file_change_patch_updated(
                     event_tx,
@@ -201,6 +220,9 @@ impl CodexNotificationEventMapper {
                 if self.is_subagent_delta(notification.params) {
                     self.forget_subagent_item(notification.params);
                     self.agent_message_phases.forget_item(notification.params);
+                    return;
+                }
+                if self.emit_applied_guidance(&emit_context, notification.params) {
                     return;
                 }
                 let phase = self
@@ -291,7 +313,18 @@ impl CodexNotificationEventMapper {
                 self.final_text_offset = 0;
                 self.observe_root_thread(notification.params);
             }
+            "turn/started" if self.has_active_goal() => {
+                emit_goal_continuation_event(&emit_context, notification.params, "started");
+            }
+            "turn/completed" if self.has_active_goal() => {
+                emit_goal_continuation_event(&emit_context, notification.params, "settled");
+            }
             "thread/goal/updated" => {
+                self.goal_status = notification
+                    .params
+                    .get("goal")
+                    .and_then(|goal| string_field(goal, "status"))
+                    .map(|status| status.to_ascii_lowercase());
                 emit_response_event(
                     event_tx,
                     device_id,
@@ -301,11 +334,14 @@ impl CodexNotificationEventMapper {
                     json!({
                         "thread_id": string_field(notification.params, "threadId")
                             .or_else(|| string_field(notification.params, "thread_id")),
+                        "turn_id": string_field(notification.params, "turnId")
+                            .or_else(|| string_field(notification.params, "turn_id")),
                         "goal": notification.params.get("goal").cloned().unwrap_or(Value::Null),
                     }),
                 );
             }
             "thread/goal/cleared" => {
+                self.goal_status = None;
                 emit_response_event(
                     event_tx,
                     device_id,
@@ -326,6 +362,43 @@ impl CodexNotificationEventMapper {
                 );
             }
         }
+    }
+
+    fn has_active_goal(&self) -> bool {
+        self.goal_status.as_deref() == Some("active")
+    }
+
+    fn emit_applied_guidance(&mut self, context: &EventEmitContext<'_>, params: &Value) -> bool {
+        let item = params.get("item").unwrap_or(params);
+        if item_type(item).as_str() != "usermessage" {
+            return false;
+        }
+
+        self.completed_user_message_count += 1;
+        if self.completed_user_message_count == 1 {
+            return true;
+        }
+
+        self.final_text_offset = 0;
+        self.reset_process_text();
+
+        emit_response_event(
+            context.event_tx,
+            context.device_id,
+            "response.guidance.applied",
+            context.local_task_id,
+            context.request,
+            json!({
+                "guidanceId": item_id(item, "guidance"),
+                "message": extract_text(item).unwrap_or_default(),
+                "appliedAtMs": params
+                    .get("completedAtMs")
+                    .or_else(|| params.get("completed_at_ms"))
+                    .and_then(Value::as_i64)
+                    .unwrap_or_else(now_ms),
+            }),
+        );
+        true
     }
 
     fn emit_tool_output_delta(
@@ -707,6 +780,49 @@ impl CodexNotificationEventMapper {
         );
     }
 
+    fn emit_turn_plan_updated(
+        &self,
+        event_tx: &Option<broadcast::Sender<Value>>,
+        device_id: &str,
+        local_task_id: &str,
+        request: &ExecutionRequest,
+        params: &Value,
+    ) {
+        let Some(plan) = params.get("plan").and_then(Value::as_array) else {
+            return;
+        };
+
+        log_executor_event(
+            "codex structured task plan updated",
+            &[
+                ("local_task_id", local_task_id.to_owned()),
+                (
+                    "thread_id",
+                    string_field(params, "threadId").unwrap_or_default(),
+                ),
+                (
+                    "turn_id",
+                    string_field(params, "turnId").unwrap_or_default(),
+                ),
+                ("step_count", plan.len().to_string()),
+            ],
+        );
+
+        emit_response_event(
+            event_tx,
+            device_id,
+            "runtime.plan.updated",
+            local_task_id,
+            request,
+            json!({
+                "threadId": string_field(params, "threadId").or_else(|| string_field(params, "thread_id")),
+                "turnId": string_field(params, "turnId").or_else(|| string_field(params, "turn_id")),
+                "explanation": raw_string_field(params, "explanation"),
+                "plan": plan,
+            }),
+        );
+    }
+
     fn emit_file_change_patch_updated(
         &mut self,
         event_tx: &Option<broadcast::Sender<Value>>,
@@ -722,8 +838,41 @@ impl CodexNotificationEventMapper {
             request.cwd().unwrap_or_default(),
             "streaming",
         ) else {
+            log_executor_event(
+                "codex patch update mapping dropped",
+                &[
+                    ("local_task_id", local_task_id.to_owned()),
+                    ("item_id", notification_item_id(params).unwrap_or_default()),
+                    (
+                        "changes",
+                        params
+                            .get("changes")
+                            .and_then(Value::as_array)
+                            .map(Vec::len)
+                            .unwrap_or_default()
+                            .to_string(),
+                    ),
+                ],
+            );
             return;
         };
+
+        log_executor_event(
+            "codex patch update mapped",
+            &[
+                ("local_task_id", local_task_id.to_owned()),
+                ("block_id", block_id.clone()),
+                (
+                    "changes",
+                    params
+                        .get("changes")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                        .unwrap_or_default()
+                        .to_string(),
+                ),
+            ],
+        );
 
         emit_response_event(
             event_tx,
@@ -787,6 +936,28 @@ impl CodexNotificationEventMapper {
         };
         stream_thread_id(params).is_some_and(|thread_id| thread_id != root_thread_id)
     }
+}
+
+fn emit_goal_continuation_event(context: &EventEmitContext<'_>, params: &Value, status: &str) {
+    if !is_root_codex_turn_event(params) {
+        return;
+    }
+    let turn = params.get("turn").unwrap_or(params);
+    emit_response_event(
+        context.event_tx,
+        context.device_id,
+        "runtime.goal.continuation",
+        context.local_task_id,
+        context.request,
+        json!({
+            "status": status,
+            "thread_id": string_field(params, "threadId")
+                .or_else(|| string_field(params, "thread_id")),
+            "turn_id": string_field(turn, "id")
+                .or_else(|| string_field(turn, "turnId"))
+                .or_else(|| string_field(turn, "turn_id")),
+        }),
+    );
 }
 
 impl ProcessTextStream {
@@ -1404,6 +1575,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn emits_guidance_applied_for_second_completed_user_message() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+        let user_message = |id: &str, text: &str, completed_at_ms: i64| {
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "completedAtMs": completed_at_ms,
+                    "item": {
+                        "id": id,
+                        "type": "userMessage",
+                        "content": [{"type": "text", "text": text}]
+                    }
+                }
+            })
+        };
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            user_message("user-initial", "first", 100),
+        );
+        assert!(event_rx.try_recv().is_err());
+
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            user_message("user-guidance", "also inspect memory", 200),
+        );
+
+        let event = event_rx
+            .try_recv()
+            .expect("guidance event should be emitted");
+        assert_eq!(event["event"], "response.guidance.applied");
+        assert_eq!(event["payload"]["subtaskId"], "8");
+        assert_eq!(event["payload"]["data"]["guidanceId"], "user-guidance");
+        assert_eq!(event["payload"]["data"]["message"], "also inspect memory");
+        assert_eq!(event["payload"]["data"]["appliedAtMs"], 200);
+    }
+
+    #[test]
     fn maps_codex_commentary_agent_messages_to_process_text_blocks() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -1726,6 +1947,79 @@ mod tests {
             "context_compaction"
         );
         assert_eq!(completed["payload"]["data"]["block"]["status"], "done");
+        assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn updates_codex_web_search_input_when_the_action_completes() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "search-1",
+                        "type": "webSearch",
+                        "query": ""
+                    }
+                }
+            }),
+        );
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "search-1",
+                        "type": "webSearch",
+                        "query": "Wegent documentation",
+                        "action": {
+                            "type": "search",
+                            "query": "Wegent documentation"
+                        }
+                    }
+                }
+            }),
+        );
+
+        let created = event_rx
+            .try_recv()
+            .expect("web search start should create a block");
+        assert_eq!(created["event"], "response.block.created");
+        assert_eq!(
+            created["payload"]["data"]["block"]["tool_input"]["query"],
+            ""
+        );
+
+        let updated = event_rx
+            .try_recv()
+            .expect("web search completion should update the block");
+        assert_eq!(updated["event"], "response.block.updated");
+        assert_eq!(updated["payload"]["data"]["block_id"], "search-1");
+        assert_eq!(updated["payload"]["data"]["updates"]["status"], "done");
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["tool_input"]["type"],
+            "search"
+        );
+        assert_eq!(
+            updated["payload"]["data"]["updates"]["tool_input"]["query"],
+            "Wegent documentation"
+        );
         assert!(event_rx.try_recv().is_err());
     }
 
@@ -2326,6 +2620,42 @@ mod tests {
     }
 
     #[test]
+    fn emits_codex_structured_turn_plan_updates_separately_from_plan_items() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+
+        map_codex_notification(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "turn/plan/updated",
+                "params": {
+                    "threadId": "thread-1",
+                    "turnId": "turn-1",
+                    "explanation": "Implementing the requested change.",
+                    "plan": [
+                        {"step": "Inspect", "status": "completed"},
+                        {"step": "Implement", "status": "inProgress"},
+                        {"step": "Verify", "status": "pending"}
+                    ]
+                }
+            }),
+        );
+
+        let event = event_rx.try_recv().expect("event should be emitted");
+        assert_eq!(event["event"], "runtime.plan.updated");
+        assert_eq!(event["payload"]["data"]["threadId"], "thread-1");
+        assert_eq!(event["payload"]["data"]["turnId"], "turn-1");
+        assert_eq!(event["payload"]["data"]["plan"][1]["status"], "inProgress");
+    }
+
+    #[test]
     fn emits_codex_subagent_activity_events() {
         let (event_tx, mut event_rx) = broadcast::channel(4);
         let request = ExecutionRequest {
@@ -2402,6 +2732,86 @@ mod tests {
             "subagent-thread-worker"
         );
         assert_eq!(update["payload"]["data"]["updates"]["status"], "done");
+    }
+
+    #[test]
+    fn emits_goal_turn_lifecycle_only_for_the_root_thread() {
+        let (event_tx, mut event_rx) = broadcast::channel(4);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "thread/goal/updated",
+                "params": {
+                    "threadId": "thread-root",
+                    "goal": { "status": "active" }
+                }
+            }),
+        );
+        let _ = event_rx.try_recv().expect("goal event should be emitted");
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "turn/started",
+                "params": {
+                    "threadId": "thread-root",
+                    "turn": { "id": "turn-2", "agent_path": "/root" }
+                }
+            }),
+        );
+        let started = event_rx
+            .try_recv()
+            .expect("started event should be emitted");
+        assert_eq!(started["event"], "runtime.goal.continuation");
+        assert_eq!(started["payload"]["data"]["status"], "started");
+        assert_eq!(started["payload"]["data"]["turn_id"], "turn-2");
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "turn/started",
+                "params": {
+                    "threadId": "thread-worker",
+                    "turn": { "id": "child-turn", "agent_path": "/root/worker" }
+                }
+            }),
+        );
+        assert!(event_rx.try_recv().is_err());
+
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "turn/completed",
+                "params": {
+                    "threadId": "thread-root",
+                    "turn": { "id": "turn-2", "agent_path": "/root" }
+                }
+            }),
+        );
+        let settled = event_rx
+            .try_recv()
+            .expect("settled event should be emitted");
+        assert_eq!(settled["event"], "runtime.goal.continuation");
+        assert_eq!(settled["payload"]["data"]["status"], "settled");
     }
 
     #[test]

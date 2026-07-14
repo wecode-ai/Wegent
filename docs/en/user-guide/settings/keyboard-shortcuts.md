@@ -22,6 +22,7 @@ After a shortcut is changed, Wework refreshes the shortcut listeners in the curr
 | Go forward          | `Command+]` / Mouse Forward | Go forward in navigation history                                         |
 | Toggle sidebar      | `Command+B`                 | Show or hide the left sidebar                                            |
 | Toggle side panel   | `Alt+Command+B`             | Show or hide the right workspace panel                                   |
+| Choose model        | `Control+Shift+M`           | Open or close the model selector for the active composer                 |
 
 Registered global shortcuts still work when focus is inside the chat composer or terminal. Normal text input is not intercepted.
 

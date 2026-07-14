@@ -25,17 +25,24 @@ class ChunkedUpload:
         return self._chunks.pop(0)
 
 
-def _create_plugin_zip(name: str = "superpowers") -> bytes:
+def _create_plugin_zip(
+    name: str = "superpowers", manifest_dir: str = ".claude-plugin"
+) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         archive.writestr(
-            ".claude-plugin/plugin.json",
+            f"{manifest_dir}/plugin.json",
             json.dumps(
                 {
                     "name": name,
                     "displayName": "Superpowers",
                     "description": "Test plugin",
                     "version": "1.0.0",
+                    "interface": {
+                        "displayName": "Superpowers",
+                        "shortDescription": "Codex test plugin",
+                        "brandColor": "#7c3aed",
+                    },
                 }
             ),
         )
@@ -87,3 +94,48 @@ def test_upload_plugin_stores_package_in_database(test_db, test_user):
     )
     assert downloaded_bytes == package_bytes
     assert filename == "superpowers.zip"
+
+
+def test_upload_plugin_accepts_codex_plugin_manifest(test_db, test_user):
+    service = InstalledPluginService()
+    package_bytes = _create_plugin_zip(manifest_dir=".codex-plugin")
+
+    installed = service.upload_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=package_bytes,
+        filename="superpowers.zip",
+    )
+
+    assert installed.spec.source.providerKey == "codex-local"
+    assert installed.spec.displayName == "Superpowers"
+    assert installed.spec.interface is not None
+    assert installed.spec.interface.shortDescription == "Codex test plugin"
+
+
+def test_publish_and_install_marketplace_plugin(test_db, test_user):
+    service = InstalledPluginService()
+    package_bytes = _create_plugin_zip(manifest_dir=".codex-plugin")
+
+    item = service.publish_marketplace_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        package_bytes=package_bytes,
+        filename="superpowers.zip",
+        visibility="workspace",
+    )
+    listed = service.list_marketplace_plugins(db=test_db, user_id=test_user.id)
+
+    assert listed.items[0].id == item.id
+    assert listed.items[0].installed is False
+
+    installed = service.install_marketplace_plugin(
+        db=test_db,
+        user_id=test_user.id,
+        marketplace_id=item.id,
+    )
+    relisted = service.list_marketplace_plugins(db=test_db, user_id=test_user.id)
+
+    assert installed.spec.source.type == "marketplace"
+    assert installed.spec.source.catalogItemId == str(item.id)
+    assert relisted.items[0].installed is True

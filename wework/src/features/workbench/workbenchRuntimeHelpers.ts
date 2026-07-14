@@ -15,6 +15,7 @@ import type { RuntimeTaskRoute } from '@/lib/navigation'
 
 export const STANDALONE_PROJECT_ID = 0
 export const EMPTY_MESSAGE_TASK_TITLE = '新对话'
+export const MAX_RUNTIME_TASK_TITLE_LENGTH = 60
 
 const DEFAULT_CONVERSATION_WORKSPACE_NAME = 'new-chat'
 const MAX_CONVERSATION_WORKSPACE_NAME_LENGTH = 20
@@ -282,9 +283,28 @@ export function findProjectMetadataDeviceWorkspace(
   return workspaces.length === 1 ? workspaces[0] : null
 }
 
+const MARKDOWN_MENTION_PATTERN = /\[([^\]]+)]\(([^)]+)\)/g
+
+function runtimeTitleText(value: string): string {
+  return value
+    .replace(MARKDOWN_MENTION_PATTERN, (_match, label: string) => label)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function truncateRuntimeTaskTitle(title: string | null | undefined): string | null {
+  const normalizedTitle = title?.trim()
+  if (!normalizedTitle) return null
+
+  const characters = Array.from(normalizedTitle)
+  if (characters.length <= MAX_RUNTIME_TASK_TITLE_LENGTH) return normalizedTitle
+
+  return `${characters.slice(0, MAX_RUNTIME_TASK_TITLE_LENGTH - 1).join('')}…`
+}
+
 export function buildRuntimeTaskTitle(message: string, fallback?: string): string {
-  const title = (fallback || message).trim()
-  return title ? title.slice(0, 100) : EMPTY_MESSAGE_TASK_TITLE
+  const title = runtimeTitleText(fallback || message)
+  return truncateRuntimeTaskTitle(title) ?? EMPTY_MESSAGE_TASK_TITLE
 }
 
 function stableRuntimeTaskId(value: string): number {

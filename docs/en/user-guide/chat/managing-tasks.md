@@ -125,6 +125,8 @@ The input area contains the following controls:
 | **Cross-Validation Button** | Enable AI cross-validation    | Control bar             |
 | **Send Button**             | Send message                  | Right side of input box |
 
+When a task is running and the composer is empty, the right-side control shows a stop icon that can stop the current response. As soon as you enter a new message, add an attachment, or add a code comment, it switches to a send icon so you can submit follow-up instructions. The message is queued or sent as guidance according to the task's current runtime state.
+
 ### Message Area
 
 The message area displays conversation history:

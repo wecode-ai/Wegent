@@ -40,6 +40,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { isClaudeCodeDevice } from '@/lib/device-capabilities'
 import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
 interface CloudRuntimeSettingsConnection {
   isConnected: boolean
@@ -459,7 +460,7 @@ function CodexOfficialModelsSection({
           <span>{error}</span>
         </div>
       ) : providers.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-surface px-3 py-3 text-sm text-text-secondary">
+        <div className="rounded-lg border border-dashed border-border bg-background px-3 py-3 text-sm text-text-secondary">
           {t('workbench.codex_official_models_empty')}
         </div>
       ) : (
@@ -1311,7 +1312,7 @@ function DisconnectedCloudModelsSection({
   return (
     <div
       data-testid="cloud-models-section"
-      className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-surface px-3 py-3 text-text-muted"
+      className="flex min-h-11 items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-background px-3 py-3 text-text-muted"
     >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -1378,7 +1379,10 @@ function DisconnectedCloudCodexSyncSection({
       <CodexSettingsGroup title={t('workbench.codex_settings_auth_group_title')}>
         <LocalCodexModelRow status={status} loading={loading} error={error} onRefresh={onRefresh} />
 
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-border bg-surface px-4 py-3 text-text-muted">
+        <div
+          data-testid="runtime-config-shared-auth-unavailable"
+          className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-dashed border-border bg-background px-4 py-3 text-text-muted"
+        >
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-text-secondary">
@@ -1714,16 +1718,12 @@ export function ModelSettingsPage({
 
   if (!cloudConnection.isConnected) {
     return (
-      <div data-testid="model-settings-page" className="mx-auto w-full max-w-[820px]">
+      <SettingsPage data-testid="model-settings-page">
+        <SettingsPageHeader
+          title={t('workbench.model_settings_title', '模型设置')}
+          description={t('workbench.model_settings_subtitle', '管理模型接口和 Codex 设置。')}
+        />
         <div>
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.model_settings_title', '模型设置')}
-          </h1>
-          <p className="mt-2 text-sm text-text-secondary">
-            {t('workbench.model_settings_subtitle', '管理模型接口和 Codex 设置。')}
-          </p>
-        </div>
-        <div className="mt-8">
           <ModelInterfaceSettingsSection
             cloudConnection={cloudConnection}
             onOpenCloudSettings={onOpenCloudSettings}
@@ -1744,39 +1744,35 @@ export function ModelSettingsPage({
             />
           </CodexAuthSettingsSection>
         </div>
-      </div>
+      </SettingsPage>
     )
   }
 
   return (
-    <div data-testid="model-settings-page" className="mx-auto w-full max-w-[820px]">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.model_settings_title', '模型设置')}
-          </h1>
-          <p className="mt-2 text-sm text-text-secondary">
-            {t('workbench.model_settings_subtitle', '管理模型接口和 Codex 设置。')}
-          </p>
-        </div>
-        <button
-          type="button"
-          data-testid="runtime-config-refresh-button"
-          onClick={() => void loadRuntimeConfig(true)}
-          disabled={loading || refreshing}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-          aria-label={t('workbench.runtime_config_refresh', '刷新')}
-          title={t('workbench.runtime_config_refresh', '刷新')}
-        >
-          {refreshing ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-        </button>
-      </div>
+    <SettingsPage data-testid="model-settings-page">
+      <SettingsPageHeader
+        title={t('workbench.model_settings_title', '模型设置')}
+        description={t('workbench.model_settings_subtitle', '管理模型接口和 Codex 设置。')}
+        actions={
+          <button
+            type="button"
+            data-testid="runtime-config-refresh-button"
+            onClick={() => void loadRuntimeConfig(true)}
+            disabled={loading || refreshing}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label={t('workbench.runtime_config_refresh', '刷新')}
+            title={t('workbench.runtime_config_refresh', '刷新')}
+          >
+            {refreshing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+          </button>
+        }
+      />
 
-      <div className="mt-8">
+      <div>
         <ModelInterfaceSettingsSection
           cloudConnection={cloudConnection}
           onOpenCloudSettings={onOpenCloudSettings}
@@ -1921,6 +1917,6 @@ export function ModelSettingsPage({
           )}
         </CodexAuthSettingsSection>
       </div>
-    </div>
+    </SettingsPage>
   )
 }

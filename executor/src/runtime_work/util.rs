@@ -42,6 +42,16 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
     {
         request.extra.insert("attachments".to_owned(), attachments);
     }
+    if let Some(additional_context) = payload
+        .get("additionalContext")
+        .or_else(|| payload.get("additional_context"))
+        .filter(|value| value.is_object())
+        .cloned()
+    {
+        request
+            .extra
+            .insert("additionalContext".to_owned(), additional_context);
+    }
     if let Some(collaboration_mode) = payload
         .get("collaborationMode")
         .or_else(|| payload.get("collaboration_mode"))

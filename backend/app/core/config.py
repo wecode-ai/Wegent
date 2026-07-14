@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Tuple, Type
 
 from dotenv import dotenv_values
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
 
     # Workspace archive configuration
-    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 500
+    WORKSPACE_ARCHIVE_MAX_SIZE_MB: int = 2048
     WORKSPACE_ARCHIVE_RETENTION_DAYS: int = 30
     WORKSPACE_ARCHIVE_BUCKET: str = "wegent-archives"
     WORKSPACE_ARCHIVE_ENABLED: bool = True
@@ -447,6 +447,26 @@ class Settings(BaseSettings):
     # WORKER_CONVERSION_S3_REGION_NAME -> converter config
     # --- End Document Conversion Configuration ---
 
+    # --- Knowledge Multimodal Analysis Configuration ---
+    # Master switch for multimodal (video/image) Gemini analysis in knowledge
+    # bases. When False the orchestrator never classifies a file as multimodal,
+    # so no dispatch/Gemini runs anywhere; already-converted documents keep
+    # re-indexing normally. The open-source build ships image analysis fully
+    # wired; video analysis requires a configured media staging provider.
+    KNOWLEDGE_MULTIMODAL_ENABLED: bool = False
+    # Dedicated Celery queue for multimodal conversion tasks. The converter
+    # worker consumes both this and the MinerU queue by default.
+    KNOWLEDGE_MULTIMODAL_CONVERSION_QUEUE: str = "knowledge_multimodal_conversion"
+    # Internal endpoint the converter calls at execution time to resolve the
+    # KB's multimodalAnalysisModelRef into a decrypted runtime config (api_key
+    # + resolved default_headers). Keeps the Celery broker free of secrets.
+    MULTIMODAL_MODEL_CONFIG_RESOLVE_PATH: str = "/api/internal/model-config/resolve"
+    # When False, video multimodal analysis is rejected up-front (the
+    # open-source default ships no media staging provider). Enable after
+    # configuring a concrete MediaStagingProvider implementation.
+    KNOWLEDGE_MULTIMODAL_VIDEO_STAGING_ENABLED: bool = False
+    # --- End Knowledge Multimodal Analysis Configuration ---
+
     # Circuit breaker configuration
     CIRCUIT_BREAKER_FAIL_MAX: int = 5  # Open circuit after 5 consecutive failures
     CIRCUIT_BREAKER_RESET_TIMEOUT: int = 60  # Try to recover after 60 seconds
@@ -608,6 +628,25 @@ class Settings(BaseSettings):
     #          chat_shell/knowledge_runtime -> Backend internal API
     # Generate using: openssl rand -hex 32
     INTERNAL_SERVICE_TOKEN: str = ""
+    # Fernet key for encrypting LLM proxy tokens.
+    # Used by WeWork local executors to authenticate to the backend proxy gateway
+    # without receiving the raw provider API key.
+    # If not set, the backend automatically generates and persists a key in the
+    # system_configs table on first use. Set this explicitly when you want to
+    # manage the key yourself (e.g., rotation or multi-region deployments).
+    # Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    LLM_PROXY_TOKEN_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices("LLM_PROXY_TOKEN_KEY", "CODEX_PROXY_TOKEN_KEY"),
+    )
+    # Lifetime of LLM proxy tokens in seconds.
+    LLM_PROXY_TOKEN_TTL_SECONDS: int = Field(
+        default=24 * 60 * 60,
+        validation_alias=AliasChoices(
+            "LLM_PROXY_TOKEN_TTL_SECONDS", "CODEX_PROXY_TOKEN_TTL_SECONDS"
+        ),
+    )
     # Knowledge runtime service URL for remote RAG execution
     KNOWLEDGE_RUNTIME_URL: str = "http://localhost:8200"
     # RAG data-plane execution mode

@@ -255,13 +255,14 @@ pnpm --filter wecode-ai-assistant run start
 
 #### Wework and Local Rust Build Cache
 
-The Wework macOS development scripts configure shared Cargo target directories for Tauri and the local executor so multiple Git worktrees do not repeatedly rebuild the same dependencies from scratch:
+The Wework macOS development scripts share Cargo targets by component across Git worktrees, so switching worktrees can reuse already compiled dependencies instead of compiling them from scratch. Cargo coordinates concurrent access to a target directory and rebuilds artifacts when their fingerprints change. On the first `pnpm --dir wework run dev:mac`, the script installs `sccache` with Homebrew when it is missing to reuse compiler outputs as well.
 
-- `pnpm --dir wework run dev:mac` and `pnpm --dir wework run build:mac` use `$XDG_CACHE_HOME/wegent/cargo-target/wework-src-tauri` by default, or `~/.cache/wegent/cargo-target/wework-src-tauri` when `XDG_CACHE_HOME` is not set.
-- The development executor sidecar and `executor/local.sh build` use the `executor` subdirectory under the same cache root by default.
-- Set `WEGENT_CARGO_TARGET_ROOT=/path/to/cache` to choose a different shared cache root.
-- Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to restore Cargo's default per-worktree `target/` behavior.
-- When `CARGO_TARGET_DIR` is set explicitly, the scripts respect that value and do not choose an automatic shared directory.
+- `pnpm --dir wework run dev:mac`, `pnpm --dir wework run build:mac`, the development executor sidecar, and `executor/local.sh build` use `$XDG_CACHE_HOME/wegent/cargo-target/<component>`, or `~/.cache/wegent/cargo-target/...` when `XDG_CACHE_HOME` is not set.
+- When `sccache` is available, the scripts set `RUSTC_WRAPPER` and `SCCACHE_BASEDIRS` automatically, normalize source and target paths across worktrees, and disable Cargo incremental compilation, which is incompatible with shared compiler caching.
+- Set `WEGENT_CARGO_TARGET_ROOT=/path/to/cache` to choose another target cache root.
+- Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use Cargo's repository-local default `target/`.
+- Set `WEGENT_DISABLE_SCCACHE=1` to skip automatic installation and disable `sccache`.
+- Explicit `CARGO_TARGET_DIR` and `RUSTC_WRAPPER` values are always preserved.
 
 ---
 

@@ -23,6 +23,13 @@ from app.schemas.kind import (
     RetrieverRef,
     SummaryModelRef,
 )
+from app.schemas.knowledge_multimodal import (
+    DocumentReindexRequest,
+    MultimodalAnalysisFieldsMixin,
+    MultimodalAnalysisResponseFieldsMixin,
+    MultimodalDocumentPromptMixin,
+    multimodal_response_kwargs,
+)
 from app.schemas.knowledge_search import KnowledgeSearchRequest
 
 # Import SplitterConfig from rag.py to use unified splitter configuration
@@ -117,7 +124,7 @@ class RetrievalConfigCreate(BaseModel):
     )
 
 
-class KnowledgeBaseCreate(BaseModel):
+class KnowledgeBaseCreate(MultimodalAnalysisFieldsMixin):
     """Schema for creating a knowledge base."""
 
     name: str = Field(..., min_length=1, max_length=100)
@@ -186,7 +193,7 @@ class RetrievalConfigUpdate(BaseModel):
     )
 
 
-class KnowledgeBaseUpdate(BaseModel):
+class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
     """Schema for updating a knowledge base."""
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
@@ -262,7 +269,7 @@ class KnowledgeBaseTypeUpdate(BaseModel):
     )
 
 
-class KnowledgeBaseResponse(BaseModel):
+class KnowledgeBaseResponse(MultimodalAnalysisResponseFieldsMixin):
     """Schema for knowledge base response."""
 
     id: int
@@ -378,6 +385,7 @@ class KnowledgeBaseResponse(BaseModel):
             is_active=kind.is_active,
             created_at=kind.created_at,
             updated_at=kind.updated_at,
+            **multimodal_response_kwargs(spec),
         )
 
     class Config:
@@ -399,7 +407,7 @@ class KnowledgeBaseListResponse(BaseModel):
 # Note: SplitterConfig is imported from app.schemas.rag to use unified splitter configuration
 
 
-class KnowledgeDocumentCreate(BaseModel):
+class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     """Schema for creating a knowledge document."""
 
     attachment_id: Optional[int] = Field(

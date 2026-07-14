@@ -48,6 +48,26 @@ vi.mock('@/tauri/localExecutor', () => ({
     .mockResolvedValue({ running: true, ready: true, deviceId: 'local-device' }),
 }))
 
+vi.mock('@/features/local-runtime/LocalRuntimeInitializer', () => ({
+  LocalRuntimeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/features/local-runtime/CodexHomeInitializer', () => ({
+  CodexHomeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/api/local/codexPlugins', () => ({
+  createLocalCodexPluginApi: () => ({
+    codexHomeMigrationStatus: vi.fn().mockResolvedValue({
+      weworkCodexHome: '/Users/test/.wegent-executor/codex',
+      nativeCodexHome: '/Users/test/.codex',
+      weworkCodexHomeExists: true,
+      nativeCodexHomeExists: true,
+      shouldPromptMigration: false,
+    }),
+  }),
+}))
+
 vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
 }))
@@ -120,6 +140,7 @@ describe('App center route', () => {
 
   afterEach(() => {
     vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
   })
 
   async function waitForStartupScreenToClose() {
@@ -162,6 +183,28 @@ describe('App center route', () => {
     await waitForStartupScreenToClose()
     expect(screen.queryByTestId('chrome-titlebar')).not.toBeInTheDocument()
     expect(screen.getByTestId('workbench-page')).toBeInTheDocument()
+  })
+
+  test('renders copyable debug instance rows', async () => {
+    window.history.pushState({}, '', '/')
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      clipboard: { writeText },
+    })
+    vi.stubEnv('VITE_WEWORK_DEV_TITLE', 'Runtime task')
+    vi.stubEnv('VITE_WEWORK_DEV_PORT', '1420')
+    vi.stubEnv('VITE_WEWORK_DEV_WORKTREE', '/Users/me/Wegent')
+    vi.stubEnv('VITE_WEWORK_PARENT_TITLE', 'Parent task')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    expect(screen.getByTestId('wework-dev-instance-badge')).toHaveTextContent('Runtime task')
+    fireEvent.click(screen.getByTestId('copy-wework-dev-port-button'))
+    expect(writeText).toHaveBeenCalledWith('1420')
+    fireEvent.click(screen.getByTestId('copy-wework-dev-parent-title-button'))
+    expect(writeText).toHaveBeenCalledWith('Parent task')
   })
 
   test('keeps the app center sidebar available on desktop app widths', async () => {

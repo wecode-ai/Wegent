@@ -9,12 +9,17 @@ import {
   getTerminalTheme,
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
+import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 
 interface RemoteTerminalProps {
   sessionId: string
   active: boolean
+  taskId?: string | null
+  workspacePath?: string | null
+  cwd?: string | null
+  title?: string | null
   onExit?: () => void
   onTitleChange?: (title: string) => void
   testIdsEnabled?: boolean
@@ -23,6 +28,10 @@ interface RemoteTerminalProps {
 export function RemoteTerminal({
   sessionId,
   active,
+  taskId,
+  workspacePath,
+  cwd,
+  title,
   onExit,
   onTitleChange,
   testIdsEnabled = true,
@@ -32,6 +41,7 @@ export function RemoteTerminal({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const clientRef = useRef<RemoteTerminalClient | null>(null)
   const activeRef = useRef(active)
+  const contextRef = useRef({ taskId, workspacePath, cwd, title })
   const onExitRef = useRef(onExit)
   const onTitleChangeRef = useRef(onTitleChange)
   const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null)
@@ -39,6 +49,10 @@ export function RemoteTerminal({
   useEffect(() => {
     activeRef.current = active
   }, [active])
+
+  useEffect(() => {
+    contextRef.current = { taskId, workspacePath, cwd, title }
+  }, [cwd, taskId, title, workspacePath])
 
   useEffect(() => {
     onExitRef.current = onExit
@@ -81,6 +95,16 @@ export function RemoteTerminal({
     })
     const unsubscribeOutput = client.onOutput(payload => {
       if (!disposed && payload.session_id === sessionId) {
+        const context = contextRef.current
+        appendRuntimeTerminalContext({
+          sessionId,
+          taskId: context.taskId,
+          workspacePath: context.workspacePath,
+          cwd: context.cwd,
+          title: context.title,
+          kind: 'remote',
+          data: payload.data,
+        })
         terminal.write(payload.data)
         scheduleThemeSync()
       }

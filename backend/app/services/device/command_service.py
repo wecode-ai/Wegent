@@ -147,6 +147,7 @@ class LocalDeviceCommandService:
         user_id: int,
         device_id: str,
         command: str,
+        command_key: Optional[str] = None,
         path: Optional[str] = None,
         args: Optional[list[str]] = None,
         cwd: Optional[str] = None,
@@ -183,6 +184,8 @@ class LocalDeviceCommandService:
             "timeout_seconds": normalized_timeout,
             "max_output_bytes": normalized_max_output,
         }
+        if command_key:
+            payload["command_key"] = command_key
 
         logger.info(
             "[LocalDeviceCommandService] Sending command RPC: "
@@ -306,16 +309,23 @@ async def execute_configured_device_command(
         device_type=device_type,
     )
 
-    result = await local_device_command_service.execute_command(
-        user_id=user_id,
-        device_id=dispatch_device_id,
-        command=command_definition.command,
-        path=path,
-        args=args or [],
-        env=env or {},
-        timeout_seconds=timeout_seconds,
-        max_output_bytes=max_output_bytes,
-    )
+    execute_kwargs = {
+        "user_id": user_id,
+        "device_id": dispatch_device_id,
+        "command": command_definition.command,
+        "path": path,
+        "args": args or [],
+        "env": env or {},
+        "timeout_seconds": timeout_seconds,
+        "max_output_bytes": max_output_bytes,
+    }
+    if command_key in {
+        "workspace_tree",
+        "workspace_read_text_file",
+        "workspace_read_file_chunk",
+    }:
+        execute_kwargs["command_key"] = command_key
+    result = await local_device_command_service.execute_command(**execute_kwargs)
 
     try:
         return apply_command_post_processor(

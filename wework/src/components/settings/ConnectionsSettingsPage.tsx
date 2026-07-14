@@ -8,7 +8,7 @@ import {
   Code2,
   Copy,
   ExternalLink,
-  GitBranch,
+  FolderGit2,
   Globe2,
   Info,
   Keyboard,
@@ -34,6 +34,7 @@ import { getRuntimeConfig, stripAppBasePath } from '@/config/runtime'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
 import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -55,18 +56,20 @@ import {
   supportsRemoteSessions,
 } from '@/lib/device-capabilities'
 import { getLocalExecutorDeviceId, isLocalTerminalAvailable } from '@/lib/local-terminal'
-import type { UnifiedModel } from '@/types/api'
+import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import { AppearanceSettingsPage } from '@/features/appearance/AppearanceSettingsPage'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
 import { ProxySettingsPage } from './ProxySettingsPage'
 import { ModelSettingsPage } from './ModelSettingsPage'
-import { SkillSettingsPage } from './SkillSettingsPage'
+import { PluginSettingsPage } from './PluginSettingsPage'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 import { ArchivedConversationsSettingsPage } from './ArchivedConversationsSettingsPage'
 import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
+import { ContextSettingsPage } from './ContextSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
 import {
   createSettingsDeviceApi,
@@ -77,9 +80,13 @@ import {
 interface ConnectionsSettingsPageProps {
   onBack: () => void
   autoOpenAddCloudDeviceDialog?: boolean
+  services?: WorkbenchServices
+  devices?: RuntimeDeviceInfo[]
+  onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
+  onRefreshWorkLists?: () => Promise<void>
 }
 
-type SettingsCategory = 'personal' | 'coding' | 'archived'
+type SettingsCategory = 'personal' | 'integrations' | 'coding' | 'archived'
 
 interface SettingsNavItem {
   key: string
@@ -95,24 +102,28 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: SlidersHorizontal,
     label: 'settings_nav_general',
     fallback: '通用',
+    category: 'personal',
   },
   {
     key: 'connections',
     icon: Globe2,
     label: 'settings_nav_connections',
     fallback: '云端连接',
+    category: 'personal',
   },
   {
     key: 'appearance',
     icon: Palette,
     label: 'settings_nav_appearance',
     fallback: '外观',
+    category: 'personal',
   },
   {
-    key: 'about',
-    icon: Info,
-    label: 'settings_nav_about',
-    fallback: '关于',
+    key: 'context',
+    icon: Terminal,
+    label: 'settings_nav_context',
+    fallback: '上下文',
+    category: 'personal',
   },
   {
     key: 'model-settings',
@@ -136,15 +147,22 @@ const settingsNavItems: SettingsNavItem[] = [
     category: 'personal',
   },
   {
-    key: 'skills',
+    key: 'about',
+    icon: Info,
+    label: 'settings_nav_about',
+    fallback: '关于',
+    category: 'personal',
+  },
+  {
+    key: 'plugins',
     icon: Package,
-    label: 'settings_nav_skills',
-    fallback: '技能',
-    category: 'coding',
+    label: 'settings_nav_plugins',
+    fallback: '插件',
+    category: 'integrations',
   },
   {
     key: 'worktrees',
-    icon: GitBranch,
+    icon: FolderGit2,
     label: 'settings_nav_worktrees',
     fallback: '工作树',
     category: 'coding',
@@ -162,6 +180,10 @@ const settingsCategoryLabels: Record<SettingsCategory, { label: string; fallback
   personal: {
     label: 'settings_category_personal',
     fallback: '个人',
+  },
+  integrations: {
+    label: 'settings_category_integrations',
+    fallback: '集成',
   },
   coding: {
     label: 'settings_category_coding',
@@ -185,6 +207,7 @@ function getSettingsNavFromPath(path: string): string {
 }
 
 function getSettingsNavPath(key: string): string {
+  if (key === 'context') return '/settings/personal/context'
   if (key === 'model-settings') return '/settings/personal/models'
   if (key === 'proxy') return '/settings/personal/proxy'
   if (key === 'keyboard-shortcuts') return '/settings/personal/keyboard-shortcuts'
@@ -531,7 +554,7 @@ function CloudDeviceConnectionInfoDialog({
           {rows.map(row => (
             <div
               key={row.key}
-              className="flex items-center gap-3 rounded-md border border-border bg-surface px-3 py-2"
+              className="flex items-center gap-3 rounded-md border border-border bg-background px-3 py-2"
             >
               <div className="w-20 shrink-0 text-xs text-text-secondary">{row.label}</div>
               <div className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
@@ -761,7 +784,7 @@ function DeviceCard({ device, onChanged }: { device: DeviceInfo; onChanged: () =
     <>
       <div
         data-testid={`connection-device-${device.device_id}`}
-        className="rounded-lg border border-border bg-surface p-3"
+        className="rounded-lg border border-border bg-background p-3"
       >
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-2">
@@ -991,7 +1014,7 @@ function DeviceSection({
         {showScaleWiki && (
           <div
             data-testid="connection-scale-wiki"
-            className="rounded-lg border border-border bg-surface px-4 py-3"
+            className="rounded-lg border border-border bg-background px-4 py-3"
           >
             <div className="flex items-start gap-3">
               <BookOpen className="mt-0.5 h-4 w-4 shrink-0 text-text-secondary" />
@@ -1104,7 +1127,7 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
           {models.slice(0, 8).map(model => (
             <div
               key={`${model.type}:${model.name}:${model.namespace ?? ''}`}
-              className="flex min-h-11 items-center gap-3 rounded-lg border border-border bg-surface px-3 py-2"
+              className="flex min-h-11 items-center gap-3 rounded-lg border border-border bg-background px-3 py-2"
             >
               <Code2 className="h-4 w-4 shrink-0 text-text-secondary" />
               <div className="min-w-0 flex-1">
@@ -1181,12 +1204,10 @@ function ConnectionsDeviceSettingsPage({
   if (!cloudConnection.isConnected) {
     return (
       <>
-        <div className="mx-auto w-full max-w-[760px]">
-          <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-            {t('workbench.connections_title', '云端连接')}
-          </h1>
+        <SettingsPage>
+          <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
 
-          <section className="mt-6 rounded-lg border border-border bg-background p-5">
+          <section className="rounded-lg border border-border bg-background p-5">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-primary">
@@ -1205,7 +1226,7 @@ function ConnectionsDeviceSettingsPage({
             </div>
           </section>
 
-          <section className="mt-4 rounded-lg border border-dashed border-border bg-surface p-5">
+          <section className="mt-4 rounded-lg border border-dashed border-border bg-background p-5">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-primary">
@@ -1228,7 +1249,7 @@ function ConnectionsDeviceSettingsPage({
               </button>
             </div>
           </section>
-        </div>
+        </SettingsPage>
 
         {connectDialogOpen && (
           <CloudConnectionDialog
@@ -1244,14 +1265,12 @@ function ConnectionsDeviceSettingsPage({
 
   return (
     <>
-      <div className="mx-auto w-full max-w-[760px]">
-        <h1 className="text-xl font-semibold tracking-normal text-text-primary">
-          {t('workbench.connections_title', '云端连接')}
-        </h1>
+      <SettingsPage>
+        <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
 
         <section
           data-testid="cloud-connection-status-card"
-          className="mt-6 rounded-lg border border-border bg-background p-5"
+          className="rounded-lg border border-border bg-background p-5"
         >
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
@@ -1364,7 +1383,7 @@ function ConnectionsDeviceSettingsPage({
             </div>
           </div>
         </section>
-      </div>
+      </SettingsPage>
 
       <AddCloudDeviceDialog
         open={addDialogOpen}
@@ -1381,6 +1400,10 @@ function ConnectionsDeviceSettingsPage({
 export function ConnectionsSettingsPage({
   onBack,
   autoOpenAddCloudDeviceDialog = false,
+  services,
+  devices = [],
+  onOpenRuntimeTask,
+  onRefreshWorkLists,
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
@@ -1487,11 +1510,17 @@ export function ConnectionsSettingsPage({
         </div>
       )}
 
-      <main className="min-w-0 flex-1 overflow-auto bg-background px-8 py-16">
+      <main
+        className={`min-w-0 flex-1 overflow-auto bg-background px-8 pb-8 ${
+          usesOverlayTitlebar ? 'pt-16' : 'pt-8'
+        }`}
+      >
         {activeNav === 'general' ? (
           <GeneralSettingsPage />
         ) : activeNav === 'appearance' ? (
           <AppearanceSettingsPage />
+        ) : activeNav === 'context' ? (
+          <ContextSettingsPage />
         ) : activeNav === 'about' ? (
           <AboutSettingsPage />
         ) : activeNav === 'model-settings' ? (
@@ -1500,12 +1529,23 @@ export function ConnectionsSettingsPage({
           <ProxySettingsPage />
         ) : activeNav === 'keyboard-shortcuts' ? (
           <KeyboardShortcutsSettingsPage />
-        ) : activeNav === 'skills' ? (
-          <SkillSettingsPage />
+        ) : activeNav === 'plugins' ? (
+          <PluginSettingsPage />
         ) : activeNav === 'worktrees' ? (
-          <WorktreesSettingsPage />
+          <WorktreesSettingsPage
+            api={services?.runtimeWorkApi}
+            devices={devices}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
+            onLeaveSettings={onBack}
+          />
         ) : activeNav === 'archived-conversations' ? (
-          <ArchivedConversationsSettingsPage />
+          <ArchivedConversationsSettingsPage
+            api={services?.runtimeWorkApi}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
+            onLeaveSettings={onBack}
+          />
         ) : (
           <ConnectionsDeviceSettingsPage
             autoOpenAddCloudDeviceDialog={autoOpenAddCloudDeviceDialog}

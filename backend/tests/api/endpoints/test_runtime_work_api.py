@@ -4,6 +4,9 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+from fastapi.responses import StreamingResponse
+
 
 def _auth_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
@@ -509,6 +512,49 @@ def test_runtime_workspace_open_endpoint_dispatches_request(
     assert request.label == "Hello project"
 
 
+def test_runtime_workspace_search_endpoint_dispatches_request(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = AsyncMock(
+        return_value={
+            "files": [
+                {
+                    "root": "/repo/Wegent",
+                    "path": "frontend/src/auth.ts",
+                    "fileName": "auth.ts",
+                    "matchType": "file",
+                    "score": 91,
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "search_runtime_workspace",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/workspace/search",
+        headers=_auth_headers(test_token),
+        json={
+            "deviceId": "device-1",
+            "root": "/repo/Wegent",
+            "query": "auth",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["files"][0]["fileName"] == "auth.ts"
+    request = service_mock.await_args.kwargs["request"]
+    assert request.device_id == "device-1"
+    assert request.query == "auth"
+
+
 def test_runtime_workspace_rename_endpoint_dispatches_request(
     test_client,
     test_token,
@@ -589,6 +635,50 @@ def test_runtime_workspace_remove_endpoint_dispatches_request(
     request = service_mock.await_args.kwargs["request"]
     assert request.device_id == "device-1"
     assert request.workspace_path == "/Users/crystal/Documents/hello-0"
+
+
+def test_runtime_resolve_model_config_endpoint_returns_model_config_alias(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    from app.api.endpoints import runtime_work
+
+    service_mock = MagicMock(
+        return_value={
+            "model": "openai",
+            "model_id": "gpt-4-turbo",
+            "api_format": "responses",
+            "protocol": "openai-responses",
+            "base_url": "https://api.example.com/v1",
+            "api_key": "sk-test",
+        }
+    )
+    monkeypatch.setattr(
+        runtime_work.runtime_work_service,
+        "resolve_codex_runtime_model_config",
+        service_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/resolve-model-config",
+        headers=_auth_headers(test_token),
+        json={
+            "modelId": "deepseek-v4-flash",
+            "modelType": "user",
+            "modelOptions": {},
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "modelConfig" in data
+    assert data["modelConfig"]["model_id"] == "gpt-4-turbo"
+    assert "model_config" not in data
+    assert service_mock.call_args.kwargs["model_id"] == "deepseek-v4-flash"
+    assert service_mock.call_args.kwargs["proxy_backend_base_url"].endswith(
+        "/api/runtime-work"
+    )
 
 
 def test_runtime_im_notification_settings_endpoint_uses_current_user(
@@ -737,3 +827,78 @@ def test_runtime_task_im_notification_unsubscribe_endpoint_dispatches_address(
     address = service_mock.await_args.kwargs["address"]
     assert address.device_id == "device-1"
     assert address.local_task_id == "codex-1"
+
+
+def test_llm_responses_proxy_endpoint_streams_from_provider(
+    test_client,
+    monkeypatch,
+):
+    from app.services import llm_proxy_service
+
+    async def stream():
+        yield b"data: ok\n\n"
+
+    proxy_mock = AsyncMock(
+        return_value=StreamingResponse(stream(), media_type="text/event-stream")
+    )
+    monkeypatch.setattr(
+        llm_proxy_service,
+        "proxy_llm_responses",
+        proxy_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/llm-responses-proxy/responses",
+        headers={
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "authorization": "Bearer test-token",
+        },
+        json={"model": "gpt-4-turbo", "input": "hello"},
+    )
+
+    assert response.status_code == 200
+    proxy_mock.assert_awaited_once()
+    call_args = proxy_mock.await_args
+    assert call_args.args[0].headers["authorization"] == "Bearer test-token"
+
+
+def test_llm_responses_proxy_endpoint_does_not_require_user_bearer_auth(
+    test_client,
+    monkeypatch,
+):
+    from app.services import llm_proxy_service
+
+    async def stream():
+        yield b"data: ok\n\n"
+
+    proxy_mock = AsyncMock(
+        return_value=StreamingResponse(stream(), media_type="text/event-stream")
+    )
+    monkeypatch.setattr(
+        llm_proxy_service,
+        "proxy_llm_responses",
+        proxy_mock,
+    )
+
+    response = test_client.post(
+        "/api/runtime-work/llm-responses-proxy/responses",
+        headers={
+            "content-type": "application/json",
+            "accept": "text/event-stream",
+            "authorization": "Bearer test-token",
+        },
+        json={"model": "gpt-4-turbo", "input": "hello"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_llm_responses_proxy_endpoint_rejects_missing_authorization(test_client):
+    response = test_client.post(
+        "/api/runtime-work/llm-responses-proxy/responses",
+        headers={"content-type": "application/json", "accept": "text/event-stream"},
+        json={"model": "gpt-4-turbo", "input": "hello"},
+    )
+
+    assert response.status_code == 401

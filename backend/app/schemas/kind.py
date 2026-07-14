@@ -110,7 +110,14 @@ class RerankConfig(BaseModel):
 
 
 class ModelCapabilities(BaseModel):
-    """Declared multimodal capabilities for LLM-style models."""
+    """Declared multimodal capabilities for LLM-style models.
+
+    Consumed by both the chat attachment pipeline (media understanding) and the
+    knowledge-base multimodal analysis selector. The knowledge multimodal
+    capability gate treats a ``supportsVideo=true`` Gemini model as also
+    covering image analysis (no separate ``supportsImage`` toggle on such
+    models).
+    """
 
     supportsImage: Optional[bool] = Field(
         None,
@@ -292,6 +299,12 @@ class ModelSpec(BaseModel):
     isAdvanced: Optional[bool] = Field(
         None,
         description="Whether this is an advanced model. Advanced models are hidden by default in chat model selector.",
+    )
+    modelCapabilities: Optional[ModelCapabilities] = Field(
+        None,
+        description="Declared multimodal capabilities (supportsImage / supportsVideo). "
+        "Used by the chat attachment media-understanding path and the knowledge-base "
+        "multimodal analysis selector/capability gate.",
     )
 
 

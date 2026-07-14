@@ -1,11 +1,10 @@
+mod desktop_capture;
 mod embedded_browser;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
 mod wecode;
 
-#[cfg(all(desktop, target_os = "macos"))]
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
 use std::sync::{
@@ -13,6 +12,95 @@ use std::sync::{
     Mutex,
 };
 use tauri::Manager;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PickedWorkspacePath {
+    path: String,
+    is_directory: bool,
+}
+
+#[cfg(all(desktop, target_os = "macos"))]
+fn pick_workspace_paths_on_macos(
+    initial_directory: Option<String>,
+) -> Result<Vec<PickedWorkspacePath>, String> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
+    use objc2_foundation::{NSString, NSURL};
+
+    let main_thread = MainThreadMarker::new()
+        .ok_or_else(|| "The workspace picker must run on the main thread".to_string())?;
+    let panel = NSOpenPanel::openPanel(main_thread);
+    panel.setCanChooseFiles(true);
+    panel.setCanChooseDirectories(true);
+    panel.setAllowsMultipleSelection(true);
+    panel.setCanCreateDirectories(true);
+    if let Some(directory) = initial_directory.filter(|path| !path.trim().is_empty()) {
+        let directory = NSString::from_str(&directory);
+        let url = NSURL::fileURLWithPath_isDirectory(&directory, true);
+        panel.setDirectoryURL(Some(&url));
+    }
+    if panel.runModal() != NSModalResponseOK {
+        return Ok(Vec::new());
+    }
+
+    let mut selected = Vec::new();
+    for url in panel.URLs() {
+        let Some(path) = url.path() else {
+            continue;
+        };
+        let path = path.to_string();
+        selected.push(PickedWorkspacePath {
+            is_directory: std::path::Path::new(&path).is_dir(),
+            path,
+        });
+    }
+    Ok(selected)
+}
+
+#[tauri::command]
+async fn pick_workspace_paths(
+    app: tauri::AppHandle,
+    initial_directory: Option<String>,
+) -> Result<Vec<PickedWorkspacePath>, String> {
+    #[cfg(all(desktop, target_os = "macos"))]
+    {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let _ = sender.send(pick_workspace_paths_on_macos(initial_directory));
+        })
+        .map_err(|error| format!("Failed to open the workspace picker: {error}"))?;
+        return tauri::async_runtime::spawn_blocking(move || {
+            receiver
+                .recv()
+                .map_err(|_| "Workspace picker closed unexpectedly".to_string())?
+        })
+        .await
+        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?;
+    }
+
+    #[cfg(not(all(desktop, target_os = "macos")))]
+    {
+        use tauri_plugin_dialog::DialogExt;
+
+        let mut picker = app.dialog().file();
+        if let Some(directory) = initial_directory.filter(|path| !path.trim().is_empty()) {
+            picker = picker.set_directory(directory);
+        }
+        let files = tauri::async_runtime::spawn_blocking(move || picker.blocking_pick_files())
+            .await
+            .map_err(|error| format!("Failed to join workspace picker task: {error}"))?
+            .unwrap_or_default();
+        return Ok(files
+            .into_iter()
+            .filter_map(|file| file.into_path().ok())
+            .map(|path| PickedWorkspacePath {
+                is_directory: path.is_dir(),
+                path: path.to_string_lossy().into_owned(),
+            })
+            .collect());
+    }
+}
 
 #[cfg(desktop)]
 use tauri::{
@@ -43,11 +131,6 @@ const TRAY_MENU_QUIT_ID: &str = "quit";
 #[cfg(desktop)]
 const TRAY_MENU_TASK_PREFIX: &str = "task:";
 
-#[cfg(all(desktop, target_os = "macos"))]
-thread_local! {
-    static MACOS_CACHED_DOCK_ICON: RefCell<Option<objc2::rc::Retained<objc2_app_kit::NSImage>>> =
-        const { RefCell::new(None) };
-}
 #[cfg(desktop)]
 const TRAY_ID: &str = "wework-main";
 #[cfg(desktop)]
@@ -254,6 +337,8 @@ struct AppPreferences {
     close_to_tray_hint_seen: bool,
     #[serde(default = "default_language_preference")]
     language: String,
+    #[serde(default = "default_true")]
+    terminal_context_injection_enabled: bool,
     #[serde(default)]
     task_completion_notifications_enabled: bool,
     #[serde(default = "default_true")]
@@ -282,6 +367,7 @@ impl Default for AppPreferences {
             show_main_window_on_launch: true,
             close_to_tray_hint_seen: false,
             language: default_language_preference(),
+            terminal_context_injection_enabled: true,
             task_completion_notifications_enabled: false,
             tray_unread_enabled: true,
             tray_running_enabled: true,
@@ -298,6 +384,7 @@ struct AppPreferencesPatch {
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
+    terminal_context_injection_enabled: Option<bool>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -313,10 +400,21 @@ enum MainWindowOpenAction {
 }
 
 #[cfg(desktop)]
-#[derive(Default)]
 struct MainWindowLifecycleState {
+    dock_icon_visible: AtomicBool,
     destroy_to_tray_in_progress: AtomicBool,
     pending_open_action: Mutex<Option<MainWindowOpenAction>>,
+}
+
+#[cfg(desktop)]
+impl Default for MainWindowLifecycleState {
+    fn default() -> Self {
+        Self {
+            dock_icon_visible: AtomicBool::new(true),
+            destroy_to_tray_in_progress: AtomicBool::new(false),
+            pending_open_action: Mutex::new(None),
+        }
+    }
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -463,6 +561,21 @@ fn wework_cli_launcher_content(
     let app_bundle = app_bundle_path
         .map(|path| shell_single_quote(&path.to_string_lossy()))
         .unwrap_or_else(|| "''".to_string());
+    // Debug `tauri dev` sets WEWORK_EXECUTOR_SIDECAR to the source-tree sidecar script.
+    // CLI launches are a fresh process without that env; bake the absolute path into the
+    // launcher so `wework <path>` can start a healthy local executor outside `dev:mac`.
+    let executor_sidecar = std::env::var_os("WEWORK_EXECUTOR_SIDECAR")
+        .map(std::path::PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+        .and_then(|path| {
+            if path.is_absolute() {
+                Some(path)
+            } else {
+                std::env::current_dir().ok().map(|cwd| cwd.join(path))
+            }
+        })
+        .map(|path| shell_single_quote(&path.to_string_lossy()))
+        .unwrap_or_else(|| "''".to_string());
 
     format!(
         r#"#!/usr/bin/env bash
@@ -509,6 +622,11 @@ fi
 ABSOLUTE_PATH="$(cd "$TARGET_PATH" && pwd -P)"
 APP_BUNDLE={app_bundle}
 WEWORK_EXECUTABLE={executable}
+WEWORK_EXECUTOR_SIDECAR={executor_sidecar}
+
+if [ -n "$WEWORK_EXECUTOR_SIDECAR" ]; then
+  export WEWORK_EXECUTOR_SIDECAR
+fi
 
 if [ -x "$WEWORK_EXECUTABLE" ]; then
   "$WEWORK_EXECUTABLE" --open-workspace "$ABSOLUTE_PATH" >/dev/null 2>&1 &
@@ -630,6 +748,9 @@ fn update_app_preferences(
     if let Some(value) = patch.language {
         preferences.language = value;
     }
+    if let Some(value) = patch.terminal_context_injection_enabled {
+        preferences.terminal_context_injection_enabled = value;
+    }
     if let Some(value) = patch.task_completion_notifications_enabled {
         preferences.task_completion_notifications_enabled = value;
     }
@@ -654,6 +775,7 @@ struct AppPreferences {
     show_main_window_on_launch: bool,
     close_to_tray_hint_seen: bool,
     language: String,
+    terminal_context_injection_enabled: bool,
     task_completion_notifications_enabled: bool,
     tray_unread_enabled: bool,
     tray_running_enabled: bool,
@@ -668,6 +790,7 @@ struct AppPreferencesPatch {
     show_main_window_on_launch: Option<bool>,
     close_to_tray_hint_seen: Option<bool>,
     language: Option<String>,
+    terminal_context_injection_enabled: Option<bool>,
     task_completion_notifications_enabled: Option<bool>,
     tray_unread_enabled: Option<bool>,
     tray_running_enabled: Option<bool>,
@@ -682,6 +805,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         show_main_window_on_launch: true,
         close_to_tray_hint_seen: false,
         language: "zh-CN".to_string(),
+        terminal_context_injection_enabled: true,
         task_completion_notifications_enabled: false,
         tray_unread_enabled: true,
         tray_running_enabled: true,
@@ -700,6 +824,9 @@ fn update_app_preferences(
         show_main_window_on_launch: patch.show_main_window_on_launch.unwrap_or(true),
         close_to_tray_hint_seen: patch.close_to_tray_hint_seen.unwrap_or(false),
         language: patch.language.unwrap_or_else(|| "zh-CN".to_string()),
+        terminal_context_injection_enabled: patch
+            .terminal_context_injection_enabled
+            .unwrap_or(true),
         task_completion_notifications_enabled: patch
             .task_completion_notifications_enabled
             .unwrap_or(false),
@@ -741,6 +868,7 @@ struct ProcessDiagnosticsProcess {
     ppid: u32,
     group: String,
     rss_kib: u64,
+    physical_footprint_kib: u64,
     cpu_percent: f64,
     command: String,
 }
@@ -750,6 +878,7 @@ struct ProcessDiagnosticsGroup {
     group: String,
     process_count: usize,
     rss_kib: u64,
+    physical_footprint_kib: u64,
     cpu_percent: f64,
     pids: Vec<u32>,
 }
@@ -814,6 +943,116 @@ fn collect_descendant_pids(processes: &[RawProcessInfo], roots: &[u32]) -> HashS
     descendants
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+struct LaunchServicesProcess {
+    display_name: String,
+    bundle_id: Option<String>,
+    pid: u32,
+}
+
+#[cfg(target_os = "macos")]
+fn parse_launch_services_processes(output: &str) -> Vec<LaunchServicesProcess> {
+    let mut processes = Vec::new();
+    let mut display_name = None;
+    let mut bundle_id = None;
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if let Some((_, value)) = trimmed.split_once(") \"") {
+            if let Some((name, _)) = value.split_once("\" ASN:") {
+                display_name = Some(name.to_owned());
+                bundle_id = None;
+                continue;
+            }
+        }
+        if let Some(value) = trimmed.strip_prefix("bundleID=\"") {
+            bundle_id = value.strip_suffix('"').map(str::to_owned);
+            continue;
+        }
+        let Some(value) = trimmed.strip_prefix("pid = ") else {
+            continue;
+        };
+        let Some(pid) = value
+            .split_whitespace()
+            .next()
+            .and_then(|candidate| candidate.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if let Some(display_name) = display_name.take() {
+            processes.push(LaunchServicesProcess {
+                display_name,
+                bundle_id: bundle_id.take(),
+                pid,
+            });
+        }
+    }
+    processes
+}
+
+#[cfg(target_os = "macos")]
+fn collect_macos_webkit_process_ids(main_pid: u32) -> Result<HashSet<u32>, String> {
+    let output = std::process::Command::new("lsappinfo")
+        .arg("list")
+        .output()
+        .map_err(|error| format!("Failed to run lsappinfo: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    related_macos_webkit_process_ids(
+        &parse_launch_services_processes(&String::from_utf8_lossy(&output.stdout)),
+        main_pid,
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn related_macos_webkit_process_ids(
+    processes: &[LaunchServicesProcess],
+    main_pid: u32,
+) -> Result<HashSet<u32>, String> {
+    let (main_index, display_name) = processes
+        .iter()
+        .enumerate()
+        .find(|(_, process)| process.pid == main_pid)
+        .map(|(index, process)| (index, process.display_name.as_str()))
+        .ok_or_else(|| format!("LaunchServices entry missing for Wework pid {main_pid}"))?;
+    let expected_processes = [
+        ("Web Content", "com.apple.WebKit.WebContent"),
+        ("Networking", "com.apple.WebKit.Networking"),
+        ("Graphics and Media", "com.apple.WebKit.GPU"),
+    ];
+    let instance_end = processes[main_index + 1..]
+        .iter()
+        .position(|process| process.display_name == display_name)
+        .map_or(processes.len(), |offset| main_index + 1 + offset);
+    let instance_processes = &processes[main_index + 1..instance_end];
+
+    Ok(expected_processes
+        .into_iter()
+        .filter_map(|(suffix, bundle_id)| {
+            let expected_name = format!("{display_name} {suffix}");
+            instance_processes
+                .iter()
+                .find(|process| {
+                    process.display_name == expected_name
+                        && process.bundle_id.as_deref() == Some(bundle_id)
+                })
+                .map(|process| process.pid)
+        })
+        .collect())
+}
+
+#[cfg(target_os = "macos")]
+fn process_physical_footprint_kib(pid: u32) -> Option<u64> {
+    let mut usage = unsafe { std::mem::zeroed::<libc::rusage_info_v2>() };
+    let usage_pointer = (&mut usage as *mut libc::rusage_info_v2).cast::<libc::rusage_info_t>();
+    // SAFETY: proc_pid_rusage writes a rusage_info_v2 into the initialized buffer for V2 flavor.
+    let result =
+        unsafe { libc::proc_pid_rusage(pid as libc::c_int, libc::RUSAGE_INFO_V2, usage_pointer) };
+    (result == 0).then_some(usage.ri_phys_footprint / 1024)
+}
+
 fn classify_process(
     process: &RawProcessInfo,
     main_pid: u32,
@@ -826,6 +1065,12 @@ fn classify_process(
     if terminal_process_ids.contains(&process.pid) || terminal_descendant_ids.contains(&process.pid)
     {
         return Some("terminal".to_string());
+    }
+    if process.command.contains("wegent-executor") {
+        return Some("executor".to_string());
+    }
+    if process.command.contains("codex") && process.command.contains("app-server") {
+        return Some("codex-app-server".to_string());
     }
     if process.command.contains("com.apple.WebKit.WebContent") {
         return Some("webkit-webcontent".to_string());
@@ -862,7 +1107,8 @@ fn get_wework_process_snapshot(
         .collect::<Vec<_>>();
     let main_pid = std::process::id();
     let terminal_roots = local_terminal_state.active_process_ids()?;
-    let app_process_ids = collect_descendant_pids(&processes, &[main_pid]);
+    let mut app_process_ids = collect_descendant_pids(&processes, &[main_pid]);
+    app_process_ids.extend(collect_macos_webkit_process_ids(main_pid)?);
     let terminal_process_ids = terminal_roots.iter().copied().collect::<HashSet<_>>();
     let terminal_descendant_ids = collect_descendant_pids(&processes, &terminal_roots);
 
@@ -881,12 +1127,17 @@ fn get_wework_process_snapshot(
                 ppid: process.ppid,
                 group,
                 rss_kib: process.rss_kib,
+                physical_footprint_kib: process_physical_footprint_kib(process.pid).unwrap_or(0),
                 cpu_percent: process.cpu_percent,
                 command: process.command.clone(),
             })
         })
         .collect::<Vec<_>>();
-    related_processes.sort_by(|left, right| right.rss_kib.cmp(&left.rss_kib));
+    related_processes.sort_by(|left, right| {
+        right
+            .physical_footprint_kib
+            .cmp(&left.physical_footprint_kib)
+    });
 
     let mut groups_by_name = HashMap::<String, ProcessDiagnosticsGroup>::new();
     for process in &related_processes {
@@ -896,17 +1147,23 @@ fn get_wework_process_snapshot(
                 group: process.group.clone(),
                 process_count: 0,
                 rss_kib: 0,
+                physical_footprint_kib: 0,
                 cpu_percent: 0.0,
                 pids: Vec::new(),
             });
         group.process_count += 1;
         group.rss_kib += process.rss_kib;
+        group.physical_footprint_kib += process.physical_footprint_kib;
         group.cpu_percent += process.cpu_percent;
         group.pids.push(process.pid);
     }
 
     let mut groups = groups_by_name.into_values().collect::<Vec<_>>();
-    groups.sort_by(|left, right| right.rss_kib.cmp(&left.rss_kib));
+    groups.sort_by(|left, right| {
+        right
+            .physical_footprint_kib
+            .cmp(&left.physical_footprint_kib)
+    });
 
     Ok(ProcessDiagnosticsSnapshot {
         timestamp_ms: std::time::SystemTime::now()
@@ -1187,6 +1444,178 @@ fn open_local_file(path: String) -> Result<(), String> {
     }
 
     open_local_file_with_default_app(&path)
+}
+
+#[tauri::command]
+fn reveal_local_file(path: String) -> Result<(), String> {
+    let path = normalized_non_empty(path).ok_or_else(|| "Local file path is empty".to_string())?;
+    if !std::path::Path::new(&path).is_file() {
+        return Err("Local file does not exist".to_string());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("open")
+            .args(["-R", &path])
+            .status()
+            .map_err(|error| format!("Failed to reveal local file: {error}"))?;
+        if !status.success() {
+            return Err("Failed to reveal local file".to_string());
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    Err("Revealing local files is only supported on macOS".to_string())
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct LocalFileOpener {
+    name: String,
+    path: String,
+    icon_path: Option<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct LocalFileOpeners {
+    default_path: Option<String>,
+    applications: Vec<LocalFileOpener>,
+}
+
+#[cfg(target_os = "macos")]
+fn local_file_openers(path: &str) -> Result<LocalFileOpeners, String> {
+    const SCRIPT: &str = r#"
+ObjC.import('AppKit');
+const args = $.NSProcessInfo.processInfo.arguments;
+const filePath = ObjC.unwrap(args.objectAtIndex(args.count - 1));
+const fileUrl = $.NSURL.fileURLWithPath(filePath);
+const workspace = $.NSWorkspace.sharedWorkspace;
+const defaultApplication = workspace.URLForApplicationToOpenURL(fileUrl);
+const applications = workspace.URLsForApplicationsToOpenURL(fileUrl);
+const result = {
+  default_path: defaultApplication ? ObjC.unwrap(defaultApplication.path) : null,
+  applications: []
+};
+function iconPath(applicationPath) {
+  try {
+    const bundle = $.NSBundle.bundleWithPath(applicationPath);
+    const iconFile = ObjC.unwrap(bundle.objectForInfoDictionaryKey('CFBundleIconFile'));
+    if (!iconFile) return null;
+    const iconName = iconFile.endsWith('.icns') ? iconFile : `${iconFile}.icns`;
+    return `${applicationPath}/Contents/Resources/${iconName}`;
+  } catch (_) {
+    return null;
+  }
+}
+for (let index = 0; index < applications.count; index += 1) {
+  const application = applications.objectAtIndex(index);
+  result.applications.push({
+    name: ObjC.unwrap(application.lastPathComponent).replace(/\.app$/, ''),
+    path: ObjC.unwrap(application.path),
+    icon_path: iconPath(ObjC.unwrap(application.path))
+  });
+}
+JSON.stringify(result);
+"#;
+    let output = std::process::Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", SCRIPT, "--", path])
+        .output()
+        .map_err(|error| format!("Failed to query local file applications: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("Failed to decode local file applications: {error}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn local_file_openers(_path: &str) -> Result<LocalFileOpeners, String> {
+    Err("Listing local file applications is only supported on macOS".to_string())
+}
+
+#[tauri::command]
+fn list_local_file_openers(path: String) -> Result<LocalFileOpeners, String> {
+    let path = normalized_non_empty(path).ok_or_else(|| "Local file path is empty".to_string())?;
+    if !std::path::Path::new(&path).is_file() {
+        return Err("Local file does not exist".to_string());
+    }
+    local_file_openers(&path)
+}
+
+#[tauri::command]
+fn open_local_file_with_application(application_path: String, path: String) -> Result<(), String> {
+    let application_path = normalized_non_empty(application_path)
+        .ok_or_else(|| "Application path is empty".to_string())?;
+    let path = normalized_non_empty(path).ok_or_else(|| "Local file path is empty".to_string())?;
+    if !std::path::Path::new(&path).is_file() {
+        return Err("Local file does not exist".to_string());
+    }
+    if !std::path::Path::new(&application_path).is_dir() {
+        return Err("Application does not exist".to_string());
+    }
+    open_local_workspace_with_app(&application_path, &path)
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let value = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        output.push(TABLE[((value >> 18) & 0x3f) as usize] as char);
+        output.push(TABLE[((value >> 12) & 0x3f) as usize] as char);
+        output.push(if chunk.len() > 1 {
+            TABLE[((value >> 6) & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            TABLE[(value & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    output
+}
+
+#[cfg(target_os = "macos")]
+fn local_file_opener_icon(icon_path: &str) -> Result<String, String> {
+    let output_path = std::env::temp_dir().join(format!(
+        "wework-opener-icon-{}-{}.png",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("Failed to create icon path: {error}"))?
+            .as_nanos()
+    ));
+    let status = std::process::Command::new("sips")
+        .args(["-s", "format", "png", "-Z", "32", icon_path, "--out"])
+        .arg(&output_path)
+        .status()
+        .map_err(|error| format!("Failed to render application icon: {error}"))?;
+    if !status.success() {
+        return Err("Failed to render application icon".to_string());
+    }
+    let bytes = std::fs::read(&output_path)
+        .map_err(|error| format!("Failed to read rendered application icon: {error}"))?;
+    let _ = std::fs::remove_file(output_path);
+    Ok(format!("data:image/png;base64,{}", encode_base64(&bytes)))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn local_file_opener_icon(_icon_path: &str) -> Result<String, String> {
+    Err("Rendering local application icons is only supported on macOS".to_string())
+}
+
+#[tauri::command]
+fn get_local_file_opener_icon(icon_path: String) -> Result<String, String> {
+    let icon_path = normalized_non_empty(icon_path)
+        .ok_or_else(|| "Application icon path is empty".to_string())?;
+    if !std::path::Path::new(&icon_path).is_file() {
+        return Err("Application icon does not exist".to_string());
+    }
+    local_file_opener_icon(&icon_path)
 }
 
 #[derive(serde::Serialize)]
@@ -1477,74 +1906,18 @@ fn get_local_executor_device_id(expected_backend_url: Option<String>) -> Option<
 fn set_dock_icon_visible<R: tauri::Runtime>(app: &tauri::AppHandle<R>, visible: bool) {
     #[cfg(target_os = "macos")]
     {
-        if !visible {
-            cache_current_macos_dock_icon();
+        let state = app.state::<MainWindowLifecycleState>();
+        if state.dock_icon_visible.swap(visible, Ordering::SeqCst) == visible {
+            return;
         }
-        let policy = if visible {
-            tauri::ActivationPolicy::Regular
-        } else {
-            tauri::ActivationPolicy::Accessory
-        };
-        if let Err(error) = app.set_activation_policy(policy) {
-            log::warn!("Failed to update macOS activation policy: {error}");
-        }
-        if visible {
-            refresh_macos_dock_icon();
+        if let Err(error) = app.set_dock_visibility(visible) {
+            state.dock_icon_visible.store(!visible, Ordering::SeqCst);
+            log::warn!("Failed to update macOS Dock visibility: {error}");
         }
     }
 
     #[cfg(not(target_os = "macos"))]
     let _ = (app, visible);
-}
-
-#[cfg(all(desktop, target_os = "macos"))]
-fn macos_application() -> Option<objc2::rc::Retained<objc2_app_kit::NSApplication>> {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::NSApplication;
-
-    let Some(main_thread) = MainThreadMarker::new() else {
-        log::warn!("Skipped macOS Dock icon operation outside the main thread");
-        return None;
-    };
-    Some(NSApplication::sharedApplication(main_thread))
-}
-
-#[cfg(all(desktop, target_os = "macos"))]
-fn cache_current_macos_dock_icon() {
-    let Some(app) = macos_application() else {
-        return;
-    };
-    let Some(app_icon) = app.applicationIconImage() else {
-        return;
-    };
-    MACOS_CACHED_DOCK_ICON.with(|cached| {
-        *cached.borrow_mut() = Some(app_icon);
-    });
-}
-
-#[cfg(all(desktop, target_os = "macos"))]
-fn refresh_macos_dock_icon() {
-    let Some(app) = macos_application() else {
-        return;
-    };
-    MACOS_CACHED_DOCK_ICON.with(|cached| {
-        if let Some(app_icon) = cached.borrow().as_ref() {
-            unsafe {
-                app.setApplicationIconImage(Some(app_icon));
-            }
-        }
-    });
-}
-
-#[cfg(all(desktop, target_os = "macos"))]
-fn initialize_macos_dock_icon_cache() {
-    if let Some(app) = macos_application() {
-        if let Some(app_icon) = app.applicationIconImage() {
-            MACOS_CACHED_DOCK_ICON.with(|cached| {
-                *cached.borrow_mut() = Some(app_icon);
-            });
-        }
-    }
 }
 
 #[cfg(desktop)]
@@ -2642,6 +3015,11 @@ mod tests {
         parse_local_workspace_open_request, parse_process_snapshot_line, tray_template_pixel,
         tray_usage_icon, wework_cli_launcher_content, RawProcessInfo,
     };
+    #[cfg(target_os = "macos")]
+    use super::{
+        parse_launch_services_processes, process_physical_footprint_kib,
+        related_macos_webkit_process_ids, LaunchServicesProcess,
+    };
     use std::collections::HashSet;
 
     fn test_temp_dir(name: &str) -> std::path::PathBuf {
@@ -2735,8 +3113,30 @@ mod tests {
 
         assert!(content.contains("# Wework CLI launcher"));
         assert!(content.contains("APP_BUNDLE='/Applications/WeWork.app'"));
+        assert!(content.contains("WEWORK_EXECUTOR_SIDECAR=''"));
+        assert!(content.contains("export WEWORK_EXECUTOR_SIDECAR"));
         assert!(content.contains("\"$WEWORK_EXECUTABLE\" --open-workspace \"$ABSOLUTE_PATH\""));
         assert!(content.contains("exec open \"$APP_BUNDLE\" --args --open-workspace"));
+    }
+
+    #[test]
+    fn bakes_configured_executor_sidecar_into_cli_launcher() {
+        let previous = std::env::var_os("WEWORK_EXECUTOR_SIDECAR");
+        std::env::set_var(
+            "WEWORK_EXECUTOR_SIDECAR",
+            "/repo/wework/scripts/dev-executor-sidecar.sh",
+        );
+
+        let content = wework_cli_launcher_content(std::path::Path::new("/tmp/debug/app"), None);
+
+        assert!(content
+            .contains("WEWORK_EXECUTOR_SIDECAR='/repo/wework/scripts/dev-executor-sidecar.sh'"));
+        assert!(content.contains("export WEWORK_EXECUTOR_SIDECAR"));
+
+        match previous {
+            Some(value) => std::env::set_var("WEWORK_EXECUTOR_SIDECAR", value),
+            None => std::env::remove_var("WEWORK_EXECUTOR_SIDECAR"),
+        }
     }
 
     #[test]
@@ -2814,6 +3214,95 @@ mod tests {
         assert!(!descendants.contains(&4));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parses_launch_services_webkit_processes() {
+        let output = r#"
+192) "app" ASN:0x0-0x3f38f35:
+    bundleID=[ NULL ]
+    pid = 40739 type="Foreground"
+193) "app Networking" ASN:0x0-0x3f39f36:
+    bundleID="com.apple.WebKit.Networking"
+    pid = 41055 type="UIElement"
+194) "app Graphics and Media" ASN:0x0-0x3f3af37:
+    bundleID="com.apple.WebKit.GPU"
+    pid = 41054 type="UIElement"
+195) "app Web Content" ASN:0x0-0x3f3bf38:
+    bundleID="com.apple.WebKit.WebContent"
+    pid = 41056 type="UIElement"
+"#;
+
+        assert_eq!(
+            parse_launch_services_processes(output),
+            vec![
+                LaunchServicesProcess {
+                    display_name: "app".to_owned(),
+                    bundle_id: None,
+                    pid: 40739,
+                },
+                LaunchServicesProcess {
+                    display_name: "app Networking".to_owned(),
+                    bundle_id: Some("com.apple.WebKit.Networking".to_owned()),
+                    pid: 41055,
+                },
+                LaunchServicesProcess {
+                    display_name: "app Graphics and Media".to_owned(),
+                    bundle_id: Some("com.apple.WebKit.GPU".to_owned()),
+                    pid: 41054,
+                },
+                LaunchServicesProcess {
+                    display_name: "app Web Content".to_owned(),
+                    bundle_id: Some("com.apple.WebKit.WebContent".to_owned()),
+                    pid: 41056,
+                },
+            ]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn associates_webkit_processes_with_the_nearest_matching_app_instance() {
+        let processes = parse_launch_services_processes(
+            r#"
+1) "app" ASN:1:
+    bundleID=[ NULL ]
+    pid = 100 type="Foreground"
+2) "app Networking" ASN:2:
+    bundleID="com.apple.WebKit.Networking"
+    pid = 101 type="UIElement"
+3) "app Graphics and Media" ASN:3:
+    bundleID="com.apple.WebKit.GPU"
+    pid = 102 type="UIElement"
+4) "app Web Content" ASN:4:
+    bundleID="com.apple.WebKit.WebContent"
+    pid = 103 type="UIElement"
+5) "app" ASN:5:
+    bundleID=[ NULL ]
+    pid = 200 type="Foreground"
+6) "app Networking" ASN:6:
+    bundleID="com.apple.WebKit.Networking"
+    pid = 201 type="UIElement"
+7) "app Graphics and Media" ASN:7:
+    bundleID="com.apple.WebKit.GPU"
+    pid = 202 type="UIElement"
+8) "app Web Content" ASN:8:
+    bundleID="com.apple.WebKit.WebContent"
+    pid = 203 type="UIElement"
+"#,
+        );
+
+        assert_eq!(
+            related_macos_webkit_process_ids(&processes, 200),
+            Ok(HashSet::from([201, 202, 203]))
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reads_current_process_physical_footprint() {
+        assert!(process_physical_footprint_kib(std::process::id()).is_some_and(|value| value > 0));
+    }
+
     #[test]
     fn classifies_wework_process_groups() {
         let terminal_roots = HashSet::from([3]);
@@ -2845,6 +3334,24 @@ mod tests {
                 &terminal_descendants
             ),
             Some("terminal".to_string())
+        );
+        assert_eq!(
+            classify_process(
+                &raw_process(5, 1, "/Applications/Wework.app/wegent-executor"),
+                1,
+                &terminal_roots,
+                &terminal_descendants
+            ),
+            Some("executor".to_string())
+        );
+        assert_eq!(
+            classify_process(
+                &raw_process(6, 5, "/Applications/Wework.app/codex app-server"),
+                1,
+                &terminal_roots,
+                &terminal_descendants
+            ),
+            Some("codex-app-server".to_string())
         );
     }
 
@@ -2986,6 +3493,7 @@ pub fn run() {
             wecode::local_executor::get_local_executor_auth_token,
             wecode::local_executor::get_startup_env,
             wecode::local_executor::kill_executor_processes,
+            desktop_capture::capture_main_webview,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_eval,
             embedded_browser::embedded_browser_eval_json,
@@ -2998,15 +3506,21 @@ pub fn run() {
             embedded_browser::embedded_browser_relabel,
             embedded_browser::embedded_browser_set_bounds,
             local_terminal::close_local_terminal,
+            pick_workspace_paths,
             get_local_executor_device_id,
             local_executor::local_executor_connect_backend,
             local_executor::local_executor_copy_debug_info,
+            local_executor::local_executor_codex_home_migration_status,
             local_executor::local_executor_disconnect_backend,
             local_executor::local_executor_ensure_started,
+            local_executor::local_executor_initialize_codex_home,
+            local_executor::local_executor_migrate_native_codex_home,
+            local_executor::local_executor_read_codex_local_config,
             local_executor::local_executor_read_log,
             local_executor::local_executor_request,
             local_executor::local_executor_restart,
             local_executor::local_executor_status,
+            local_executor::local_executor_update_codex_local_config,
             get_app_log_directory,
             get_app_preferences,
             close_main_window_to_tray,
@@ -3022,6 +3536,10 @@ pub fn run() {
             local_path_exists,
             wecode::local_executor::open_executor_logs_directory,
             open_local_file,
+            reveal_local_file,
+            list_local_file_openers,
+            open_local_file_with_application,
+            get_local_file_opener_icon,
             open_local_workspace,
             read_dropped_files,
             save_local_attachment_file,
@@ -3038,9 +3556,16 @@ pub fn run() {
     app.run(|app_handle, event| {
         #[cfg(desktop)]
         match event {
-            tauri::RunEvent::Ready => {
-                #[cfg(target_os = "macos")]
-                initialize_macos_dock_icon_cache();
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } => {
+                if !has_visible_windows {
+                    if let Err(error) = ensure_main_window(app_handle, None) {
+                        log::warn!("Failed to reopen main window from macOS activation: {error}");
+                    }
+                }
             }
             tauri::RunEvent::ExitRequested { api, .. } => {
                 let lifecycle = app_handle.state::<MainWindowLifecycleState>();

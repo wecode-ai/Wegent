@@ -45,7 +45,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-WORKSPACE_FILE_COMMAND_KEYS = {"workspace_tree", "workspace_read_text_file"}
+WORKSPACE_FILE_COMMAND_KEYS = {
+    "workspace_tree",
+    "workspace_read_text_file",
+    "workspace_read_file_chunk",
+}
 WORKSPACE_ROOTS_ENV = "WEGENT_WORKSPACE_ROOTS"
 WORKSPACE_ROOTS_RUNTIME_RPC_TIMEOUT_SECONDS = 5
 

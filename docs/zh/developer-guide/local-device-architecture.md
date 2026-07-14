@@ -59,6 +59,12 @@ Tauri 会先连接 `~/.wegent-executor/app-ipc.sock`；如果本地 executor sid
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend WebSocket 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本机 socket 服务 Wework App，一边通过 WebSocket 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
+### 运行时任务与目标状态
+
+运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
+
+目标（goal）有独立的生命周期。目标为 `active` 表示其目标仍可在后续回合继续推进，不表示当前存在模型回合。因此，任务空闲时保留 active goal 不会将任务重新标记为运行中；用户发送下一条消息会直接创建新回合，而不是把消息作为对运行中回合的引导。
+
 ### 后端设备对话任务 REST 入口
 
 网页版设备对话页仍然通过 WebSocket 发送消息。对于需要从外部系统或 curl 创建同类任务的场景，Backend 提供 REST 入口：

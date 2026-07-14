@@ -301,7 +301,7 @@ describe('model-ui', () => {
     ])
   })
 
-  test('uses xhigh for ultra reasoning while accepting stored extra_high values', () => {
+  test('uses xhigh for extra-high reasoning while accepting stored extra_high values', () => {
     const model: UnifiedModel = {
       name: 'gpt-5.5',
       type: 'runtime',
@@ -321,5 +321,57 @@ describe('model-ui', () => {
     expect(getSelectedModelDisplayLabel(model, { reasoning: 'extra_high' })).toBe(
       'gpt-5.5 Extra High'
     )
+  })
+
+  test('uses the model-advertised reasoning order, default, max, and ultra values', () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Sol',
+      config: {
+        ui: {
+          family: 'codex-official',
+          modelLabel: 'GPT 5.6 Sol',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          defaultReasoningEffort: 'low',
+        },
+      },
+    }
+
+    const reasoningControl = getControlsForModel(model).find(control => control.id === 'reasoning')
+
+    expect(reasoningControl).toMatchObject({
+      defaultValue: 'low',
+      options: [
+        { value: 'low' },
+        { value: 'medium' },
+        { value: 'high' },
+        { value: 'xhigh' },
+        { value: 'max' },
+        { value: 'ultra' },
+      ],
+    })
+    expect(normalizeModelOptions(model, { reasoning: 'ultra' })).toEqual({
+      reasoning: 'ultra',
+    })
+  })
+
+  test('falls back to the advertised default when a stored effort is unsupported', () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-luna',
+      type: 'runtime',
+      displayName: 'GPT 5.6 Luna',
+      config: {
+        ui: {
+          family: 'codex-official',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+          defaultReasoningEffort: 'medium',
+        },
+      },
+    }
+
+    expect(normalizeModelOptions(model, { reasoning: 'ultra' })).toEqual({
+      reasoning: 'medium',
+    })
   })
 })

@@ -391,6 +391,7 @@ jobs:
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
           VITE_API_BASE_URL: https://api.wecode.ai/api
           VITE_SOCKET_BASE_URL: https://api.wecode.ai
+          VITE_WEGENT_BACKEND_URL: http://localhost:8000
         run: |
           set -euo pipefail
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then

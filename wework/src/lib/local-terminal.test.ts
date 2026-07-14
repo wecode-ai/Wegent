@@ -168,6 +168,39 @@ describe('local-terminal', () => {
     })
   })
 
+  test('passes sanitized context env when starting an embedded local terminal', async () => {
+    setNavigatorValue(
+      'userAgent',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
+    )
+    setNavigatorValue('platform', 'MacIntel')
+    setNavigatorValue('maxTouchPoints', 0)
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    invokeMock.mockResolvedValue('local-terminal-1')
+
+    await expect(
+      startLocalTerminal({
+        cwd: '/Users/me/project',
+        env: {
+          WEWORK_PARENT_TITLE: 'Task A',
+          ' BAD=KEY ': 'ignored',
+          EMPTY_VALUE: null,
+        },
+      })
+    ).resolves.toBe('local-terminal-1')
+    expect(invokeMock).toHaveBeenCalledWith('start_local_terminal', {
+      cwd: '/Users/me/project',
+      rows: undefined,
+      cols: undefined,
+      env: {
+        WEWORK_PARENT_TITLE: 'Task A',
+      },
+    })
+  })
+
   test('opens a local workspace through the selected native app', async () => {
     setNavigatorValue(
       'userAgent',
