@@ -5464,11 +5464,15 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
-    expect(screen.getByTestId('environment-info-panel-container')).toContainElement(
-      screen.getByTestId('environment-info-popover')
-    )
-    expect(screen.getByTestId('desktop-workbench-content')).toContainElement(
-      screen.getByTestId('environment-info-panel-container')
+    const environmentInfoPanel = screen.getByTestId('environment-info-panel-container')
+    const environmentInfoPopover = screen.getByTestId('environment-info-popover')
+    expect(environmentInfoPanel).toContainElement(environmentInfoPopover)
+    expect(environmentInfoPopover).toHaveAttribute('data-environment-info-popover')
+    expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(true)
+    expect(screen.getByTestId('desktop-workbench-content')).toContainElement(environmentInfoPanel)
+    expect(environmentInfoPanel).toHaveClass(
+      'overflow-hidden',
+      'has-[[data-environment-info-popover]]:overflow-visible'
     )
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[300px]',
@@ -5533,6 +5537,8 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('environment-info-button'))
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(false)
+    expect(environmentInfoPanel).toHaveClass('overflow-hidden')
   })
 
   test('opens environment changes review in the right workspace panel', async () => {
