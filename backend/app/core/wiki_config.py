@@ -46,7 +46,6 @@ class WikiSettings(BaseSettings):
         "guide",
         "deep",
     ]
-    INTERNAL_API_TOKEN: str = ""
 
     class Config:
         env_file = ".env"
