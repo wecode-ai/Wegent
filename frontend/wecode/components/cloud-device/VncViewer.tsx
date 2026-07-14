@@ -62,9 +62,9 @@ export function VncViewer({ deviceId, ownerUserId, className = '' }: VncViewerPr
 
       // Build WebSocket URL for VNC proxy
       // Two modes:
-      // 1. Direct backend (npm run dev): getSocketUrl() returns backend URL like http://localhost:8000
-      //    -> connect to ws://localhost:8000/api/cloud-devices/{deviceId}/vnc-ws?token=jwt
-      // 2. Proxy mode (npm run dev:proxy / production): getSocketUrl() is empty
+      // 1. Configured proxy host: getSocketUrl() returns a URL like http://localhost:8000
+      //    -> connect to ws://localhost:8000/vnc-proxy/{deviceId}?token=jwt
+      // 2. Same-origin proxy mode: getSocketUrl() is empty
       //    -> connect to ws://current-host/vnc-proxy/{deviceId}?token=jwt (handled by server.cjs)
       const backendUrl = getSocketUrl()
       const searchParams = new URLSearchParams({
@@ -76,11 +76,11 @@ export function VncViewer({ deviceId, ownerUserId, className = '' }: VncViewerPr
 
       let wsUrl: string
       if (backendUrl) {
-        // Direct backend mode
+        // Configured proxy host mode
         const wsBase = backendUrl.replace(/^http/, 'ws')
-        wsUrl = `${wsBase}/api/cloud-devices/${encodeURIComponent(deviceId)}/vnc-ws?${searchParams.toString()}`
+        wsUrl = `${wsBase}/vnc-proxy/${encodeURIComponent(deviceId)}?${searchParams.toString()}`
       } else {
-        // Proxy mode (server.cjs)
+        // Same-origin proxy mode (server.cjs)
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         wsUrl = `${protocol}//${window.location.host}/vnc-proxy/${encodeURIComponent(deviceId)}?${searchParams.toString()}`
       }
