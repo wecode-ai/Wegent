@@ -195,7 +195,8 @@ async function runServer(sessionPath, token) {
   }
   await writeFile(sessionPath, `${JSON.stringify(updated, null, 2)}\n`)
   const log = join(session.directory, 'app.log')
-  const codexHome = join(session.directory, 'executor-home', 'codex')
+  const executorHome = join(session.directory, 'executor-home')
+  const codexHome = join(executorHome, 'codex')
   await mkdir(codexHome, { recursive: true })
   await symlink(join(homedir(), '.codex', 'auth.json'), join(codexHome, 'auth.json'))
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
@@ -209,7 +210,8 @@ async function runServer(sessionPath, token) {
       CODEX_HOME: codexHome,
       DEVICE_ID: session.deviceId,
       WEGENT_EXECUTOR_APP_IPC_SOCKET: updated.socketPath,
-      WEGENT_EXECUTOR_HOME: join(session.directory, 'executor-home'),
+      WEGENT_EXECUTOR_HOME: executorHome,
+      WEGENT_EXECUTOR_PROJECTS_DIR: join(executorHome, 'workspace', 'projects'),
       WEGENT_EXECUTOR_LOG_DIR: session.directory,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
