@@ -5,6 +5,7 @@
 pub mod agents;
 pub mod app;
 pub mod attachments;
+pub mod browser_mcp;
 pub mod callback;
 mod claude_session;
 mod codex_phase;
