@@ -3,6 +3,7 @@ import { Activity, Bell, Check, CircleDot, Gauge, Loader2, type LucideIcon } fro
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader, SettingsRow, SettingsSwitch } from './settings-ui'
 import { applyLanguagePreference, languagePreferenceOptions } from '@/i18n/languagePreference'
+import { ExternalContentImportDialog } from './ExternalContentImportDialog'
 import {
   defaultAppPreferences,
   getAppPreferences,
@@ -36,6 +37,7 @@ export function GeneralSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showImportDialog, setShowImportDialog] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -222,6 +224,23 @@ export function GeneralSettingsPage() {
       </section>
 
       <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
+        <SettingsRow
+          label={t('workbench.external_import_row_title')}
+          description={t('workbench.external_import_row_description')}
+          control={
+            <button
+              type="button"
+              data-testid="general-external-content-import-button"
+              onClick={() => setShowImportDialog(true)}
+              className="h-8 rounded-md bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted"
+            >
+              {t('workbench.external_import_action')}
+            </button>
+          }
+        />
+      </section>
+
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
         <div className="border-b border-border px-4 py-2.5">
           <h2 className="text-sm font-semibold text-text-primary">
             {t('workbench.general_settings_background_title')}
@@ -317,6 +336,9 @@ export function GeneralSettingsPage() {
               (loading ? t('common.loading', '加载中...') : t('workbench.general_settings_saving'))}
           </span>
         </div>
+      )}
+      {showImportDialog && (
+        <ExternalContentImportDialog onClose={() => setShowImportDialog(false)} />
       )}
     </SettingsPage>
   )

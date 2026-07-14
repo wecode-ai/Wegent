@@ -399,6 +399,21 @@ pub struct CodexHomeInitializeOptions {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExternalContentImportOptions {
+    source: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalContentImportResult {
+    source: String,
+    source_path: String,
+    destination_path: String,
+    imported_entries: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexLocalConfigPatch {
     remote_apps_enabled: Option<bool>,
 }
@@ -1176,6 +1191,70 @@ fn copy_codex_initialization_files(source: &Path, destination: &Path) -> Result<
         copy_codex_initialization_entry(&source_path, &destination_path)?;
     }
     Ok(())
+}
+
+fn import_external_content(source: &str) -> Result<ExternalContentImportResult, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    let executor_home = local_executor_home_path()?;
+    let destination = wework_codex_home_path(&executor_home.display().to_string())?;
+    import_external_content_from_paths(source, &home, &destination)
+}
+
+fn import_external_content_from_paths(
+    source: &str,
+    home: &Path,
+    destination: &Path,
+) -> Result<ExternalContentImportResult, String> {
+    let (source_path, entries): (PathBuf, Vec<(&str, &str)>) = match source {
+        "codex" => (
+            home.join(".codex"),
+            vec![
+                ("config.toml", "config.toml"),
+                ("auth.json", "auth.json"),
+                ("AGENTS.md", "AGENTS.md"),
+                ("models_cache.json", "models_cache.json"),
+                ("plugins", "plugins"),
+                ("skills", "skills"),
+                ("cache", "cache"),
+                ("vendor_imports", "vendor_imports"),
+            ],
+        ),
+        "claude-code" => (
+            home.join(".claude"),
+            vec![("CLAUDE.md", "AGENTS.md"), ("skills", "skills")],
+        ),
+        _ => return Err(format!("Unsupported import source: {source}")),
+    };
+    if !source_path.is_dir() {
+        return Err(format!(
+            "Import source does not exist: {}",
+            source_path.display()
+        ));
+    }
+
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
+    let mut imported_entries = Vec::new();
+    for (source_entry, destination_entry) in entries {
+        let entry_path = source_path.join(source_entry);
+        if !entry_path.exists() {
+            continue;
+        }
+        copy_codex_initialization_entry(&entry_path, &destination.join(destination_entry))?;
+        imported_entries.push(source_entry.to_string());
+    }
+    if imported_entries.is_empty() {
+        return Err(format!(
+            "No supported content was found in {}",
+            source_path.display()
+        ));
+    }
+    Ok(ExternalContentImportResult {
+        source: source.to_string(),
+        source_path: source_path.display().to_string(),
+        destination_path: destination.display().to_string(),
+        imported_entries,
+    })
 }
 
 fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
@@ -2189,6 +2268,13 @@ pub async fn local_executor_migrate_native_codex_home() -> Result<CodexHomeMigra
 }
 
 #[tauri::command]
+pub async fn local_executor_import_external_content(
+    options: ExternalContentImportOptions,
+) -> Result<ExternalContentImportResult, String> {
+    import_external_content(&options.source)
+}
+
+#[tauri::command]
 pub async fn local_executor_copy_debug_info(text: String) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("Debug info must not be empty".to_string());
@@ -2297,6 +2383,17 @@ mod tests {
         }
     }
 
+    fn import_test_root(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "wework-import-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
     #[test]
     fn parses_success_response_line() {
         let line = r#"{"type":"response","id":"req-1","ok":true,"result":{"value":1}}"#;
@@ -2335,6 +2432,43 @@ mod tests {
         assert!(!read_remote_apps_enabled_from_config(
             "[other]\napps = true\n"
         ));
+    }
+
+    #[test]
+    fn imports_codex_initialization_content_again() {
+        let root = import_test_root("codex");
+        let home = root.join("home");
+        let destination = root.join("destination");
+        fs::create_dir_all(home.join(".codex/skills/example")).unwrap();
+        fs::write(home.join(".codex/config.toml"), "model = \"gpt-5\"").unwrap();
+        fs::write(home.join(".codex/skills/example/SKILL.md"), "example").unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("config.toml"), "old").unwrap();
+
+        let result = import_external_content_from_paths("codex", &home, &destination).unwrap();
+
+        assert_eq!(fs::read_to_string(destination.join("config.toml")).unwrap(), "model = \"gpt-5\"");
+        assert!(destination.join("skills/example/SKILL.md").is_file());
+        assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn maps_claude_instructions_and_skills_to_codex_content() {
+        let root = import_test_root("claude");
+        let home = root.join("home");
+        let destination = root.join("destination");
+        fs::create_dir_all(home.join(".claude/skills/example")).unwrap();
+        fs::write(home.join(".claude/CLAUDE.md"), "Claude instructions").unwrap();
+        fs::write(home.join(".claude/skills/example/SKILL.md"), "example").unwrap();
+
+        let result =
+            import_external_content_from_paths("claude-code", &home, &destination).unwrap();
+
+        assert_eq!(fs::read_to_string(destination.join("AGENTS.md")).unwrap(), "Claude instructions");
+        assert!(destination.join("skills/example/SKILL.md").is_file());
+        assert_eq!(result.imported_entries, vec!["CLAUDE.md", "skills"]);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
