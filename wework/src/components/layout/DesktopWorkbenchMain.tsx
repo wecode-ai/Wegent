@@ -47,6 +47,7 @@ import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
+  DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
   markEmbeddedBrowserLabelTransferred,
   relabelEmbeddedBrowser,
@@ -636,6 +637,25 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     migratedEmbeddedBrowserLabel,
   ])
 
+  useEffect(() => {
+    if (paneActive || migratedEmbeddedBrowserLabel !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
+
+    let disposed = false
+    void relabelEmbeddedBrowser(DEFAULT_EMBEDDED_BROWSER_LABEL, defaultEmbeddedBrowserLabel)
+      .then(() => {
+        if (disposed) return
+        markEmbeddedBrowserLabelTransferred(DEFAULT_EMBEDDED_BROWSER_LABEL)
+        setMigratedEmbeddedBrowserLabel(null)
+      })
+      .catch(error => {
+        console.error('Failed to preserve embedded browser for inactive task:', error)
+      })
+
+    return () => {
+      disposed = true
+    }
+  }, [defaultEmbeddedBrowserLabel, migratedEmbeddedBrowserLabel, paneActive])
+
   const bottomPanelWorkspaceKey = createBottomPanelWorkspaceKey({
     currentRuntimeTask,
     workspaceProjectId: workspaceProject?.id,
@@ -825,7 +845,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   }, [openRightPanelTab])
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {
-      if (request.label && request.label !== embeddedBrowserLabel) return
+      if (request.label === DEFAULT_EMBEDDED_BROWSER_LABEL && !paneActive) return
+      if (request.label && request.label !== embeddedBrowserLabel) {
+        if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
+        setMigratedEmbeddedBrowserLabel(request.label)
+      }
       setEmbeddedBrowserOpenRequest(current => ({
         ...request,
         id: (current?.id ?? 0) + 1,
@@ -836,7 +860,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [embeddedBrowserLabel, openRightPanelTab])
+  }, [embeddedBrowserLabel, openRightPanelTab, paneActive])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
