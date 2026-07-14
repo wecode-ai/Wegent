@@ -1353,6 +1353,7 @@ class KnowledgeOrchestrator:
                 filename=filename,
                 binary_data=binary_data,
                 subtask_id=0,  # Unlinked attachment for knowledge base
+                parse_mode="knowledge_raw",
             )
 
             # Create document using shared helper
@@ -1387,6 +1388,7 @@ class KnowledgeOrchestrator:
             filename=filename,
             binary_data=binary_data,
             subtask_id=0,
+            parse_mode="knowledge_raw",
         )
 
         # Create document using shared helper
@@ -1904,10 +1906,10 @@ class KnowledgeOrchestrator:
                 )
                 dispatched_attachment_id = document.attachment_id
 
-            elif settings.needs_conversion(normalized_extension):
-                # File type requires conversion before indexing
-                # Task is dispatched to knowledge_doc_converter microservice
-                # via the shared Celery broker (knowledge_conversion queue)
+            elif pipeline in {"mineru", "local_markdown"}:
+                # File type requires conversion before indexing. The converter
+                # worker chooses the concrete implementation from the
+                # knowledge_engine format registry.
 
                 # Override QUEUED -> PENDING_CONVERSION: document is waiting
                 # for a conversion worker, not for direct indexing

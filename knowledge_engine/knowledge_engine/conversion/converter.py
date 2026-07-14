@@ -13,10 +13,19 @@ import logging
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from knowledge_engine.conversion.formats import (
+    KnowledgeFormatPipeline,
+    get_knowledge_pipeline,
+)
+from knowledge_engine.conversion.local_markdown import convert_local_markdown
 from knowledge_engine.conversion.mineru_client import (
     SUPPORTED_MIME_TYPES,
     MinerUConfig,
     submit_and_wait,
+)
+from knowledge_engine.conversion.office_legacy import (
+    convert_legacy_office_to_openxml,
+    is_legacy_office_extension,
 )
 from knowledge_engine.conversion.s3_uploader import S3Config, S3Uploader
 from knowledge_engine.conversion.zip_extractor import extract_markdown_from_zip
@@ -59,10 +68,22 @@ def convert_document(
         RuntimeError: If conversion fails
     """
     ext = file_extension.lstrip(".").lower()
-    if ext not in SUPPORTED_MIME_TYPES:
+    pipeline = get_knowledge_pipeline(ext)
+
+    if pipeline == KnowledgeFormatPipeline.LOCAL_MARKDOWN:
+        return ConversionResult(
+            markdown_bytes=convert_local_markdown(binary_data, ext),
+            uploaded_images=[],
+        )
+
+    if pipeline == KnowledgeFormatPipeline.MINERU and is_legacy_office_extension(ext):
+        binary_data, ext = convert_legacy_office_to_openxml(binary_data, ext)
+
+    if pipeline != KnowledgeFormatPipeline.MINERU or ext not in SUPPORTED_MIME_TYPES:
+        supported = sorted(SUPPORTED_MIME_TYPES)
         raise RuntimeError(
             f"Conversion for '{ext}' not supported. "
-            f"Supported: {', '.join(SUPPORTED_MIME_TYPES)}"
+            f"Supported: {', '.join(supported)}"
         )
 
     # Use thread executor if already in a running event loop (e.g., async tests)

@@ -79,10 +79,7 @@ See [Knowledge Base Types](./knowledge-base-types.md) for detailed comparison.
 
 ### Supported Formats
 
-- `.txt` - Plain text files
-- `.md` - Markdown files
-- `.pdf` - PDF documents
-- `.doc`, `.docx` - Word documents
+Wegent supports common documents, Office files, structured text, plain text, code/configuration files, XMind maps, and multimodal files when multimodal analysis is enabled. The exact upload allow-list is delivered by the backend and can be narrowed by administrators with `KNOWLEDGE_UPLOAD_FILE_TYPES`.
 
 See [Document Management](./document-management.md) for detailed guide.
 

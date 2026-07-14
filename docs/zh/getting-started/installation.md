@@ -123,6 +123,13 @@ WEGENT_IMAGE_TAG=latest
 # 可选：显式覆盖 executor 镜像；未设置时跟随 WEGENT_IMAGE_TAG
 # EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 EXECUTOR_WORKSPACE=/path/to/workspace
+
+# 知识库文档转换（PDF/Office/EPUB/HTML/XML/EML 等）
+INTERNAL_SERVICE_TOKEN=replace-with-a-shared-secret
+KNOWLEDGE_CONVERSION_ENABLED=true
+KNOWLEDGE_CONVERSION_QUEUE=knowledge_conversion
+# 可选：限制知识库允许上传的文件扩展名；留空时使用系统默认格式注册表
+# KNOWLEDGE_UPLOAD_FILE_TYPES=pdf,docx,epub,eml,html,xml,txt,md
 ```
 
 `RUNTIME_WEWORK_CODE_URL` 为空时，Wegent Web 的编码入口会进入 `/chat?agent=code`，并只显示编码智能体；配置后，左侧菜单显示 **WeWork** 而不是 **编码**，并打开该运行时 URL。该配置只通过 `/runtime-config` 下发，不支持 `NEXT_PUBLIC_*` 回退。
@@ -138,6 +145,38 @@ docker-compose ps
 
 # 查看日志
 docker-compose logs -f
+```
+
+知识库文档转换、知识检索运行时和 Elasticsearch 使用 `rag` profile。需要上传 PDF、Office、EPUB、HTML、XML、EML 等需要转换或索引的文档时，请使用：
+
+```bash
+docker compose --profile rag up -d
+```
+
+如果只想启动依赖容器，并在本机运行源码服务，可以先启动：
+
+```bash
+docker compose --profile rag up -d mysql redis elasticsearch
+```
+
+再分别启动后端、前端、`knowledge_runtime` 和 `knowledge_doc_converter`。
+
+> `knowledge_doc_converter` 必须与后端使用同一个 `INTERNAL_SERVICE_TOKEN`。在 Docker Compose 中由 `BACKEND_INTERNAL_TOKEN` 传给转换服务；在本机源码启动时，请在 `knowledge_doc_converter/.env` 中设置相同的 `BACKEND_INTERNAL_TOKEN`，否则转换服务调用后端内部下载和回调接口会返回 `401 Unauthorized`，文档会停留在“待转换”。
+
+旧版 Office 文件（`.doc`、`.ppt`、`.xls`）需要转换服务环境安装 LibreOffice。Docker 镜像已包含所需组件；本机源码运行时需自行安装：
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
+
+# macOS
+brew install --cask libreoffice
+```
+
+macOS 如需显式指定路径，可在 `knowledge_doc_converter/.env` 中配置：
+
+```bash
+SOFFICE_PATH=/Applications/LibreOffice.app/Contents/MacOS/soffice
 ```
 
 如需测试 CI 发布的 edge 镜像，可以设置统一镜像 tag：
@@ -205,6 +244,9 @@ sudo apt-get install git
 ```bash
 # 使用 Homebrew 安装
 brew install python@3.10 node@18 mysql redis git
+
+# 可选：本机运行知识库转换服务并处理 .doc/.ppt/.xls 时需要
+brew install --cask libreoffice
 ```
 
 ### 步骤 2: 设置数据库
@@ -292,6 +334,30 @@ pnpm run dev
 ### 步骤 6: 安装 Executor Manager
 
 [本地开发](/executor_manager/README_zh.md)
+
+### 步骤 7: 启动知识库转换服务（可选）
+
+当 `KNOWLEDGE_CONVERSION_ENABLED=true` 时，需要运行 `knowledge_doc_converter` worker 才能处理待转换文档：
+
+```bash
+cd knowledge_doc_converter
+cp .env.example .env
+vim .env  # 设置 BACKEND_BASE_URL、BACKEND_INTERNAL_TOKEN 和 Redis 地址
+
+./start.sh
+```
+
+`knowledge_doc_converter/.env` 至少应包含：
+
+```bash
+BACKEND_BASE_URL=http://localhost:8000
+BACKEND_INTERNAL_TOKEN=<same-as-backend-INTERNAL_SERVICE_TOKEN>
+CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+REDIS_URL=redis://127.0.0.1:6379/0
+```
+
+如果只运行本机源码服务，避免同时启动 Docker 版 `knowledge_doc_converter`，否则两个 worker 可能消费同一个 `knowledge_conversion` 队列。
 
 ---
 

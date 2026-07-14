@@ -123,6 +123,13 @@ WEGENT_IMAGE_TAG=latest
 # Optional: explicitly override the executor image; leave unset to follow WEGENT_IMAGE_TAG
 # EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
 EXECUTOR_WORKSPACE=/path/to/workspace
+
+# Knowledge document conversion (PDF/Office/EPUB/HTML/XML/EML, etc.)
+INTERNAL_SERVICE_TOKEN=replace-with-a-shared-secret
+KNOWLEDGE_CONVERSION_ENABLED=true
+KNOWLEDGE_CONVERSION_QUEUE=knowledge_conversion
+# Optional: restrict uploadable knowledge-base extensions; leave empty for the default registry
+# KNOWLEDGE_UPLOAD_FILE_TYPES=pdf,docx,epub,eml,html,xml,txt,md
 ```
 
 When `RUNTIME_WEWORK_CODE_URL` is empty, Wegent Web opens coding entry points at `/chat?agent=code` and filters to coding agents. When it is configured, the sidebar shows **WeWork** instead of **Code** and opens that runtime URL. This setting is delivered only through `/runtime-config`; there is no `NEXT_PUBLIC_*` fallback.
@@ -138,6 +145,38 @@ docker-compose ps
 
 # View logs
 docker-compose logs -f
+```
+
+Knowledge document conversion, the knowledge runtime, and Elasticsearch use the `rag` profile. To upload documents that require conversion or indexing, such as PDF, Office, EPUB, HTML, XML, or EML files, start services with:
+
+```bash
+docker compose --profile rag up -d
+```
+
+If you only want Docker for dependencies and run application services from source, start:
+
+```bash
+docker compose --profile rag up -d mysql redis elasticsearch
+```
+
+Then start the backend, frontend, `knowledge_runtime`, and `knowledge_doc_converter` from source.
+
+> `knowledge_doc_converter` must use the same shared secret as the backend. Docker Compose passes it as `BACKEND_INTERNAL_TOKEN`; when running from source, set the same value in `knowledge_doc_converter/.env`. If it does not match the backend `INTERNAL_SERVICE_TOKEN`, converter downloads and callbacks return `401 Unauthorized`, and documents remain in **Pending Conversion**.
+
+Legacy Office files (`.doc`, `.ppt`, `.xls`) require LibreOffice in the converter runtime. The Docker image includes the required components. For source-based local runs, install it manually:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
+
+# macOS
+brew install --cask libreoffice
+```
+
+On macOS, you can set an explicit path in `knowledge_doc_converter/.env`:
+
+```bash
+SOFFICE_PATH=/Applications/LibreOffice.app/Contents/MacOS/soffice
 ```
 
 To test CI-published edge images, set the shared image tag:
@@ -205,6 +244,9 @@ sudo apt-get install git
 ```bash
 # Install using Homebrew
 brew install python@3.10 node@18 mysql redis git
+
+# Optional: required when running the converter from source and processing .doc/.ppt/.xls
+brew install --cask libreoffice
 ```
 
 ### Step 2: Setup Database
@@ -292,6 +334,30 @@ The repository root `pnpm-workspace.yaml` declares the dependency build-script a
 ### Step 6: Install Executor Manager
 
 [Local Development](/executor_manager/README.md)
+
+### Step 7: Start Knowledge Document Converter (Optional)
+
+When `KNOWLEDGE_CONVERSION_ENABLED=true`, run the `knowledge_doc_converter` worker to process documents waiting for conversion:
+
+```bash
+cd knowledge_doc_converter
+cp .env.example .env
+vim .env  # Set BACKEND_BASE_URL, BACKEND_INTERNAL_TOKEN, and Redis URLs
+
+./start.sh
+```
+
+`knowledge_doc_converter/.env` should include at least:
+
+```bash
+BACKEND_BASE_URL=http://localhost:8000
+BACKEND_INTERNAL_TOKEN=<same-as-backend-INTERNAL_SERVICE_TOKEN>
+CELERY_BROKER_URL=redis://127.0.0.1:6379/0
+CELERY_RESULT_BACKEND=redis://127.0.0.1:6379/1
+REDIS_URL=redis://127.0.0.1:6379/0
+```
+
+When running application services from source, do not also run the Docker `knowledge_doc_converter`, otherwise two workers may consume the same `knowledge_conversion` queue.
 
 ---
 

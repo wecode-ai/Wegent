@@ -65,6 +65,36 @@ def test_create_embedding_model_exposes_additional_input_modalities(mocker) -> N
     assert result._additional_input_modalities == ["image"]
 
 
+def test_openai_compatible_base_url_uses_custom_embedding(mocker) -> None:
+    embedding_instance = SimpleNamespace()
+    custom_embedding_cls = mocker.patch(
+        "knowledge_engine.embedding.factory.CustomEmbedding",
+        return_value=embedding_instance,
+    )
+
+    result = create_embedding_model_from_runtime_config(
+        RuntimeEmbeddingModelConfig(
+            model_name="bge-m3",
+            resolved_config={
+                "protocol": "openai",
+                "base_url": "https://haf.example.com/haf-compatible",
+                "model_id": "bge-m3",
+                "api_key": "token",
+                "dimensions": 1024,
+            },
+        )
+    )
+
+    custom_embedding_cls.assert_called_once_with(
+        api_url="https://haf.example.com/haf-compatible/embeddings",
+        model="bge-m3",
+        headers={},
+        api_key="token",
+        dimensions=1024,
+    )
+    assert result is embedding_instance
+
+
 @pytest.mark.asyncio
 async def test_custom_embedding_supports_async_text_embedding(mocker) -> None:
     embedding = CustomEmbedding(

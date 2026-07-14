@@ -78,6 +78,54 @@ class TestSettings:
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 120
         assert s.ENABLE_API_DOCS is False
 
+    def test_needs_conversion_uses_registry_when_types_unset(self):
+        """Conversion-enabled KBs use the knowledge format registry by default."""
+        s = build_settings(
+            KNOWLEDGE_CONVERSION_ENABLED=True,
+            KNOWLEDGE_CONVERSION_FILE_TYPES="",
+        )
+
+        assert s.needs_conversion("pdf") is True
+        assert s.needs_conversion("epub") is True
+        assert s.needs_conversion("txt") is False
+
+    def test_needs_conversion_explicit_types_override_registry(self):
+        """Deployments can still narrow conversion to an explicit extension list."""
+        s = build_settings(
+            KNOWLEDGE_CONVERSION_ENABLED=True,
+            KNOWLEDGE_CONVERSION_FILE_TYPES="pdf",
+        )
+
+        assert s.needs_conversion("pdf") is True
+        assert s.needs_conversion("epub") is False
+
+    def test_knowledge_upload_extensions_use_registry_by_default(self):
+        """KB upload accept defaults to the enabled knowledge format registry."""
+        s = build_settings(KNOWLEDGE_UPLOAD_FILE_TYPES="")
+
+        assert "epub" in s.knowledge_upload_extensions()
+        assert "xmind" in s.knowledge_upload_extensions()
+        assert "key" not in s.knowledge_upload_extensions()
+        assert "jpg" in s.knowledge_upload_extensions(include_multimodal=True)
+        assert "jpg" not in s.knowledge_upload_extensions(include_multimodal=False)
+
+    def test_knowledge_upload_extensions_can_be_configured(self):
+        """Deployments can narrow KB uploads without editing frontend code."""
+        s = build_settings(KNOWLEDGE_UPLOAD_FILE_TYPES="pdf, .epub, jpg, unknown")
+
+        assert s.knowledge_upload_extensions(include_multimodal=False) == (
+            "epub",
+            "pdf",
+        )
+        assert s.knowledge_upload_extensions(include_multimodal=True) == (
+            "epub",
+            "jpg",
+            "pdf",
+        )
+        assert s.knowledge_upload_accept(include_multimodal=False) == ".epub,.pdf"
+        assert s.is_knowledge_upload_extension_allowed(".jpg") is True
+        assert s.is_knowledge_upload_extension_allowed(".unknown") is False
+
     def test_settings_database_url(self):
         """Test database URL configuration"""
         s = build_settings()

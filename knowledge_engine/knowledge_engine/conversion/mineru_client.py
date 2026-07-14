@@ -47,11 +47,8 @@ class MinerUConfig:
 SUPPORTED_MIME_TYPES = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "doc": "application/msword",
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "ppt": "application/vnd.ms-powerpoint",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "xls": "application/vnd.ms-excel",
 }
 
 
@@ -118,7 +115,20 @@ async def _submit_task(
     response = await client.post(
         submit_url, data=data, files=files, timeout=config.submit_timeout_seconds
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = response.text[:500]
+        logger.error(
+            "[MinerU] Submit failed: status=%s, filename=%s, response=%s",
+            response.status_code,
+            filename,
+            detail,
+        )
+        raise RuntimeError(
+            f"MinerU submit failed for {filename}: "
+            f"HTTP {response.status_code}, response={detail}"
+        ) from exc
 
     result = response.json()
     task_id = result.get("task_id") if isinstance(result, dict) else result.strip('"')

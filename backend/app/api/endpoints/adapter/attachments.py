@@ -311,6 +311,7 @@ def _validate_share_token_access(
 async def upload_attachment(
     file: UploadFile = File(...),
     overwrite_attachment_id: Optional[int] = None,
+    purpose: str = Query(default="chat"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_jwt_apikey_tasktoken),
     authorization: str = Header(default=""),
@@ -343,11 +344,13 @@ async def upload_attachment(
 
     logger.info(
         f"[attachments.py] upload_attachment: user_id={current_user.id}, "
-        f"filename={file.filename}, subtask_id={subtask_id}"
+        f"filename={file.filename}, subtask_id={subtask_id}, purpose={purpose}"
     )
 
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
+    if purpose not in {"chat", "knowledge"}:
+        raise HTTPException(status_code=400, detail="Invalid upload purpose")
 
     # Read file content
     try:
@@ -367,6 +370,7 @@ async def upload_attachment(
         )
 
     try:
+        parse_mode = "knowledge_raw" if purpose == "knowledge" else "chat"
         if overwrite_attachment_id is not None:
             if overwrite_attachment_id <= 0:
                 raise HTTPException(
@@ -378,6 +382,7 @@ async def upload_attachment(
                 user_id=current_user.id,
                 filename=file.filename,
                 binary_data=binary_data,
+                parse_mode=parse_mode,
             )
         else:
             context, truncation_info = context_service.upload_attachment(
@@ -386,6 +391,7 @@ async def upload_attachment(
                 filename=file.filename,
                 binary_data=binary_data,
                 subtask_id=subtask_id,
+                parse_mode=parse_mode,
             )
 
         return _build_attachment_response(context, truncation_info)

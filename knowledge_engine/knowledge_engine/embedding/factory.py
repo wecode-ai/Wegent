@@ -46,12 +46,8 @@ def _create_embedding_model_from_resolved_values(
         additional_input_modalities
     )
     if protocol == "openai":
-        if custom_headers:
-            api_url = (
-                f"{base_url.rstrip('/')}/embeddings"
-                if base_url
-                else "https://api.openai.com/v1/embeddings"
-            )
+        if base_url or custom_headers:
+            api_url = _build_openai_compatible_embedding_url(base_url)
             return _attach_runtime_capabilities(
                 CustomEmbedding(
                     api_url=api_url,
@@ -95,6 +91,18 @@ def _create_embedding_model_from_resolved_values(
     raise ValueError(
         f"Unsupported embedding protocol for model '{model_name}': {protocol}"
     )
+
+
+def _build_openai_compatible_embedding_url(base_url: str | None) -> str:
+    """Build the embeddings endpoint for OpenAI-compatible providers."""
+
+    if not base_url:
+        return "https://api.openai.com/v1/embeddings"
+
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/embeddings"):
+        return normalized
+    return f"{normalized}/embeddings"
 
 
 def _attach_runtime_capabilities(

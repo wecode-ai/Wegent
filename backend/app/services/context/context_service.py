@@ -11,7 +11,7 @@ context types that can be associated with subtasks.
 
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from sqlalchemy.orm import Session
 
@@ -48,6 +48,8 @@ from shared.utils.crypto import decrypt_attachment, encrypt_attachment
 from shared.utils.multimodal_ext import multimodal_media_type
 
 logger = logging.getLogger(__name__)
+
+AttachmentParseMode = Literal["chat", "knowledge_raw"]
 
 
 def _should_encrypt() -> bool:
@@ -109,6 +111,7 @@ class ContextService:
         self,
         filename: str,
         binary_data: bytes,
+        parse_mode: AttachmentParseMode = "chat",
     ) -> Tuple[str, int, str]:
         """
         Validate attachment input and return basic metadata.
@@ -119,18 +122,48 @@ class ContextService:
         _, extension = os.path.splitext(filename)
         extension = extension.lower()
 
-        if not self.parser.is_supported_extension(extension):
-            raise ValueError(
-                f"Unsupported file type: {extension}. "
-                f"Supported types: {', '.join(self.parser.SUPPORTED_EXTENSIONS.keys())}"
-            )
-
         file_size = len(binary_data)
         if not self.parser.validate_file_size(file_size):
             max_size_mb = DocumentParser.get_max_file_size() / (1024 * 1024)
             raise ValueError(f"File size exceeds maximum limit ({max_size_mb} MB)")
 
-        mime_type = self.parser.get_mime_type(extension)
+        if parse_mode == "knowledge_raw":
+            from knowledge_engine.conversion.formats import (
+                KnowledgeFormatPipeline,
+                get_knowledge_format,
+                validate_knowledge_file,
+            )
+
+            validate_knowledge_file(binary_data, extension)
+            knowledge_format = get_knowledge_format(extension)
+            if knowledge_format is None:
+                raise ValueError(f"Unsupported knowledge file type: {extension}")
+            if not settings.is_knowledge_upload_extension_allowed(extension):
+                supported = settings.knowledge_upload_accept(include_multimodal=True)
+                raise ValueError(
+                    f"Unsupported knowledge file type: {extension}. "
+                    f"Supported types: {supported}"
+                )
+            if (
+                knowledge_format.pipeline == KnowledgeFormatPipeline.MULTIMODAL
+                and not settings.KNOWLEDGE_MULTIMODAL_ENABLED
+            ):
+                raise ValueError(
+                    "Multimodal knowledge uploads are disabled by configuration"
+                )
+            mime_type = (
+                knowledge_format.mime_types[0]
+                if knowledge_format.mime_types
+                else "application/octet-stream"
+            )
+        elif not self.parser.is_supported_extension(extension):
+            raise ValueError(
+                f"Unsupported file type: {extension}. "
+                f"Supported types: {', '.join(self.parser.SUPPORTED_EXTENSIONS.keys())}"
+            )
+        else:
+            mime_type = self.parser.get_mime_type(extension)
+
         return extension, file_size, mime_type
 
     @staticmethod
@@ -334,6 +367,7 @@ class ContextService:
         filename: str,
         binary_data: bytes,
         subtask_id: int = 0,
+        parse_mode: AttachmentParseMode = "chat",
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
         Upload and process a file attachment.
@@ -344,6 +378,8 @@ class ContextService:
             filename: Original filename
             binary_data: File binary data
             subtask_id: Subtask ID to link to (0 means unlinked)
+            parse_mode: "chat" parses content for chat injection; "knowledge_raw"
+                stores the original file for the KB conversion/index pipeline.
 
         Returns:
             Tuple of (Created SubtaskContext record, TruncationInfo if truncated)
@@ -354,7 +390,9 @@ class ContextService:
             StorageError: If storage operation fails
         """
         extension, file_size, mime_type = self._validate_attachment_input(
-            filename, binary_data
+            filename,
+            binary_data,
+            parse_mode=parse_mode,
         )
 
         # Get the storage backend
@@ -393,20 +431,32 @@ class ContextService:
             db.rollback()
             raise
 
-        # Update status to PARSING
-        context.status = ContextStatus.PARSING.value
-        db.flush()
+        if parse_mode == "knowledge_raw":
+            context.status = ContextStatus.READY.value
+            context.extracted_text = ""
+            context.text_length = 0
+            context.image_base64 = ""
+            context.type_data = {
+                **(context.type_data or {}),
+                "is_truncated": False,
+                "parse_mode": parse_mode,
+            }
+            truncation_info = None
+        else:
+            # Update status to PARSING
+            context.status = ContextStatus.PARSING.value
+            db.flush()
 
-        # Parse document
-        try:
-            truncation_info = self._parse_and_update_context(
-                context=context,
-                binary_data=binary_data,
-                extension=extension,
-            )
-        except DocumentParseError as e:
-            db.commit()
-            raise
+            # Parse document
+            try:
+                truncation_info = self._parse_and_update_context(
+                    context=context,
+                    binary_data=binary_data,
+                    extension=extension,
+                )
+            except DocumentParseError:
+                db.commit()
+                raise
 
         db.commit()
         db.refresh(context)
@@ -427,6 +477,7 @@ class ContextService:
         user_id: int,
         filename: str,
         binary_data: bytes,
+        parse_mode: AttachmentParseMode = "chat",
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """
         Overwrite an existing attachment with owner validation.
@@ -448,7 +499,13 @@ class ContextService:
         if context.context_type != ContextType.ATTACHMENT.value:
             raise NotFoundException(f"Context {context_id} not found")
 
-        return self._overwrite_attachment_impl(db, context, filename, binary_data)
+        return self._overwrite_attachment_impl(
+            db,
+            context,
+            filename,
+            binary_data,
+            parse_mode=parse_mode,
+        )
 
     def overwrite_attachment_internal(
         self,
@@ -495,10 +552,13 @@ class ContextService:
         context: SubtaskContext,
         filename: str,
         binary_data: bytes,
+        parse_mode: AttachmentParseMode = "chat",
     ) -> Tuple[SubtaskContext, Optional[TruncationInfo]]:
         """Shared implementation for attachment overwrite."""
         extension, file_size, mime_type = self._validate_attachment_input(
-            filename, binary_data
+            filename,
+            binary_data,
+            parse_mode=parse_mode,
         )
 
         storage_backend = get_storage_backend(db)
@@ -533,18 +593,30 @@ class ContextService:
             db.rollback()
             raise
 
-        context.status = ContextStatus.PARSING.value
-        db.flush()
+        if parse_mode == "knowledge_raw":
+            context.status = ContextStatus.READY.value
+            context.extracted_text = ""
+            context.text_length = 0
+            context.image_base64 = ""
+            context.type_data = {
+                **(context.type_data or {}),
+                "is_truncated": False,
+                "parse_mode": parse_mode,
+            }
+            truncation_info = None
+        else:
+            context.status = ContextStatus.PARSING.value
+            db.flush()
 
-        try:
-            truncation_info = self._parse_and_update_context(
-                context=context,
-                binary_data=binary_data,
-                extension=extension,
-            )
-        except DocumentParseError:
-            db.commit()
-            raise
+            try:
+                truncation_info = self._parse_and_update_context(
+                    context=context,
+                    binary_data=binary_data,
+                    extension=extension,
+                )
+            except DocumentParseError:
+                db.commit()
+                raise
 
         db.commit()
         db.refresh(context)

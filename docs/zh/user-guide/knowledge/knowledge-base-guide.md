@@ -330,6 +330,12 @@ AI 响应包含链接到源文档的编号引用：
 
 **解决方案：** 检查文件大小限制（通常 50MB）、转换为支持的格式、尝试重新导出文档
 
+#### 文档一直停留在待转换
+
+**可能原因：** `knowledge_doc_converter` worker 未运行、Redis 队列配置不一致，或转换服务使用的 `BACKEND_INTERNAL_TOKEN` 与后端 `INTERNAL_SERVICE_TOKEN` 不一致。
+
+**解决方案：** 检查转换服务日志，确认 worker 正在消费 `knowledge_conversion` 队列；本机源码运行时不要同时启动 Docker 版 `knowledge_doc_converter`，避免两个 worker 消费同一队列。更多状态说明见 [文档管理](./document-management.md)。
+
 ### 检索问题
 
 #### 没有返回结果
