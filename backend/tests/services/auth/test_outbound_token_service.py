@@ -8,7 +8,11 @@ import jwt
 import pytest
 from sqlalchemy.orm import Session
 
-from app.schemas.token_issuer import SigningKeyCreateRequest, TokenIssuerCreateRequest
+from app.schemas.token_issuer import (
+    SigningKeyCreateRequest,
+    TokenIssuerCreateRequest,
+    TokenIssueRequest,
+)
 from app.services.auth.outbound_token_service import (
     OutboundTokenValidationError,
     outbound_token_service,
@@ -207,3 +211,69 @@ def test_issue_outbound_token_rejects_non_positive_ttl(
         )
 
     assert "must be positive" in str(exc_info.value)
+
+
+def _new_issuer(test_db, name):
+    signing_key = outbound_token_service.create_signing_key(
+        test_db, SigningKeyCreateRequest(name=f"{name}-key")
+    )
+    issuer = outbound_token_service.create_token_issuer(
+        test_db,
+        TokenIssuerCreateRequest(
+            name=f"{name}-issuer",
+            signing_key_id=signing_key.id,
+            issuer="wegent",
+            audience="aud",
+            default_ttl_seconds=600,
+            max_ttl_seconds=900,
+            enabled=True,
+        ),
+    )
+    return signing_key, issuer
+
+
+def test_extra_claims_hook_merges_without_overriding_reserved(
+    test_db, test_user, monkeypatch
+):
+    signing_key, issuer = _new_issuer(test_db, "hook")
+
+    def fake_extra(self, db, *, user, issuer, request=None):
+        return {"custom_claim": "ok", "sub": "hacked"}
+
+    monkeypatch.setattr(
+        type(outbound_token_service), "_collect_extra_claims", fake_extra
+    )
+
+    issued = outbound_token_service.issue_token(
+        test_db,
+        issuer_id=issuer.id,
+        user=test_user,
+        request=TokenIssueRequest(expires_in=300),
+    )
+    claims = jwt.decode(
+        issued.access_token,
+        signing_key.public_key_pem,
+        algorithms=["RS256"],
+        audience="aud",
+        issuer="wegent",
+    )
+    assert claims["custom_claim"] == "ok"
+    assert claims["sub"] == f"user:{test_user.id}"  # reserved 不被覆盖
+
+
+def test_issue_request_ignores_unknown_fields_in_core(test_db, test_user):
+    signing_key, issuer = _new_issuer(test_db, "unknown")
+    req = TokenIssueRequest.model_validate(
+        {"expires_in": 300, "include_employee_id": True}
+    )
+    issued = outbound_token_service.issue_token(
+        test_db, issuer_id=issuer.id, user=test_user, request=req
+    )
+    claims = jwt.decode(
+        issued.access_token,
+        signing_key.public_key_pem,
+        algorithms=["RS256"],
+        audience="aud",
+        issuer="wegent",
+    )
+    assert "employee_id" not in claims  # core 无扩展
