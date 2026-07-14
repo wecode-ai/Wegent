@@ -22,6 +22,8 @@ struct PickedWorkspacePath {
 #[cfg(all(desktop, target_os = "macos"))]
 fn pick_workspace_paths_on_macos(
     initial_directory: Option<String>,
+    directories_only: bool,
+    multiple: bool,
 ) -> Result<Vec<PickedWorkspacePath>, String> {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
@@ -30,16 +32,17 @@ fn pick_workspace_paths_on_macos(
     let main_thread = MainThreadMarker::new()
         .ok_or_else(|| "The workspace picker must run on the main thread".to_string())?;
     let panel = NSOpenPanel::openPanel(main_thread);
-    panel.setCanChooseFiles(true);
+    panel.setCanChooseFiles(!directories_only);
     panel.setCanChooseDirectories(true);
-    panel.setAllowsMultipleSelection(true);
+    panel.setAllowsMultipleSelection(multiple);
     panel.setCanCreateDirectories(true);
     if let Some(directory) = initial_directory.filter(|path| !path.trim().is_empty()) {
         let directory = NSString::from_str(&directory);
         let url = NSURL::fileURLWithPath_isDirectory(&directory, true);
         panel.setDirectoryURL(Some(&url));
     }
-    if panel.runModal() != NSModalResponseOK {
+    let response = panel.runModal();
+    if response != NSModalResponseOK {
         return Ok(Vec::new());
     }
 
@@ -61,12 +64,31 @@ fn pick_workspace_paths_on_macos(
 async fn pick_workspace_paths(
     app: tauri::AppHandle,
     initial_directory: Option<String>,
+    directories_only: Option<bool>,
+    multiple: Option<bool>,
+    default_to_home: Option<bool>,
 ) -> Result<Vec<PickedWorkspacePath>, String> {
+    let directories_only = directories_only.unwrap_or(false);
+    let multiple = multiple.unwrap_or(true);
+    let initial_directory = initial_directory
+        .filter(|path| !path.trim().is_empty())
+        .or_else(|| {
+            default_to_home
+                .unwrap_or(false)
+                .then(|| app.path().home_dir().ok())
+                .flatten()
+                .map(|path| path.to_string_lossy().into_owned())
+        });
+
     #[cfg(all(desktop, target_os = "macos"))]
     {
         let (sender, receiver) = std::sync::mpsc::channel();
         app.run_on_main_thread(move || {
-            let _ = sender.send(pick_workspace_paths_on_macos(initial_directory));
+            let _ = sender.send(pick_workspace_paths_on_macos(
+                initial_directory,
+                directories_only,
+                multiple,
+            ));
         })
         .map_err(|error| format!("Failed to open the workspace picker: {error}"))?;
         return tauri::async_runtime::spawn_blocking(move || {
@@ -83,13 +105,24 @@ async fn pick_workspace_paths(
         use tauri_plugin_dialog::DialogExt;
 
         let mut picker = app.dialog().file();
-        if let Some(directory) = initial_directory.filter(|path| !path.trim().is_empty()) {
+        if let Some(directory) = initial_directory {
             picker = picker.set_directory(directory);
         }
-        let files = tauri::async_runtime::spawn_blocking(move || picker.blocking_pick_files())
-            .await
-            .map_err(|error| format!("Failed to join workspace picker task: {error}"))?
-            .unwrap_or_default();
+        let files = tauri::async_runtime::spawn_blocking(move || {
+            if directories_only {
+                if multiple {
+                    picker.blocking_pick_folders().unwrap_or_default()
+                } else {
+                    picker.blocking_pick_folder().into_iter().collect()
+                }
+            } else if multiple {
+                picker.blocking_pick_files().unwrap_or_default()
+            } else {
+                picker.blocking_pick_file().into_iter().collect()
+            }
+        })
+        .await
+        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?;
         return Ok(files
             .into_iter()
             .filter_map(|file| file.into_path().ok())

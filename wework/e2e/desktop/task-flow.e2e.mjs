@@ -808,10 +808,33 @@ async function main() {
       'The desktop controller did not connect from a webview'
     )
 
-    phase = 'project-folder-cancel'
+    phase = 'remote-project-dialog'
     await control.command('waitFor', '[data-testid="projects-create-button"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await control.command('click', '[data-testid="projects-create-button"]')
+    await control.command('click', '[data-testid="project-create-remote-option"]')
+    await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const remoteProjectDialogText = await control.command(
+      'getText',
+      '[data-testid="standalone-folder-project-dialog"]'
+    )
+    assert.match(
+      remoteProjectDialogText,
+      /New remote project|新建远程项目/,
+      'The remote project dialog title was not localized'
+    )
+    await control.command('click', '[data-testid="standalone-folder-project-dialog-overlay"]')
+    const closedRemoteDialogSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      closedRemoteDialogSnapshot.testIds.includes('standalone-folder-project-dialog'),
+      false,
+      'Clicking the remote project dialog backdrop did not restore the workbench'
+    )
+
+    phase = 'project-folder-cancel'
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-existing-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
