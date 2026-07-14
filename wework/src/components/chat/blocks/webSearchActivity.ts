@@ -34,12 +34,27 @@ export function getWebSearchActivityItems(
   blocks.forEach(block => {
     const action = getWebSearchAction(block.toolInput)
     const actionType = getStringField(action, 'type')
-    if (actionType === 'open_page') {
+    if (actionType === 'open_page' || actionType === 'openPage') {
       const url = getStringField(action, 'url')
       const urlMetadata = getUrlMetadata(url)
       addItem({
         id: `${block.id}-url`,
         label: url,
+        domain: urlMetadata?.domain,
+        iconUrl: urlMetadata?.iconUrl,
+        sourceLabel: urlMetadata?.displayUrl,
+        sourceUrl: urlMetadata?.url,
+      })
+      return
+    }
+
+    if (actionType === 'find_in_page' || actionType === 'findInPage') {
+      const url = getStringField(action, 'url')
+      const pattern = getStringField(action, 'pattern')
+      const urlMetadata = getUrlMetadata(url)
+      addItem({
+        id: `${block.id}-find`,
+        label: pattern && url ? `'${pattern}' in ${url}` : (pattern ?? url),
         domain: urlMetadata?.domain,
         iconUrl: urlMetadata?.iconUrl,
         sourceLabel: urlMetadata?.displayUrl,

@@ -33,7 +33,7 @@ async def issue_outbound_token(
             db,
             issuer_id=issuer_id,
             user=current_user,
-            expires_in=request.expires_in,
+            request=request,
         )
     except TokenIssuerNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

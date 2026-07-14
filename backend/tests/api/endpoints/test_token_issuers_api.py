@@ -161,3 +161,51 @@ def test_issue_endpoint_openapi_declares_oauth2_and_api_key_security(
 
     assert {"OAuth2PasswordBearer": []} in operation["security"]
     assert {"APIKeyHeader": []} in operation["security"]
+
+
+def test_issue_endpoint_accepts_unknown_fields_and_core_ignores_them(
+    test_client: TestClient,
+    test_admin_token: str,
+    test_token: str,
+):
+    admin_headers = {"Authorization": f"Bearer {test_admin_token}"}
+
+    signing_key = test_client.post(
+        "/api/admin/signing-keys",
+        headers=admin_headers,
+        json={"name": "extra-fields-key"},
+    ).json()
+
+    issuer = test_client.post(
+        "/api/admin/token-issuers",
+        headers=admin_headers,
+        json={
+            "name": "extra-fields-issuer",
+            "signing_key_id": signing_key["id"],
+            "issuer": "wegent",
+            "audience": "vip_sql_platform",
+            "default_ttl_seconds": 600,
+            "max_ttl_seconds": 900,
+            "enabled": True,
+        },
+    ).json()
+
+    issue_response = test_client.post(
+        f"/api/v1/token-issuers/{issuer['id']}/issue",
+        headers={"Authorization": f"Bearer {test_token}"},
+        json={"expires_in": 300, "include_employee_id": True, "bogus": "x"},
+    )
+    # extra="allow" means the unknown fields pass FastAPI validation (no 422)
+    assert issue_response.status_code == 200
+    claims = jwt.decode(
+        issue_response.json()["access_token"],
+        signing_key["public_key_pem"],
+        algorithms=["RS256"],
+        audience="vip_sql_platform",
+        issuer="wegent",
+    )
+    # open-source core contributes no extra claims
+    assert "employee_id" not in claims
+    assert "include_employee_id" not in claims
+    assert "bogus" not in claims
+    assert claims["sub"] == "user:" + str(claims["user_id"])

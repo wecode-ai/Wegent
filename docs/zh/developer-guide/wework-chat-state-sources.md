@@ -29,7 +29,7 @@ sidebar_position: 18
 | runtime goal                  | `threadGoal` + `pendingGoalState`                                                                  | goal bar、goal draft、首条消息 initial goal                                                            | 已持久化目标来自 runtime goal API；新建任务前目标暂存在 pending seed                                                                                                            |
 | request user input 已处理集合 | `answeredRequestUserInputIds`                                                                      | 隐藏已响应/忽略的 request user input 卡片                                                              | 只由提交或忽略动作更新                                                                                                                                                          |
 | 模型上下文用量                | Codex `thread/tokenUsage/updated` runtime stream 事件；`runtime.tasks.transcript.contextUsage`     | composer 右下角上下文窗口用量圆环和 tooltip                                                            | executor 必须原样转发 Codex token usage notification，并在历史 transcript 响应中从同一 rollout 读取最新 token count；UI 只按当前 runtime task 保存到 `projectChat.contextUsage` |
-| 长回复正文与工具输出          | `reduceWorkbenchMessages` 的预览窗口；`runtime.tasks.transcript` 的截断字段与完整加载标记           | `MessageList`、processing block、Debug Panel 内存摘要                                                  | 默认 resident `messages` 只保留尾部预览、原始长度和加载引用；只有用户显式加载完整 transcript 后，当前 pane 才能升级为完整态并替换 `messages`                                |
+| 长回复正文与工具输出          | `reduceWorkbenchMessages` 的预览窗口；`runtime.tasks.transcript` 的截断字段与完整加载标记          | `MessageList`、processing block、Debug Panel 内存摘要                                                  | 默认 resident `messages` 只保留尾部预览、原始长度和加载引用；只有用户显式加载完整 transcript 后，当前 pane 才能升级为完整态并替换 `messages`                                    |
 | 附件/模型/技能选择            | `projectChat` context                                                                              | send payload、composer 控件                                                                            | 当前 LocalTask 内选项锁定由 `projectChat.isOptionsLocked` 派生                                                                                                                  |
 | 设备可用性                    | `state.devices` + 当前任务/项目设备选择                                                            | composer disabled reason、设备提示                                                                     | 只用于发送前置条件，不参与 assistant streaming 判断                                                                                                                             |
 
@@ -43,6 +43,12 @@ sidebar_position: 18
 6. 打开历史任务时，`runtime.tasks.transcript.contextUsage` 只恢复当前任务的 `projectChat.contextUsage`，不能通过额外 UI fallback 重新扫描消息或任务列表。
 7. `chat:done`、`chat:error`、取消事件通过 reducer 结算 assistant 消息，并触发 work list 刷新。
 8. 如果 runtime work 与消息状态不一致，不做兜底结算；必须修正缺失的 stream event、transcript 数据或 reducer action。
+
+### 网页搜索工具块
+
+Codex 的网页搜索在 `item/started` 时可能还没有查询动作，在 `item/completed` 时才提供最终的 `action`。executor 必须用相同 block id 发出更新，把状态结算为 `done`，并将最终 `action` 写入 `tool_input`；否则 Wework 会一直显示“正在搜索网页”，展开后也没有内容。实时事件和历史 transcript 必须生成一致的 `web_search` 工具块。
+
+Wework 展示层兼容 Responses API 的 snake_case 动作名（如 `open_page`、`find_in_page`）和 Codex app-server 的 camelCase 动作名（如 `openPage`、`findInPage`）。动作名差异只能在工具详情解析边界处理，不能通过 UI 占位内容或状态兜底掩盖缺失的完成事件。
 
 ## Goal 与任务执行状态
 

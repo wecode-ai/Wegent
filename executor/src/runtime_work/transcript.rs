@@ -505,8 +505,15 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
     {
         return None;
     }
+    let status = tool_status(&item);
+    let status =
+        if matches!(item_type.as_str(), "websearch" | "websearchcall") && status == "pending" {
+            "done".to_owned()
+        } else {
+            status
+        };
     let mut updates = json!({
-        "status": tool_status(&item),
+        "status": status,
     });
     if let Some(object) = updates.as_object_mut() {
         insert_tool_output_fields(object, &item, TranscriptBuildOptions::truncated());
@@ -514,6 +521,11 @@ pub(crate) fn tool_update_from_notification(params: &Value) -> Option<(String, V
     if let Some(input) = command_input_from_output(&item) {
         if let Some(object) = updates.as_object_mut() {
             object.insert("tool_input".to_owned(), input);
+        }
+    }
+    if matches!(item_type.as_str(), "websearch" | "websearchcall") {
+        if let Some(object) = updates.as_object_mut() {
+            object.insert("tool_input".to_owned(), tool_input(&item));
         }
     }
     Some((tool_call_id(&item), updates))
@@ -1639,8 +1651,7 @@ fn tool_input(item: &Value) -> Value {
             })
             .cloned()
             .unwrap_or(Value::Null),
-        "websearch" => json!({"query": string_field(item, "query").unwrap_or_default()}),
-        "websearchcall" => item
+        "websearch" | "websearchcall" => item
             .get("action")
             .cloned()
             .unwrap_or_else(|| json!({"query": string_field(item, "query").unwrap_or_default()})),
@@ -2430,6 +2441,38 @@ fn memory_citation(item: &Value) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_search_updates_preserve_all_action_payloads() {
+        let actions = [
+            json!({
+                "type": "openPage",
+                "url": "https://docs.wegent.ai/guide"
+            }),
+            json!({
+                "type": "findInPage",
+                "url": "https://docs.wegent.ai/guide",
+                "pattern": "install"
+            }),
+        ];
+
+        for (index, action) in actions.into_iter().enumerate() {
+            let params = json!({
+                "item": {
+                    "id": format!("search-{index}"),
+                    "type": "webSearch",
+                    "query": "",
+                    "action": action.clone()
+                }
+            });
+
+            let (_, updates) = tool_update_from_notification(&params)
+                .expect("completed web search should produce a tool update");
+
+            assert_eq!(updates["status"], "done");
+            assert_eq!(updates["tool_input"], action);
+        }
+    }
 
     #[test]
     fn created_plain_content_counts_lines_as_additions() {
