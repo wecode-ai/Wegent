@@ -6178,6 +6178,7 @@ mod tests {
 
         assert!(combined.contains("用中文回复"));
         assert!(combined.contains("browser_navigate"));
+        assert!(combined.contains("Wework built-in browser"));
         assert_eq!(strip_wework_browser_instructions(&combined), "用中文回复");
     }
 
