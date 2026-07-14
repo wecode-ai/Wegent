@@ -28,6 +28,9 @@ interface SwitchRowProps {
   description: string
 }
 
+const GENERAL_ROW_CLASS_NAME = 'py-4'
+const GENERAL_ROW_LABEL_CLASS_NAME = 'font-normal'
+
 interface TrayDisplayOption {
   preferenceKey: BooleanPreferenceKey
   testId: string
@@ -94,6 +97,8 @@ export function GeneralSettingsPage() {
     <SettingsRow
       label={label}
       description={description}
+      className={GENERAL_ROW_CLASS_NAME}
+      labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
       control={
         <SettingsSwitch
           data-testid={testId}
@@ -169,6 +174,8 @@ export function GeneralSettingsPage() {
           <SettingsRow
             label={t('workbench.general_settings_language_preference')}
             description={t('workbench.general_settings_language_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
               <div className="grid h-8 w-full shrink-0 grid-cols-3 rounded-md border border-border bg-background p-0.5 md:w-[300px]">
                 {languagePreferenceOptions.map(option => {
@@ -205,6 +212,8 @@ export function GeneralSettingsPage() {
           <SettingsRow
             label={t('workbench.external_import_row_title')}
             description={t('workbench.external_import_row_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
               <button
                 type="button"
@@ -238,6 +247,8 @@ export function GeneralSettingsPage() {
               </span>
             }
             description={t('workbench.general_settings_tray_display_content_description')}
+            className={GENERAL_ROW_CLASS_NAME}
+            labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
             control={
               <div className="grid w-[420px] max-w-full shrink-0 grid-cols-3 gap-2">
                 {trayDisplayOptions.map(option => {
