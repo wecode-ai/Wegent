@@ -4,6 +4,7 @@ import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
+import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { PluginManagementWorkspace } from '@/components/plugins/PluginManagementWorkspace'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
@@ -13,6 +14,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 export function PluginManagementPage() {
   const { t } = useTranslation('common')
@@ -39,6 +41,7 @@ export function PluginManagementPage() {
     createGitWorkspaceProject,
     prepareDeviceWorkspace,
     deleteDeviceWorkspace,
+    searchRuntimeWork,
     listGitRepositories,
     listGitBranches,
     updateProjectName,
@@ -50,8 +53,10 @@ export function PluginManagementPage() {
   } = useWorkbench()
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isTauri = isTauriRuntime()
+  const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -109,9 +114,10 @@ export function PluginManagementPage() {
           activeItem="plugins"
           collapsed={sidebarCollapsed}
           onNewChat={handleNewChat}
+          onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
-          onOpenRuntimeTask={openRuntimeTask}
+          onOpenRuntimeTask={handleOpenRuntimeTask}
           onRenameRuntimeTask={renameRuntimeTask}
           onArchiveRuntimeTask={archiveRuntimeTask}
           onArchiveProjectConversations={archiveProjectConversations}
@@ -158,7 +164,7 @@ export function PluginManagementPage() {
             onStartStandaloneChat={handleStartStandaloneChat}
             onOpenSettings={() => setSettingsOpen(true)}
             onSelectProject={handleSelectProject}
-            onOpenRuntimeTask={openRuntimeTask}
+            onOpenRuntimeTask={handleOpenRuntimeTask}
             onCreateProject={createProject}
             onCreateGitWorkspaceProject={createGitWorkspaceProject}
             onPrepareDeviceWorkspace={prepareDeviceWorkspace}
@@ -190,6 +196,12 @@ export function PluginManagementPage() {
             />
           ) : undefined
         }
+      />
+      <WorkbenchSearchDialog
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSearchRuntimeWork={searchRuntimeWork}
+        onOpenRuntimeTask={handleOpenRuntimeTask}
       />
     </div>
   )

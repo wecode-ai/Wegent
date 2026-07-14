@@ -6,6 +6,7 @@ export interface AppPreferences {
   showMainWindowOnLaunch: boolean
   closeToTrayHintSeen: boolean
   language: AppLanguagePreference
+  terminalContextInjectionEnabled: boolean
   taskCompletionNotificationsEnabled: boolean
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
@@ -19,6 +20,7 @@ export interface AppPreferencesPatch {
   showMainWindowOnLaunch?: boolean
   closeToTrayHintSeen?: boolean
   language?: AppLanguagePreference
+  terminalContextInjectionEnabled?: boolean
   taskCompletionNotificationsEnabled?: boolean
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
@@ -30,6 +32,7 @@ export const defaultAppPreferences: AppPreferences = {
   showMainWindowOnLaunch: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
+  terminalContextInjectionEnabled: true,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
@@ -78,6 +81,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       supportedLanguagePreferences.has(record.language as AppLanguagePreference)
         ? (record.language as AppLanguagePreference)
         : defaultAppPreferences.language,
+    terminalContextInjectionEnabled:
+      typeof record.terminalContextInjectionEnabled === 'boolean'
+        ? record.terminalContextInjectionEnabled
+        : defaultAppPreferences.terminalContextInjectionEnabled,
     taskCompletionNotificationsEnabled:
       typeof record.taskCompletionNotificationsEnabled === 'boolean'
         ? record.taskCompletionNotificationsEnabled
@@ -111,7 +118,9 @@ export async function getAppPreferences(): Promise<AppPreferences> {
 
 export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<AppPreferences> {
   if (!isTauriRuntime() || !canInvokeAppPreferencesCommand()) {
-    return mergeAppPreferences({ ...defaultAppPreferences, ...patch })
+    const preferences = mergeAppPreferences({ ...defaultAppPreferences, ...patch })
+    emitAppPreferencesChanged(preferences)
+    return preferences
   }
 
   const preferences = mergeAppPreferences(await invoke('update_app_preferences', { patch }))

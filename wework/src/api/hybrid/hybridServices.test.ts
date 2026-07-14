@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
   const cloudListTeams = vi.fn()
   const cloudGetDefaultWorkbenchTeam = vi.fn()
   const localSearchRuntimeWork = vi.fn()
+  const localGetWorktreeSettings = vi.fn()
   const cloudSearchRuntimeWork = vi.fn()
   const cloudCreateDockerRemoteDeviceCommand = vi.fn()
   const cloudRuntimeIpcRequest = vi.fn()
@@ -51,6 +52,7 @@ const mocks = vi.hoisted(() => {
       rollbackRuntimeTask: vi.fn(),
       compactRuntimeTask: vi.fn(),
       searchRuntimeWork: localSearchRuntimeWork,
+      getWorktreeSettings: localGetWorktreeSettings,
       listArchivedConversations: vi.fn(async () => ({
         items: [],
         projectGroups: [],
@@ -129,6 +131,7 @@ const mocks = vi.hoisted(() => {
     cloudListTeams,
     cloudGetDefaultWorkbenchTeam,
     localSearchRuntimeWork,
+    localGetWorktreeSettings,
     cloudSearchRuntimeWork,
     cloudCreateDockerRemoteDeviceCommand,
     cloudRuntimeIpcRequest,
@@ -167,6 +170,12 @@ vi.mock('@/api/local/localServices', () => ({
         data,
         String(data.deviceId ?? (await getDefaultDeviceId()))
       )
+    },
+    getWorktreeSettings(data: Record<string, unknown>) {
+      return request('runtime.worktrees.settings.get', data, String(data.deviceId))
+    },
+    listWorktrees(data: Record<string, unknown>) {
+      return request('runtime.worktrees.list', data, String(data.deviceId))
     },
     listArchivedConversations: vi.fn(async () => ({
       items: [],
@@ -269,6 +278,13 @@ describe('createHybridWorkbenchServices', () => {
     mocks.localListModels.mockResolvedValue({ data: [codexModel] })
     mocks.cloudListModels.mockResolvedValue({ data: [codexModel] })
     mocks.localSearchRuntimeWork.mockResolvedValue({ items: [] })
+    mocks.localGetWorktreeSettings.mockResolvedValue({
+      deviceId: 'local-device',
+      worktreeRoot: '',
+      resolvedWorktreeRoot: '/tmp/local-worktrees',
+      autoCleanupEnabled: true,
+      keepCount: 15,
+    })
     mocks.cloudSearchRuntimeWork.mockResolvedValue({ items: [] })
     mocks.cloudRuntimeIpcRequest.mockImplementation(async method => {
       if (method === 'runtime.tasks.list') {
@@ -340,6 +356,21 @@ describe('createHybridWorkbenchServices', () => {
     const devices = await services.deviceApi.listDevices()
 
     expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+  })
+
+  it('routes Worktree settings to the selected local or cloud device', async () => {
+    const services = createServices()
+    await services.cloudBackgroundApi?.listDevices?.()
+
+    await services.runtimeWorkApi?.getWorktreeSettings({ deviceId: 'local-device' })
+    await services.runtimeWorkApi?.getWorktreeSettings({ deviceId: 'cloud-device' })
+
+    expect(mocks.localGetWorktreeSettings).toHaveBeenCalledWith({ deviceId: 'local-device' })
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'runtime.worktrees.settings.get',
+      { deviceId: 'cloud-device' },
+      'cloud-device'
+    )
   })
 
   it('merges remembered cloud devices into the local device when app_device_id matches', async () => {

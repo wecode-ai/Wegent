@@ -1,7 +1,13 @@
-import { useCallback, useState } from 'react'
+import { memo, useCallback, useState } from 'react'
 import { ChatInput, type ChatInputProps, type ChatSubmitOptions } from '@/components/chat/ChatInput'
+import { parseComposerMentions } from '@/components/chat/composer/composerMentions'
 
-export function BufferedChatInput({ value, onSubmit, ...props }: ChatInputProps) {
+export const BufferedChatInput = memo(function BufferedChatInput({
+  value,
+  onChange,
+  onSubmit,
+  ...props
+}: ChatInputProps) {
   const [draftState, setDraftState] = useState(() => ({
     sourceValue: value,
     draft: value,
@@ -10,8 +16,11 @@ export function BufferedChatInput({ value, onSubmit, ...props }: ChatInputProps)
   const setDraft = useCallback(
     (nextDraft: string) => {
       setDraftState({ sourceValue: value, draft: nextDraft })
+      if (parseComposerMentions(nextDraft).length > 0) {
+        onChange(nextDraft)
+      }
     },
-    [value]
+    [onChange, value]
   )
 
   const handleSubmit = useCallback(
@@ -30,4 +39,4 @@ export function BufferedChatInput({ value, onSubmit, ...props }: ChatInputProps)
   )
 
   return <ChatInput {...props} value={draft} onChange={setDraft} onSubmit={handleSubmit} />
-}
+})

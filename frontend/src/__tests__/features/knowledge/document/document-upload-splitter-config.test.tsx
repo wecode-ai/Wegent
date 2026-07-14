@@ -134,7 +134,10 @@ describe('DocumentUpload splitter config defaults', () => {
         markdown_enhancement: {
           enabled: true,
         },
-      }
+      },
+      // Third arg: per-media-type multimodal prompt overrides. undefined for a
+      // non-multimodal (.md) upload — the document inherits the KB default.
+      undefined
     )
   })
 })

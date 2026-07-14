@@ -2,6 +2,7 @@ import { AlertCircle, Cloud, Loader2, LogOut, Plus, Server, Settings, X } from '
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { getRuntimeConfig } from '@/config/runtime'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
@@ -34,7 +35,9 @@ export function CloudConnectionDialog({
 }: CloudConnectionDialogProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
-  const [backendUrl, setBackendUrl] = useState(cloud.backendUrl ?? '')
+  const [backendUrl, setBackendUrl] = useState(
+    () => cloud.backendUrl || getRuntimeConfig().wegentBackendUrl
+  )
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -44,6 +47,10 @@ export function CloudConnectionDialog({
 
   const isConnected = cloud.isConnected
   const host = displayHost(cloud.backendUrl)
+  const cloudError =
+    cloud.error === 'Cloud login has expired'
+      ? t('workbench.cloud_connection_relogin_required', '云端登录已过期，请重新登录。')
+      : cloud.error
 
   async function handleAuthorizationSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -197,13 +204,13 @@ export function CloudConnectionDialog({
               </div>
             )}
 
-            {(error || cloud.error) && (
+            {(error || cloudError) && (
               <div
                 data-testid="cloud-connection-error"
                 className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-500"
               >
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{error || cloud.error}</span>
+                <span>{error || cloudError}</span>
               </div>
             )}
 

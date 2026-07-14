@@ -101,15 +101,6 @@ interface WorkspaceTreeModel {
   expandedTreePaths: string[]
 }
 
-function sortEntries(entries: WorkspaceFileEntry[]) {
-  return [...entries].sort((first, second) => {
-    if (first.isDirectory !== second.isDirectory) {
-      return first.isDirectory ? -1 : 1
-    }
-    return first.name.localeCompare(second.name)
-  })
-}
-
 function normalizeWorkspacePath(path: string) {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
@@ -146,19 +137,29 @@ function createWorkspaceTreeModel({
   rootPath: string
   selectedPath?: string | null
 }): WorkspaceTreeModel {
-  const treePaths = new Set<string>()
+  const entriesByCanonicalTreePath = new Map<string, WorkspaceFileEntry>()
   const entryByTreePath = new Map<string, WorkspaceFileEntry>()
 
   Object.values(entriesByPath).forEach(entries => {
-    sortEntries(entries).forEach(entry => {
-      const treePath = treePathForEntry(rootPath, entry)
-      treePaths.add(treePath)
-      entryByTreePath.set(treePath, entry)
-      if (entry.isDirectory) {
-        entryByTreePath.set(treePath.replace(/\/+$/, ''), entry)
+    entries.forEach(entry => {
+      const canonicalTreePath = treePathForEntry(rootPath, entry).replace(/\/+$/, '')
+      const previousEntry = entriesByCanonicalTreePath.get(canonicalTreePath)
+      if (!previousEntry || entry.isDirectory) {
+        entriesByCanonicalTreePath.set(canonicalTreePath, entry)
       }
     })
   })
+
+  const treePaths = Array.from(entriesByCanonicalTreePath.entries())
+    .map(([treePath, entry]) => {
+      entryByTreePath.set(treePath, entry)
+      if (!entry.isDirectory) return treePath
+
+      const directoryPath = `${treePath}/`
+      entryByTreePath.set(directoryPath, entry)
+      return directoryPath
+    })
+    .sort((left, right) => left.localeCompare(right))
 
   const expandedTreePaths = Array.from(expandedPaths)
     .map(path => {
@@ -175,7 +176,7 @@ function createWorkspaceTreeModel({
       : null
 
   return {
-    paths: Array.from(treePaths),
+    paths: treePaths,
     entryByTreePath,
     selectedTreePath,
     expandedTreePaths,
@@ -250,12 +251,6 @@ function WorkspacePierreFileTree({
   }, [model, query])
 
   useEffect(() => {
-    if (!treeModel.selectedTreePath) return
-    model.getItem(treeModel.selectedTreePath)?.select()
-    model.scrollToPath(treeModel.selectedTreePath, { focus: false, offset: 'nearest' })
-  }, [model, treeModel.selectedTreePath])
-
-  useEffect(() => {
     treeModel.expandedTreePaths.forEach(path => {
       const item = model.getItem(path)
       if (isDirectoryHandle(item)) {
@@ -311,7 +306,6 @@ export function WorkspaceFileTree({
     () => `${treeModel.paths.join('\n')}::${treeModel.expandedTreePaths.join('\n')}`,
     [treeModel.expandedTreePaths, treeModel.paths]
   )
-
   return (
     <aside
       data-testid="workspace-file-tree"

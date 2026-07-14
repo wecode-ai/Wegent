@@ -1566,7 +1566,7 @@ class ArchiveExecutorRequest(BaseModel):
     upload_url: str  # Presigned MinIO upload URL
     executor_name: str
     executor_namespace: str
-    max_size_mb: int = 500
+    max_size_mb: int = 2048
     runtime_type: str = "executor"
 
 

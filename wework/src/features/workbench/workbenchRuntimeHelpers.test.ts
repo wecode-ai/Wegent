@@ -1,8 +1,32 @@
 import { describe, expect, test } from 'vitest'
-import { projectTaskAddresses } from './workbenchRuntimeHelpers'
+import {
+  buildRuntimeTaskTitle,
+  MAX_RUNTIME_TASK_TITLE_LENGTH,
+  projectTaskAddresses,
+  truncateRuntimeTaskTitle,
+} from './workbenchRuntimeHelpers'
 import type { RuntimeWorkListResponse } from '@/types/api'
 
 describe('workbenchRuntimeHelpers', () => {
+  test('builds readable titles from structured plugin mentions', () => {
+    expect(buildRuntimeTaskTitle('[$linear](/tmp/linear/SKILL.md) ')).toBe('$linear')
+    expect(buildRuntimeTaskTitle('Use [$calendar](app://calendar) today')).toBe(
+      'Use $calendar today'
+    )
+    expect(buildRuntimeTaskTitle('Ask [@sample](plugin://sample@local) to help')).toBe(
+      'Ask @sample to help'
+    )
+  })
+
+  test('limits runtime task titles for compact display and terminal context', () => {
+    const title = 'a'.repeat(MAX_RUNTIME_TASK_TITLE_LENGTH + 1)
+
+    expect(truncateRuntimeTaskTitle(title)).toBe(
+      `${'a'.repeat(MAX_RUNTIME_TASK_TITLE_LENGTH - 1)}…`
+    )
+    expect(buildRuntimeTaskTitle(title)).toBe(`${'a'.repeat(MAX_RUNTIME_TASK_TITLE_LENGTH - 1)}…`)
+  })
+
   test('carries runtime handles into project task addresses', () => {
     const runtimeWork: RuntimeWorkListResponse = {
       projects: [

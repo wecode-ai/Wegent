@@ -57,6 +57,17 @@ function runtimeWork(running: boolean, status?: string | null): RuntimeWorkListR
 }
 
 describe('runtime pane status', () => {
+  test('treats a task without a running flag as unknown', () => {
+    const runtimeWorkWithoutRunningState = runtimeWork(false)
+    runtimeWorkWithoutRunningState.chats[0].tasks[0].running = undefined
+
+    expect(getRuntimePaneTaskExecution(runtimeWorkWithoutRunningState, runtimeAddress)).toEqual({
+      known: false,
+      running: false,
+      status: null,
+    })
+  })
+
   test('derives one busy state from send phase, streaming message, and task execution', () => {
     const taskExecution = getRuntimePaneTaskExecution(runtimeWork(true), runtimeAddress)
     const status = deriveRuntimePaneStatus({

@@ -22,7 +22,10 @@ from knowledge_engine.ingestion.metadata import (
     build_ingestion_metadata,
     enrich_nodes_metadata,
 )
-from knowledge_engine.ingestion.qa_unitizer import build_qa_pair_nodes
+from knowledge_engine.ingestion.qa_unitizer import (
+    QAUnitizationResult,
+    unitize_qa_documents,
+)
 from knowledge_engine.splitter.config import (
     FlatChunkConfig,
     MarkdownEnhancementConfig,
@@ -196,21 +199,34 @@ def build_ingestion_result(
             parser_subtype=hierarchical_parser_subtype,
         )
 
-    qa_pair_nodes = _try_build_qa_pair_nodes(
+    qa_unitization = _try_unitize_qa_documents(
         documents=documents,
         preparation=preparation,
     )
-    if qa_pair_nodes is not None:
+    if qa_unitization is not None:
         qa_ingestion_metadata = build_ingestion_metadata(
             preparation.normalized_splitter_config,
             parser_subtype=QA_PAIR_PARSER_SUBTYPE,
         )
-        nodes = enrich_nodes_metadata(
-            qa_pair_nodes,
+        qa_nodes = enrich_nodes_metadata(
+            qa_unitization.qa_nodes,
             ingestion_metadata=qa_ingestion_metadata,
         )
+        prose_nodes: list[BaseNode] = []
+        if qa_unitization.prose_documents:
+            prose_pipeline = IngestionPipeline(
+                transformations=_build_transformations(
+                    preparation.normalized_splitter_config,
+                    ingestion_metadata=preparation.ingestion_metadata,
+                    parser_subtype=preparation.parser_subtype,
+                    embed_model=embed_model,
+                )
+            )
+            prose_nodes = list(
+                prose_pipeline.run(documents=qa_unitization.prose_documents)
+            )
         return IngestionResult(
-            index_nodes=nodes,
+            index_nodes=[*qa_nodes, *prose_nodes],
             parent_nodes=None,
             child_nodes=None,
             normalized_splitter_config=preparation.normalized_splitter_config,
@@ -237,11 +253,11 @@ def build_ingestion_result(
     )
 
 
-def _try_build_qa_pair_nodes(
+def _try_unitize_qa_documents(
     *,
     documents: list[Document],
     preparation: IngestionPreparation,
-) -> list[BaseNode] | None:
+) -> QAUnitizationResult | None:
     """Auto-unitize clear Q/A documents without changing the query contract."""
     splitter_config = preparation.normalized_splitter_config
     if splitter_config.chunk_strategy != "flat":
@@ -251,7 +267,7 @@ def _try_build_qa_pair_nodes(
     if preparation.parser_subtype not in {"markdown_sentence", "sentence"}:
         return None
 
-    return build_qa_pair_nodes(documents)
+    return unitize_qa_documents(documents)
 
 
 def _prepare_hierarchical_documents(

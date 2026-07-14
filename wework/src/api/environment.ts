@@ -29,13 +29,18 @@ const ENVIRONMENT_INFO_CACHE_TTL_MS = 1500
 
 export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
 
+export interface EnvironmentInfoLoadOptions {
+  force?: boolean
+}
+
 const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
-  branch: 'git_diff',
+  branch: 'git_branch_diff',
   unstaged: 'git_diff_unstaged',
   staged: 'git_diff_staged',
   commit: 'git_diff_last_commit',
 }
 const GENERATED_COMMIT_MESSAGE_COMMAND = 'git_generate_commit_message'
+const NO_CHANGES_TO_COMMIT_MESSAGE = 'No changes to commit'
 
 type EnvironmentInfoCacheEntry = {
   expiresAt: number
@@ -97,6 +102,10 @@ function environmentInfoCacheKey(
 
 function cloneEnvironmentInfo(info: EnvironmentInfo): EnvironmentInfo {
   return { ...info }
+}
+
+function isNotGitRepositoryError(error: unknown): boolean {
+  return error instanceof Error && /not a git repository/i.test(error.message)
 }
 
 function getEnvironmentInfoCache(api: DeviceCommandApi): Map<string, EnvironmentInfoCacheEntry> {
@@ -335,12 +344,10 @@ async function loadBranchDiffShortStat(
   deviceId: string,
   path: string
 ): Promise<string> {
-  // Use diff against HEAD for tracked uncommitted line changes.
-  // This captures staged + unstaged modifications to tracked files.
+  // Compare the current branch with its merge base to the primary branch.
+  // This includes committed branch changes as well as tracked worktree changes.
   try {
-    return await runGitCommand(api, deviceId, 'git_diff_shortstat', path, {
-      args: ['HEAD', '--'],
-    })
+    return await runGitCommand(api, deviceId, 'git_branch_diff_shortstat', path)
   } catch {
     // HEAD may not exist (no commits yet).
     return ''
@@ -452,6 +459,10 @@ async function loadProjectEnvironmentUncached(
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
     }
   } catch (error) {
+    if (isNotGitRepositoryError(error)) {
+      return environmentWorkspaceInfo
+    }
+
     return {
       ...environmentWorkspaceInfo,
       error: error instanceof Error ? error.message : 'Failed to load environment info',
@@ -462,7 +473,8 @@ async function loadProjectEnvironmentUncached(
 export async function loadProjectEnvironment(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  target?: EnvironmentWorkspaceTarget | null
+  target?: EnvironmentWorkspaceTarget | null,
+  options: EnvironmentInfoLoadOptions = {}
 ): Promise<EnvironmentInfo> {
   if (!project && !target) {
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
@@ -476,7 +488,7 @@ export async function loadProjectEnvironment(
   const now = Date.now()
   const environmentInfoCache = getEnvironmentInfoCache(api)
   const cached = environmentInfoCache.get(cacheKey)
-  if (cached && cached.expiresAt > now) {
+  if (!options.force && cached && cached.expiresAt > now) {
     return cloneEnvironmentInfo(await cached.promise)
   }
 
@@ -523,6 +535,13 @@ export async function commitProjectChanges(
   })
 
   if (!commitMessage) {
+    const stagedDiff = await runGitCommand(api, deviceId, 'git_diff_staged', path, {
+      timeoutSeconds: 30,
+      maxOutputBytes: 4096,
+    })
+    if (!stagedDiff.trim()) {
+      throw new Error(NO_CHANGES_TO_COMMIT_MESSAGE)
+    }
     commitMessage = await generateCommitMessage(api, deviceId, path)
   }
 
@@ -531,6 +550,28 @@ export async function commitProjectChanges(
     timeoutSeconds: 30,
     maxOutputBytes: 8192,
   })
+}
+
+export async function pushProjectChanges(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  target?: EnvironmentWorkspaceTarget | null
+): Promise<void> {
+  const { deviceId, path } = await commandContext(api, project, target)
+  await runGitCommand(api, deviceId, 'git_push', path, {
+    timeoutSeconds: 120,
+    maxOutputBytes: 8192,
+  })
+}
+
+export async function commitAndPushProjectChanges(
+  api: DeviceCommandApi,
+  project: ProjectWithTasks | null,
+  message: string,
+  target?: EnvironmentWorkspaceTarget | null
+): Promise<void> {
+  await commitProjectChanges(api, project, message, target)
+  await pushProjectChanges(api, project, target)
 }
 
 export async function listProjectBranches(

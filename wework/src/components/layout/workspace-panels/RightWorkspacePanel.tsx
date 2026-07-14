@@ -9,7 +9,7 @@ import {
   X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   FileChangesReviewPanel,
@@ -77,10 +77,13 @@ interface RightWorkspacePanelProps {
   activeView: RightWorkspacePanelView
   openTabs: RightWorkspacePanelTab[]
   currentProject: ProjectWithTasks | null
+  canBrowseFiles: boolean
   currentRuntimeTask: RuntimeTaskAddress | null
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
+  fileWorkspaceTarget?: WorkspaceTarget | null
   preferLocalTerminal?: boolean
+  terminalContextTitle?: string | null
   workspaceFileApi: WorkspaceFileApi
   openFileRequest?: WorkspaceFileOpenRequest | null
   workspaceTargetError?: string | null
@@ -103,15 +106,18 @@ interface RightWorkspacePanelProps {
   onRefreshReview?: () => void
 }
 
-export function RightWorkspacePanel({
+export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   visible,
   activeView,
   openTabs,
   currentProject,
+  canBrowseFiles,
   currentRuntimeTask,
   devices,
   workspaceTarget,
+  fileWorkspaceTarget = workspaceTarget,
   preferLocalTerminal = false,
+  terminalContextTitle,
   workspaceFileApi,
   openFileRequest,
   workspaceTargetError,
@@ -133,7 +139,8 @@ export function RightWorkspacePanel({
   onRefreshReview,
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
-  const showTabs = openTabs.length > 0
+  const visibleTabs = canBrowseFiles ? openTabs : openTabs.filter(tab => tab !== 'files')
+  const showTabs = visibleTabs.length > 0
   const renderTabsInTitlebar = isTauriRuntime() && visible && showTabs
   const browserOpen = openTabs.includes('browser')
   const [browserFaviconUrl, setBrowserFaviconUrl] = useState<string | null>(null)
@@ -170,7 +177,7 @@ export function RightWorkspacePanel({
       } else if (key === 's') {
         event.preventDefault()
         onSelectChat()
-      } else if (key === 'f') {
+      } else if (key === 'f' && canBrowseFiles) {
         event.preventDefault()
         onSelectFiles()
       }
@@ -180,6 +187,7 @@ export function RightWorkspacePanel({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [
     browserOpen,
+    canBrowseFiles,
     canOpenReview,
     onSelectChat,
     onSelectFiles,
@@ -238,14 +246,18 @@ export function RightWorkspacePanel({
       shortcut: RIGHT_WORKSPACE_SHORTCUTS.chat,
       onSelect: onSelectChat,
     },
-    {
-      id: 'files',
-      testId: 'right-workspace-file-option',
-      icon: File,
-      label: t('workbench.workspace_tab_files', '文件'),
-      shortcut: RIGHT_WORKSPACE_SHORTCUTS.files,
-      onSelect: onSelectFiles,
-    },
+    ...(canBrowseFiles
+      ? [
+          {
+            id: 'files' as const,
+            testId: 'right-workspace-file-option',
+            icon: File,
+            label: t('workbench.workspace_tab_files', '文件'),
+            shortcut: RIGHT_WORKSPACE_SHORTCUTS.files,
+            onSelect: onSelectFiles,
+          },
+        ]
+      : []),
   ]
 
   const tabBar = showTabs ? (
@@ -259,7 +271,7 @@ export function RightWorkspacePanel({
           : 'h-10 border-b border-border bg-background px-3'
       )}
     >
-      {openTabs.map(tab => (
+      {visibleTabs.map(tab => (
         <RightWorkspaceTitleTab
           key={tab}
           tab={tab}
@@ -316,6 +328,7 @@ export function RightWorkspacePanel({
           <RightWorkspaceLauncher
             canOpenReview={canOpenReview}
             browserOpen={browserOpen}
+            canBrowseFiles={canBrowseFiles}
             onSelectReview={onSelectReview}
             onSelectBrowser={openBrowserTab}
             onSelectFiles={onSelectFiles}
@@ -342,6 +355,7 @@ export function RightWorkspacePanel({
             defaultOpenTool="terminal"
             hideTerminalChrome
             preferLocalTerminal={preferLocalTerminal}
+            terminalContextTitle={terminalContextTitle}
           />
         ) : !isRightWorkspaceChatTab(activeView) && activeView === 'plan' ? (
           <PlanWorkspacePanel content={planContent ?? ''} />
@@ -355,12 +369,15 @@ export function RightWorkspacePanel({
           </section>
         ) : (
           !isRightWorkspaceChatTab(activeView) &&
+          canBrowseFiles &&
           activeView === 'files' && (
             <FileWorkspacePanel
               key={
-                workspaceTarget ? `${workspaceTarget.deviceId}:${workspaceTarget.path}` : 'empty'
+                fileWorkspaceTarget
+                  ? `${fileWorkspaceTarget.deviceId}:${fileWorkspaceTarget.path}`
+                  : 'empty'
               }
-              target={workspaceTarget}
+              target={fileWorkspaceTarget}
               workspaceFileApi={workspaceFileApi}
               openFileRequest={openFileRequest}
               onAddCodeComment={onAddCodeComment}
@@ -398,7 +415,7 @@ export function RightWorkspacePanel({
       </div>
     </section>
   )
-}
+})
 
 function RightWorkspaceTitleTab({
   tab,
@@ -527,6 +544,7 @@ function PlanWorkspacePanel({ content }: { content: string }) {
 function RightWorkspaceLauncher({
   canOpenReview,
   browserOpen,
+  canBrowseFiles,
   onSelectReview,
   onSelectBrowser,
   onSelectFiles,
@@ -534,6 +552,7 @@ function RightWorkspaceLauncher({
 }: {
   canOpenReview: boolean
   browserOpen: boolean
+  canBrowseFiles: boolean
   onSelectReview: () => void
   onSelectBrowser: () => void
   onSelectFiles: () => void
@@ -571,13 +590,15 @@ function RightWorkspaceLauncher({
           shortcut={RIGHT_WORKSPACE_SHORTCUTS.chat}
           onClick={onSelectChat}
         />
-        <RightWorkspaceLauncherItem
-          data-testid="right-workspace-file-option"
-          icon={File}
-          label={t('workbench.workspace_tab_files', '文件')}
-          shortcut={RIGHT_WORKSPACE_SHORTCUTS.files}
-          onClick={onSelectFiles}
-        />
+        {canBrowseFiles && (
+          <RightWorkspaceLauncherItem
+            data-testid="right-workspace-file-option"
+            icon={File}
+            label={t('workbench.workspace_tab_files', '文件')}
+            shortcut={RIGHT_WORKSPACE_SHORTCUTS.files}
+            onClick={onSelectFiles}
+          />
+        )}
       </div>
     </div>
   )

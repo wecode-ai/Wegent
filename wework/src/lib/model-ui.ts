@@ -49,6 +49,8 @@ interface ModelUiMetadata {
   modelLabel: string
   sortOrder: number
   supportedControls: Set<string>
+  supportedReasoningEfforts: string[]
+  defaultReasoningEffort?: string
 }
 
 type LabelResolver = (key: string, fallback: string) => string
@@ -109,6 +111,20 @@ const OPENAI_RESPONSES_CONTROLS: ModelControlConfig[] = [
         label: 'Extra High',
         labelKey: 'workbench.intelligence_ultra',
         order: 40,
+      },
+      {
+        value: 'max',
+        label: 'Maximum',
+        labelKey: 'workbench.intelligence_max',
+        order: 50,
+      },
+      {
+        value: 'ultra',
+        label: 'Extra High',
+        labelKey: 'workbench.intelligence_ultra',
+        description: 'Faster, uses more quota',
+        descriptionKey: 'workbench.reasoning_ultra_description',
+        order: 60,
       },
     ],
   },
@@ -323,6 +339,14 @@ function getExplicitSupportedControls(ui: Record<string, unknown>): Set<string> 
   return new Set()
 }
 
+function getSupportedReasoningEfforts(ui: Record<string, unknown>): string[] {
+  const values = ui.reasoningEfforts ?? ui.supportedReasoningEfforts
+  if (!Array.isArray(values)) return []
+  return values
+    .filter((value): value is string => typeof value === 'string')
+    .map(value => normalizeModelOptionValue('reasoning', value) ?? value)
+}
+
 export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
   const ui = getConfigUi(model)
   const modelLabel =
@@ -340,6 +364,11 @@ export function getModelUiMetadata(model: UnifiedModel): ModelUiMetadata {
     modelLabel,
     sortOrder,
     supportedControls: getExplicitSupportedControls(ui),
+    supportedReasoningEfforts: getSupportedReasoningEfforts(ui),
+    defaultReasoningEffort:
+      typeof ui.defaultReasoningEffort === 'string'
+        ? normalizeModelOptionValue('reasoning', ui.defaultReasoningEffort)
+        : undefined,
   }
 }
 
@@ -347,10 +376,30 @@ export function getControlsForModel(model: UnifiedModel | null): ModelControlCon
   if (!model) return []
   const metadata = getModelUiMetadata(model)
   const familyConfig = getFamilyConfig(metadata.family, metadata.familyLabel)
-  return familyConfig.controls.filter(control => {
-    if ((control.scope ?? 'family') === 'family') return true
-    return metadata.supportedControls.has(control.id)
-  })
+  return familyConfig.controls
+    .filter(control => {
+      if ((control.scope ?? 'family') === 'family') return true
+      return metadata.supportedControls.has(control.id)
+    })
+    .map(control => {
+      if (control.id !== 'reasoning') return control
+      const supportedValues = new Set(metadata.supportedReasoningEfforts)
+      const options = control.options.filter(option => {
+        if (supportedValues.size > 0) return supportedValues.has(option.value)
+        return !['max', 'ultra'].includes(option.value)
+      })
+      const configuredDefault = metadata.defaultReasoningEffort
+      const defaultValue = options.some(option => option.value === configuredDefault)
+        ? configuredDefault
+        : options.some(option => option.value === control.defaultValue)
+          ? control.defaultValue
+          : options[0]?.value
+      return {
+        ...control,
+        defaultValue: defaultValue ?? control.defaultValue,
+        options,
+      }
+    })
 }
 
 export function getModelDisplayLabel(
@@ -406,9 +455,10 @@ export function normalizeModelOptionValue(optionId: string, value?: string): str
   if (optionId !== 'reasoning') return value
 
   const normalized = value.trim().toLowerCase().replace(/\s+/g, '_')
-  if (['extra_high', 'x_high', 'x-high', 'ultra'].includes(normalized)) {
+  if (['extra_high', 'x_high', 'x-high'].includes(normalized)) {
     return 'xhigh'
   }
+  if (normalized === 'maximum') return 'max'
   return value
 }
 
@@ -422,7 +472,10 @@ export function normalizeModelOptionAliases(options: ModelOptions = {}): ModelOp
 }
 
 function selectedControlValue(control: ModelControlConfig, options: ModelOptions): string {
-  return normalizeModelOptionValue(control.id, options[control.id]) ?? control.defaultValue
+  const selected = normalizeModelOptionValue(control.id, options[control.id])
+  return control.options.some(option => option.value === selected)
+    ? selected!
+    : control.defaultValue
 }
 
 export function getSelectedModelDisplayLabel(

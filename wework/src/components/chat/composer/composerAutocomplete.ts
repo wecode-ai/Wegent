@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
-import type { LocalDeviceSkill } from '@/types/api'
+import type { LocalDeviceApp, LocalDeviceSkill } from '@/types/api'
 
-export type ComposerTriggerKind = 'skill' | 'slash'
+export type ComposerTriggerKind = 'mention' | 'skill' | 'slash'
 
 export interface ComposerTextTrigger {
   kind: ComposerTriggerKind
@@ -21,6 +21,7 @@ export interface SlashCommand {
   enabled?: boolean
   testId: string
   skill?: LocalDeviceSkill
+  app?: LocalDeviceApp
   onSelect?: () => void
 }
 
@@ -29,7 +30,7 @@ const SLASH_ONLY_PATTERN = /^\s*\/[^/\r\n]*\s*$/
 export function findStandaloneTrigger(
   value: string,
   cursor: number,
-  trigger: '$' | '/',
+  trigger: '@' | '$' | '/',
   kind: ComposerTriggerKind
 ): ComposerTextTrigger | null {
   const beforeCursor = value.slice(0, cursor)

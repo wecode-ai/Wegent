@@ -17,7 +17,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 type AuthorizationState = 'idle' | 'submitting' | 'approved' | 'declined' | 'error'
 
 function currentRedirectTarget(): string {
-  if (typeof window === 'undefined') return '/wework/authorize'
+  if (typeof window === 'undefined') return paths.auth.wework_authorize.getHref()
   return `${window.location.pathname}${window.location.search}`
 }
 

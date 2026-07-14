@@ -205,10 +205,10 @@ async fn codex_app_server_engine_passes_provider_overrides_as_cli_config() {
     assert_eq!(messages[3]["params"]["modelProvider"], "wecode-openai");
     assert_eq!(
         messages[3]["params"]["config"]["model_reasoning_effort"],
-        "xhigh"
+        "ultra"
     );
     assert_eq!(messages[3]["params"]["config"]["service_tier"], "priority");
-    assert_eq!(messages[4]["params"]["effort"], "xhigh");
+    assert_eq!(messages[4]["params"]["effort"], "ultra");
 }
 
 #[tokio::test]
@@ -308,12 +308,17 @@ async fn codex_app_server_receives_normalized_developer_path() {
 }
 
 #[tokio::test]
-async fn codex_app_server_engine_does_not_override_user_runtime_home() {
+async fn codex_app_server_engine_uses_isolated_wework_runtime_home() {
     let _lock = env_lock().await;
     let home = unique_dir("codex-user-home");
-    let codex_home = unique_dir("codex-home");
+    let user_codex_home = unique_dir("codex-user-config-home");
+    let wework_codex_home = unique_dir("codex-wework-home");
     let _home = EnvGuard::set("HOME", &home.display().to_string());
-    let _codex_home = EnvGuard::set("CODEX_HOME", &codex_home.display().to_string());
+    let _codex_home = EnvGuard::set("CODEX_HOME", &user_codex_home.display().to_string());
+    let _wework_codex_home = EnvGuard::set(
+        "WEGENT_CODEX_HOME",
+        &wework_codex_home.display().to_string(),
+    );
     let log_path = std::env::temp_dir().join(format!(
         "wegent-executor-codex-user-home-rpc-{}.jsonl",
         std::process::id()
@@ -348,7 +353,7 @@ async fn codex_app_server_engine_does_not_override_user_runtime_home() {
     let messages = read_json_lines(&log_path);
     assert_eq!(
         messages[0]["env"]["CODEX_HOME"],
-        codex_home.display().to_string()
+        wework_codex_home.display().to_string()
     );
     assert_eq!(messages[0]["env"]["HOME"], home.display().to_string());
 }
