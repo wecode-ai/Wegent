@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
@@ -3152,6 +3153,91 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
     )
     expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  })
+
+  test('opens the native folder picker under React StrictMode', async () => {
+    const onOpenStandaloneWorkspace = vi.fn()
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(
+      '/Users/alice/repo'
+    )
+
+    render(
+      <StrictMode>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          state={{
+            ...baseProps.state,
+            devices: [
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'sifang-executor',
+                status: 'online',
+                is_default: true,
+                bind_shell: 'claudecode',
+                device_type: 'local',
+                executor_version: '1.8.5',
+              },
+            ],
+          }}
+        />
+      </StrictMode>
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
+    )
+  })
+
+  test('keeps the native folder picker active while the workbench rerenders', async () => {
+    const onOpenStandaloneWorkspace = vi.fn()
+    let resolvePicker: (path: string) => void = () => undefined
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolvePicker = resolve
+        })
+    )
+    const props = {
+      ...baseProps,
+      onOpenStandaloneWorkspace,
+      state: {
+        ...baseProps.state,
+        devices: [
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'sifang-executor',
+            status: 'online' as const,
+            is_default: true,
+            bind_shell: 'claudecode' as const,
+            device_type: 'local' as const,
+            executor_version: '1.8.5',
+          },
+        ],
+      },
+    }
+    const view = render(<DesktopWorkbenchLayout {...props} />)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+
+    view.rerender(<DesktopWorkbenchLayout {...props} />)
+    resolvePicker('/Users/alice/repo')
+
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
+    )
   })
 
   test('does not open the in-app folder dialog when the native folder picker is cancelled', async () => {

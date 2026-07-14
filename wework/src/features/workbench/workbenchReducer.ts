@@ -12,7 +12,12 @@ import type {
   UserPreferences,
 } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
-import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  normalizeRuntimeWorkspacePath,
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+  standaloneRuntimeProjectKey,
+} from '@/lib/runtime-project'
 import { getRuntimeTaskWorkspacePath } from './workbenchRuntimeHelpers'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
@@ -764,20 +769,6 @@ function runtimeWorkspaceFromMapping(
   }
 }
 
-function stableRuntimeProjectId(value: string): number {
-  let hash = 0
-  for (const char of value) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0
-  }
-  return (hash % 1_000_000_000) + 1
-}
-
-function normalizeRuntimeWorkspacePath(path: string): string {
-  const trimmedPath = path.trim()
-  if (trimmedPath === '/') return trimmedPath
-  return trimmedPath.replace(/\/+$/, '')
-}
-
 function runtimeWorkspaceLabel(workspacePath: string, label?: string | null): string {
   const trimmedLabel = label?.trim()
   if (trimmedLabel) return trimmedLabel
@@ -828,8 +819,7 @@ function upsertOpenedRuntimeWorkspace(
     projectLabel,
     devices
   )
-  const projectKey = `local:${normalizedWorkspacePath}`
-  const projectId = stableRuntimeProjectId(normalizedWorkspacePath)
+  const projectKey = standaloneRuntimeProjectKey(normalizedWorkspacePath)
   const remainingProjects = currentRuntimeWork.projects
     .map(projectWork => ({
       ...projectWork,
@@ -846,7 +836,7 @@ function upsertOpenedRuntimeWorkspace(
     {
       project: {
         key: projectKey,
-        id: projectId,
+        stateDeviceId: normalizedDeviceId,
         name: projectLabel,
       },
       deviceWorkspaces: [nextWorkspace],
