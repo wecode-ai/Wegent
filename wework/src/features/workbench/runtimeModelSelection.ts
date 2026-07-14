@@ -1,9 +1,8 @@
-import { resolveModelExecutionSelection } from '@/features/cloud-connection/modelExecution'
 import {
-  getDefaultModelOptions,
-  getModelCompatibilityFamily,
-  normalizeModelOptionAliases,
-} from '@/lib/model-ui'
+  resolveModelExecutionSelection,
+  supportsResponsesApi,
+} from '@/features/cloud-connection/modelExecution'
+import { getDefaultModelOptions, normalizeModelOptionAliases } from '@/lib/model-ui'
 import type {
   ModelOptions,
   ModelSelectionConfig,
@@ -11,9 +10,6 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 
-const OPENAI_RESPONSES_RUNTIME_FAMILY = 'openai.openai-responses'
-const OPENAI_RESPONSES_PROTOCOL = 'openai-responses'
-const RESPONSES_API_FORMAT = 'responses'
 const MODEL_EXECUTION_CONFIG_KEY = 'weworkExecution'
 export const CLOUD_MODEL_NAMESPACE_OPTION = 'weworkCloudModelNamespace'
 export const CLOUD_MODEL_RESOURCE_USER_ID_OPTION = 'weworkCloudModelResourceUserId'
@@ -85,12 +81,7 @@ function selectionForModel(model: UnifiedModel): ModelSelectionConfig {
 }
 
 function isCodexCompatibleModel(model: UnifiedModel): boolean {
-  return (
-    getModelCompatibilityFamily(model) === OPENAI_RESPONSES_RUNTIME_FAMILY ||
-    getStringConfigValue(model.config, 'protocol') === OPENAI_RESPONSES_PROTOCOL ||
-    getStringConfigValue(model.config, 'apiFormat') === RESPONSES_API_FORMAT ||
-    getStringConfigValue(model.config, 'api_format') === RESPONSES_API_FORMAT
-  )
+  return supportsResponsesApi(model)
 }
 
 export function resolveAutomaticModel(models: UnifiedModel[]): UnifiedModel | null {
