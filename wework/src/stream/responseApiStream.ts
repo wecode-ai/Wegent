@@ -503,13 +503,15 @@ function emitToolDone(
 function imageGenerationRenderPayload(item: Record<string, unknown>): Record<string, unknown> {
   const result = stringField(item, 'result')
   const partialImage = stringField(item, 'partial_image_b64')
+  const imageBase64 = result ?? partialImage
+  const revisedPrompt = stringField(item, 'revised_prompt') ?? stringField(item, 'revisedPrompt')
+  const savedPath = stringField(item, 'saved_path') ?? stringField(item, 'savedPath')
+
   return {
     kind: 'image_generation',
-    ...(result && { imageBase64: result }),
-    ...(partialImage && { imageBase64: partialImage }),
-    ...(stringField(item, 'revised_prompt') && {
-      revisedPrompt: stringField(item, 'revised_prompt'),
-    }),
+    ...(imageBase64 && { imageBase64 }),
+    ...(revisedPrompt && { revisedPrompt }),
+    ...(savedPath && { savedPath }),
   }
 }
 

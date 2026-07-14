@@ -483,8 +483,10 @@ describe('emitResponseApiEvent', () => {
             id: 'ig-1',
             type: 'image_generation_call',
             status: 'completed',
-            revised_prompt: 'A finished image',
+            revisedPrompt: 'A finished image',
             result: 'ZmluYWw=',
+            partial_image_b64: 'cGFydGlhbA==',
+            savedPath: '/tmp/generated.png',
           },
         },
       },
@@ -517,6 +519,7 @@ describe('emitResponseApiEvent', () => {
           kind: 'image_generation',
           imageBase64: 'ZmluYWw=',
           revisedPrompt: 'A finished image',
+          savedPath: '/tmp/generated.png',
         },
       })
     )

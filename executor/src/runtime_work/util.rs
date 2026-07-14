@@ -310,7 +310,6 @@ pub(crate) fn is_codex_tool_output_item_type(item_type: &str) -> bool {
 pub(crate) fn is_likely_codex_tool_item_type(item_type: &str) -> bool {
     is_codex_tool_item_type(item_type)
         || is_codex_tool_output_item_type(item_type)
-        || item_type == "imagegeneration"
         || item_type.contains("tool")
         || item_type.contains("command")
         || item_type.contains("exec")
