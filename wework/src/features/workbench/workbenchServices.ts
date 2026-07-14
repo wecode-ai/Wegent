@@ -111,7 +111,6 @@ export function createDefaultWorkbenchServices(
       cloudConnection.token
     ) {
       return createHybridWorkbenchServices({
-        backendUrl: cloudConnection.backendUrl,
         apiBaseUrl: cloudConnection.apiBaseUrl,
         socketBaseUrl: cloudConnection.socketBaseUrl,
         socketPath: cloudConnection.socketPath,

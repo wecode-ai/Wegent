@@ -2006,6 +2006,7 @@ export interface UnifiedModel {
   provider?: string | null
   modelId?: string | null
   namespace?: string
+  resourceUserId?: number
   config?: Record<string, unknown>
   runtime?: ModelRuntime | null
   isActive?: boolean
