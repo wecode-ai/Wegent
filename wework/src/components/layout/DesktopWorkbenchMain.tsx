@@ -640,20 +640,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   useEffect(() => {
     if (paneActive || migratedEmbeddedBrowserLabel !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
 
-    let disposed = false
     void relabelEmbeddedBrowser(DEFAULT_EMBEDDED_BROWSER_LABEL, defaultEmbeddedBrowserLabel)
       .then(() => {
-        if (disposed) return
         markEmbeddedBrowserLabelTransferred(DEFAULT_EMBEDDED_BROWSER_LABEL)
         setMigratedEmbeddedBrowserLabel(null)
       })
       .catch(error => {
         console.error('Failed to preserve embedded browser for inactive task:', error)
       })
-
-    return () => {
-      disposed = true
-    }
   }, [defaultEmbeddedBrowserLabel, migratedEmbeddedBrowserLabel, paneActive])
 
   const bottomPanelWorkspaceKey = createBottomPanelWorkspaceKey({
@@ -843,24 +837,37 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     temporaryChatTabSequence.current += 1
     openRightPanelTab(`chat:${Date.now()}-${temporaryChatTabSequence.current}`)
   }, [openRightPanelTab])
+  const embeddedBrowserListenerStateRef = useRef({
+    embeddedBrowserLabel,
+    openRightPanelTab,
+    paneActive,
+  })
+  useEffect(() => {
+    embeddedBrowserListenerStateRef.current = {
+      embeddedBrowserLabel,
+      openRightPanelTab,
+      paneActive,
+    }
+  }, [embeddedBrowserLabel, openRightPanelTab, paneActive])
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {
-      if (request.label === DEFAULT_EMBEDDED_BROWSER_LABEL && !paneActive) return
-      if (request.label && request.label !== embeddedBrowserLabel) {
+      const current = embeddedBrowserListenerStateRef.current
+      if (request.label === DEFAULT_EMBEDDED_BROWSER_LABEL && !current.paneActive) return
+      if (request.label && request.label !== current.embeddedBrowserLabel) {
         if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
         setMigratedEmbeddedBrowserLabel(request.label)
       }
-      setEmbeddedBrowserOpenRequest(current => ({
+      setEmbeddedBrowserOpenRequest(previous => ({
         ...request,
-        id: (current?.id ?? 0) + 1,
+        id: (previous?.id ?? 0) + 1,
       }))
-      openRightPanelTab('browser')
+      current.openRightPanelTab('browser')
     })
 
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [embeddedBrowserLabel, openRightPanelTab, paneActive])
+  }, [])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
