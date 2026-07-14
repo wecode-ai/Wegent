@@ -358,6 +358,11 @@ describe('DesktopSidebar', () => {
     expect(content).not.toHaveTextContent('创建时间')
     expect(content).not.toHaveTextContent('done')
     expect(content).not.toHaveTextContent('local-device /Users/alice/repo/Wegent')
+
+    fireEvent.pointerMove(document.body)
+    expect(
+      screen.queryByTestId('runtime-local-task-hover-content-hover-task')
+    ).not.toBeInTheDocument()
   })
 
   test('keeps the account settings trigger and notification bell inside the sidebar width', () => {
