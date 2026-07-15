@@ -65,6 +65,8 @@ The runtime task `running` field represents only whether a model turn is current
 
 Goals have an independent lifecycle. An `active` goal means that its objective can continue in later turns; it does not mean that a model turn is currently executing. Keeping an active goal while a task is idle must not mark the task as running again. A user's next message creates a new turn directly instead of being sent as guidance to an in-progress turn.
 
+Codex guidance is sent to the active turn through the shared app-server. If that turn finishes or changes while guidance is being sent, the executor reports the race as `no_active_turn`; Wework then sends the same content as a normal follow-up message so user input is preserved without a misleading send failure.
+
 ### Backend Device Chat Task REST Entrypoint
 
 The web device chat page still sends messages through WebSocket. For external systems or curl-based callers that need to create the same kind of task, Backend exposes a REST entrypoint:

@@ -2176,14 +2176,17 @@ impl RuntimeWorkRpcHandler {
                 "turnId": turn_id,
                 "runtime": "codex",
             })),
-            Err(error) => Ok(json!({
-                "success": false,
-                "accepted": false,
-                "error": error,
-                "code": "guidance_failed",
-                "taskId": local_task_id,
-                "runtime": "codex",
-            })),
+            Err(error) => {
+                let code = codex_guidance_failure_code(&error);
+                Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "error": error,
+                    "code": code,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                }))
+            }
         }
     }
 
@@ -4972,6 +4975,17 @@ fn guidance_input_items(message: &str, attachments: Option<&Value>) -> Vec<Value
     inputs
 }
 
+fn codex_guidance_failure_code(error: &str) -> &'static str {
+    let normalized = error.to_ascii_lowercase();
+    if normalized.contains("no active turn to steer")
+        || (normalized.contains("expected active turn id") && normalized.contains("but found"))
+    {
+        "no_active_turn"
+    } else {
+        "guidance_failed"
+    }
+}
+
 fn copy_attachment_field(source: &Map<String, Value>, target: &mut Map<String, Value>, key: &str) {
     if let Some(value) = source.get(key).cloned() {
         target.insert(key.to_owned(), value);
@@ -6596,6 +6610,22 @@ mod tests {
             })]
         );
         assert!(guidance_input_items("", None).is_empty());
+    }
+
+    #[test]
+    fn codex_guidance_turn_races_are_reported_as_no_active_turn() {
+        assert_eq!(
+            codex_guidance_failure_code("no active turn to steer"),
+            "no_active_turn"
+        );
+        assert_eq!(
+            codex_guidance_failure_code("expected active turn id `turn-1` but found `turn-2`"),
+            "no_active_turn"
+        );
+        assert_eq!(
+            codex_guidance_failure_code("turn/steer response missing turnId"),
+            "guidance_failed"
+        );
     }
 
     #[test]
