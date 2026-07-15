@@ -10,14 +10,15 @@ The Settings module provides configuration functionality for the Wegent system, 
 
 ## 📋 Documentation in This Module
 
-| Document                                                  | Description                                                    |
-| --------------------------------------------------------- | -------------------------------------------------------------- |
-| [Agent Settings](./agent-settings.md)                     | Configure Agents, Bots, prompts, and collaboration modes       |
-| [Configuring Models](./configuring-models.md)             | Configure AI models (Anthropic Claude, OpenAI GPT, etc.)       |
-| [Configuring Shells](./configuring-shells.md)             | Configure runtime environments (ClaudeCode, Dify, Chat)        |
-| [Managing Skills](./managing-skills.md)                   | Upload, manage, and use Skill capability extension packages    |
-| [Keyboard Shortcuts](./keyboard-shortcuts.md)             | Manage local shortcuts for the Wework desktop app              |
-| [Desktop App Preferences](./desktop-app-preferences.md)   | Configure Wework desktop launch, background, and tray behavior |
+| Document                                                | Description                                                    |
+| ------------------------------------------------------- | -------------------------------------------------------------- |
+| [Agent Settings](./agent-settings.md)                   | Configure Agents, Bots, prompts, and collaboration modes       |
+| [Configuring Models](./configuring-models.md)           | Configure AI models (Anthropic Claude, OpenAI GPT, etc.)       |
+| [Configuring Shells](./configuring-shells.md)           | Configure runtime environments (ClaudeCode, Dify, Chat)        |
+| [Managing Skills](./managing-skills.md)                 | Upload, manage, and use Skill capability extension packages    |
+| [Keyboard Shortcuts](./keyboard-shortcuts.md)           | Manage local shortcuts for the Wework desktop app              |
+| [Desktop App Preferences](./desktop-app-preferences.md) | Configure Wework desktop launch, background, and tray behavior |
+| [Browser settings](./browser-settings.md)               | Configure built-in browser links, privacy, and downloads       |
 
 ---
 

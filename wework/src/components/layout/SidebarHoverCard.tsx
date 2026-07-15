@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 
@@ -28,11 +28,12 @@ export function SidebarHoverCard({
   cardClassName,
 }: SidebarHoverCardProps) {
   const anchorRef = useRef<HTMLDivElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
   const openTimerRef = useRef<number | null>(null)
   const closeTimerRef = useRef<number | null>(null)
   const [position, setPosition] = useState<HoverCardPosition | null>(null)
 
-  const clearTimers = () => {
+  const clearTimers = useCallback(() => {
     if (openTimerRef.current !== null) {
       window.clearTimeout(openTimerRef.current)
       openTimerRef.current = null
@@ -41,14 +42,14 @@ export function SidebarHoverCard({
       window.clearTimeout(closeTimerRef.current)
       closeTimerRef.current = null
     }
-  }
+  }, [])
 
-  const close = () => {
+  const close = useCallback(() => {
     clearTimers()
     setPosition(null)
-  }
+  }, [clearTimers])
 
-  const scheduleOpen = () => {
+  const scheduleOpen = useCallback(() => {
     clearTimers()
     openTimerRef.current = window.setTimeout(() => {
       openTimerRef.current = null
@@ -59,9 +60,9 @@ export function SidebarHoverCard({
         top: Math.max(VIEWPORT_PADDING, Math.min(rect.top, window.innerHeight - 220)),
       })
     }, HOVER_OPEN_DELAY_MS)
-  }
+  }, [clearTimers])
 
-  const scheduleClose = () => {
+  const scheduleClose = useCallback(() => {
     if (!interactive) {
       close()
       return
@@ -70,15 +71,17 @@ export function SidebarHoverCard({
       window.clearTimeout(openTimerRef.current)
       openTimerRef.current = null
     }
-    closeTimerRef.current = window.setTimeout(close, HOVER_CLOSE_DELAY_MS)
-  }
+    if (closeTimerRef.current === null) {
+      closeTimerRef.current = window.setTimeout(close, HOVER_CLOSE_DELAY_MS)
+    }
+  }, [close, interactive])
 
-  const keepOpen = () => {
+  const keepOpen = useCallback(() => {
     if (closeTimerRef.current !== null) {
       window.clearTimeout(closeTimerRef.current)
       closeTimerRef.current = null
     }
-  }
+  }, [])
 
   useEffect(
     () => () => {
@@ -87,6 +90,32 @@ export function SidebarHoverCard({
     },
     []
   )
+
+  useEffect(() => {
+    if (!position) return
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const path = event.composedPath()
+      if (path.includes(anchorRef.current as EventTarget)) {
+        keepOpen()
+        return
+      }
+      if (interactive && path.includes(cardRef.current as EventTarget)) {
+        keepOpen()
+        return
+      }
+      scheduleClose()
+    }
+
+    document.addEventListener('pointermove', handlePointerMove, true)
+    window.addEventListener('blur', close)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      document.removeEventListener('pointermove', handlePointerMove, true)
+      window.removeEventListener('blur', close)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [close, interactive, keepOpen, position, scheduleClose])
 
   return (
     <div
@@ -100,6 +129,7 @@ export function SidebarHoverCard({
       {position &&
         createPortal(
           <div
+            ref={cardRef}
             data-testid={testId}
             role={interactive ? 'dialog' : 'tooltip'}
             style={position}

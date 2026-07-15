@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{SocketAddr, TcpStream};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -399,6 +399,21 @@ pub struct CodexHomeInitializeOptions {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ExternalContentImportOptions {
+    source: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalContentImportResult {
+    source: String,
+    source_path: String,
+    destination_path: String,
+    imported_entries: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CodexLocalConfigPatch {
     remote_apps_enabled: Option<bool>,
 }
@@ -467,6 +482,14 @@ fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
     Ok(home)
 }
 
+fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) {
+        return local_executor_runtime_dir_path();
+    }
+
+    local_executor_home_path()
+}
+
 fn local_executor_home_path() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
         let trimmed = path.trim();
@@ -480,7 +503,7 @@ fn local_executor_home_path() -> Result<PathBuf, String> {
 }
 
 fn app_ipc_addr_file_path() -> Result<PathBuf, String> {
-    Ok(local_executor_home_path()?.join(LOCAL_EXECUTOR_ADDR_FILE_NAME))
+    Ok(local_executor_runtime_home_path()?.join(LOCAL_EXECUTOR_ADDR_FILE_NAME))
 }
 
 fn resolve_app_ipc_addr() -> Result<SocketAddr, String> {
@@ -722,13 +745,9 @@ fn remove_stale_app_ipc_addr_file_at(path: &Path) -> Result<(), String> {
         return Ok(());
     }
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() => {
-            std::fs::remove_file(path).map_err(|error| {
-                format!(
-                    "Failed to remove stale local executor IPC address file {path:?}: {error}"
-                )
-            })
-        }
+        Ok(metadata) if metadata.is_file() => std::fs::remove_file(path).map_err(|error| {
+            format!("Failed to remove stale local executor IPC address file {path:?}: {error}")
+        }),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
@@ -938,13 +957,16 @@ fn configured_file_edit_hook_command() -> String {
 }
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
-    let executor_home = path_or_error(local_executor_home_path());
+    let executor_home = path_or_error(local_executor_runtime_home_path());
     let codex_home = path_or_error(wework_codex_home_path(&executor_home));
     let log_dir = path_or_error(local_executor_log_dir_path());
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
         (CODEX_HOME_ENV.to_string(), codex_home),
-        (LOCAL_EXECUTOR_ADDR_ENV.to_string(), LOCAL_EXECUTOR_DEFAULT_ADDR.to_string()),
+        (
+            LOCAL_EXECUTOR_ADDR_ENV.to_string(),
+            LOCAL_EXECUTOR_DEFAULT_ADDR.to_string(),
+        ),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (
             "PATH".to_string(),
@@ -1176,6 +1198,70 @@ fn copy_codex_initialization_files(source: &Path, destination: &Path) -> Result<
         copy_codex_initialization_entry(&source_path, &destination_path)?;
     }
     Ok(())
+}
+
+fn import_external_content(source: &str) -> Result<ExternalContentImportResult, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    let executor_home = local_executor_home_path()?;
+    let destination = wework_codex_home_path(&executor_home.display().to_string())?;
+    import_external_content_from_paths(source, &home, &destination)
+}
+
+fn import_external_content_from_paths(
+    source: &str,
+    home: &Path,
+    destination: &Path,
+) -> Result<ExternalContentImportResult, String> {
+    let (source_path, entries): (PathBuf, Vec<(&str, &str)>) = match source {
+        "codex" => (
+            home.join(".codex"),
+            vec![
+                ("config.toml", "config.toml"),
+                ("auth.json", "auth.json"),
+                ("AGENTS.md", "AGENTS.md"),
+                ("models_cache.json", "models_cache.json"),
+                ("plugins", "plugins"),
+                ("skills", "skills"),
+                ("cache", "cache"),
+                ("vendor_imports", "vendor_imports"),
+            ],
+        ),
+        "claude-code" => (
+            home.join(".claude"),
+            vec![("CLAUDE.md", "AGENTS.md"), ("skills", "skills")],
+        ),
+        _ => return Err(format!("Unsupported import source: {source}")),
+    };
+    if !source_path.is_dir() {
+        return Err(format!(
+            "Import source does not exist: {}",
+            source_path.display()
+        ));
+    }
+
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
+    let mut imported_entries = Vec::new();
+    for (source_entry, destination_entry) in entries {
+        let entry_path = source_path.join(source_entry);
+        if !entry_path.exists() {
+            continue;
+        }
+        copy_codex_initialization_entry(&entry_path, &destination.join(destination_entry))?;
+        imported_entries.push(source_entry.to_string());
+    }
+    if imported_entries.is_empty() {
+        return Err(format!(
+            "No supported content was found in {}",
+            source_path.display()
+        ));
+    }
+    Ok(ExternalContentImportResult {
+        source: source.to_string(),
+        source_path: source_path.display().to_string(),
+        destination_path: destination.display().to_string(),
+        imported_entries,
+    })
 }
 
 fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
@@ -1524,8 +1610,9 @@ fn handle_executor_line_inner(
 fn connect_sidecar_socket() -> Result<TcpStream, String> {
     let addr = resolve_app_ipc_addr()?;
     if addr.port() != 0 {
-        return TcpStream::connect(addr)
-            .map_err(|error| format!("Failed to connect local executor TCP socket {addr}: {error}"));
+        return TcpStream::connect(addr).map_err(|error| {
+            format!("Failed to connect local executor TCP socket {addr}: {error}")
+        });
     }
 
     let addr = wait_for_app_ipc_addr(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS))?;
@@ -1536,7 +1623,9 @@ fn connect_sidecar_socket() -> Result<TcpStream, String> {
 fn prepare_connected_stream(stream: TcpStream) -> Result<PreparedExecutorStream, String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS)))
-        .map_err(|error| format!("Failed to configure local executor TCP socket timeout: {error}"))?;
+        .map_err(|error| {
+            format!("Failed to configure local executor TCP socket timeout: {error}")
+        })?;
     let mut reader = BufReader::new(stream);
     let mut ready_line = String::new();
     reader
@@ -2189,6 +2278,13 @@ pub async fn local_executor_migrate_native_codex_home() -> Result<CodexHomeMigra
 }
 
 #[tauri::command]
+pub async fn local_executor_import_external_content(
+    options: ExternalContentImportOptions,
+) -> Result<ExternalContentImportResult, String> {
+    import_external_content(&options.source)
+}
+
+#[tauri::command]
 pub async fn local_executor_copy_debug_info(text: String) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("Debug info must not be empty".to_string());
@@ -2297,6 +2393,17 @@ mod tests {
         }
     }
 
+    fn import_test_root(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "wework-import-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
     #[test]
     fn parses_success_response_line() {
         let line = r#"{"type":"response","id":"req-1","ok":true,"result":{"value":1}}"#;
@@ -2335,6 +2442,43 @@ mod tests {
         assert!(!read_remote_apps_enabled_from_config(
             "[other]\napps = true\n"
         ));
+    }
+
+    #[test]
+    fn imports_codex_initialization_content_again() {
+        let root = import_test_root("codex");
+        let home = root.join("home");
+        let destination = root.join("destination");
+        fs::create_dir_all(home.join(".codex/skills/example")).unwrap();
+        fs::write(home.join(".codex/config.toml"), "model = \"gpt-5\"").unwrap();
+        fs::write(home.join(".codex/skills/example/SKILL.md"), "example").unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("config.toml"), "old").unwrap();
+
+        let result = import_external_content_from_paths("codex", &home, &destination).unwrap();
+
+        assert_eq!(fs::read_to_string(destination.join("config.toml")).unwrap(), "model = \"gpt-5\"");
+        assert!(destination.join("skills/example/SKILL.md").is_file());
+        assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn maps_claude_instructions_and_skills_to_codex_content() {
+        let root = import_test_root("claude");
+        let home = root.join("home");
+        let destination = root.join("destination");
+        fs::create_dir_all(home.join(".claude/skills/example")).unwrap();
+        fs::write(home.join(".claude/CLAUDE.md"), "Claude instructions").unwrap();
+        fs::write(home.join(".claude/skills/example/SKILL.md"), "example").unwrap();
+
+        let result =
+            import_external_content_from_paths("claude-code", &home, &destination).unwrap();
+
+        assert_eq!(fs::read_to_string(destination.join("AGENTS.md")).unwrap(), "Claude instructions");
+        assert!(destination.join("skills/example/SKILL.md").is_file());
+        assert_eq!(result.imported_entries, vec!["CLAUDE.md", "skills"]);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2412,9 +2556,17 @@ command = "example"
         let path = app_ipc_addr_file_path().expect("addr file path should resolve");
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
 
+        if cfg!(debug_assertions) {
+            assert!(path
+                .display()
+                .to_string()
+                .starts_with("/tmp/wegent-home/app-runtime/wework-"));
+        } else {
+            assert_eq!(path, PathBuf::from("/tmp/wegent-home/app-ipc.addr"));
+        }
         assert_eq!(
-            path,
-            PathBuf::from("/tmp/wegent-home/app-ipc.addr")
+            path.file_name().and_then(|name| name.to_str()),
+            Some(LOCAL_EXECUTOR_ADDR_FILE_NAME)
         );
     }
 
@@ -2430,9 +2582,20 @@ command = "example"
         restore_env("HOME", previous_home);
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
 
+        if cfg!(debug_assertions) {
+            assert!(path
+                .display()
+                .to_string()
+                .starts_with("/tmp/wework-test-home/.wegent-executor/app-runtime/wework-"));
+        } else {
+            assert_eq!(
+                path,
+                PathBuf::from("/tmp/wework-test-home/.wegent-executor/app-ipc.addr")
+            );
+        }
         assert_eq!(
-            path,
-            PathBuf::from("/tmp/wework-test-home/.wegent-executor/app-ipc.addr")
+            path.file_name().and_then(|name| name.to_str()),
+            Some(LOCAL_EXECUTOR_ADDR_FILE_NAME)
         );
     }
 
@@ -2485,8 +2648,13 @@ command = "example"
             home,
             PathBuf::from("/tmp/wework-test-home/.wegent-executor")
         );
-        assert_eq!(addr_file, home.join(LOCAL_EXECUTOR_ADDR_FILE_NAME));
         if cfg!(debug_assertions) {
+            assert_eq!(
+                addr_file,
+                home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+                    .join(local_executor_instance_name())
+                    .join(LOCAL_EXECUTOR_ADDR_FILE_NAME)
+            );
             assert_eq!(
                 log,
                 home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
@@ -2495,6 +2663,7 @@ command = "example"
                     .join(LOCAL_EXECUTOR_LOG_FILE_NAME)
             );
         } else {
+            assert_eq!(addr_file, home.join(LOCAL_EXECUTOR_ADDR_FILE_NAME));
             assert_eq!(log, home.join("logs").join(LOCAL_EXECUTOR_LOG_FILE_NAME));
         }
         assert_eq!(
@@ -2587,7 +2756,10 @@ command = "example"
         let release_text = "WEGENT_EXECUTOR_APP_IPC_ADDR=/Users/me/.wegent-executor/app-ipc.addr";
 
         assert!(!process_text_uses_addr_file(debug_text, &release_addr_file));
-        assert!(process_text_uses_addr_file(release_text, &release_addr_file));
+        assert!(process_text_uses_addr_file(
+            release_text,
+            &release_addr_file
+        ));
     }
 
     #[test]
@@ -2605,8 +2777,7 @@ command = "example"
 
         remove_stale_app_ipc_addr_file_at(&addr_file_path)
             .expect("addr file cleanup should succeed");
-        remove_stale_app_ipc_addr_file_at(&regular_path)
-            .expect("regular cleanup should succeed");
+        remove_stale_app_ipc_addr_file_at(&regular_path).expect("regular cleanup should succeed");
 
         assert!(!addr_file_path.exists());
         assert!(regular_path.exists());
@@ -2682,14 +2853,12 @@ command = "example"
             Some("local-device-abc")
         );
         assert_eq!(envs.get("DEVICE_TYPE").map(String::as_str), Some("app"));
-        assert_eq!(
-            envs.get(LOCAL_EXECUTOR_HOME_ENV).map(String::as_str),
-            Some("/tmp/wework-instance-executor")
-        );
-        assert_eq!(
-            envs.get(CODEX_HOME_ENV).map(String::as_str),
-            Some("/tmp/wework-instance-executor/codex")
-        );
+        let executor_home_env = envs
+            .get(LOCAL_EXECUTOR_HOME_ENV)
+            .expect("executor home env should be passed to sidecar");
+        let codex_home_env = envs
+            .get(CODEX_HOME_ENV)
+            .expect("codex home env should be passed to sidecar");
         let addr_env = envs
             .get(LOCAL_EXECUTOR_ADDR_ENV)
             .expect("addr env should be passed to sidecar");
@@ -2698,8 +2867,14 @@ command = "example"
             .expect("log dir env should be passed to sidecar");
         assert_eq!(addr_env, LOCAL_EXECUTOR_DEFAULT_ADDR);
         if cfg!(debug_assertions) {
+            assert!(
+                executor_home_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-")
+            );
+            assert_eq!(codex_home_env, &format!("{executor_home_env}/codex"));
             assert!(log_dir_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
         } else {
+            assert_eq!(executor_home_env, "/tmp/wework-instance-executor");
+            assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
         }
     }

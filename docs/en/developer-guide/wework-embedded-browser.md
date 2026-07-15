@@ -32,6 +32,8 @@ This binding keeps the browser the user sees and the browser the agent controls 
 
 ## WebView Compatibility
 
+- Browser WebViews use a fixed isolated data-store identifier and app data directory. They must not share Wework's main-interface sign-in storage, and the browser settings clear action only targets this store.
+- The download handler reads the download directory and ask-before-download preference. Cancelling the system save dialog must cancel that download.
 - Page-load events write the current URL into application state. Do not synchronously read the native WebView URL while handling IPC or custom protocols because macOS WebKit may temporarily have no URL while creating or destroying a WebView.
 - The embedded browser uses a standard Safari-compatible User-Agent so websites do not treat a WebKit User-Agent without a browser product identifier as an unsupported client.
 

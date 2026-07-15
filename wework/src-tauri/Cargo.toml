@@ -36,6 +36,9 @@ portable-pty = "0.8"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
+reqwest = { version = "0.13", features = ["blocking"] }
+# Keep Wry's devtools API available when its debug assertions are disabled below.
+wry = { version = "0.55.1", features = ["devtools"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
@@ -47,3 +50,9 @@ objc2 = "0.6.3"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSBitmapImageRep", "NSImage", "NSImageRep", "NSOpenPanel", "NSPanel", "NSPasteboard", "NSResponder", "NSSavePanel", "NSWindow"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData", "NSDictionary", "NSDistributedNotificationCenter", "NSError", "NSNotification", "NSObject", "NSString", "std"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["WKSnapshotConfiguration", "WKWebView", "block2", "objc2-app-kit", "std"] }
+
+# Wry prints an expected WKDownload cancellation to stderr whenever Wework takes
+# over a browser download. Keep application debug assertions enabled while
+# suppressing that dependency-only false error in development builds.
+[profile.dev.package.wry]
+debug-assertions = false

@@ -170,9 +170,19 @@ export function WorkbenchProvider({
   const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
-  const currentRuntimeTaskRunning = useMemo(
+  const authoritativeRuntimeTaskRunning = useMemo(
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
+  )
+  const currentRuntimeTaskRunning = useMemo(
+    () =>
+      authoritativeRuntimeTaskRunning ||
+      (state.currentRuntimeTask !== null &&
+        state.activeRuntimeTasks.some(
+          address =>
+            getRuntimeTaskRouteKey(address) === getRuntimeTaskRouteKey(state.currentRuntimeTask!)
+        )),
+    [authoritativeRuntimeTaskRunning, state.activeRuntimeTasks, state.currentRuntimeTask]
   )
   const runtimeTaskReminders = useRuntimeTaskReminders({
     userId: user.id,
@@ -732,7 +742,7 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     runtimeTasks,
-    currentRuntimeTaskRunning,
+    authoritativeRuntimeTaskRunning,
     projectExecutionMode,
     projectWorktreeBranch,
     isOptionsLocked,
@@ -748,7 +758,12 @@ export function WorkbenchProvider({
     (error: string | null) => dispatch({ type: 'error_set', error }),
     [dispatch]
   )
+  const markRuntimeTaskStarted = useCallback(
+    (address: RuntimeTaskAddress) => dispatch({ type: 'runtime_task_started', address }),
+    [dispatch]
+  )
   const stableSetWorkbenchError = useStableEvent(setWorkbenchError)
+  const stableMarkRuntimeTaskStarted = useStableEvent(markRuntimeTaskStarted)
   const stableSetProjectWorktreeBranch = useStableEvent(setProjectWorktreeBranch)
   const stableSelectProjectWorkspace = useStableEvent(selectProjectWorkspace)
   const stableSelectStandaloneDevice = useStableEvent(selectStandaloneDevice)
@@ -1155,6 +1170,7 @@ export function WorkbenchProvider({
     getRuntimeGoal: runtimeTasks.getRuntimeGoal,
     setRuntimeGoal: runtimeTasks.setRuntimeGoal,
     clearRuntimeGoal: runtimeTasks.clearRuntimeGoal,
+    markRuntimeTaskStarted,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,
     getImNotificationSettings,
@@ -1237,6 +1253,7 @@ export function WorkbenchProvider({
       getRuntimeGoal: stableGetRuntimeGoal,
       setRuntimeGoal: stableSetRuntimeGoal,
       clearRuntimeGoal: stableClearRuntimeGoal,
+      markRuntimeTaskStarted: stableMarkRuntimeTaskStarted,
       listImPrivateSessions: stableListImPrivateSessions,
       bindRuntimeTaskToImSessions: stableBindRuntimeTaskToImSessions,
       getImNotificationSettings: stableGetImNotificationSettings,
@@ -1326,6 +1343,7 @@ export function WorkbenchProvider({
       stableLoadEnvironmentInfo,
       stableLoadRuntimeTranscriptForPane,
       stableLoadTurnFileChangesDiff,
+      stableMarkRuntimeTaskStarted,
       stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,
       stablePauseCurrentResponse,

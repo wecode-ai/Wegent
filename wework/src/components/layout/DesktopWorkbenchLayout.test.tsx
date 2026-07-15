@@ -2870,6 +2870,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'remote',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              client_ip: '127.0.0.1',
             },
           ],
         }}
@@ -2880,8 +2881,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     const select = screen.getByTestId('standalone-remote-device-select')
-    expect(select).toHaveTextContent('10.201.3.200 · Cloud Device')
-    expect(select).toHaveTextContent('Remote Device')
+    expect(select).toHaveTextContent('10.201.3.200')
+    expect(select).toHaveTextContent('127.0.0.1')
+    expect(select).not.toHaveTextContent('Cloud Device')
+    expect(select).not.toHaveTextContent('Remote Device')
     expect(select).not.toHaveTextContent('Local Device')
   })
 
@@ -3043,6 +3046,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(document.body).toContainElement(overlay)
     expect(document.querySelector('aside')).not.toContainElement(overlay)
     expect(overlay).toHaveClass('fixed', 'inset-0')
+    expect(dialog).toHaveClass('max-w-[520px]', 'rounded-[24px]', 'p-5')
+  })
+
+  test('closes the standalone remote project dialog on backdrop click', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await userEvent.click(screen.getByTestId('standalone-folder-project-dialog-overlay'))
+
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
   })
 
   test('opens blank project dialog from the project work menu add option', async () => {
@@ -3111,20 +3125,66 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'New remote project' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '新建远程项目' })).toBeInTheDocument()
   })
 
   test('opens a standalone Codex workspace from an existing local folder selected in Finder', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/Users/alice')
     const onOpenStandaloneWorkspace = vi.fn()
-    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(async () => {
-      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
-      return '/Users/alice/repo'
-    })
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(
+      async initialDirectory => {
+        expect(initialDirectory).toBeUndefined()
+        expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+        return '/Users/alice/repo'
+      }
+    )
+
+    render(
+      <StrictMode>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          state={{
+            ...baseProps.state,
+            devices: [
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'sifang-executor',
+                status: 'online',
+                is_default: true,
+                bind_shell: 'claudecode',
+                device_type: 'local',
+                executor_version: '1.8.5',
+              },
+            ],
+          }}
+        />
+      </StrictMode>
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+    expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
+    )
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  })
+
+  test('opens Finder without waiting for the local executor home directory', async () => {
+    const onGetDeviceHomeDirectory = vi.fn(() => new Promise<string>(() => undefined))
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         state={{
           ...baseProps.state,
           devices: [
@@ -3149,10 +3209,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
     )
-    await waitFor(() =>
-      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
-    )
-    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+    expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
   })
 
   test('opens the native folder picker under React StrictMode', async () => {
@@ -3344,7 +3401,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'New remote project' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '新建远程项目' })).toBeInTheDocument()
     expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('device-1')
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
   })
@@ -3475,6 +3532,57 @@ describe('DesktopWorkbenchLayout', () => {
       '192.0.2.10'
     )
     expect(within(projectRow).getByTestId('project-new-conversation-button')).not.toBeDisabled()
+  })
+
+  test('shows a loopback IP instead of the device ID for a remote project', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: '9d317900-0c00-4000-8000-000000000000',
+              name: 'Remote Device',
+              status: 'online' as const,
+              is_default: false,
+              device_type: 'remote' as const,
+              bind_shell: 'claudecode',
+              client_ip: '127.0.0.1',
+            },
+            {
+              id: 2,
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online' as const,
+              is_default: true,
+              device_type: 'local' as const,
+              bind_shell: 'claudecode',
+            },
+          ],
+          projects: [
+            {
+              id: 7,
+              name: 'hello',
+              config: {
+                execution: {
+                  targetType: 'remote',
+                  deviceId: '9d317900-0c00-4000-8000-000000000000',
+                },
+              },
+              tasks: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    const status = within(screen.getByTestId('project-row-7')).getByTestId(
+      'project-device-status-7'
+    )
+    expect(status).toHaveTextContent('127.0.0.1')
+    expect(status).not.toHaveTextContent('9d317900')
   })
 
   test('hides project device network status when only one device exists', () => {

@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   Archive,
   ArrowLeft,
   Palette,
@@ -71,6 +72,7 @@ import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
 import { ContextSettingsPage } from './ContextSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
+import { BrowserSettingsPage } from './BrowserSettingsPage'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
@@ -158,6 +160,13 @@ const settingsNavItems: SettingsNavItem[] = [
     icon: Package,
     label: 'settings_nav_plugins',
     fallback: '插件',
+    category: 'integrations',
+  },
+  {
+    key: 'browser',
+    icon: AppWindow,
+    label: 'settings_nav_browser',
+    fallback: '浏览器',
     category: 'integrations',
   },
   {
@@ -1531,6 +1540,8 @@ export function ConnectionsSettingsPage({
           <KeyboardShortcutsSettingsPage />
         ) : activeNav === 'plugins' ? (
           <PluginSettingsPage />
+        ) : activeNav === 'browser' ? (
+          <BrowserSettingsPage />
         ) : activeNav === 'worktrees' ? (
           <WorktreesSettingsPage
             api={services?.runtimeWorkApi}

@@ -21,6 +21,10 @@ const mergedDefaultPreferences = {
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  browserExternalLinkTarget: 'system',
+  browserLocalLinkTarget: 'wework',
+  browserDownloadDirectory: null,
+  browserAskBeforeDownload: false,
 }
 
 describe('appPreferences', () => {
@@ -60,6 +64,25 @@ describe('appPreferences', () => {
     await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
   })
 
+  test('normalizes stored browser preferences', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue({
+      browserExternalLinkTarget: 'wework',
+      browserLocalLinkTarget: 'unsupported',
+      browserDownloadDirectory: '  /tmp/downloads  ',
+      browserAskBeforeDownload: true,
+    })
+
+    const { getAppPreferences } = await import('./appPreferences')
+
+    await expect(getAppPreferences()).resolves.toEqual({
+      ...mergedDefaultPreferences,
+      browserExternalLinkTarget: 'wework',
+      browserDownloadDirectory: '/tmp/downloads',
+      browserAskBeforeDownload: true,
+    })
+  })
+
   test('updates preferences through the Tauri command', async () => {
     isTauriRuntimeMock.mockReturnValue(true)
     invokeMock.mockResolvedValue({
@@ -97,6 +120,19 @@ describe('appPreferences', () => {
     })
     expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
       patch: { language: 'en' },
+    })
+  })
+
+  test('serializes a cleared browser download directory for the native command', async () => {
+    isTauriRuntimeMock.mockReturnValue(true)
+    invokeMock.mockResolvedValue(mergedDefaultPreferences)
+
+    const { updateAppPreferences } = await import('./appPreferences')
+
+    await updateAppPreferences({ browserDownloadDirectory: null })
+
+    expect(invokeMock).toHaveBeenCalledWith('update_app_preferences', {
+      patch: { browserDownloadDirectory: '' },
     })
   })
 })

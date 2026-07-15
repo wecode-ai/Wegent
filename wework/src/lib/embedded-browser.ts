@@ -9,6 +9,7 @@ let embeddedBrowserOpenRequestUnlistenPromise: Promise<UnlistenFn> | null = null
 let embeddedBrowserOpenRequestUnlisten: UnlistenFn | null = null
 let embeddedBrowserOpenRequestReleaseTimer: ReturnType<typeof setTimeout> | null = null
 export const EMBEDDED_BROWSER_OPEN_REQUEST_EVENT = 'wework:embedded-browser-open-request'
+export const EMBEDDED_BROWSER_DOWNLOAD_EVENT = 'wework:embedded-browser-download'
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
 
@@ -32,6 +33,37 @@ export interface EmbeddedBrowserPageState {
 export interface EmbeddedBrowserOpenRequest {
   url: string
   label: string
+}
+
+export interface EmbeddedBrowserDownloadEvent {
+  id: string
+  label: string
+  url: string
+  path: string | null
+  status: 'started' | 'progress' | 'paused' | 'finished' | 'failed' | 'deleted'
+  receivedBytes: number | null
+  totalBytes: number | null
+}
+
+export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {
+  await invoke('embedded_browser_pause_download', { id })
+}
+
+export async function resumeEmbeddedBrowserDownload(id: string): Promise<void> {
+  await invoke('embedded_browser_resume_download', { id })
+}
+
+export async function deleteEmbeddedBrowserDownload(id: string): Promise<void> {
+  await invoke('embedded_browser_delete_download', { id })
+}
+
+export function listenEmbeddedBrowserDownloads(
+  handler: (event: EmbeddedBrowserDownloadEvent) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listen<EmbeddedBrowserDownloadEvent>(EMBEDDED_BROWSER_DOWNLOAD_EVENT, event => {
+    handler(event.payload)
+  })
 }
 
 interface EmbeddedBrowserEvalResult {
@@ -170,6 +202,23 @@ export async function relabelEmbeddedBrowser(
 
 export async function closeEmbeddedBrowser(label = DEFAULT_EMBEDDED_BROWSER_LABEL): Promise<void> {
   await invoke('embedded_browser_close', browserArgs(label))
+}
+
+export async function clearEmbeddedBrowserData(): Promise<number> {
+  return invoke<number>('embedded_browser_clear_data')
+}
+
+export function requestEmbeddedBrowserOpen(
+  url: string,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): boolean {
+  if (!canUseEmbeddedBrowser() || embeddedBrowserOpenRequestHandlers.size === 0) {
+    return false
+  }
+
+  const request = { url, label }
+  embeddedBrowserOpenRequestHandlers.forEach(handler => handler(request))
+  return true
 }
 
 export function listenEmbeddedBrowserOpenRequests(

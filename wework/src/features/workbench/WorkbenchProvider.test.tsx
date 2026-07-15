@@ -2950,7 +2950,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('pane-goal-objective')).toHaveTextContent('修复 CI')
   })
 
-  test('keeps the sent user message when transcript loading effects replay', async () => {
+  test('uses the loaded transcript instead of an optimistic message from a replaced task id', async () => {
     const initialRuntimeWork = createRuntimeWork({
       projects: [
         {
@@ -3006,7 +3006,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         'device-1:runtime-created:/workspace/project-alpha'
       )
     )
-    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
+    expect(screen.getByTestId('pane-message-roles')).toBeEmptyDOMElement()
   })
 
   test('starts a fresh project pane after creating a runtime task in the same project', async () => {
@@ -4107,9 +4107,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('message-roles')).toHaveTextContent('user:修复 CI')
-    await waitFor(() =>
-      expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant:streamed answer')
-    )
+    expect(screen.getByTestId('message-roles')).not.toHaveTextContent('assistant:streamed answer')
 
     await act(async () => {
       transcript.resolve({
@@ -4128,6 +4126,10 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
       await transcript.promise
     })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant:streamed answer')
+    )
   })
 
   test('restores a runtime task from the URL with transcript blocks', async () => {
@@ -5800,6 +5802,80 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
+  test('restores a goal task as running when reopened with a streaming transcript', async () => {
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi.fn().mockResolvedValue(
+        createRuntimeWork({
+          projects: [
+            {
+              project: { id: 7, name: 'Wegent' },
+              deviceWorkspaces: [
+                {
+                  id: 22,
+                  projectId: 7,
+                  deviceId: 'device-1',
+                  deviceName: 'Project Device',
+                  deviceStatus: 'online',
+                  workspacePath: '/workspace/project-alpha',
+                  mapped: true,
+                  available: true,
+                  tasks: [
+                    {
+                      taskId: 'runtime-a',
+                      workspacePath: '/workspace/project-alpha',
+                      title: 'Runtime A',
+                      runtime: 'codex',
+                      running: false,
+                      status: 'active',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        })
+      ),
+      getRuntimeTranscript: vi.fn().mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        running: true,
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: '继续实现目标' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: '正在输出',
+            status: 'streaming',
+            subtaskId: '101',
+          },
+        ],
+      }),
+      getRuntimeGoal: vi.fn().mockResolvedValue({
+        accepted: true,
+        goal: createRuntimeGoal({ status: 'active' }),
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-message-statuses')).toHaveTextContent(
+        'assistant:streaming'
+      )
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
+    )
+    expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
+  })
+
   test('resumes a paused runtime goal when editing and sending its objective', async () => {
     const setRuntimeGoal = vi.fn().mockResolvedValue({
       accepted: true,
@@ -6765,13 +6841,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('queued-notices')).not.toHaveTextContent('正在引导当前对话')
   })
 
-  test('sends queued guidance as a follow-up when the pane is already idle', async () => {
+  test('sends queued guidance as a follow-up when the active turn is unavailable', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
     })
-    const sendRuntimeMessage = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce({
+    const sendRuntimeMessage = vi.fn().mockResolvedValueOnce(false).mockResolvedValue({
       accepted: true,
       taskId: 'runtime-a',
     })
@@ -6877,6 +6953,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByText('guide first queued'))
 
+    await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
     expect(sendRuntimeMessage).toHaveBeenLastCalledWith({
       address: {
