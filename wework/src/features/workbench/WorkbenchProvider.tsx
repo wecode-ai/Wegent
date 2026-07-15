@@ -638,10 +638,12 @@ export function WorkbenchProvider({
     requestNewChatComposerFocus()
   }, [state.devices, state.standaloneDeviceId, user])
 
+  const availableSkills = skillSelection.skills
+  const setSelectedSkillsForScope = skillSelection.setSelectedSkillsForScope
   const startNewSkillChat = useCallback(
     (skillNames: string[]): boolean => {
       const requestedSkills = skillNames.map(name =>
-        skillSelection.skills.find(skill => skill.name === name && skill.is_active)
+        availableSkills.find(skill => skill.name === name && skill.is_active)
       )
       if (requestedSkills.some(skill => !skill)) {
         return false
@@ -651,7 +653,7 @@ export function WorkbenchProvider({
         currentRuntimeTask: null,
         standaloneChatKey: state.standaloneChatKey + 1,
       })
-      skillSelection.setSelectedSkillsForScope(
+      setSelectedSkillsForScope(
         nextScopeKey,
         requestedSkills.map(skill => ({
           name: skill!.name,
@@ -674,8 +676,8 @@ export function WorkbenchProvider({
       return true
     },
     [
-      skillSelection.skills,
-      skillSelection.setSelectedSkillsForScope,
+      availableSkills,
+      setSelectedSkillsForScope,
       state.devices,
       state.standaloneChatKey,
       state.standaloneDeviceId,
@@ -1421,6 +1423,7 @@ export function WorkbenchProvider({
       stableSetWorkbenchError,
       stableSetProjectWorktreeBranch,
       stableStartNewChat,
+      stableStartNewSkillChat,
       stableStartNewProjectChat,
       stableStartStandaloneChat,
       stableSubscribeRuntimeTaskNotifications,
