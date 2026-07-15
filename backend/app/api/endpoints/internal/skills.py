@@ -8,7 +8,7 @@ Provides internal API for chat_shell to download skill binaries.
 These endpoints are intended for service-to-service communication.
 
 Authentication:
-- In production, should be protected by network-level security
+- Requires the Backend internal service token as an Authorization bearer token
 """
 
 import io
@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
+from app.services.auth.internal_service_token import verify_internal_service_token
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/skills", tags=["internal-skills"])
 @router.get("/{skill_id}/binary")
 def get_skill_binary(
     skill_id: int,
+    _: None = Depends(verify_internal_service_token),
     db: Session = Depends(get_db),
 ):
     """
