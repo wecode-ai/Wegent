@@ -26,6 +26,7 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEventHandler,
   ReactNode,
+  RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -1003,6 +1004,7 @@ function GlobalImNotificationBell({
   devices,
   imNotificationSettings,
   menuOpen,
+  menuContainerRef,
   onMenuOpenChange,
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
@@ -1012,6 +1014,10 @@ function GlobalImNotificationBell({
   devices: DeviceInfo[]
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   menuOpen: boolean
+  // Portal target covering the full-width account area. The bell trigger lives
+  // inside a narrow 32px icon group, so the menu must anchor to this wider
+  // relative container for `left-4 right-4` to resolve against the sidebar.
+  menuContainerRef: RefObject<HTMLDivElement | null>
   onMenuOpenChange: (open: boolean) => void
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
@@ -1021,6 +1027,12 @@ function GlobalImNotificationBell({
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
   const [cloudDialogOpen, setCloudDialogOpen] = useState(false)
+  // Resolve the portal target from the ref into state. Reading the ref's
+  // `.current` during render is disallowed, so we mirror it into state here.
+  const [menuContainer, setMenuContainer] = useState<HTMLDivElement | null>(null)
+  useEffect(() => {
+    setMenuContainer(menuContainerRef.current)
+  }, [menuContainerRef])
   const targetLabel = getImNotificationSessionLabel(imNotificationSettings)
   const enabled = Boolean(imNotificationSettings?.global.enabled)
   const connecting = cloud.status === 'connecting'
@@ -1111,91 +1123,94 @@ function GlobalImNotificationBell({
         )}
       </button>
 
-      {menuOpen && (
-        <div
-          data-testid="sidebar-global-im-notification-menu"
-          className="absolute bottom-[68px] left-4 right-4 z-30 rounded-xl border border-border bg-background p-3 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-        >
-          <div className="flex items-start gap-3">
-            <div
-              className={cn(
-                'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary',
-                notifying && 'bg-primary/10 text-primary',
-                needsSession && 'bg-amber-400/15 text-amber-600'
-              )}
-            >
-              <NotificationIcon className={cn('h-4 w-4', notifying && 'fill-current')} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold leading-5">
-                {notifying
-                  ? t('workbench.away_im_reminder_on', '离开电脑提醒已开启')
-                  : t('workbench.away_im_reminder_title', '离开电脑提醒')}
-              </div>
-              <p className="mt-1 text-xs leading-5 text-text-secondary">
-                {t(
-                  'workbench.away_im_reminder_description',
-                  '所有任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
-                )}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-3 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-text-secondary">
-                {t('workbench.away_im_reminder_target', '投递到')}
-              </span>
-              <span className="min-w-0 truncate font-medium text-text-primary">
-                {targetLabel ?? t('workbench.away_im_reminder_no_target', '未选择 IM 会话')}
-              </span>
-            </div>
-            {requiresCloudLogin && (
-              <div className="mt-1 text-text-secondary">
-                {t(
-                  'workbench.global_im_notifications_requires_cloud_login',
-                  '登录云端后可开启离开电脑提醒'
-                )}
-              </div>
-            )}
-            {cloudConnectionErrorMessage && (
+      {menuOpen &&
+        menuContainer &&
+        createPortal(
+          <div
+            data-testid="sidebar-global-im-notification-menu"
+            className="absolute bottom-[68px] left-4 right-4 z-30 rounded-xl border border-border bg-background p-3 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+          >
+            <div className="flex items-start gap-3">
               <div
-                data-testid="sidebar-global-im-notification-error"
-                className="mt-1 min-w-0 break-words text-red-500 [overflow-wrap:anywhere]"
+                className={cn(
+                  'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary',
+                  notifying && 'bg-primary/10 text-primary',
+                  needsSession && 'bg-amber-400/15 text-amber-600'
+                )}
               >
-                {cloudConnectionErrorMessage}
+                <NotificationIcon className={cn('h-4 w-4', notifying && 'fill-current')} />
               </div>
-            )}
-          </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold leading-5">
+                  {notifying
+                    ? t('workbench.away_im_reminder_on', '离开电脑提醒已开启')
+                    : t('workbench.away_im_reminder_title', '离开电脑提醒')}
+                </div>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">
+                  {t(
+                    'workbench.away_im_reminder_description',
+                    '所有任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
+                  )}
+                </p>
+              </div>
+            </div>
 
-          <div className="mt-3 flex items-center justify-end gap-2">
-            {cloud.isConnected && onOpenGlobalImNotificationSettings && (
+            <div className="mt-3 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-text-secondary">
+                  {t('workbench.away_im_reminder_target', '投递到')}
+                </span>
+                <span className="min-w-0 truncate font-medium text-text-primary">
+                  {targetLabel ?? t('workbench.away_im_reminder_no_target', '未选择 IM 会话')}
+                </span>
+              </div>
+              {requiresCloudLogin && (
+                <div className="mt-1 text-text-secondary">
+                  {t(
+                    'workbench.global_im_notifications_requires_cloud_login',
+                    '登录云端后可开启离开电脑提醒'
+                  )}
+                </div>
+              )}
+              {cloudConnectionErrorMessage && (
+                <div
+                  data-testid="sidebar-global-im-notification-error"
+                  className="mt-1 min-w-0 break-words text-red-500 [overflow-wrap:anywhere]"
+                >
+                  {cloudConnectionErrorMessage}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 flex items-center justify-end gap-2">
+              {cloud.isConnected && onOpenGlobalImNotificationSettings && (
+                <button
+                  type="button"
+                  data-testid="sidebar-global-im-notification-settings-button"
+                  onClick={openSessionSettings}
+                  className="h-8 rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                >
+                  {t('workbench.away_im_reminder_change_session', '更换会话')}
+                </button>
+              )}
               <button
                 type="button"
-                data-testid="sidebar-global-im-notification-settings-button"
-                onClick={openSessionSettings}
-                className="h-8 rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                data-testid="sidebar-global-im-notification-primary-button"
+                disabled={connecting}
+                onClick={handlePrimaryAction}
+                className={cn(
+                  'h-8 shrink-0 whitespace-nowrap rounded-md px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-55',
+                  enabled
+                    ? 'bg-muted text-text-primary hover:bg-muted/80'
+                    : 'bg-text-primary text-background hover:bg-text-primary/90'
+                )}
               >
-                {t('workbench.away_im_reminder_change_session', '更换会话')}
+                {primaryActionLabel}
               </button>
-            )}
-            <button
-              type="button"
-              data-testid="sidebar-global-im-notification-primary-button"
-              disabled={connecting}
-              onClick={handlePrimaryAction}
-              className={cn(
-                'h-8 rounded-md px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-55',
-                enabled
-                  ? 'bg-muted text-text-primary hover:bg-muted/80'
-                  : 'bg-text-primary text-background hover:bg-text-primary/90'
-              )}
-            >
-              {primaryActionLabel}
-            </button>
-          </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          menuContainer
+        )}
 
       {cloudDialogOpen && (
         <CloudConnectionDialog
@@ -3493,6 +3508,7 @@ export function DesktopSidebar({
                   devices={devices}
                   imNotificationSettings={imNotificationSettings}
                   menuOpen={imNotificationMenuOpen}
+                  menuContainerRef={settingsMenuRef}
                   onMenuOpenChange={open => {
                     if (open) setSettingsMenuOpen(false)
                     setImNotificationMenuOpen(open)
