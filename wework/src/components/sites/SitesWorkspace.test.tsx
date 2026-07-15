@@ -34,6 +34,7 @@ function createApi(items: Site[] = [unpublishedSite]): SitesApi {
       publish_status: 'published',
       external_url: 'https://product.example.site',
     }),
+    deleteSite: vi.fn().mockResolvedValue(undefined),
   }
 }
 
@@ -122,5 +123,50 @@ describe('SitesWorkspace', () => {
 
     await userEvent.click(screen.getByTestId('sites-create-button'))
     expect(onCreate).toHaveBeenCalledTimes(1)
+  })
+
+  test('requires confirmation and explains that local files are preserved', async () => {
+    const api = createApi()
+    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
+    await userEvent.click(screen.getByTestId('site-delete-menu-item-site-1'))
+
+    expect(api.deleteSite).not.toHaveBeenCalled()
+    expect(screen.getByTestId('site-delete-dialog')).toHaveTextContent('公网入口')
+    expect(screen.getByTestId('site-delete-dialog')).toHaveTextContent('不会删除本地目录')
+
+    await userEvent.click(screen.getByTestId('site-delete-cancel-button'))
+    expect(screen.queryByTestId('site-delete-dialog')).not.toBeInTheDocument()
+    expect(api.deleteSite).not.toHaveBeenCalled()
+  })
+
+  test('removes only the confirmed site after the API succeeds', async () => {
+    const api = createApi()
+    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
+    await userEvent.click(screen.getByTestId('site-delete-menu-item-site-1'))
+    await userEvent.click(screen.getByTestId('site-delete-confirm-button'))
+
+    await waitFor(() => expect(api.deleteSite).toHaveBeenCalledWith('site-1'))
+    await waitFor(() => expect(screen.queryByTestId('site-row-site-1')).not.toBeInTheDocument())
+  })
+
+  test('keeps the row and dialog open when deletion fails so it can be retried', async () => {
+    const api = createApi()
+    vi.mocked(api.deleteSite).mockRejectedValueOnce(new Error('公网撤销失败'))
+    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} />)
+    await screen.findByText('产品发布页')
+
+    await userEvent.click(screen.getByTestId('site-more-site-1'))
+    await userEvent.click(screen.getByTestId('site-delete-menu-item-site-1'))
+    await userEvent.click(screen.getByTestId('site-delete-confirm-button'))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('公网撤销失败')
+    expect(screen.getByTestId('site-row-site-1')).toBeInTheDocument()
+    expect(screen.getByTestId('site-delete-dialog')).toBeInTheDocument()
   })
 })

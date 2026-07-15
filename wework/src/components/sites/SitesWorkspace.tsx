@@ -14,6 +14,8 @@ import {
 import type { Site, SitesApi } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { DeleteSiteDialog } from './DeleteSiteDialog'
+import { SiteActionsMenu } from './SiteActionsMenu'
 
 interface SitesWorkspaceProps {
   api: SitesApi
@@ -53,10 +55,12 @@ function SiteThumbnail({ site }: { site: Site }) {
 interface SiteRowProps {
   site: Site
   publishing: boolean
+  deleting: boolean
   onPublish: (site: Site) => void
+  onDelete: (site: Site) => void
 }
 
-function SiteRow({ site, publishing, onPublish }: SiteRowProps) {
+function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowProps) {
   const { t } = useTranslation('sites')
   const isPublished = site.publish_status === 'published'
   const isPublishing = publishing || site.publish_status === 'publishing'
@@ -119,7 +123,7 @@ function SiteRow({ site, publishing, onPublish }: SiteRowProps) {
         <button
           type="button"
           data-testid={`site-publish-${site.siteid}`}
-          disabled={isPublished || isPublishing}
+          disabled={isPublished || isPublishing || deleting}
           onClick={() => onPublish(site)}
           className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-[13px] font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-default disabled:text-text-secondary disabled:opacity-70"
         >
@@ -138,6 +142,7 @@ function SiteRow({ site, publishing, onPublish }: SiteRowProps) {
                 ? t('retry_publish', '重试发布')
                 : t('publish', '发布到外网')}
         </button>
+        <SiteActionsMenu site={site} disabled={isPublishing || deleting} onDelete={onDelete} />
       </div>
     </article>
   )
@@ -163,6 +168,9 @@ export function SitesWorkspace({
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set())
+  const [pendingDeleteSite, setPendingDeleteSite] = useState<Site | null>(null)
+  const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const requestId = useRef(0)
 
   useEffect(() => {
@@ -218,6 +226,7 @@ export function SitesWorkspace({
   }
 
   const publish = async (site: Site) => {
+    if (deletingSiteId === site.siteid) return
     setPublishingIds(current => new Set(current).add(site.siteid))
     setSites(current =>
       current.map(item =>
@@ -247,6 +256,33 @@ export function SitesWorkspace({
         next.delete(site.siteid)
         return next
       })
+    }
+  }
+
+  const openDeleteDialog = (site: Site) => {
+    setDeleteError(null)
+    setPendingDeleteSite(site)
+  }
+
+  const cancelDelete = () => {
+    if (deletingSiteId) return
+    setDeleteError(null)
+    setPendingDeleteSite(null)
+  }
+
+  const deleteSite = async () => {
+    if (!pendingDeleteSite || deletingSiteId) return
+    setDeletingSiteId(pendingDeleteSite.siteid)
+    setDeleteError(null)
+    try {
+      await api.deleteSite(pendingDeleteSite.siteid)
+      setSites(current => current.filter(item => item.siteid !== pendingDeleteSite.siteid))
+      setTotal(current => Math.max(0, current - 1))
+      setPendingDeleteSite(null)
+    } catch (error) {
+      setDeleteError(errorMessage(error, t('delete_failed', '站点删除失败')))
+    } finally {
+      setDeletingSiteId(null)
     }
   }
 
@@ -380,7 +416,9 @@ export function SitesWorkspace({
                   key={site.siteid}
                   site={site}
                   publishing={publishingIds.has(site.siteid)}
+                  deleting={deletingSiteId === site.siteid}
                   onPublish={publish}
+                  onDelete={openDeleteDialog}
                 />
               ))}
             </div>
@@ -407,6 +445,15 @@ export function SitesWorkspace({
           )}
         </div>
       </div>
+      {pendingDeleteSite && (
+        <DeleteSiteDialog
+          site={pendingDeleteSite}
+          loading={deletingSiteId === pendingDeleteSite.siteid}
+          error={deleteError}
+          onCancel={cancelDelete}
+          onConfirm={() => void deleteSite()}
+        />
+      )}
     </main>
   )
 }

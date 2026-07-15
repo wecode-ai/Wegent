@@ -22,6 +22,7 @@ function createUnavailableSitesApi(message: string): SitesApi {
   return {
     listSites: () => Promise.reject(new Error(message)),
     publishSite: () => Promise.reject(new Error(message)),
+    deleteSite: () => Promise.reject(new Error(message)),
   }
 }
 
