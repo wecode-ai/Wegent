@@ -33,6 +33,7 @@ import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettin
 import { useTranslation } from '@/hooks/useTranslation'
 import { useWorkbenchShellEventHandlers } from './workbenchShellEvents'
 import { EMPTY_RUNTIME_TASK_REMINDERS } from '@/features/workbench/runtimeTaskReminders'
+import { TodoWorkspace } from '@/features/todo/TodoWorkspace'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
 
@@ -43,6 +44,7 @@ export function DesktopWorkbenchLayout() {
   const { logout: onLogout } = useAuth()
   const {
     state,
+    projectChat,
     cloudWorkStatus,
     upgradingDevices,
     selectProject: onSelectProject,
@@ -50,6 +52,7 @@ export function DesktopWorkbenchLayout() {
     openStandaloneWorkspace: onOpenStandaloneWorkspace,
     startNewChat: onNewChat,
     startNewProjectChat: onStartNewProjectChat,
+    createProjectRuntimeTask: onCreateProjectRuntimeTask,
     openRuntimeTask: onOpenRuntimeTask,
     searchRuntimeWork: onSearchRuntimeWork = async () => ({ items: [] }),
     renameRuntimeTask: onRenameRuntimeTask,
@@ -87,15 +90,16 @@ export function DesktopWorkbenchLayout() {
     services,
     refreshWorkLists,
   } = useWorkbench()
-  const activeItem = 'chat'
+  const initialPath = stripAppBasePath(window.location.pathname)
+  const [currentPath, setCurrentPath] = useState(initialPath)
+  const todoOpen = currentPath === '/todo'
+  const activeItem = todoOpen ? 'todo' : 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const [sidebarAutoCollapsed, setSidebarAutoCollapsed] = useState(false)
   const [sidebarPreviewOpen, setSidebarPreviewOpen] = useState(false)
   const [sidebarResizing, setSidebarResizing] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(() =>
-    isSettingsRoute(stripAppBasePath(window.location.pathname))
-  )
+  const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
   const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
@@ -123,7 +127,9 @@ export function DesktopWorkbenchLayout() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+      const path = stripAppBasePath(window.location.pathname)
+      setCurrentPath(path)
+      setSettingsOpen(isSettingsRoute(path))
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -131,6 +137,7 @@ export function DesktopWorkbenchLayout() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (todoOpen) return
       if (event.key.toLowerCase() !== 'k') return
       if (!event.metaKey && !event.ctrlKey) return
       event.preventDefault()
@@ -139,7 +146,7 @@ export function DesktopWorkbenchLayout() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [todoOpen])
 
   useEffect(() => {
     const syncAutoCollapse = () => {
@@ -486,6 +493,7 @@ export function DesktopWorkbenchLayout() {
       onPointerLeave={onPointerLeave}
       onToggleSidebar={() => updateSidebarCollapsed(!collapsed)}
       onOpenWorkbench={() => navigateTo('/')}
+      onOpenTodo={() => navigateTo('/todo')}
       onOpenApps={() => navigateTo('/apps')}
       onNewChat={onNewChat}
       onOpenSearch={() => setSearchOpen(true)}
@@ -538,8 +546,8 @@ export function DesktopWorkbenchLayout() {
 
   return (
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
-      {!settingsOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-      {!settingsOpen && effectiveSidebarCollapsed && (
+      {!settingsOpen && !todoOpen && renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
+      {!settingsOpen && !todoOpen && effectiveSidebarCollapsed && (
         <>
           <div
             data-testid="desktop-sidebar-hover-edge"
@@ -584,16 +592,38 @@ export function DesktopWorkbenchLayout() {
         />
       )}
       <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-        <DesktopWorkbenchMain
-          sidebarCollapsed={effectiveSidebarCollapsed}
-          sidebarResizing={sidebarResizing}
-          onSidebarCollapsedChange={updateSidebarCollapsed}
-          activePane={{
-            currentRuntimeTask: state.currentRuntimeTask,
-            currentProject: state.currentProject,
-            standaloneChatKey: state.standaloneChatKey,
-          }}
-        />
+        {todoOpen ? (
+          <TodoWorkspace
+            user={state.user}
+            projects={state.projects}
+            runtimeWork={state.runtimeWork}
+            currentProjectId={state.currentProject?.id}
+            services={services}
+            modelName={projectChat.selectedModel?.displayName ?? projectChat.selectedModel?.name}
+            onRunTodo={({ project, message, goal, attachments }) =>
+              onCreateProjectRuntimeTask(message, {
+                project,
+                attachments,
+                initialGoal: goal ? { objective: goal } : null,
+              })
+            }
+            onOpenRuntimeTask={async address => {
+              navigateTo('/')
+              await onOpenRuntimeTask?.(address)
+            }}
+          />
+        ) : (
+          <DesktopWorkbenchMain
+            sidebarCollapsed={effectiveSidebarCollapsed}
+            sidebarResizing={sidebarResizing}
+            onSidebarCollapsedChange={updateSidebarCollapsed}
+            activePane={{
+              currentRuntimeTask: state.currentRuntimeTask,
+              currentProject: state.currentProject,
+              standaloneChatKey: state.standaloneChatKey,
+            }}
+          />
+        )}
       </div>
       <StandaloneBlankProjectDialog
         open={blankProjectDialogOpen}

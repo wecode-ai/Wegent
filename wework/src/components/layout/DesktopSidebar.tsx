@@ -11,6 +11,7 @@ import {
   Globe2,
   GitCompareArrows,
   Grid3X3,
+  ListTodo,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -124,7 +125,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'plugins' | 'automation'
+  activeItem?: 'chat' | 'todo' | 'plugins' | 'automation'
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -134,6 +135,7 @@ interface DesktopSidebarProps {
   onPointerLeave?: PointerEventHandler<HTMLElement>
   onToggleSidebar?: () => void
   onOpenWorkbench?: () => void
+  onOpenTodo?: () => void
   onOpenApps?: () => void
   onNewChat: () => void
   onOpenSearch?: () => void
@@ -2456,6 +2458,7 @@ export function DesktopSidebar({
   onPointerLeave,
   onToggleSidebar,
   onOpenWorkbench,
+  onOpenTodo,
   onOpenApps,
 }: DesktopSidebarProps) {
   useSidebarRelativeTimeRefresh()
@@ -2968,12 +2971,33 @@ export function DesktopSidebar({
                 aria-label={workbenchAppLabel}
                 className={cn(
                   SIDEBAR_CHROME_TAB_BUTTON_CLASS,
-                  'bg-black/[0.045] text-text-primary'
+                  activeItem === 'chat'
+                    ? 'bg-black/[0.045] text-text-primary'
+                    : 'text-text-secondary hover:bg-black/[0.04]'
                 )}
               >
                 <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
                 <span className="sr-only">{workbenchAppLabel}</span>
                 <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{workbenchAppLabel}</span>
+              </button>
+              <button
+                type="button"
+                data-testid="chrome-tab-todo"
+                onClick={onOpenTodo}
+                title={t('todo.navigation', 'TODO')}
+                aria-label={t('todo.navigation', 'TODO')}
+                className={cn(
+                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
+                  activeItem === 'todo'
+                    ? 'bg-black/[0.045] text-text-primary'
+                    : 'text-text-secondary hover:bg-black/[0.04]'
+                )}
+              >
+                <ListTodo aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
+                <span className="sr-only">{t('todo.navigation', 'TODO')}</span>
+                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>
+                  {t('todo.navigation', 'TODO')}
+                </span>
               </button>
               <button
                 type="button"
