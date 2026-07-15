@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export { useFileBlob } from './useFileBlob'
-export { useExcelParser, type ExcelSheet } from './useExcelParser'
 export {
   useAttachmentShare,
   type UseAttachmentShareOptions,
