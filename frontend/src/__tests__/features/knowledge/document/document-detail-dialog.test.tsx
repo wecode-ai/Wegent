@@ -9,6 +9,9 @@ import { DocumentDetailDialog } from '@/features/knowledge/document/components/D
 import type { KnowledgeDocument } from '@/types/knowledge'
 
 const mockRouterPush = jest.fn()
+const mockDialogContent = jest.fn(
+  ({ children }: { children: React.ReactNode; className?: string }) => <div>{children}</div>
+)
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -101,7 +104,8 @@ jest.mock('@/features/knowledge/document/components/KnowledgeSourcePreview', () 
 jest.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children, open }: { children: React.ReactNode; open: boolean }) =>
     open ? <div>{children}</div> : null,
-  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogContent: (props: { children: React.ReactNode; className?: string }) =>
+    mockDialogContent(props),
   DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -135,6 +139,7 @@ jest.mock('sonner', () => ({
 // Reset mocks before each test
 beforeEach(() => {
   mockRouterPush.mockClear()
+  mockDialogContent.mockClear()
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
 })
 
@@ -249,6 +254,44 @@ describe('DocumentDetailDialog original file preview', () => {
 
     expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
     expect(screen.queryByTestId('knowledge-document-source-tab')).not.toBeInTheDocument()
+  })
+
+  it('resets fullscreen before rendering a reopened dialog', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    await user.click(screen.getByTestId('mock-source-fullscreen'))
+    rerender(
+      <DocumentDetailDialog
+        open={false}
+        onOpenChange={jest.fn()}
+        document={null}
+        knowledgeBaseId={21}
+      />
+    )
+    mockDialogContent.mockClear()
+
+    rerender(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    const renderedClassNames = mockDialogContent.mock.calls.map(call => String(call[0].className))
+    expect(renderedClassNames).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('max-w-[100vw]')])
+    )
+    expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
   })
 })
 

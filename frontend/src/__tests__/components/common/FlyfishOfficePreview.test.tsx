@@ -38,6 +38,7 @@ describe('FlyfishOfficePreview', () => {
     const props = mockFileViewer.mock.calls[0][0]
     const file = props.file as File
     const options = props.options as {
+      styleIsolation: string
       docx: { workerUrl: string }
       spreadsheet: { workerUrl: string }
       presentation: { workerUrl: string }
@@ -47,6 +48,7 @@ describe('FlyfishOfficePreview', () => {
     expect(file.name).toBe('deck.pptx')
     expect(props.type).toBe('pptx')
     expect(props.className).toContain('overflow-auto')
+    expect(options.styleIsolation).toBe('scoped')
     expect(options.docx.workerUrl).toContain('/file-viewer/2.1.27-office-v2/')
     expect(options.spreadsheet.workerUrl).toContain('/file-viewer/2.1.27-office-v2/')
     expect(options.presentation.workerUrl).toContain('/file-viewer/2.1.27-office-v2/')
@@ -59,7 +61,7 @@ describe('FlyfishOfficePreview', () => {
     expect(getPreviewType(mimeType, 'deck.pptx')).toBe('office')
   })
 
-  it('adds the shared page scroll container to Word files', () => {
+  it('keeps Word files on the renderer-owned scroll container', () => {
     render(
       <FlyfishOfficePreview
         blob={new Blob(['document'], { type: 'application/octet-stream' })}
@@ -67,7 +69,9 @@ describe('FlyfishOfficePreview', () => {
       />
     )
 
-    expect(mockFileViewer.mock.calls[0][0].className).toContain('overflow-auto')
+    const props = mockFileViewer.mock.calls[0][0]
+    expect(props.className).not.toContain('overflow-auto')
+    expect((props.options as { styleIsolation: string }).styleIsolation).toBe('shadow')
   })
 
   it('does not add the page scroll container to spreadsheets', () => {

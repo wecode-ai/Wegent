@@ -119,6 +119,9 @@ export function DocumentDetailDialog({
   const [contentSourceMode, setContentSourceMode] = useState<'parsed' | 'source'>(() =>
     document && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
   )
+  const [openedDocumentId, setOpenedDocumentId] = useState<number | null>(
+    open ? (document?.id ?? null) : null
+  )
   // Fullscreen mode for editing
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Chunk storage configuration - controls whether chunks section is visible
@@ -166,15 +169,17 @@ export function DocumentDetailDialog({
   // Track if content has changed (compare against content at edit start)
   const hasChanges = editedContent !== (editStartContentRef.current || fullContent || '')
 
-  // Reset transient state when the dialog opens or switches documents while open.
-  useEffect(() => {
-    if (!open) return
-
-    setIsEditing(false)
-    setEditedContent('')
-    setIsFullscreen(false)
-    setContentSourceMode(canPreviewSource ? 'source' : 'parsed')
-  }, [canPreviewSource, document?.id, open])
+  // Reset before rendering children on each open cycle or document switch.
+  const activeDocumentId = open ? (document?.id ?? null) : null
+  if (openedDocumentId !== activeDocumentId) {
+    setOpenedDocumentId(activeDocumentId)
+    if (activeDocumentId !== null) {
+      setIsEditing(false)
+      setEditedContent('')
+      setIsFullscreen(false)
+      setContentSourceMode(canPreviewSource ? 'source' : 'parsed')
+    }
+  }
 
   // Build the full accessible URL using virtual path
   const documentFullUrl = document
