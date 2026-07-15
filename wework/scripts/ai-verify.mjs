@@ -7,9 +7,9 @@
 
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -199,7 +199,6 @@ async function runServer(sessionPath, token) {
   const executorHome = join(session.directory, 'executor-home')
   const codexHome = join(executorHome, 'codex')
   await mkdir(codexHome, { recursive: true })
-  await symlink(join(homedir(), '.codex', 'auth.json'), join(codexHome, 'auth.json'))
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
     cwd: weworkDir,
     detached: true,
