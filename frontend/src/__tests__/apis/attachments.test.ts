@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { fetchAttachmentFile, getErrorMessageFromCode } from '@/apis/attachments'
+import {
+  downloadAttachment,
+  fetchAttachmentFile,
+  getErrorMessageFromCode,
+} from '@/apis/attachments'
 
 describe('fetchAttachmentFile', () => {
   const originalFetch = global.fetch
@@ -71,6 +75,59 @@ describe('fetchAttachmentFile', () => {
     }) as typeof fetch
 
     await expect(fetchAttachmentFile(404)).rejects.toThrow('Failed to fetch attachment (404)')
+  })
+})
+
+describe('downloadAttachment', () => {
+  const originalFetch = global.fetch
+  const originalCreateObjectURL = URL.createObjectURL
+  const originalRevokeObjectURL = URL.revokeObjectURL
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      writable: true,
+      value: originalCreateObjectURL,
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      writable: true,
+      value: originalRevokeObjectURL,
+    })
+    jest.useRealTimers()
+    jest.restoreAllMocks()
+  })
+
+  it('defers revoking the object URL until after the anchor click', async () => {
+    jest.useFakeTimers()
+    const revokeObjectURL = jest.fn()
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      writable: true,
+      value: jest.fn(() => 'blob:download'),
+    })
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      configurable: true,
+      writable: true,
+      value: revokeObjectURL,
+    })
+    const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation()
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'Content-Type': 'application/pdf' }),
+      blob: async () => new Blob(['pdf-data'], { type: 'application/pdf' }),
+    }) as typeof fetch
+
+    await downloadAttachment(42, 'report.pdf')
+
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).not.toHaveBeenCalled()
+
+    jest.runOnlyPendingTimers()
+
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:download')
   })
 })
 

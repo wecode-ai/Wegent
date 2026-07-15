@@ -164,8 +164,10 @@ export function DocumentDetailDialog({
   // Track if content has changed (compare against content at edit start)
   const hasChanges = editedContent !== (editStartContentRef.current || fullContent || '')
 
-  // Reset transient state when the dialog closes or switches documents.
+  // Reset transient state when the dialog opens or switches documents while open.
   useEffect(() => {
+    if (!open) return
+
     setIsEditing(false)
     setEditedContent('')
     setIsFullscreen(false)
@@ -369,14 +371,14 @@ export function DocumentDetailDialog({
               <TabsList className="h-8">
                 <TabsTrigger
                   value="parsed"
-                  className="h-7 px-3 text-xs"
+                  className="h-7 px-3 text-xs max-md:min-h-[44px]"
                   data-testid="knowledge-document-parsed-tab"
                 >
                   {t('document.document.detail.parsedContent')}
                 </TabsTrigger>
                 <TabsTrigger
                   value="source"
-                  className="h-7 px-3 text-xs"
+                  className="h-7 px-3 text-xs max-md:min-h-[44px]"
                   data-testid="knowledge-document-source-tab"
                 >
                   {t('document.document.detail.sourceFile')}

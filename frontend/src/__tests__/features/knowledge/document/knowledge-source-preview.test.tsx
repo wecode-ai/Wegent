@@ -88,6 +88,14 @@ describe('KnowledgeSourcePreview', () => {
     )
 
     await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
+    expect(screen.getByTestId('knowledge-source-preview-download')).toHaveClass(
+      'max-md:min-h-[44px]',
+      'max-md:min-w-[44px]'
+    )
+    expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toHaveClass(
+      'max-md:min-h-[44px]',
+      'max-md:min-w-[44px]'
+    )
     expect(fetchAttachmentFile).toHaveBeenCalledWith(3, {
       filename: 'report.docx',
       signal: expect.any(AbortSignal),
@@ -134,7 +142,9 @@ describe('KnowledgeSourcePreview', () => {
     )
 
     expect(fetchAttachmentFile).not.toHaveBeenCalled()
-    screen.getByTestId('knowledge-source-preview-too-large-download').click()
+    const download = screen.getByTestId('knowledge-source-preview-too-large-download')
+    expect(download).toHaveClass('max-md:min-h-[44px]', 'max-md:min-w-[44px]')
+    download.click()
     await waitFor(() => expect(downloadAttachment).toHaveBeenCalledWith(3, 'report.docx'))
   })
 
@@ -153,7 +163,13 @@ describe('KnowledgeSourcePreview', () => {
       />
     )
 
-    await user.click(await screen.findByTestId('knowledge-source-preview-retry'))
+    const retry = await screen.findByTestId('knowledge-source-preview-retry')
+    expect(retry).toHaveClass('max-md:min-h-[44px]', 'max-md:min-w-[44px]')
+    expect(screen.getByTestId('knowledge-source-preview-error-download')).toHaveClass(
+      'max-md:min-h-[44px]',
+      'max-md:min-w-[44px]'
+    )
+    await user.click(retry)
 
     await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
     expect(fetchAttachmentFile).toHaveBeenCalledTimes(2)

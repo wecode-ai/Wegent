@@ -93,6 +93,7 @@ export function KnowledgeSourcePreview({
           variant="outline"
           size="sm"
           onClick={handleDownload}
+          className="max-md:min-h-[44px] max-md:min-w-[44px]"
           data-testid="knowledge-source-preview-download"
         >
           <Download className="h-3.5 w-3.5" />
@@ -103,6 +104,7 @@ export function KnowledgeSourcePreview({
           variant="outline"
           size="sm"
           onClick={() => onFullscreenChange(!isFullscreen)}
+          className="max-md:min-h-[44px] max-md:min-w-[44px]"
           aria-label={
             isFullscreen
               ? t('document.document.detail.exitFullscreen')
@@ -134,6 +136,7 @@ export function KnowledgeSourcePreview({
             type="button"
             variant="primary"
             onClick={handleDownload}
+            className="max-md:min-h-[44px] max-md:min-w-[44px]"
             data-testid="knowledge-source-preview-too-large-download"
           >
             <Download className="h-4 w-4" />
@@ -160,6 +163,7 @@ export function KnowledgeSourcePreview({
               type="button"
               variant="outline"
               onClick={() => setRetryKey(key => key + 1)}
+              className="max-md:min-h-[44px] max-md:min-w-[44px]"
               data-testid="knowledge-source-preview-retry"
             >
               <RefreshCw className="h-4 w-4" />
@@ -169,6 +173,7 @@ export function KnowledgeSourcePreview({
               type="button"
               variant="primary"
               onClick={handleDownload}
+              className="max-md:min-h-[44px] max-md:min-w-[44px]"
               data-testid="knowledge-source-preview-error-download"
             >
               <Download className="h-4 w-4" />

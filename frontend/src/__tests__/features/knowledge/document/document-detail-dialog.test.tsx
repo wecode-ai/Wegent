@@ -212,6 +212,8 @@ describe('DocumentDetailDialog original file preview', () => {
     )
 
     expect(screen.getByTestId('knowledge-document-source-tab')).toBeInTheDocument()
+    expect(screen.getByTestId('knowledge-document-parsed-tab')).toHaveClass('max-md:min-h-[44px]')
+    expect(screen.getByTestId('knowledge-document-source-tab')).toHaveClass('max-md:min-h-[44px]')
     expect(screen.queryByTestId('mock-knowledge-source-preview')).not.toBeInTheDocument()
 
     await user.click(screen.getByTestId('knowledge-document-source-tab'))
