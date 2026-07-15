@@ -404,6 +404,7 @@ export function FileWorkspacePanel({
       )
       setPreview(saved)
       setEditedContent(saved.content)
+      setEditing(false)
       return true
     } catch (error) {
       setSaveError(

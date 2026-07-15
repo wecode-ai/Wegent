@@ -5623,7 +5623,12 @@ describe('DesktopWorkbenchLayout', () => {
         'sha256:old'
       )
     )
-    await waitFor(() => expect(screen.getByTestId('workspace-file-save-button')).toBeDisabled())
+    await waitFor(() => {
+      expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
+      expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
+      expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    })
   })
 
   test('workspace file preview renders file contents with Pierre file viewer', async () => {
