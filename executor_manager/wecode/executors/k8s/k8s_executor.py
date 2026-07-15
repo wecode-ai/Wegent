@@ -1290,16 +1290,10 @@ class K8sExecutor(Executor):
             older_than_hours: Minimum pod age in hours.
 
         Returns:
-            Dict with status and pods list of {task_id, pod_name, runtime_type}
-            dicts. task_id is None when the label is missing. runtime_type is
-            "sandbox" for sandbox pods and "executor" otherwise, letting callers
-            archive sandbox workspaces before deletion.
+            Dict with status and pods list of {task_id, pod_name} dicts.
+            task_id is None when the label is missing.
         """
         import re
-
-        from executor_manager.wecode.executors.warmpool.constants import (
-            ANNOTATION_HEARTBEAT_TYPE,
-        )
 
         start_time = time.time()
         try:
@@ -1339,20 +1333,8 @@ class K8sExecutor(Executor):
                 except (ValueError, TypeError):
                     continue
                 labels = metadata.get("labels", {})
-                annotations = metadata.get("annotations", {})
                 task_id = labels.get("aigc.weibo.com/executor-task-id")
-                runtime_type = (
-                    "sandbox"
-                    if annotations.get(ANNOTATION_HEARTBEAT_TYPE) == "sandbox"
-                    else "executor"
-                )
-                old_pods.append(
-                    {
-                        "task_id": task_id,
-                        "pod_name": pod_name,
-                        "runtime_type": runtime_type,
-                    }
-                )
+                old_pods.append({"task_id": task_id, "pod_name": pod_name})
 
             elapsed = time.time() - start_time
             logger.info(

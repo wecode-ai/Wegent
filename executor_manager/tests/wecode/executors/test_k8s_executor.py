@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import json
 import sys
 from types import ModuleType, SimpleNamespace
 
@@ -338,66 +337,3 @@ def test_create_pod_from_warmpool_deletes_stale_claim_without_pod(mocker):
     assert result == {"status": "success"}
     warm_pool_client.delete_sandbox_claim.assert_called_once_with("executor-1")
     warm_pool_client.create_sandbox_claim.assert_called_once()
-
-
-def test_get_old_task_ids_includes_runtime_type(mocker):
-    from datetime import datetime, timedelta, timezone
-
-    executor = object.__new__(K8sExecutor)
-    core_v1 = mocker.MagicMock()
-
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=50)
-    old_time = (cutoff - timedelta(hours=1)).isoformat()
-
-    pod_response = {
-        "items": [
-            {
-                "metadata": {
-                    "name": "wegent-task-100-abc",
-                    "creationTimestamp": old_time,
-                    "labels": {"aigc.weibo.com/executor-task-id": "100"},
-                    "annotations": {},
-                },
-            },
-            {
-                "metadata": {
-                    "name": "sandbox-200-xyz",
-                    "creationTimestamp": old_time,
-                    "labels": {"aigc.weibo.com/executor-task-id": "200"},
-                    "annotations": {"aigc.weibo.com/heartbeat-type": "sandbox"},
-                },
-            },
-            {
-                "metadata": {
-                    "name": "sandbox-300-no-label",
-                    "creationTimestamp": old_time,
-                    "labels": {},
-                    "annotations": {"aigc.weibo.com/heartbeat-type": "sandbox"},
-                },
-            },
-        ]
-    }
-
-    mock_response = mocker.MagicMock()
-    mock_response.data = json.dumps(pod_response).encode("utf-8")
-    core_v1.list_namespaced_pod.return_value = mock_response
-    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
-
-    result = executor.get_old_task_ids(older_than_hours=48)
-
-    assert result["status"] == "success"
-    assert len(result["pods"]) == 3
-
-    # executor pod (no sandbox annotation)
-    assert result["pods"][0]["task_id"] == "100"
-    assert result["pods"][0]["pod_name"] == "wegent-task-100-abc"
-    assert result["pods"][0]["runtime_type"] == "executor"
-
-    # sandbox pod (has sandbox heartbeat annotation)
-    assert result["pods"][1]["task_id"] == "200"
-    assert result["pods"][1]["pod_name"] == "sandbox-200-xyz"
-    assert result["pods"][1]["runtime_type"] == "sandbox"
-
-    # sandbox pod without task_id label
-    assert result["pods"][2]["task_id"] is None
-    assert result["pods"][2]["runtime_type"] == "sandbox"
