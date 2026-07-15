@@ -96,6 +96,7 @@ async def create_mail_config(
             {
                 "task_id": request.task_id,
                 "extension_name": MAIL_EXTENSION_NAME,
+                "extension_scope": "global",
                 "script_path": MAIL_EXTENSION_SCRIPT_PATH,
                 "action": "configure",
                 "payload": payload,

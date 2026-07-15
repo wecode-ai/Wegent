@@ -140,6 +140,16 @@ async function sendPrompt(control, selector, prompt) {
   })
 }
 
+async function waitForSnapshot(control, predicate, message, timeoutMs = UI_TIMEOUT_MS) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    if (predicate(snapshot)) return snapshot
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
 async function sendPromptUntilScenarioRequest(control, selector, prompt, scenario) {
   let lastError
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -659,6 +669,17 @@ async function buildExecutor() {
   return binaryPath
 }
 
+async function readTauriMainBinaryName() {
+  const configPath = join(weworkDir, 'src-tauri', 'tauri.conf.json')
+  try {
+    const raw = await readFile(configPath, 'utf8')
+    const config = JSON.parse(raw)
+    return config.mainBinaryName || 'app'
+  } catch {
+    return 'app'
+  }
+}
+
 async function buildDesktopApp(controlUrl, appIdentifier) {
   const configured = process.env.WEWORK_E2E_APP_BIN
   if (configured) return resolveExecutable(configured, 'app', 'Configured Wework desktop app')
@@ -684,7 +705,8 @@ async function buildDesktopApp(controlUrl, appIdentifier) {
       },
     }
   )
-  const binaryName = process.platform === 'win32' ? 'app.exe' : 'app'
+  const mainBinaryName = await readTauriMainBinaryName()
+  const binaryName = process.platform === 'win32' ? `${mainBinaryName}.exe` : mainBinaryName
   const candidates = [
     join(weworkDir, 'src-tauri', 'target', 'debug', binaryName),
     join(
@@ -786,10 +808,33 @@ async function main() {
       'The desktop controller did not connect from a webview'
     )
 
-    phase = 'project-folder-cancel'
+    phase = 'remote-project-dialog'
     await control.command('waitFor', '[data-testid="projects-create-button"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await control.command('click', '[data-testid="projects-create-button"]')
+    await control.command('click', '[data-testid="project-create-remote-option"]')
+    await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    const remoteProjectDialogText = await control.command(
+      'getText',
+      '[data-testid="standalone-folder-project-dialog"]'
+    )
+    assert.match(
+      remoteProjectDialogText,
+      /New remote project|新建远程项目/,
+      'The remote project dialog title was not localized'
+    )
+    await control.command('click', '[data-testid="standalone-folder-project-dialog-overlay"]')
+    const closedRemoteDialogSnapshot = JSON.parse(await control.command('snapshot', 'body'))
+    assert.equal(
+      closedRemoteDialogSnapshot.testIds.includes('standalone-folder-project-dialog'),
+      false,
+      'Clicking the remote project dialog backdrop did not restore the workbench'
+    )
+
+    phase = 'project-folder-cancel'
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-existing-option"]')
     await control.command('waitFor', '[data-testid="standalone-folder-project-dialog"]', {
@@ -819,6 +864,48 @@ async function main() {
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+
+    phase = 'project-folder-remove-immediately'
+    const openedProjectSnapshot = await waitForSnapshot(
+      control,
+      snapshot => snapshot.testIds.some(testId => testId.startsWith('project-menu-')),
+      'The newly opened folder project was not shown in the sidebar'
+    )
+    const projectMenuTestId = openedProjectSnapshot.testIds.find(testId =>
+      testId.startsWith('project-menu-')
+    )
+    assert.ok(projectMenuTestId, 'The newly opened folder project was not shown in the sidebar')
+    const projectId = projectMenuTestId.slice('project-menu-'.length)
+    await control.command('click', `[data-testid="${projectMenuTestId}"]`)
+    await control.command('click', `[data-testid="remove-project-${projectId}"]`)
+    await control.command(
+      'click',
+      `[data-testid="remove-project-dialog-${projectId}-confirm-button"]`
+    )
+    await waitForSnapshot(
+      control,
+      snapshot => !snapshot.testIds.includes(projectMenuTestId),
+      'A folder project could not be removed immediately after it was opened'
+    )
+
+    phase = 'project-folder-reopen'
+    await control.command('click', '[data-testid="projects-create-button"]')
+    await control.command('click', '[data-testid="project-create-existing-option"]')
+    await control.command('waitFor', '[data-testid="device-folder-path-input"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+    await control.command('fill', '[data-testid="device-folder-path-input"]', {
+      value: workspacePath,
+    })
+    await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+    await control.command('click', '[data-testid="confirm-device-folder-picker-button"]')
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('waitFor', '[data-testid^="project-menu-"]', {
+      timeoutMs: UI_TIMEOUT_MS,
+    })
+
     await selectE2EModel(control)
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)

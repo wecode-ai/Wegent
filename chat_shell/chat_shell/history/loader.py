@@ -74,18 +74,15 @@ def _get_remote_history_store() -> "RemoteHistoryStore":
                 "REMOTE_STORAGE_URL is required for HTTP mode. "
                 "Set CHAT_SHELL_REMOTE_STORAGE_URL environment variable."
             )
-        # Note: REMOTE_STORAGE_TOKEN is optional for internal API calls
-        # The internal API doesn't require authentication
-        if settings.REMOTE_STORAGE_TOKEN:
-            logger.debug("[history] Using REMOTE_STORAGE_TOKEN for remote storage auth")
-        else:
-            logger.debug(
-                "[history] No REMOTE_STORAGE_TOKEN set, internal API will use unauthenticated requests"
+        if not settings.backend_internal_token:
+            raise ValueError(
+                "CHAT_SHELL_REMOTE_STORAGE_TOKEN or "
+                "CHAT_SHELL_INTERNAL_SERVICE_TOKEN is required for remote history"
             )
 
         _remote_history_store = RemoteHistoryStore(
             base_url=settings.REMOTE_STORAGE_URL,
-            auth_token=settings.REMOTE_STORAGE_TOKEN,
+            auth_token=settings.backend_internal_token,
             timeout=30.0,
         )
         logger.debug(

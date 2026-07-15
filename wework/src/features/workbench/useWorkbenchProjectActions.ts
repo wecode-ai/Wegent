@@ -33,7 +33,11 @@ import type { ProjectMutationOptions } from './workbenchContextTypes'
 import type { WorkbenchAction } from './workbenchReducer'
 import { findProjectMetadataDeviceWorkspace, writeLastProjectId } from './workbenchRuntimeHelpers'
 import type { WorkbenchServices } from './workbenchServices'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  normalizeRuntimeWorkspacePath,
+  runtimeProjectUiId,
+  standaloneRuntimeProjectKey,
+} from '@/lib/runtime-project'
 
 interface UseWorkbenchProjectActionsOptions {
   user: User
@@ -156,35 +160,131 @@ export function useWorkbenchProjectActions({
     [dispatch, executorClient, refreshWorkLists, services.projectApi, state.runtimeWork]
   )
 
-  const removeProject = useCallback(
+  const removeListedRuntimeProject = useCallback(
     async (projectId: number) => {
       const runtimeWorkspace = findProjectMetadataDeviceWorkspace(
         state.runtimeWork,
         projectId,
         null
       )
-      if (runtimeWorkspace) {
-        const runtimeProject = state.runtimeWork?.projects.find(
-          item => runtimeProjectUiId(item.project) === projectId
-        )?.project
-        const response = await executorClient.runtime.removeRuntimeWorkspace({
-          deviceId: runtimeWorkspace.deviceId,
-          projectKey: runtimeProject?.key,
-          workspacePath: runtimeWorkspace.workspacePath,
-          runtime: 'codex',
-        })
-        if (!response.accepted) {
-          const message = response.error || 'Failed to remove runtime workspace'
-          dispatch({ type: 'error_set', error: message })
-          throw new Error(message)
-        }
-        await refreshWorkLists()
-        return
+      if (!runtimeWorkspace) return false
+
+      const runtimeProject = state.runtimeWork?.projects.find(
+        item => runtimeProjectUiId(item.project) === projectId
+      )?.project
+      const response = await executorClient.runtime.removeRuntimeWorkspace({
+        deviceId: runtimeWorkspace.deviceId,
+        projectKey: runtimeProject?.key,
+        workspacePath: runtimeWorkspace.workspacePath,
+        runtime: 'codex',
+      })
+      if (!response.accepted) {
+        const message = response.error || 'Failed to remove runtime workspace'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
       }
-      await services.projectApi.deleteProject(projectId)
+
+      const standaloneDeviceId = state.standaloneDeviceId?.trim()
+      const standaloneWorkspacePath = state.standaloneWorkspacePath
+        ? normalizeRuntimeWorkspacePath(state.standaloneWorkspacePath)
+        : ''
+      const clearsStandaloneWorkspace =
+        standaloneDeviceId === runtimeWorkspace.deviceId.trim() &&
+        standaloneWorkspacePath === normalizeRuntimeWorkspacePath(runtimeWorkspace.workspacePath)
+      await refreshWorkLists()
+      if (clearsStandaloneWorkspace) {
+        dispatch({
+          type: 'project_cleared',
+          standaloneDeviceId: runtimeWorkspace.deviceId,
+          standaloneWorkspacePath: null,
+          startFreshChat: true,
+        })
+      }
+      return true
+    },
+    [
+      dispatch,
+      executorClient,
+      refreshWorkLists,
+      state.runtimeWork,
+      state.standaloneDeviceId,
+      state.standaloneWorkspacePath,
+    ]
+  )
+
+  const removeStandaloneRuntimeProject = useCallback(
+    async (projectId: number) => {
+      const standaloneDeviceId = state.standaloneDeviceId?.trim()
+      const standaloneWorkspacePath = state.standaloneWorkspacePath
+        ? normalizeRuntimeWorkspacePath(state.standaloneWorkspacePath)
+        : ''
+      const standaloneProjectId =
+        standaloneDeviceId && standaloneWorkspacePath
+          ? runtimeProjectUiId({
+              key: standaloneRuntimeProjectKey(standaloneWorkspacePath),
+              stateDeviceId: standaloneDeviceId,
+              name: standaloneWorkspacePath,
+            })
+          : null
+      if (standaloneProjectId !== projectId || !standaloneDeviceId || !standaloneWorkspacePath) {
+        return false
+      }
+
+      const response = await executorClient.runtime.removeRuntimeWorkspace({
+        deviceId: standaloneDeviceId,
+        projectKey: standaloneRuntimeProjectKey(standaloneWorkspacePath),
+        workspacePath: standaloneWorkspacePath,
+        runtime: 'codex',
+      })
+      if (!response.accepted) {
+        const message = response.error || 'Failed to remove runtime workspace'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+      await refreshWorkLists()
+      dispatch({
+        type: 'project_cleared',
+        standaloneDeviceId,
+        standaloneWorkspacePath: null,
+        startFreshChat: true,
+      })
+      return true
+    },
+    [
+      dispatch,
+      executorClient,
+      refreshWorkLists,
+      state.standaloneDeviceId,
+      state.standaloneWorkspacePath,
+    ]
+  )
+
+  const removeCloudProject = useCallback(
+    async (projectId: number) => {
+      if (!state.projects.some(project => project.id === projectId)) {
+        const message = 'Project is no longer available'
+        dispatch({ type: 'error_set', error: message })
+        throw new Error(message)
+      }
+      try {
+        await services.projectApi.deleteProject(projectId)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to remove project'
+        dispatch({ type: 'error_set', error: message })
+        throw error
+      }
       await refreshWorkLists()
     },
-    [dispatch, executorClient, refreshWorkLists, services.projectApi, state.runtimeWork]
+    [dispatch, refreshWorkLists, services.projectApi, state.projects]
+  )
+
+  const removeProject = useCallback(
+    async (projectId: number) => {
+      if (await removeListedRuntimeProject(projectId)) return
+      if (await removeStandaloneRuntimeProject(projectId)) return
+      await removeCloudProject(projectId)
+    },
+    [removeCloudProject, removeListedRuntimeProject, removeStandaloneRuntimeProject]
   )
 
   const reorderRuntimeProjects = useCallback(

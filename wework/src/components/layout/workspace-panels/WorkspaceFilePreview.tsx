@@ -9,6 +9,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
+import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -90,6 +91,10 @@ interface WorkspaceFilePreviewProps {
   targetLineStart?: number
   targetLineEnd?: number
   onAddCodeComment: (context: CodeCommentContext) => void
+  editing?: boolean
+  editedContent?: string
+  onEditedContentChange?: (content: string) => void
+  onSave?: () => void
 }
 
 const FILE_VIEWER_TYPE_BY_MIME: Record<string, string> = {
@@ -415,6 +420,10 @@ export function WorkspaceFilePreview({
   targetLineStart,
   targetLineEnd,
   onAddCodeComment,
+  editing = false,
+  editedContent = '',
+  onEditedContentChange,
+  onSave,
 }: WorkspaceFilePreviewProps) {
   const { t } = useTranslation('common')
 
@@ -471,6 +480,20 @@ export function WorkspaceFilePreview({
     return (
       <section className="flex min-w-0 flex-1 items-center justify-center text-sm text-text-muted">
         {t('workbench.workspace_file_preview_empty', '选择文件查看内容')}
+      </section>
+    )
+  }
+
+  if (editing && onEditedContentChange && onSave) {
+    return (
+      <section className="flex min-w-0 flex-1 overflow-hidden bg-background">
+        <WorkspaceTextFileEditor
+          key={file.path}
+          path={file.path}
+          value={editedContent}
+          onChange={onEditedContentChange}
+          onSave={onSave}
+        />
       </section>
     )
   }

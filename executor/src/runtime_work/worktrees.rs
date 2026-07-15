@@ -691,9 +691,7 @@ fn expand_home(value: &str) -> PathBuf {
 }
 
 fn home_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(env::temp_dir)
+    dirs::home_dir().unwrap_or_else(env::temp_dir)
 }
 
 fn normalized_path_key(path: &Path) -> String {

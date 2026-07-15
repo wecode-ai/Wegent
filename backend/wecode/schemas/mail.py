@@ -15,7 +15,7 @@ class MailConfigRequest(BaseModel):
     task_id: int = Field(
         ...,
         gt=0,
-        description="Task ID whose skill workspace contains the mail extension",
+        description="Task ID that requested the mail configuration",
     )
     account_prefix: str = Field(
         ...,

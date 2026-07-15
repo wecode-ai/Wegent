@@ -3,7 +3,7 @@ import type { RefObject } from 'react'
 import { baseKeymap } from 'prosemirror-commands'
 import { history, redo, undo } from 'prosemirror-history'
 import { keymap } from 'prosemirror-keymap'
-import type { Node as ProseMirrorNode } from 'prosemirror-model'
+import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model'
 import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import { ComposerMentionNodeView } from './ComposerMentionNodeView'
@@ -147,8 +147,16 @@ export const ComposerProseMirrorEditor = forwardRef<
         return true
       },
       handleDOMEvents: {
-        paste(_view, event) {
-          return callbacksRef.current.onPaste(event)
+        paste(view, event) {
+          if (callbacksRef.current.onPaste(event)) return true
+          const text =
+            event.clipboardData?.getData('text/plain') || event.clipboardData?.getData('text')
+          if (!text) return false
+          const paragraph = createComposerDocument(text).firstChild
+          if (!paragraph) return false
+          event.preventDefault()
+          view.dispatch(view.state.tr.replaceSelection(new Slice(paragraph.content, 0, 0)))
+          return true
         },
         drop(_view, event) {
           return callbacksRef.current.onDrop(event)

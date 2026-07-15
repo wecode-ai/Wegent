@@ -21,6 +21,7 @@ import httpx
 
 from chat_shell.core.config import settings
 from shared.models.execution import ExecutionRequest
+from shared.telemetry.context import get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +94,13 @@ async def _download_skill_binary(download_url: str, skill_name: str) -> Optional
         Binary data or None if download failed
     """
     try:
-        # Get service token from settings
-        service_token = getattr(settings, "INTERNAL_SERVICE_TOKEN", None)
-        if not service_token:
-            service_token = getattr(settings, "REMOTE_STORAGE_TOKEN", "")
-
-        headers = {}
+        service_token = settings.backend_internal_token
+        headers = {"X-Service-Name": "chat-shell"}
         if service_token:
             headers["Authorization"] = f"Bearer {service_token}"
+        request_id = get_request_id()
+        if request_id:
+            headers["X-Request-ID"] = request_id
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(download_url, headers=headers)

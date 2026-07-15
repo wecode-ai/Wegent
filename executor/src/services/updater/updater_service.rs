@@ -283,9 +283,7 @@ fn free_space_bytes(_path: &Path) -> Option<u64> {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
+    dirs::home_dir().unwrap_or_else(std::env::temp_dir)
 }
 
 fn numeric_to_u64<T>(value: T) -> Option<u64>

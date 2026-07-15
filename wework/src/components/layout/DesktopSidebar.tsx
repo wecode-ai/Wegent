@@ -56,7 +56,11 @@ import {
 } from '@/lib/device-capabilities'
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+  standaloneRuntimeProjectKey,
+} from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
   DeviceInfo,
@@ -311,7 +315,8 @@ function standaloneRuntimeProjectWork(
   const deviceStatus = deviceState?.status ?? 'unavailable'
   return {
     project: {
-      key: `${resolvedDeviceId}:${normalizedWorkspacePath}`,
+      key: standaloneRuntimeProjectKey(normalizedWorkspacePath),
+      stateDeviceId: resolvedDeviceId,
       name: getSidebarPathBasename(normalizedWorkspacePath),
       description: normalizedWorkspacePath,
       color: null,
@@ -701,9 +706,7 @@ function getDeviceRouteTitle(deviceState: SidebarDeviceState): string {
 
 function getDisplayableNetworkHost(value?: string | null): string | null {
   if (!value) return null
-  const host = extractNetworkHost(value.trim())
-  if (!host || isLoopbackNetworkHost(host)) return null
-  return host
+  return extractNetworkHost(value.trim()) || null
 }
 
 function extractNetworkHost(value: string): string {
@@ -714,11 +717,6 @@ function extractNetworkHost(value: string): string {
     return colonParts[0]
   }
   return value
-}
-
-function isLoopbackNetworkHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase()
-  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.')
 }
 
 function getRuntimeProjectDeviceState(
@@ -1591,6 +1589,7 @@ function RuntimeTaskRow({
     <>
       <SidebarHoverCard
         testId={`runtime-local-task-hover-card-${task.taskId}`}
+        interactive
         content={
           <TaskSidebarHoverCardContent
             taskId={task.taskId}
@@ -2047,6 +2046,8 @@ function ProjectItem({
     try {
       await onRemoveProject(project.id)
       setRemoveConfirmOpen(false)
+    } catch (error) {
+      console.error('[Wework project removal] failed', error)
     } finally {
       setRemovingProject(false)
     }

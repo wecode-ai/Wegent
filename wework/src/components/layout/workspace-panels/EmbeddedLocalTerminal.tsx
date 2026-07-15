@@ -17,6 +17,7 @@ import {
 import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { createXtermWebLinksAddon } from './xtermLinks'
+import { installXtermSelectionGuard } from './xtermSelectionGuard'
 
 interface EmbeddedLocalTerminalProps {
   sessionId: string
@@ -98,6 +99,7 @@ export function EmbeddedLocalTerminal({
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(webLinksAddon)
     terminal.open(container)
+    const selectionGuard = installXtermSelectionGuard({ container, terminal })
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {
@@ -178,6 +180,7 @@ export function EmbeddedLocalTerminal({
       resizeObserver.disconnect()
       dataDisposable.dispose()
       titleDisposable.dispose()
+      selectionGuard.dispose()
       inputFallback.dispose()
       unlisteners.forEach(unlisten => unlisten())
       terminal.dispose()

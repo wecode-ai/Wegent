@@ -46,6 +46,7 @@ import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_s
 import wecode.service.executor_job_patch  # noqa: F401  patch JobService with K8s orphan pod cleanup capabilities
 import wecode.service.executor_kinds_patch  # noqa: F401  patch executor_kinds_service with K8s orphan pod cleanup methods
 import wecode.service.jobs  # noqa: F401  register notification and evaluation grading monitor background workers
+import wecode.service.llm_proxy_service_patch  # noqa: F401  resolve user API keys for the LLM proxy gateway
 import wecode.service.local_device_patch  # noqa: F401  register LocalDeviceProvider with factory
 import wecode.service.openclaw_token_monitor_patch  # noqa: F401  register OpenClaw token monitor background worker
 import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuilder.build to replace ${WECODE_USER_API_KEY} (new dispatcher flow)

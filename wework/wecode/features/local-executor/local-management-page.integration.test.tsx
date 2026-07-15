@@ -190,6 +190,10 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   },
 }))
 
+vi.mock('@/features/appshots/AppshotBridge', () => ({
+  AppshotBridge: () => null,
+}))
+
 vi.mock('@/pages/WorkbenchPage', () => ({
   WorkbenchPage: () => <div data-testid="workbench-page">WeWork 工作台</div>,
 }))

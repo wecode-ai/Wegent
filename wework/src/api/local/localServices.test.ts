@@ -1561,9 +1561,28 @@ describe('createLocalAppServices', () => {
               path: '/Users/me/project/README.md',
               name: 'README.md',
               content: 'hello',
+              editable: true,
+              revision: 'sha256:old',
               truncated: false,
               size: 5,
               modified_at: '2026-06-20T01:00:00Z',
+            },
+            stderr: '',
+            exit_code: 0,
+          }
+        }
+        if (data.command_key === 'workspace_write_text_file') {
+          return {
+            success: true,
+            stdout: {
+              path: '/Users/me/project/README.md',
+              name: 'README.md',
+              content: data.stdin,
+              editable: true,
+              revision: 'sha256:new',
+              truncated: false,
+              size: 7,
+              modified_at: '2026-06-20T01:01:00Z',
             },
             stderr: '',
             exit_code: 0,
@@ -1597,9 +1616,28 @@ describe('createLocalAppServices', () => {
       path: '/Users/me/project/README.md',
       name: 'README.md',
       content: 'hello',
+      editable: true,
+      revision: 'sha256:old',
       truncated: false,
       size: 5,
       modifiedAt: '2026-06-20T01:00:00Z',
+    })
+    await expect(
+      services.deviceApi.writeWorkspaceTextFile(
+        'local-device',
+        '/Users/me/project/README.md',
+        'updated',
+        'sha256:old'
+      )
+    ).resolves.toEqual({
+      path: '/Users/me/project/README.md',
+      name: 'README.md',
+      content: 'updated',
+      editable: true,
+      revision: 'sha256:new',
+      truncated: false,
+      size: 7,
+      modifiedAt: '2026-06-20T01:01:00Z',
     })
 
     expect(request).toHaveBeenCalledWith('device.execute_command', {
@@ -1614,6 +1652,15 @@ describe('createLocalAppServices', () => {
       command_key: 'workspace_read_text_file',
       path: '/Users/me/project',
       args: ['README.md'],
+      timeout_seconds: 15,
+      max_output_bytes: 1024 * 1024 * 2,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'workspace_write_text_file',
+      path: '/Users/me/project',
+      args: ['README.md', 'sha256:old'],
+      stdin: 'updated',
       timeout_seconds: 15,
       max_output_bytes: 1024 * 1024 * 2,
     })

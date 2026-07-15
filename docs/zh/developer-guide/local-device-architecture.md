@@ -65,6 +65,8 @@ Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、�
 
 目标（goal）有独立的生命周期。目标为 `active` 表示其目标仍可在后续回合继续推进，不表示当前存在模型回合。因此，任务空闲时保留 active goal 不会将任务重新标记为运行中；用户发送下一条消息会直接创建新回合，而不是把消息作为对运行中回合的引导。
 
+Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
+
 ### 后端设备对话任务 REST 入口
 
 网页版设备对话页仍然通过 WebSocket 发送消息。对于需要从外部系统或 curl 创建同类任务的场景，Backend 提供 REST 入口：
@@ -168,6 +170,11 @@ Rust executor 的本地 Backend 通道需要与旧 Python 本地设备 runner �
 - `runtime:rpc`
 - `device:upgrade`
 - `device:run_extension`
+
+`device:run_extension` 的 `extension_scope` 可设为 `task` 或 `global`，省略时默认为
+`task`。任务级扩展从当前任务的 `.claude/skills/<extension>` 目录运行；全局扩展从
+executor 运行用户的 `~/.claude/skills/<extension>` 目录运行。脚本路径必须保留在所选
+扩展目录内，其他作用域值会被拒绝。
 
 迁移覆盖关系记录在 `executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`。新增本地设备事件时，应先补 `executor/tests/local_backend_device_migration_contract.rs`，再更新该迁移矩阵。
 

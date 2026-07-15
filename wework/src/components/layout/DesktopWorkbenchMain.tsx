@@ -47,6 +47,7 @@ import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
+  DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
   markEmbeddedBrowserLabelTransferred,
   relabelEmbeddedBrowser,
@@ -215,6 +216,7 @@ function createBottomPanelWorkspaceKey({
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  visible?: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -298,6 +300,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       renderPane={pane => (
         <DesktopWorkbenchPane
           pane={pane}
+          workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
@@ -324,6 +327,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
 
 const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   pane,
+  workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
   onSidebarCollapsedChange,
@@ -331,6 +335,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPaneUnpinned,
 }: {
   pane: WorkbenchPaneIdentity
+  workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -636,6 +641,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     migratedEmbeddedBrowserLabel,
   ])
 
+  useEffect(() => {
+    if (paneActive || migratedEmbeddedBrowserLabel !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
+
+    void relabelEmbeddedBrowser(DEFAULT_EMBEDDED_BROWSER_LABEL, defaultEmbeddedBrowserLabel)
+      .then(() => {
+        markEmbeddedBrowserLabelTransferred(DEFAULT_EMBEDDED_BROWSER_LABEL)
+        setMigratedEmbeddedBrowserLabel(null)
+      })
+      .catch(error => {
+        console.error('Failed to preserve embedded browser for inactive task:', error)
+      })
+  }, [defaultEmbeddedBrowserLabel, migratedEmbeddedBrowserLabel, paneActive])
+
   const bottomPanelWorkspaceKey = createBottomPanelWorkspaceKey({
     currentRuntimeTask,
     workspaceProjectId: workspaceProject?.id,
@@ -823,20 +841,37 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     temporaryChatTabSequence.current += 1
     openRightPanelTab(`chat:${Date.now()}-${temporaryChatTabSequence.current}`)
   }, [openRightPanelTab])
+  const embeddedBrowserListenerStateRef = useRef({
+    embeddedBrowserLabel,
+    openRightPanelTab,
+    paneActive,
+  })
+  useEffect(() => {
+    embeddedBrowserListenerStateRef.current = {
+      embeddedBrowserLabel,
+      openRightPanelTab,
+      paneActive,
+    }
+  }, [embeddedBrowserLabel, openRightPanelTab, paneActive])
   useEffect(() => {
     const listener = listenEmbeddedBrowserOpenRequests(request => {
-      if (request.label && request.label !== embeddedBrowserLabel) return
-      setEmbeddedBrowserOpenRequest(current => ({
+      const current = embeddedBrowserListenerStateRef.current
+      if (request.label === DEFAULT_EMBEDDED_BROWSER_LABEL && !current.paneActive) return
+      if (request.label && request.label !== current.embeddedBrowserLabel) {
+        if (request.label !== DEFAULT_EMBEDDED_BROWSER_LABEL) return
+        setMigratedEmbeddedBrowserLabel(request.label)
+      }
+      setEmbeddedBrowserOpenRequest(previous => ({
         ...request,
-        id: (current?.id ?? 0) + 1,
+        id: (previous?.id ?? 0) + 1,
       }))
-      openRightPanelTab('browser')
+      current.openRightPanelTab('browser')
     })
 
     return () => {
       void listener?.then(unlisten => unlisten())
     }
-  }, [embeddedBrowserLabel, openRightPanelTab])
+  }, [])
   const openAssistantPlan = useCallback(
     (request: AssistantPlanOpenRequest) => {
       setSelectedAssistantPlan({
@@ -1437,7 +1472,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
           className={cn(
-            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto] overflow-y-auto',
+            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
+            hasConversation ? 'overflow-y-auto' : 'overflow-hidden',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
@@ -1735,7 +1771,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
-              visible={paneActive && rightPanelOpen}
+              visible={workbenchVisible && paneActive && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}
