@@ -13,6 +13,7 @@ import {
 } from './assistantMarkdownLinks'
 import { MarkdownCodeBlock } from './MarkdownCodeBlock'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
+import { openExternalUrl } from '@/lib/external-links'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
@@ -332,9 +333,15 @@ function AssistantMarkdownLink({
     <a
       href={href}
       className={ASSISTANT_MARKDOWN_LINK_CLASS}
-      target="_blank"
-      rel="noopener noreferrer"
       data-testid="assistant-markdown-link"
+      onClick={event => {
+        event.preventDefault()
+        event.stopPropagation()
+        if (!href) return
+        void openExternalUrl(href).catch(error => {
+          console.error('[Wework] Failed to open assistant link', error)
+        })
+      }}
     >
       {icon}
       {children}

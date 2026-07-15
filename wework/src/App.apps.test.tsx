@@ -34,6 +34,10 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   },
 }))
 
+vi.mock('@/features/appshots/AppshotBridge', () => ({
+  AppshotBridge: () => null,
+}))
+
 vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
     .fn()

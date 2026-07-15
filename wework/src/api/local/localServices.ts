@@ -916,6 +916,8 @@ function normalizeWorkspaceTextFile(
     path,
     name: record.name,
     content: record.content,
+    editable: record.editable === true && typeof record.revision === 'string',
+    revision: typeof record.revision === 'string' ? record.revision : '',
     truncated: record.truncated,
     size: record.size,
     modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace text file response'),
@@ -1956,6 +1958,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       path?: string
       cwd?: string
       args?: string[]
+      stdin?: string
       env?: Record<string, unknown>
       timeout_seconds?: number
       max_output_bytes?: number
@@ -2063,6 +2066,24 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       })
       assertCommandSuccess(response, 'Failed to read workspace file')
       return normalizeWorkspaceFileChunk(response.stdout, filePath, offset)
+    },
+    async writeWorkspaceTextFile(
+      deviceId: string,
+      filePath: string,
+      content: string,
+      expectedRevision: string
+    ) {
+      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
+      const response = await executeCommand(deviceId, {
+        command_key: 'workspace_write_text_file',
+        path: parentPath,
+        args: [fileName, expectedRevision],
+        stdin: content,
+        timeout_seconds: 15,
+        max_output_bytes: WORKSPACE_TEXT_FILE_MAX_OUTPUT_BYTES,
+      })
+      assertCommandSuccess(response, 'Failed to save workspace file')
+      return normalizeWorkspaceTextFile(response.stdout, filePath)
     },
   }
   const runtimeWorkApi = createRuntimeWorkApiFromIpc(

@@ -455,6 +455,17 @@ export function createHybridWorkbenchServices(
     readWorkspaceFileChunk(deviceId, filePath, offset) {
       return deviceApi(deviceId).readWorkspaceFileChunk(deviceId, filePath, offset)
     },
+    writeWorkspaceTextFile(deviceId, filePath, content, expectedRevision) {
+      if (!isLocalDeviceId(deviceId) || !localServices.deviceApi.writeWorkspaceTextFile) {
+        throw new Error('Workspace file editing is only available for local devices')
+      }
+      return localServices.deviceApi.writeWorkspaceTextFile(
+        deviceId,
+        filePath,
+        content,
+        expectedRevision
+      )
+    },
     createDockerRemoteDeviceCommand(data) {
       if (!cloudServices.deviceApi.createDockerRemoteDeviceCommand) {
         throw new Error('Remote device startup command is unavailable')

@@ -6,6 +6,12 @@ sidebar_position: 33
 
 Wework 内置一个默认关闭的前端性能诊断开关，用于定位 release 包中“运行一段时间后变卡”的问题。诊断代码只在显式开启后运行；关闭时不会安装 React Profiler，也不会采集定时样本。
 
+## 多实例调试
+
+使用 `pnpm --filter wework dev:mac` 启动 debug 应用时，每个 Wework 进程都会使用独立的本地 executor runtime 目录和 IPC 地址文件。可以同时启动多个调试窗口，不同窗口不会连接到同一个 executor 实例。
+
+开发环境默认让这些实例复用同一个 Cargo target 目录，以便 executor 源码变化后继续使用增量编译产物。需要排查共享构建缓存问题时，可以设置 `WEGENT_DISABLE_SHARED_CARGO_TARGET=1`，让当前启动过程使用项目内的默认 target 目录。
+
 ## 开启方式
 
 在 Wework 窗口中按隐藏快捷键：

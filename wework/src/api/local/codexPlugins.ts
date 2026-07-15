@@ -30,6 +30,15 @@ export interface LocalCodexHomeMigrationStatus {
   shouldPromptMigration: boolean
 }
 
+export type ExternalContentSource = 'codex' | 'claude-code'
+
+export interface ExternalContentImportResult {
+  source: ExternalContentSource
+  sourcePath: string
+  destinationPath: string
+  importedEntries: string[]
+}
+
 export interface LocalCodexLocalConfig {
   codexHome: string
   configPath: string
@@ -52,6 +61,7 @@ function normalizeMarketplaceSource(source: string): string {
 }
 
 export interface LocalCodexPluginApi {
+  importExternalContent(source: ExternalContentSource): Promise<ExternalContentImportResult>
   codexHomeMigrationStatus(): Promise<LocalCodexHomeMigrationStatus>
   initializeCodexHome(options: {
     migrateNativeHome: boolean
@@ -523,6 +533,14 @@ export function createLocalCodexPluginApi(): LocalCodexPluginApi {
     remoteAppsEnabled: false,
   }
   return {
+    importExternalContent(source) {
+      if (!isTauriRuntime()) {
+        return Promise.reject(new Error('External content import requires the Wework desktop app'))
+      }
+      return invoke<ExternalContentImportResult>('local_executor_import_external_content', {
+        options: { source },
+      })
+    },
     codexHomeMigrationStatus() {
       if (!isTauriRuntime()) {
         return Promise.resolve({

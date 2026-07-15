@@ -914,7 +914,7 @@ export function ComposerTextarea({
   return (
     <div className="relative min-w-0 flex-1 w-full">
       <ComposerProseMirrorEditor
-        key="composer-editor-path-casing-v2"
+        key="composer-editor-multiline-paste-v3"
         ref={editorRef}
         value={value}
         onChange={nextValue => {

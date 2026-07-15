@@ -183,11 +183,12 @@ describe('ComposerTextarea', () => {
     await waitFor(() => expect(screen.queryByTestId('mention-plan-action')).not.toBeInTheDocument())
 
     act(() => {
+      editor.blur()
       editor.value = '@'
       editor.focus()
     })
     fireEvent.click(await screen.findByTestId('mention-plan-action'))
-    expect(onSetPlanMode).toHaveBeenCalledOnce()
+    await waitFor(() => expect(onSetPlanMode).toHaveBeenCalledOnce())
   })
 
   test('adds a selected folder as an atomic composer reference', async () => {

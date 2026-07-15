@@ -1742,10 +1742,7 @@ fn workspace_root() -> PathBuf {
                 env::var_os("WEGENT_EXECUTOR_HOME")
                     .map(|home| PathBuf::from(home).join("workspace"))
             })
-            .or_else(|| {
-                env::var_os("HOME")
-                    .map(|home| PathBuf::from(home).join(".wegent-executor/workspace"))
-            })
+            .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor/workspace")))
             .unwrap_or_else(|| env::temp_dir().join("wegent-executor/workspace"));
     }
     PathBuf::from("/workspace")
@@ -1754,11 +1751,7 @@ fn workspace_root() -> PathBuf {
 fn executor_home() -> PathBuf {
     env::var_os("WEGENT_EXECUTOR_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/root"))
-        })
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/root")))
 }
 
 fn codex_skills_dir(task_dir: &Path) -> PathBuf {

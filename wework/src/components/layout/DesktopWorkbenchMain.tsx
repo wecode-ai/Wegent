@@ -216,6 +216,7 @@ function createBottomPanelWorkspaceKey({
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  visible?: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -299,6 +300,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       renderPane={pane => (
         <DesktopWorkbenchPane
           pane={pane}
+          workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
@@ -325,6 +327,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
 
 const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   pane,
+  workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
   onSidebarCollapsedChange,
@@ -332,6 +335,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPaneUnpinned,
 }: {
   pane: WorkbenchPaneIdentity
+  workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -1468,7 +1472,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
           className={cn(
-            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto] overflow-y-auto',
+            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
+            hasConversation ? 'overflow-y-auto' : 'overflow-hidden',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
@@ -1766,7 +1771,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
-              visible={paneActive && rightPanelOpen}
+              visible={workbenchVisible && paneActive && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}

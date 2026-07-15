@@ -102,6 +102,7 @@ export interface GuidanceWorkbenchMessage {
 
 export interface RuntimePaneTranscript {
   messages: WorkbenchMessage[]
+  running?: boolean
   contextUsage?: RuntimeContextUsage | null
   turnNavigation?: RuntimeTurnNavigationItem[]
   fullContent?: boolean
@@ -184,6 +185,7 @@ export interface WorkbenchState {
   runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
   currentRuntimeTask: RuntimeTaskAddress | null
+  activeRuntimeTasks: RuntimeTaskAddress[]
   standaloneChatKey: number
   selectedDeviceWorkspaceId: number | null
   pendingProjectWorkspaceProjectId: number | null

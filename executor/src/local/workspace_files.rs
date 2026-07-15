@@ -5,12 +5,14 @@
 use std::{
     collections::HashMap,
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
     time::{Instant, SystemTime},
 };
 
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use super::command::CommandResult;
 
@@ -21,7 +23,10 @@ const WORKSPACE_ROOTS_ENV: &str = "WEGENT_WORKSPACE_ROOTS";
 pub fn is_workspace_file_command(command_key: &str) -> bool {
     matches!(
         command_key,
-        "workspace_tree" | "workspace_read_text_file" | "workspace_read_file_chunk"
+        "workspace_tree"
+            | "workspace_read_text_file"
+            | "workspace_read_file_chunk"
+            | "workspace_write_text_file"
     )
 }
 
@@ -31,10 +36,26 @@ pub async fn execute_workspace_file_command(
     args: Vec<String>,
     env_values: HashMap<String, String>,
 ) -> CommandResult {
+    execute_workspace_file_command_with_input(command_key, path, args, env_values, None).await
+}
+
+pub async fn execute_workspace_file_command_with_input(
+    command_key: &str,
+    path: Option<String>,
+    args: Vec<String>,
+    env_values: HashMap<String, String>,
+    stdin: Option<String>,
+) -> CommandResult {
     let started_at = Instant::now();
     let command_key = command_key.to_owned();
     match tokio::task::spawn_blocking(move || {
-        execute_blocking(&command_key, path.as_deref(), &args, &env_values)
+        execute_blocking(
+            &command_key,
+            path.as_deref(),
+            &args,
+            &env_values,
+            stdin.as_deref(),
+        )
     })
     .await
     {
@@ -52,6 +73,7 @@ fn execute_blocking(
     path: Option<&str>,
     args: &[String],
     env_values: &HashMap<String, String>,
+    stdin: Option<&str>,
 ) -> Result<Value, String> {
     let root = resolve_workspace_directory(path)?;
     let allowed_roots = allowed_workspace_roots(env_values)?;
@@ -61,6 +83,7 @@ fn execute_blocking(
         "workspace_tree" => list_entries(&root),
         "workspace_read_text_file" => read_text_file(&root, &allowed_roots, args),
         "workspace_read_file_chunk" => read_file_chunk(&root, &allowed_roots, args),
+        "workspace_write_text_file" => write_text_file(&root, &allowed_roots, args, stdin),
         _ => Err(format!("Unsupported workspace file command: {command_key}")),
     }
 }
@@ -161,15 +184,75 @@ fn read_text_file(
         .map_err(|error| format!("Failed to read file: {error}"))?;
     let truncated = bytes.len() > MAX_TEXT_FILE_BYTES;
     bytes.truncate(MAX_TEXT_FILE_BYTES);
+    let editable = !truncated && std::str::from_utf8(&bytes).is_ok();
     Ok(json!({
         "success": true,
         "path": target.to_string_lossy(),
         "name": target.file_name().and_then(|name| name.to_str()).unwrap_or_default(),
         "content": String::from_utf8_lossy(&bytes),
+        "editable": editable,
+        "revision": sha256_revision(&bytes),
         "truncated": truncated,
         "size": metadata.len(),
         "modified_at": modified_at(metadata.modified().ok()),
     }))
+}
+
+fn write_text_file(
+    root: &Path,
+    allowed_roots: &[PathBuf],
+    args: &[String],
+    stdin: Option<&str>,
+) -> Result<Value, String> {
+    if args.len() != 2 || args[0].trim().is_empty() || args[1].trim().is_empty() {
+        return Err("File name and expected revision are required".to_owned());
+    }
+    let content = stdin.ok_or_else(|| "File content is required".to_owned())?;
+    if content.len() > MAX_TEXT_FILE_BYTES {
+        return Err("File content exceeds 256 KiB".to_owned());
+    }
+    let target = resolve_workspace_file(root, allowed_roots, &args[0])?;
+    let current = fs::read(&target).map_err(|error| format!("Failed to read file: {error}"))?;
+    std::str::from_utf8(&current).map_err(|_| "File is not valid UTF-8".to_owned())?;
+    if sha256_revision(&current) != args[1] {
+        return Err("Workspace file has changed on disk".to_owned());
+    }
+    let metadata =
+        fs::metadata(&target).map_err(|error| format!("Failed to read file metadata: {error}"))?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| "File parent directory is missing".to_owned())?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| format!("Failed to create temporary file: {error}"))?;
+    temporary
+        .write_all(content.as_bytes())
+        .map_err(|error| format!("Failed to write file: {error}"))?;
+    temporary
+        .as_file_mut()
+        .sync_all()
+        .map_err(|error| format!("Failed to flush file: {error}"))?;
+    fs::set_permissions(temporary.path(), metadata.permissions())
+        .map_err(|error| format!("Failed to preserve file permissions: {error}"))?;
+    temporary
+        .persist(&target)
+        .map_err(|error| format!("Failed to replace file: {}", error.error))?;
+    let saved_metadata = fs::metadata(&target)
+        .map_err(|error| format!("Failed to read saved file metadata: {error}"))?;
+    Ok(json!({
+        "success": true,
+        "path": target.to_string_lossy(),
+        "name": target.file_name().and_then(|name| name.to_str()).unwrap_or_default(),
+        "content": content,
+        "editable": true,
+        "revision": sha256_revision(content.as_bytes()),
+        "truncated": false,
+        "size": saved_metadata.len(),
+        "modified_at": modified_at(saved_metadata.modified().ok()),
+    }))
+}
+
+fn sha256_revision(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
 fn read_file_chunk(
@@ -265,5 +348,87 @@ fn error_result(error: String, started_at: Instant) -> CommandResult {
         stdout_truncated: false,
         stderr_truncated: false,
         error: Some(error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn allowed_env(root: &Path) -> HashMap<String, String> {
+        HashMap::from([(
+            WORKSPACE_ROOTS_ENV.to_owned(),
+            root.to_string_lossy().into_owned(),
+        )])
+    }
+
+    #[test]
+    fn write_text_file_saves_content_and_updates_revision() {
+        let directory = tempfile::tempdir().expect("create workspace");
+        let target = directory.path().join("README.md");
+        fs::write(&target, "hello").expect("seed file");
+        let expected_revision = sha256_revision(b"hello");
+
+        let saved = execute_blocking(
+            "workspace_write_text_file",
+            directory.path().to_str(),
+            &["README.md".to_owned(), expected_revision],
+            &allowed_env(directory.path()),
+            Some("updated"),
+        )
+        .expect("save file");
+
+        assert_eq!(
+            fs::read_to_string(&target).expect("read saved file"),
+            "updated"
+        );
+        assert_eq!(saved["content"], "updated");
+        assert_eq!(saved["editable"], true);
+        assert_eq!(saved["revision"], sha256_revision(b"updated"));
+    }
+
+    #[test]
+    fn write_text_file_rejects_stale_revision_without_overwriting() {
+        let directory = tempfile::tempdir().expect("create workspace");
+        let target = directory.path().join("README.md");
+        fs::write(&target, "changed").expect("seed file");
+
+        let error = execute_blocking(
+            "workspace_write_text_file",
+            directory.path().to_str(),
+            &["README.md".to_owned(), "sha256:stale".to_owned()],
+            &allowed_env(directory.path()),
+            Some("updated"),
+        )
+        .expect_err("reject stale revision");
+
+        assert_eq!(error, "Workspace file has changed on disk");
+        assert_eq!(
+            fs::read_to_string(target).expect("read original file"),
+            "changed"
+        );
+    }
+
+    #[test]
+    fn write_text_file_rejects_content_over_limit() {
+        let directory = tempfile::tempdir().expect("create workspace");
+        let target = directory.path().join("README.md");
+        fs::write(&target, "hello").expect("seed file");
+        let content = "x".repeat(MAX_TEXT_FILE_BYTES + 1);
+
+        let error = execute_blocking(
+            "workspace_write_text_file",
+            directory.path().to_str(),
+            &["README.md".to_owned(), sha256_revision(b"hello")],
+            &allowed_env(directory.path()),
+            Some(&content),
+        )
+        .expect_err("reject oversized content");
+
+        assert_eq!(error, "File content exceeds 256 KiB");
+        assert_eq!(
+            fs::read_to_string(target).expect("read original file"),
+            "hello"
+        );
     }
 }

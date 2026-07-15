@@ -7,14 +7,18 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   canUseEmbeddedBrowser: vi.fn(),
   closeEmbeddedBrowser: vi.fn(),
   consumeEmbeddedBrowserLabelTransfer: vi.fn(),
+  deleteEmbeddedBrowserDownload: vi.fn(),
   evalEmbeddedBrowser: vi.fn(),
   evalEmbeddedBrowserJson: vi.fn(),
   goBackEmbeddedBrowser: vi.fn(),
   goForwardEmbeddedBrowser: vi.fn(),
+  listenEmbeddedBrowserDownloads: vi.fn(),
   navigateEmbeddedBrowser: vi.fn(),
   openEmbeddedBrowser: vi.fn(),
+  pauseEmbeddedBrowserDownload: vi.fn(),
   readEmbeddedBrowserPageState: vi.fn(),
   reloadEmbeddedBrowser: vi.fn(),
+  resumeEmbeddedBrowserDownload: vi.fn(),
   setEmbeddedBrowserBounds: vi.fn(),
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT: 'wework:debug-panel-visibility-change',
   EMBEDDED_BROWSER_OCCLUSION_EVENT: 'wework:embedded-browser-occlusion-change',
@@ -52,6 +56,7 @@ describe('WorkspaceBrowserPanel', () => {
     vi.stubGlobal('ResizeObserver', ResizeObserverMock)
     embeddedBrowserMocks.canUseEmbeddedBrowser.mockReturnValue(true)
     embeddedBrowserMocks.consumeEmbeddedBrowserLabelTransfer.mockReturnValue(false)
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.openEmbeddedBrowser.mockResolvedValue({
       title: null,
       url: 'https://example.com/',
@@ -137,6 +142,78 @@ describe('WorkspaceBrowserPanel', () => {
         'workspace-browser'
       )
     })
+  })
+
+  test('shows completed downloads with their saved file path', async () => {
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handler({
+        id: 'download-1',
+        label: 'workspace-browser',
+        url: 'https://example.com/app.dmg',
+        path: '/Users/test/Downloads/app.dmg',
+        status: 'finished',
+        receivedBytes: 1024,
+        totalBytes: 1024,
+      })
+      return null
+    })
+
+    render(<WorkspaceBrowserPanel active />)
+
+    expect(await screen.findByTestId('workspace-browser-downloads-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-download-item')).toHaveTextContent('app.dmg')
+    expect(screen.getByTestId('workspace-browser-download-item')).toHaveTextContent('下载完成')
+    expect(screen.getByTestId('workspace-browser-download-reveal-button')).toBeInTheDocument()
+  })
+
+  test('shows download percentage and byte progress', async () => {
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handler({
+        id: 'download-1',
+        label: 'workspace-browser',
+        url: 'https://example.com/app.dmg',
+        path: '/Users/test/Downloads/app.dmg',
+        status: 'progress',
+        receivedBytes: 5 * 1024 * 1024,
+        totalBytes: 10 * 1024 * 1024,
+      })
+      return null
+    })
+
+    render(<WorkspaceBrowserPanel active />)
+
+    expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
+      '50% · 5.0 MB / 10.0 MB'
+    )
+    expect(screen.getByTestId('workspace-browser-download-progress').firstChild).toHaveStyle({
+      width: '50%',
+    })
+  })
+
+  test('allows paused downloads to resume or be deleted', async () => {
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handler({
+        id: 'download-paused',
+        label: 'workspace-browser',
+        url: 'https://example.com/app.dmg',
+        path: '/Users/test/Downloads/app.dmg',
+        status: 'paused',
+        receivedBytes: 5 * 1024 * 1024,
+        totalBytes: 10 * 1024 * 1024,
+      })
+      return null
+    })
+
+    render(<WorkspaceBrowserPanel active />)
+
+    fireEvent.click(await screen.findByTestId('workspace-browser-download-resume-button'))
+    fireEvent.click(screen.getByTestId('workspace-browser-download-delete-button'))
+    expect(embeddedBrowserMocks.resumeEmbeddedBrowserDownload).toHaveBeenCalledWith(
+      'download-paused'
+    )
+    expect(embeddedBrowserMocks.deleteEmbeddedBrowserDownload).toHaveBeenCalledWith(
+      'download-paused'
+    )
   })
 
   test('opens the embedded browser from an external open request', async () => {

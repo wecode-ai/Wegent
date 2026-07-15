@@ -1,4 +1,5 @@
 import {
+  AppWindow,
   Archive,
   ArrowLeft,
   Palette,
@@ -22,6 +23,7 @@ import {
   Plus,
   RotateCcw,
   Server,
+  ScanLine,
   SlidersHorizontal,
   Terminal,
   Trash2,
@@ -71,6 +73,8 @@ import { KeyboardShortcutsSettingsPage } from './KeyboardShortcutsSettingsPage'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
 import { ContextSettingsPage } from './ContextSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
+import { BrowserSettingsPage } from './BrowserSettingsPage'
+import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
@@ -154,10 +158,24 @@ const settingsNavItems: SettingsNavItem[] = [
     category: 'personal',
   },
   {
+    key: 'appshots',
+    icon: ScanLine,
+    label: 'settings_nav_appshots',
+    fallback: '应用快照',
+    category: 'integrations',
+  },
+  {
     key: 'plugins',
     icon: Package,
     label: 'settings_nav_plugins',
     fallback: '插件',
+    category: 'integrations',
+  },
+  {
+    key: 'browser',
+    icon: AppWindow,
+    label: 'settings_nav_browser',
+    fallback: '浏览器',
     category: 'integrations',
   },
   {
@@ -1409,7 +1427,7 @@ export function ConnectionsSettingsPage({
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const usesOverlayTitlebar = isTauriRuntime()
   const visibleSettingsNavItems = settingsNavItems.filter(
-    item => item.key !== 'keyboard-shortcuts' || usesOverlayTitlebar
+    item => !['keyboard-shortcuts', 'appshots'].includes(item.key) || usesOverlayTitlebar
   )
   const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
 
@@ -1529,8 +1547,12 @@ export function ConnectionsSettingsPage({
           <ProxySettingsPage />
         ) : activeNav === 'keyboard-shortcuts' ? (
           <KeyboardShortcutsSettingsPage />
+        ) : activeNav === 'appshots' ? (
+          <AppshotsSettingsPage />
         ) : activeNav === 'plugins' ? (
           <PluginSettingsPage />
+        ) : activeNav === 'browser' ? (
+          <BrowserSettingsPage />
         ) : activeNav === 'worktrees' ? (
           <WorktreesSettingsPage
             api={services?.runtimeWorkApi}

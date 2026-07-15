@@ -1,10 +1,15 @@
 import {
   ArrowLeft,
   ArrowRight,
+  CheckCircle2,
+  Download,
   ExternalLink,
   Globe2,
+  CircleAlert,
   Loader2,
   MessageSquarePlus,
+  Pause,
+  Play,
   RotateCw,
   Trash2,
   X,
@@ -15,22 +20,28 @@ import {
   canUseEmbeddedBrowser,
   closeEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
+  deleteEmbeddedBrowserDownload,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
   evalEmbeddedBrowser,
   evalEmbeddedBrowserJson,
   goBackEmbeddedBrowser,
   goForwardEmbeddedBrowser,
+  listenEmbeddedBrowserDownloads,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
+  pauseEmbeddedBrowserDownload,
   readEmbeddedBrowserPageState,
   reloadEmbeddedBrowser,
+  resumeEmbeddedBrowserDownload,
   setEmbeddedBrowserBounds,
   type EmbeddedBrowserBounds,
+  type EmbeddedBrowserDownloadEvent,
   type EmbeddedBrowserOcclusionChange,
   type EmbeddedBrowserOpenRequest,
 } from '@/lib/embedded-browser'
 import { openExternalUrl } from '@/lib/external-links'
+import { revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
 import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -55,6 +66,7 @@ interface WorkspaceBrowserPanelProps {
 }
 
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
+type BrowserDownload = EmbeddedBrowserDownloadEvent
 type BrowserAnnotationRect = { x: number; y: number; width: number; height: number }
 type BrowserAnnotation = BrowserAnnotationRect & {
   id: string
@@ -81,6 +93,14 @@ function getFallbackFaviconUrl(url: string) {
   } catch {
     return null
   }
+}
+
+function formatDownloadBytes(bytes: number | null) {
+  if (bytes === null) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
 }
 
 function getElementBounds(element: HTMLElement): EmbeddedBrowserBounds | null {
@@ -542,9 +562,26 @@ export function WorkspaceBrowserPanel({
   const [error, setError] = useState<string | null>(null)
   const [annotationMode, setAnnotationMode] = useState(false)
   const [annotations, setAnnotations] = useState<BrowserAnnotation[]>([])
+  const [downloads, setDownloads] = useState<BrowserDownload[]>([])
+  const [downloadsOpen, setDownloadsOpen] = useState(false)
   const embeddedBrowserAvailable = canUseEmbeddedBrowser()
   const activePageUrl = pageUrl ?? currentUrl
   const embeddedBrowserOccluded = occludingOverlayIds.size > 0
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserDownloads(download => {
+      if (download.label !== label) return
+      setDownloads(current => {
+        const remaining = current.filter(item => item.id !== download.id)
+        if (download.status === 'deleted') return remaining
+        return [download, ...remaining].slice(0, 10)
+      })
+      setDownloadsOpen(true)
+    })
+    return () => {
+      void listener?.then(unlisten => unlisten())
+    }
+  }, [label])
 
   const updatePageUrl = useCallback(
     (url: string | null) => {
@@ -1116,7 +1153,7 @@ export function WorkspaceBrowserPanel({
 
   const handleOpenExternal = () => {
     if (!activePageUrl) return
-    void openExternalUrl(activePageUrl)
+    void openExternalUrl(activePageUrl, { target: 'system' })
   }
 
   return (
@@ -1210,6 +1247,20 @@ export function WorkspaceBrowserPanel({
             />
           </form>
           <BrowserToolbarButton
+            testId="workspace-browser-downloads-button"
+            label={t('workbench.browser_downloads')}
+            onClick={() => setDownloadsOpen(open => !open)}
+          >
+            <span className="relative">
+              <Download className="h-4 w-4" />
+              {downloads.some(
+                download => download.status === 'started' || download.status === 'progress'
+              ) ? (
+                <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-primary" />
+              ) : null}
+            </span>
+          </BrowserToolbarButton>
+          <BrowserToolbarButton
             testId="workspace-browser-annotate-button"
             label={t('workbench.browser_annotation_start')}
             disabled={!activePageUrl || !embeddedBrowserAvailable}
@@ -1227,6 +1278,113 @@ export function WorkspaceBrowserPanel({
           </BrowserToolbarButton>
         </div>
       )}
+      {!annotationMode && downloadsOpen ? (
+        <div
+          data-testid="workspace-browser-downloads-panel"
+          className="flex max-h-40 shrink-0 flex-col overflow-y-auto border-b border-border bg-surface px-3 py-2"
+        >
+          {downloads.length === 0 ? (
+            <span className="text-xs text-text-muted">
+              {t('workbench.browser_downloads_empty')}
+            </span>
+          ) : (
+            downloads.map(download => {
+              const fileName = download.path?.split(/[\\/]/).pop() || download.url
+              const downloading = download.status === 'started' || download.status === 'progress'
+              const progress =
+                download.totalBytes && download.receivedBytes !== null
+                  ? Math.min(100, Math.round((download.receivedBytes / download.totalBytes) * 100))
+                  : null
+              return (
+                <div
+                  key={download.id}
+                  data-testid="workspace-browser-download-item"
+                  className="flex min-h-12 flex-col justify-center gap-1 text-xs"
+                >
+                  <div className="flex items-center gap-2">
+                    {download.status === 'finished' ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
+                    ) : download.status === 'failed' ? (
+                      <CircleAlert className="h-4 w-4 shrink-0 text-red-500" />
+                    ) : download.status === 'paused' ? (
+                      <Download className="h-4 w-4 shrink-0 text-text-muted" />
+                    ) : (
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate" title={download.path ?? download.url}>
+                      {fileName}
+                    </span>
+                    <span className="shrink-0 text-text-muted">
+                      {downloading
+                        ? progress !== null
+                          ? `${progress}% · ${formatDownloadBytes(download.receivedBytes)} / ${formatDownloadBytes(download.totalBytes)}`
+                          : formatDownloadBytes(download.receivedBytes) ||
+                            t('workbench.browser_download_started')
+                        : t(`workbench.browser_download_${download.status}`)}
+                    </span>
+                    {download.status === 'finished' && download.path ? (
+                      <button
+                        type="button"
+                        data-testid="workspace-browser-download-reveal-button"
+                        className="shrink-0 rounded-md px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+                        onClick={() => void revealLocalFile(download.path ?? undefined)}
+                      >
+                        {t('workbench.browser_download_reveal')}
+                      </button>
+                    ) : null}
+                    {downloading ? (
+                      <button
+                        type="button"
+                        data-testid="workspace-browser-download-pause-button"
+                        className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+                        aria-label={t('workbench.browser_download_pause')}
+                        onClick={() => void pauseEmbeddedBrowserDownload(download.id)}
+                      >
+                        <Pause className="h-3.5 w-3.5" />
+                      </button>
+                    ) : null}
+                    {download.status === 'paused' ? (
+                      <>
+                        <button
+                          type="button"
+                          data-testid="workspace-browser-download-resume-button"
+                          className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+                          aria-label={t('workbench.browser_download_resume')}
+                          onClick={() => void resumeEmbeddedBrowserDownload(download.id)}
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="workspace-browser-download-delete-button"
+                          className="shrink-0 rounded-md p-1 text-red-500 hover:bg-red-500/10"
+                          aria-label={t('workbench.browser_download_delete')}
+                          onClick={() => void deleteEmbeddedBrowserDownload(download.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                  {downloading ? (
+                    <div
+                      data-testid="workspace-browser-download-progress"
+                      className="ml-6 h-1 overflow-hidden rounded-full bg-muted"
+                    >
+                      <div
+                        className={`h-full rounded-full bg-primary transition-[width] ${
+                          progress === null ? 'w-1/3 animate-pulse' : ''
+                        }`}
+                        style={progress === null ? undefined : { width: `${progress}%` }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })
+          )}
+        </div>
+      ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-background pl-1">
         {!currentUrl && (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">

@@ -38,6 +38,8 @@ pnpm --filter wework ai:verify start
 pnpm --filter wework ai:verify snapshot --session <session-path>
 pnpm --filter wework ai:verify click --session <session-path> --selector '[data-testid="..."]'
 pnpm --filter wework ai:verify fill --session <session-path> --selector '[data-testid="..."]' --value '...'
+pnpm --filter wework ai:verify hover --session <session-path> --selector '[data-testid="..."]'
+pnpm --filter wework ai:verify pointer-move --session <session-path> --selector 'body'
 pnpm --filter wework ai:verify wait-for --session <session-path> --selector '[data-testid="..."]' --text '...'
 pnpm --filter wework ai:verify capture --session <session-path> --output <png-path>
 pnpm --filter wework ai:verify close-to-tray --session <session-path>

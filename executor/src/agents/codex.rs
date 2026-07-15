@@ -1635,12 +1635,7 @@ fn user_codex_auth_path() -> Option<PathBuf> {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .map(|home| home.join("auth.json"))
-        .or_else(|| {
-            env::var_os("HOME")
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .map(|home| home.join(".codex").join("auth.json"))
-        })
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))
 }
 
 #[cfg(test)]
@@ -2483,6 +2478,7 @@ struct PreparedCodexExecutionRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexLocalImage {
     path: String,
+    source_path: String,
 }
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
@@ -3263,7 +3259,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            let mut success_attachment = attachment.clone();
+            let success_attachment = attachment.clone();
             if is_image_attachment(&success_attachment) {
                 let prepared_path = prepare_local_image_path(
                     local_path,
@@ -3274,9 +3270,9 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
                     &mut generated_files,
                 )
                 .unwrap_or_else(|| local_path.to_owned());
-                success_attachment.local_path = Some(prepared_path.clone());
                 local_images.push(Some(CodexLocalImage {
                     path: prepared_path,
+                    source_path: local_path.to_owned(),
                 }));
             }
             success.push(success_attachment);
@@ -3483,11 +3479,11 @@ fn files_mentioned_text(local_images: &[Option<CodexLocalImage>], text_parts: &[
         .iter()
         .filter_map(|local_image| local_image.as_ref())
         .map(|local_image| {
-            let filename = Path::new(&local_image.path)
+            let filename = Path::new(&local_image.source_path)
                 .file_name()
                 .and_then(|value| value.to_str())
-                .unwrap_or(&local_image.path);
-            format!("## {filename}: {}", local_image.path)
+                .unwrap_or(&local_image.source_path);
+            format!("## {filename}: {}", local_image.source_path)
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -3723,7 +3719,7 @@ fn parse_config_override_value(value: &str) -> Value {
 fn executor_home() -> PathBuf {
     env::var_os("WEGENT_EXECUTOR_HOME")
         .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".wegent-executor")))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
         .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
 }
 
