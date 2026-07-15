@@ -679,7 +679,10 @@ export function WorkbenchProvider({
   const availableSkills = skillSelection.skills
   const setSelectedSkillsForScope = skillSelection.setSelectedSkillsForScope
   const startNewSkillChat = useCallback(
-    async (skillNames: string[]): Promise<boolean> => {
+    async (
+      skillNames: string[],
+      options: { allowLocalSkills?: boolean } = {}
+    ): Promise<boolean> => {
       const requestedNames = skillNames.map(name => name.trim()).filter(Boolean)
       if (requestedNames.length === 0) {
         return false
@@ -692,7 +695,10 @@ export function WorkbenchProvider({
         )
       )
       const unresolvedNames = requestedNames.filter((_, index) => !requestedUnifiedSkills[index])
-      const localSkills = unresolvedNames.length > 0 ? await listLocalSkills(true) : []
+      const localSkills =
+        options.allowLocalSkills !== false && unresolvedNames.length > 0
+          ? await listLocalSkills(true)
+          : []
       const requestedLocalSkills = unresolvedNames.map(name =>
         localSkills.find(
           skill =>

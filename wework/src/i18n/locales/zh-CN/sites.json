@@ -23,6 +23,7 @@
   "open_internal": "打开内部站点 {{name}}",
   "open_external": "打开外部站点 {{name}}",
   "skill_missing": "Sites 插件尚未安装或启用",
+  "skill_load_failed": "无法读取 Codex Sites 插件",
   "open_plugins": "查看插件",
   "more_actions": "更多操作",
   "delete_site": "删除站点",

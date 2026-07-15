@@ -2,8 +2,26 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
+import type { InstalledPlugin, LocalDeviceSkill } from '@/types/api'
 import './i18n'
 import App from './App'
+
+const localCodexPluginMocks = vi.hoisted(() => ({
+  listInstalledPlugins: vi.fn(),
+  listSkills: vi.fn(),
+}))
+
+const localPathMocks = vi.hoisted(() => ({
+  exists: vi.fn(),
+}))
+
+vi.mock('@/lib/local-terminal', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/local-terminal')>()
+  return {
+    ...actual,
+    localPathExists: localPathMocks.exists,
+  }
+})
 
 vi.mock('@/tauri/localExecutor', () => ({
   ensureLocalExecutorStarted: vi
@@ -40,6 +58,8 @@ vi.mock('@/api/local/codexPlugins', async importOriginal => {
         nativeCodexHomeExists: true,
         shouldPromptMigration: false,
       }),
+      listInstalledPlugins: localCodexPluginMocks.listInstalledPlugins,
+      listSkills: localCodexPluginMocks.listSkills,
     }),
   }
 })
@@ -218,6 +238,51 @@ function createSkillZipFile(name: string, rootSkillMd = false): File {
   return new File([localHeader, contentBytes, centralHeader, endHeader], `${name}.zip`, {
     type: 'application/zip',
   })
+}
+
+function installedCodexSitesPlugin(): InstalledPlugin {
+  return {
+    apiVersion: 'agent.wecode.io/v1',
+    kind: 'InstalledPlugin',
+    metadata: {
+      name: 'sites',
+      namespace: 'openai-bundled',
+      labels: { id: 'sites' },
+    },
+    spec: {
+      source: {
+        type: 'marketplace',
+        providerKey: 'openai-bundled',
+        pluginKey: 'sites',
+      },
+      displayName: 'Sites',
+      description: 'Build and deploy websites with Sites',
+      version: '0.1.27',
+      installState: 'installed',
+      enabled: true,
+      componentStates: {},
+      manifest: { name: 'sites' },
+      components: {
+        skills: [],
+        commands: [],
+        templates: [],
+        apps: [],
+        agents: [],
+        mcps: [],
+        hooks: [],
+        lsps: [],
+        monitors: [],
+        bins: [],
+      },
+      interface: null,
+      packageRef: null,
+      sourcePayload: {
+        pluginName: 'sites',
+        marketplaceName: 'openai-bundled',
+      },
+    },
+    status: { state: 'enabled' },
+  }
 }
 
 vi.mock('@/features/auth/AuthProvider', () => ({
@@ -583,11 +648,16 @@ describe('App plugins route', () => {
   beforeEach(() => {
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
+    sessionStorage.clear()
     vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
     workbenchValue.state.runtimeWork = null
     workbenchValue.state.currentRuntimeTask = null
     vi.mocked(workbenchValue.openRuntimeTask).mockReset().mockResolvedValue(undefined)
+    vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
+    localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue({ items: [] })
+    localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
+    localPathMocks.exists.mockReset().mockResolvedValue(false)
     mockSystemSkillsFetch()
   })
 
@@ -609,7 +679,7 @@ describe('App plugins route', () => {
     expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
   })
 
-  test('renders Sites for the signed-in username and starts a Sites skill chat', async () => {
+  test('renders Sites and starts a chat with the installed Codex Sites plugin', async () => {
     localStorage.setItem('auth_token', 'wegent-secret')
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
@@ -631,7 +701,9 @@ describe('App plugins route', () => {
           limit: 20,
         }),
     } as Response)
-    vi.mocked(workbenchValue.startNewSkillChat).mockResolvedValue(true)
+    localCodexPluginMocks.listInstalledPlugins.mockResolvedValue({
+      items: [installedCodexSitesPlugin()],
+    })
     window.history.pushState({}, '', '/sites')
 
     render(<App />)
@@ -648,7 +720,96 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
 
     await userEvent.click(screen.getByTestId('sites-create-button'))
-    expect(workbenchValue.startNewSkillChat).toHaveBeenCalledWith(['sites:sites-building'])
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(localCodexPluginMocks.listInstalledPlugins).toHaveBeenCalledTimes(1)
+    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Sites](plugin://sites@openai-bundled) ',
+        pluginName: 'Sites',
+      }
+    )
+  })
+
+  test('falls back to the Wegent Backend Sites skill when Codex Sites is unavailable', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    vi.mocked(workbenchValue.startNewSkillChat).mockResolvedValue(true)
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    expect(workbenchValue.startNewSkillChat).toHaveBeenCalledWith(['sites:sites-building'], {
+      allowLocalSkills: false,
+    })
+  })
+
+  test('uses the Codex Sites plugin reference when the native bundled Sites skill is available', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    localCodexPluginMocks.listSkills.mockResolvedValue([
+      {
+        name: 'sites:sites-building',
+        description: 'Build websites with Sites',
+        path: '/Users/alice/.codex/plugins/cache/openai-bundled/sites/0.1.27/skills/sites-building/SKILL.md',
+        source: 'codex',
+        origin: 'local',
+        plugin_name: 'sites',
+        plugin_provider: 'openai-bundled',
+      } satisfies LocalDeviceSkill,
+    ])
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(localCodexPluginMocks.listSkills).toHaveBeenCalledWith({ forceReload: true })
+    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Sites](plugin://sites@openai-bundled) ',
+        pluginName: 'Sites',
+      }
+    )
+  })
+
+  test('uses the Codex Sites plugin reference when its native plugin cache exists', async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ items: [], total: 0, offset: 0, limit: 20 }),
+    } as Response)
+    localPathMocks.exists.mockImplementation(path =>
+      Promise.resolve(path === '/Users/test/.codex/plugins/cache/openai-bundled/sites')
+    )
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    await userEvent.click(await screen.findByTestId('sites-create-button'))
+
+    await waitFor(() => expect(window.location.pathname).toBe('/'))
+    expect(localPathMocks.exists).toHaveBeenCalledWith(
+      '/Users/test/.codex/plugins/cache/openai-bundled/sites'
+    )
+    expect(workbenchValue.startNewSkillChat).not.toHaveBeenCalled()
+    expect(JSON.parse(sessionStorage.getItem('wework:pending-plugin-trial') ?? '{}')).toMatchObject(
+      {
+        input: '[$Sites](plugin://sites@openai-bundled) ',
+        pluginName: 'Sites',
+      }
+    )
   })
 
   test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {

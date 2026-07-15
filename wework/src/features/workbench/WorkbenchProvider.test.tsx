@@ -1516,6 +1516,16 @@ function StartSkillChatProbe() {
       >
         start sites chat
       </button>
+      <button
+        type="button"
+        onClick={() =>
+          void Promise.resolve(
+            workbench.startNewSkillChat(['sites:sites-building'], { allowLocalSkills: false })
+          ).then(started => setResult(started ? 'started' : 'missing'))
+        }
+      >
+        start backend sites chat
+      </button>
     </div>
   )
 }
@@ -1660,6 +1670,54 @@ describe('WorkbenchProvider runtime tasks', () => {
         method: 'skills/list',
         params: { cwds: [], forceReload: true },
       }
+    )
+  })
+
+  test('does not resolve local skills for a Backend-only skill chat', async () => {
+    setTauriRuntime()
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (
+          method === 'codex.app_server_request' &&
+          params &&
+          typeof params === 'object' &&
+          (params as { method?: unknown }).method === 'skills/list'
+        ) {
+          return {
+            data: [
+              {
+                cwd: '',
+                skills: [
+                  {
+                    name: 'sites:sites-building',
+                    description: 'Build websites with Sites',
+                    path: '/Users/alice/.codex/plugins/sites/skills/sites-building/SKILL.md',
+                    scope: 'user',
+                    enabled: true,
+                  },
+                ],
+                errors: [],
+              },
+            ],
+          }
+        }
+        return {}
+      }
+    )
+
+    renderWorkbench(<StartSkillChatProbe />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'start backend sites chat' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('missing')
+    )
+    expect(localExecutorMocks.requestLocalExecutor).not.toHaveBeenCalledWith(
+      'codex.app_server_request',
+      expect.objectContaining({ method: 'skills/list' })
     )
   })
 

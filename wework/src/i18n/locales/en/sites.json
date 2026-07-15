@@ -23,6 +23,7 @@
   "open_internal": "Open internal site {{name}}",
   "open_external": "Open external site {{name}}",
   "skill_missing": "The Sites plugin is not installed or enabled",
+  "skill_load_failed": "Unable to load the Codex Sites plugin",
   "open_plugins": "View plugins",
   "more_actions": "More actions",
   "delete_site": "Delete site",

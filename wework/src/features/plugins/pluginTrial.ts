@@ -11,6 +11,19 @@ interface PendingPluginTrial {
   templates: PluginPathComponent[]
 }
 
+interface PluginReferenceTrial {
+  pluginName: string
+  marketplaceName: string
+  displayName: string
+  templates?: PluginPathComponent[]
+}
+
+function queuePendingPluginTrial(payload: PendingPluginTrial): boolean {
+  window.sessionStorage.setItem(PLUGIN_TRIAL_STORAGE_KEY, JSON.stringify(payload))
+  window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT))
+  return true
+}
+
 function firstPluginSkill(plugin: InstalledPlugin) {
   return plugin.spec.components.skills.find(skill => skill.path && skill.name)
 }
@@ -79,14 +92,29 @@ export function pluginTrialInput(plugin: InstalledPlugin): string | null {
 export function queuePluginTrial(plugin: InstalledPlugin): boolean {
   const input = pluginTrialInput(plugin)
   if (!input) return false
-  const payload: PendingPluginTrial = {
+  return queuePendingPluginTrial({
     input,
     pluginName: plugin.spec.displayName || plugin.spec.source.pluginKey,
     templates: plugin.spec.components.templates ?? plugin.spec.components.commands ?? [],
-  }
-  window.sessionStorage.setItem(PLUGIN_TRIAL_STORAGE_KEY, JSON.stringify(payload))
-  window.dispatchEvent(new Event(PLUGIN_TRIAL_QUEUED_EVENT))
-  return true
+  })
+}
+
+export function queuePluginReferenceTrial({
+  pluginName,
+  marketplaceName,
+  displayName,
+  templates = [],
+}: PluginReferenceTrial): boolean {
+  const normalizedPluginName = pluginName.trim()
+  const normalizedMarketplaceName = marketplaceName.trim()
+  const normalizedDisplayName = displayName.trim()
+  if (!normalizedPluginName || !normalizedMarketplaceName || !normalizedDisplayName) return false
+
+  return queuePendingPluginTrial({
+    input: `[$${normalizedDisplayName}](plugin://${normalizedPluginName}@${normalizedMarketplaceName}) `,
+    pluginName: normalizedDisplayName,
+    templates,
+  })
 }
 
 export function consumePluginTrial(): PendingPluginTrial | null {

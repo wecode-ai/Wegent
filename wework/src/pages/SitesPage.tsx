@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Menu } from 'lucide-react'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createSitesApi } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
@@ -14,9 +15,64 @@ import { useAuth } from '@/features/auth/useAuth'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
+import { queuePluginReferenceTrial, queuePluginTrial } from '@/features/plugins/pluginTrial'
+import { localPathExists } from '@/lib/local-terminal'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import type { RuntimeTaskAddress } from '@/types/api'
+import type { InstalledPlugin, LocalDeviceSkill, RuntimeTaskAddress } from '@/types/api'
+
+const CODEX_SITES_PLUGIN_NAME = 'sites'
+const CODEX_SITES_MARKETPLACE = 'openai-bundled'
+
+function normalizedPluginKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+}
+
+function isEnabledCodexSitesPlugin(plugin: InstalledPlugin): boolean {
+  if (!plugin.spec.enabled || plugin.spec.installState !== 'installed') return false
+  if (normalizedPluginKey(plugin.spec.source.pluginKey) !== CODEX_SITES_PLUGIN_NAME) return false
+
+  const payload =
+    plugin.spec.sourcePayload && typeof plugin.spec.sourcePayload === 'object'
+      ? (plugin.spec.sourcePayload as Record<string, unknown>)
+      : {}
+  const marketplaceNames = [
+    plugin.metadata.namespace,
+    plugin.spec.source.providerKey,
+    typeof payload.marketplaceName === 'string' ? payload.marketplaceName : '',
+  ].filter((marketplace): marketplace is string => typeof marketplace === 'string')
+  return marketplaceNames.some(
+    marketplace => normalizedPluginKey(marketplace) === CODEX_SITES_MARKETPLACE
+  )
+}
+
+function isNativeCodexSitesPluginSkill(skill: LocalDeviceSkill): boolean {
+  if (skill.source !== 'codex' || skill.name.trim().toLowerCase() !== 'sites:sites-building') {
+    return false
+  }
+  const normalizedPath = skill.path.trim().toLowerCase().replace(/\\/g, '/')
+  return normalizedPath.includes('/plugins/cache/openai-bundled/sites/')
+}
+
+function queueCodexSitesPluginReference(): boolean {
+  return queuePluginReferenceTrial({
+    pluginName: CODEX_SITES_PLUGIN_NAME,
+    marketplaceName: CODEX_SITES_MARKETPLACE,
+    displayName: 'Sites',
+  })
+}
+
+function nativeCodexSitesPluginPaths(nativeCodexHome: string): string[] {
+  const normalizedHome = nativeCodexHome.trim().replace(/[\\/]+$/, '')
+  if (!normalizedHome) return []
+  return [
+    `${normalizedHome}/plugins/cache/openai-bundled/sites`,
+    `${normalizedHome}/.tmp/bundled-marketplaces/openai-bundled/plugins/sites/.codex-plugin/plugin.json`,
+  ]
+}
 
 export function SitesPage() {
   const { t } = useTranslation('sites')
@@ -65,6 +121,7 @@ export function SitesPage() {
 
   const apiBaseUrl = getRuntimeConfig().apiBaseUrl
   const sitesApi = useMemo(() => createSitesApi(apiBaseUrl), [apiBaseUrl])
+  const localCodexPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -93,11 +150,65 @@ export function SitesPage() {
 
   const handleCreate = async () => {
     setCreating(true)
+    let codexPluginLoadFailed = false
     try {
-      const started = await startNewSkillChat(['sites:sites-building'])
-      setCreateError(started ? null : t('skill_missing', 'Sites 插件尚未安装或启用'))
+      try {
+        const installedPlugins = await localCodexPluginApi.listInstalledPlugins()
+        const codexSitesPlugin = installedPlugins.items.find(isEnabledCodexSitesPlugin)
+        if (codexSitesPlugin && queuePluginTrial(codexSitesPlugin)) {
+          setCreateError(null)
+          navigateTo('/')
+          return
+        }
+      } catch {
+        codexPluginLoadFailed = true
+      }
+
+      try {
+        const migrationStatus = await localCodexPluginApi.codexHomeMigrationStatus()
+        if (migrationStatus.nativeCodexHomeExists) {
+          for (const path of nativeCodexSitesPluginPaths(migrationStatus.nativeCodexHome)) {
+            if (await localPathExists(path)) {
+              if (queueCodexSitesPluginReference()) {
+                setCreateError(null)
+                navigateTo('/')
+                return
+              }
+              break
+            }
+          }
+        }
+      } catch {
+        codexPluginLoadFailed = true
+      }
+
+      try {
+        const localSkills = await localCodexPluginApi.listSkills({ forceReload: true })
+        if (localSkills.some(isNativeCodexSitesPluginSkill) && queueCodexSitesPluginReference()) {
+          setCreateError(null)
+          navigateTo('/')
+          return
+        }
+      } catch {
+        codexPluginLoadFailed = true
+      }
+
+      const started = await startNewSkillChat(['sites:sites-building'], {
+        allowLocalSkills: false,
+      })
+      setCreateError(
+        started
+          ? null
+          : codexPluginLoadFailed
+            ? t('skill_load_failed', '无法读取 Codex Sites 插件')
+            : t('skill_missing', 'Sites 插件尚未安装或启用')
+      )
     } catch {
-      setCreateError(t('skill_missing', 'Sites 插件尚未安装或启用'))
+      setCreateError(
+        codexPluginLoadFailed
+          ? t('skill_load_failed', '无法读取 Codex Sites 插件')
+          : t('skill_missing', 'Sites 插件尚未安装或启用')
+      )
     } finally {
       setCreating(false)
     }
