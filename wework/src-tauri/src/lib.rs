@@ -1,3 +1,4 @@
+mod appshots;
 mod desktop_capture;
 mod embedded_browser;
 mod local_executor;
@@ -394,6 +395,8 @@ struct AppPreferences {
     browser_download_directory: Option<String>,
     #[serde(default)]
     browser_ask_before_download: bool,
+    #[serde(default = "default_true")]
+    appshots_play_sound: bool,
 }
 
 #[cfg(desktop)]
@@ -433,6 +436,7 @@ impl Default for AppPreferences {
             browser_local_link_target: default_browser_local_link_target(),
             browser_download_directory: None,
             browser_ask_before_download: false,
+            appshots_play_sound: true,
         }
     }
 }
@@ -454,6 +458,7 @@ struct AppPreferencesPatch {
     browser_local_link_target: Option<String>,
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
+    appshots_play_sound: Option<bool>,
 }
 
 #[cfg(desktop)]
@@ -859,6 +864,9 @@ fn update_app_preferences(
         preferences.browser_ask_before_download = value;
     }
     preferences = normalize_app_preferences(preferences);
+    if let Some(value) = patch.appshots_play_sound {
+        preferences.appshots_play_sound = value;
+    }
     write_app_preferences_impl(&app, &preferences)?;
     Ok(preferences)
 }
@@ -880,6 +888,7 @@ struct AppPreferences {
     browser_local_link_target: String,
     browser_download_directory: Option<String>,
     browser_ask_before_download: bool,
+    appshots_play_sound: bool,
 }
 
 #[cfg(not(desktop))]
@@ -899,6 +908,7 @@ struct AppPreferencesPatch {
     browser_local_link_target: Option<String>,
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
+    appshots_play_sound: Option<bool>,
 }
 
 #[cfg(not(desktop))]
@@ -918,6 +928,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         browser_local_link_target: "wework".to_string(),
         browser_download_directory: None,
         browser_ask_before_download: false,
+        appshots_play_sound: true,
     })
 }
 
@@ -953,6 +964,7 @@ fn update_app_preferences(
             .browser_download_directory
             .and_then(normalized_non_empty),
         browser_ask_before_download: patch.browser_ask_before_download.unwrap_or(false),
+        appshots_play_sound: patch.appshots_play_sound.unwrap_or(true),
     })
 }
 
@@ -3577,6 +3589,21 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init());
 
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, shortcut, event| {
+                use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+
+                if event.state == ShortcutState::Pressed
+                    && shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::Digit2)
+                {
+                    appshots::handle_shortcut(app);
+                }
+            })
+            .build(),
+    );
+
     #[cfg(all(desktop, not(debug_assertions)))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
         let action = if let Some(request) = parse_local_workspace_open_request(&argv) {
@@ -3591,6 +3618,7 @@ pub fn run() {
     }));
 
     let app = builder
+        .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
@@ -3653,6 +3681,8 @@ pub fn run() {
             #[cfg(desktop)]
             setup_system_tray(app)?;
             #[cfg(desktop)]
+            appshots::setup(app.handle());
+            #[cfg(desktop)]
             match install_wework_cli_link(app.handle()) {
                 Ok(path) => log::info!("Installed Wework CLI launcher: {}", path.display()),
                 Err(error) => log::warn!("{error}"),
@@ -3688,6 +3718,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            appshots::acknowledge_appshot,
+            appshots::get_appshots_status,
+            appshots::open_appshots_permission_settings,
+            appshots::take_pending_appshots,
+            appshots::take_pending_appshots_permission,
             desktop_capture::capture_main_webview,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_clear_data,

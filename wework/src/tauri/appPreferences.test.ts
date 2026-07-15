@@ -25,6 +25,7 @@ const mergedDefaultPreferences = {
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
 }
 
 describe('appPreferences', () => {
