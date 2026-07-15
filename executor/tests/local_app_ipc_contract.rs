@@ -805,6 +805,27 @@ async fn app_ipc_accepts_gitdir_with_configured_worktree_as_worktree_source() {
 }
 
 #[tokio::test]
+async fn app_ipc_health_check_confirms_bidirectional_transport() {
+    let server = AppIpcServer::new();
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-health",
+                "method": "executor.health",
+                "params": {}
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["status"], "healthy");
+}
+
+#[tokio::test]
 async fn app_ipc_unknown_method_returns_protocol_error() {
     let server = AppIpcServer::new();
 
