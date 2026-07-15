@@ -10,6 +10,7 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
+  Grid3X3,
   Loader2,
   MessageSquarePlus,
   Pin,
