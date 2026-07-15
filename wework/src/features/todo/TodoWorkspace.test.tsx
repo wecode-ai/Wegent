@@ -79,7 +79,7 @@ describe('TodoWorkspace V4-01', () => {
     expect(screen.getByTestId('todo-column-review')).toHaveTextContent('1')
     expect(screen.getByTestId('todo-column-completed')).toHaveTextContent('1')
     expect(screen.getByTestId('todo-board-scroll')).toHaveClass('overflow-auto')
-    expect(screen.getByTestId('todo-board-grid')).toHaveClass('min-w-[960px]', 'grid-cols-4')
+    expect(screen.getByTestId('todo-board-grid')).toHaveClass('min-w-[900px]', 'flex')
     expect(screen.getByText('Synchronize runtime state')).toBeInTheDocument()
   })
 
@@ -97,6 +97,51 @@ describe('TodoWorkspace V4-01', () => {
 
     expect(screen.getAllByText('Agent Runtime').length).toBeGreaterThan(0)
     expect(screen.queryByText('Synchronize runtime state')).not.toBeInTheDocument()
+  })
+
+  it('switches between project overview and work items without losing project context', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('todo-sidebar-overview'))
+
+    expect(screen.getByTestId('todo-overview')).toBeInTheDocument()
+    expect(screen.getByTestId('todo-main-header')).toHaveTextContent('总览')
+    expect(screen.queryByTestId('todo-board-grid')).not.toBeInTheDocument()
+    expect(screen.getByTestId('todo-overview-metric-started')).toHaveTextContent('1')
+    expect(screen.getByTestId('todo-overview-metric-review')).toHaveTextContent('1')
+    expect(screen.getByTestId('todo-overview-metric-completed')).toHaveTextContent('1')
+
+    await userEvent.click(screen.getByTestId('todo-overview-open-work-items'))
+
+    expect(screen.getByTestId('todo-board-grid')).toBeInTheDocument()
+    expect(screen.getByTestId('todo-sidebar-work-items')).toHaveClass('bg-[#E8F8F5]')
+  })
+
+  it('expands and collapses the current project navigation', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    expect(screen.getByTestId('todo-sidebar-project-7')).toHaveAttribute('aria-expanded', 'true')
+    await userEvent.click(screen.getByTestId('todo-sidebar-project-7'))
+
+    expect(screen.getByTestId('todo-sidebar-project-7')).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByTestId('todo-sidebar-work-items')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('todo-sidebar-project-7'))
+    expect(screen.getByTestId('todo-sidebar-overview')).toBeInTheDocument()
   })
 
   it('keeps the collapsed TODO sidebar control clear of macOS traffic lights', async () => {
@@ -210,6 +255,7 @@ describe('TodoWorkspace V4-01', () => {
 
     await waitFor(() => expect(screen.queryByTestId('todo-create-dialog')).not.toBeInTheDocument())
     expect(screen.getByText('Fix login redirect')).toBeInTheDocument()
+    expect(screen.getByTestId('todo-sidebar-work-items')).toHaveTextContent('4')
     expect(window.localStorage.getItem('wework:todo:drafts:1')).toContain('Keep login stable')
   })
 
@@ -245,5 +291,139 @@ describe('TodoWorkspace V4-01', () => {
       })
     )
     await waitFor(() => expect(screen.queryByTestId('todo-create-dialog')).not.toBeInTheDocument())
+  })
+
+  it('switches between the board and list layouts', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('todo-view-list'))
+    expect(screen.getByTestId('todo-list-view')).toBeInTheDocument()
+    expect(screen.queryByTestId('todo-board-grid')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('todo-view-board'))
+    expect(screen.getByTestId('todo-board-grid')).toBeInTheDocument()
+  })
+
+  it('filters work items and clears the active conditions', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('todo-filter-button'))
+    await userEvent.selectOptions(screen.getByTestId('todo-filter-state'), 'review')
+
+    expect(screen.getByTestId('todo-column-review')).toBeInTheDocument()
+    expect(screen.queryByTestId('todo-column-started')).not.toBeInTheDocument()
+    expect(screen.getByTestId('todo-filter-button')).toHaveTextContent('1')
+
+    await userEvent.click(screen.getByTestId('todo-filter-clear'))
+    expect(screen.getByTestId('todo-column-started')).toBeInTheDocument()
+  })
+
+  it('persists display settings and supports collapsing a board column', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('todo-display-button'))
+    await userEvent.click(screen.getByTestId('todo-display-priority'))
+    await userEvent.click(screen.getByTestId('todo-display-order-updated'))
+
+    expect(screen.getByTestId('todo-display-priority')).toHaveAttribute('aria-checked', 'false')
+    await waitFor(() =>
+      expect(window.localStorage.getItem('wework:todo:view:1:7')).toContain('"order":"updated"')
+    )
+
+    await userEvent.click(screen.getByTestId('todo-column-more-started'))
+    await userEvent.click(screen.getByTestId('todo-column-menu-collapse-started'))
+    expect(screen.getByTestId('todo-column-expand-started')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('todo-column-expand-started'))
+    expect(screen.getByTestId('todo-column-more-started')).toBeInTheDocument()
+  })
+
+  it('searches the current project and opens the matching TODO detail', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+        onOpenRuntimeTask={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('todo-sidebar-search'))
+    await userEvent.type(screen.getByTestId('todo-search-input'), 'metadata')
+    await userEvent.click(screen.getByTestId('todo-search-result-completed-task'))
+
+    expect(screen.getByTestId('todo-detail-panel')).toBeInTheDocument()
+    expect(screen.getAllByText('Prepare project metadata')).toHaveLength(2)
+  })
+
+  it('keeps an unassigned draft visible and explains why it cannot run', async () => {
+    const onRunTodo = vi.fn()
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+        onRunTodo={onRunTodo}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('todo-create-button'))
+    await userEvent.type(screen.getByTestId('todo-create-markdown'), 'Unassigned draft')
+    await userEvent.click(screen.getByTestId('todo-create-submit'))
+    await userEvent.click(await screen.findByText('Unassigned draft'))
+    await userEvent.click(screen.getByTestId('todo-detail-run'))
+
+    expect(await screen.findByTestId('todo-detail-run-error')).toHaveTextContent(
+      '请先选择员工或 AI 智能体作为执行者'
+    )
+    expect(screen.getByTestId('todo-detail-panel')).toBeInTheDocument()
+    expect(onRunTodo).not.toHaveBeenCalled()
+  })
+
+  it('toggles the detail layout and exposes working draft actions', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('todo-create-button'))
+    await userEvent.type(screen.getByTestId('todo-create-markdown'), 'Disposable draft')
+    await userEvent.click(screen.getByTestId('todo-create-submit'))
+    await userEvent.click(await screen.findByText('Disposable draft'))
+
+    await userEvent.click(screen.getByTestId('todo-detail-preview-mode'))
+    expect(screen.getByTestId('todo-detail-panel')).toHaveClass('left-0', 'w-full')
+
+    await userEvent.click(screen.getByTestId('todo-detail-more'))
+    expect(screen.getByTestId('todo-detail-more-menu')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('todo-detail-menu-delete'))
+    expect(screen.queryByText('Disposable draft')).not.toBeInTheDocument()
   })
 })

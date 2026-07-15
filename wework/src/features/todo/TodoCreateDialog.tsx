@@ -7,7 +7,6 @@ import {
   ChevronDown,
   CircleDot,
   Code2,
-  FileText,
   Image,
   Italic,
   Link2,
@@ -16,8 +15,6 @@ import {
   Play,
   Plus,
   Sparkles,
-  Tag,
-  UserRound,
   X,
 } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -33,6 +30,7 @@ export interface TodoCreateValues {
   priority: 'none' | 'urgent' | 'high' | 'normal' | 'low'
   assignee: 'unassigned' | 'ai' | 'human'
   launchMode: 'manual' | 'automatic'
+  dueDate: string
   files: File[]
 }
 
@@ -69,6 +67,7 @@ export function TodoCreateDialog({
   const [priority, setPriority] = useState<TodoCreateValues['priority']>('none')
   const [assignee, setAssignee] = useState<TodoCreateValues['assignee']>('unassigned')
   const [launchMode, setLaunchMode] = useState<TodoCreateValues['launchMode']>('manual')
+  const [dueDate, setDueDate] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -100,7 +99,7 @@ export function TodoCreateDialog({
     setError(null)
     try {
       await onSubmit(
-        { projectId, state, goal, markdown, priority, assignee, launchMode, files },
+        { projectId, state, goal, markdown, priority, assignee, launchMode, dueDate, files },
         runImmediately
       )
     } catch (submitError) {
@@ -299,7 +298,7 @@ export function TodoCreateDialog({
               hint={t('todo.properties_optional', '全部可选，可创建后再补充')}
               spread
             >
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="grid grid-cols-3 gap-1.5">
                 <PropertySelect
                   testId="todo-create-state"
                   icon={CircleDot}
@@ -323,26 +322,11 @@ export function TodoCreateDialog({
                     { value: 'low', label: t('todo.priority_low', '低') },
                   ]}
                 />
-                <PropertySelect
-                  testId="todo-create-assignee"
-                  icon={UserRound}
-                  value={assignee}
-                  onChange={value => setAssignee(value as TodoCreateValues['assignee'])}
-                  options={[
-                    { value: 'unassigned', label: t('todo.assignee_unassigned', '负责人：未指定') },
-                    { value: 'ai', label: t('todo.assignee_ai', 'AI 智能体') },
-                    { value: 'human', label: t('todo.assignee_human', '员工') },
-                  ]}
-                />
-                <StaticProperty icon={Tag} label="Labels" testId="todo-create-labels" />
-                <StaticProperty icon={CircleDot} label="Cycle" testId="todo-create-cycle" />
-                <StaticProperty icon={FileText} label="Module" testId="todo-create-module" />
-                <StaticProperty
-                  icon={CalendarDays}
+                <DateProperty
+                  value={dueDate}
+                  onChange={setDueDate}
                   label={t('todo.due_date', '截止时间')}
-                  testId="todo-create-due-date"
                 />
-                <StaticProperty icon={UserRound} label="Parent" testId="todo-create-parent" />
               </div>
             </FormGroup>
 
@@ -363,11 +347,17 @@ export function TodoCreateDialog({
                     { value: 'human', label: t('todo.assignee_human', '员工') },
                   ]}
                 />
-                <StaticProperty
-                  icon={Bot}
-                  label={modelName || t('todo.model_automatic', 'Model：自动')}
-                  testId="todo-create-model"
-                />
+                {assignee === 'ai' && (
+                  <div
+                    data-testid="todo-create-model"
+                    className="flex h-[30px] min-w-0 items-center gap-1.5 rounded-md border border-[#E1E4E7] bg-[#F7F8F9] px-2 dark:border-border dark:bg-muted"
+                  >
+                    <Bot className="h-3 w-3 shrink-0 text-[#7C858D]" />
+                    <span className="truncate text-[9px] text-[#626A72] dark:text-text-secondary">
+                      {modelName || t('todo.model_automatic', 'Model：自动')}
+                    </span>
+                  </div>
+                )}
                 <PropertySelect
                   testId="todo-create-launch-mode"
                   icon={Play}
@@ -504,24 +494,29 @@ function PropertySelect({
   )
 }
 
-function StaticProperty({
-  testId,
-  icon: Icon,
+function DateProperty({
+  value,
   label,
+  onChange,
 }: {
-  testId: string
-  icon: typeof CircleDot
+  value: string
   label: string
+  onChange: (value: string) => void
 }) {
   return (
-    <button
-      type="button"
-      data-testid={testId}
-      className="flex h-[30px] min-w-0 items-center gap-1.5 rounded-md border border-[#E1E4E7] bg-[#F7F8F9] px-2 text-left dark:border-border dark:bg-muted"
-    >
-      <Icon className="h-3 w-3 shrink-0 text-[#7C858D]" />
-      <span className="truncate text-[9px] text-[#626A72] dark:text-text-secondary">{label}</span>
-      <ChevronDown className="ml-auto h-2.5 w-2.5 shrink-0 text-[#9AA1A8]" />
-    </button>
+    <label className="relative flex h-[30px] min-w-0 items-center gap-1.5 rounded-md border border-[#E1E4E7] bg-[#F7F8F9] px-2 dark:border-border dark:bg-muted">
+      <CalendarDays className="h-3 w-3 shrink-0 text-[#7C858D]" />
+      <span className="truncate text-[9px] text-[#626A72] dark:text-text-secondary">
+        {value || label}
+      </span>
+      <input
+        data-testid="todo-create-due-date"
+        type="date"
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        className="absolute inset-0 cursor-pointer opacity-0"
+        aria-label={label}
+      />
+    </label>
   )
 }
