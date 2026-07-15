@@ -14,6 +14,10 @@ const defaultPreferences: AppPreferences = {
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  browserExternalLinkTarget: 'system',
+  browserLocalLinkTarget: 'wework',
+  browserDownloadDirectory: null,
+  browserAskBeforeDownload: false,
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
@@ -39,6 +43,10 @@ vi.mock('@/tauri/appPreferences', () => ({
     trayUnreadEnabled: true,
     trayRunningEnabled: true,
     trayUsageEnabled: true,
+    browserExternalLinkTarget: 'system',
+    browserLocalLinkTarget: 'wework',
+    browserDownloadDirectory: null,
+    browserAskBeforeDownload: false,
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,

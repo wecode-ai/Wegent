@@ -11,8 +11,13 @@ const tauriCoreMock = vi.hoisted(() => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => false),
 }))
+const openExternalUrlMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
 
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
+vi.mock('@/lib/external-links', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/external-links')>()),
+  openExternalUrl: openExternalUrlMock,
+}))
 
 describe('MessageList', () => {
   test('renders generated image artifacts from image generation blocks', () => {
@@ -1276,6 +1281,7 @@ describe('MessageList', () => {
     )
     tauriCoreMock.invoke = vi.fn()
     tauriCoreMock.isTauri = vi.fn(() => false)
+    openExternalUrlMock.mockClear()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
     URL.revokeObjectURL = originalRevokeObjectUrl
@@ -1574,8 +1580,6 @@ describe('MessageList', () => {
 
   test('renders final answer web search sources as a Codex-style source chip', async () => {
     const user = userEvent.setup()
-    const openWindowMock = vi.fn()
-    vi.stubGlobal('open', openWindowMock)
     const blocks: ProcessingBlock[] = [
       {
         id: 'web-search-1',
@@ -1640,10 +1644,8 @@ describe('MessageList', () => {
     await user.click(screen.getByTestId('web-search-source-popup-row'))
 
     await waitFor(() =>
-      expect(openWindowMock).toHaveBeenCalledWith(
-        'https://www.weather.com/weather/today/l/Beijing+China',
-        '_blank',
-        'noopener,noreferrer'
+      expect(openExternalUrlMock).toHaveBeenCalledWith(
+        'https://www.weather.com/weather/today/l/Beijing+China'
       )
     )
   })
@@ -1739,7 +1741,7 @@ describe('MessageList', () => {
     expect(screen.getByRole('heading', { level: 3 })).toHaveClass('text-text-primary')
   })
 
-  test('renders assistant markdown links as reference-style inline links', () => {
+  test('routes assistant markdown links through the configured browser target', () => {
     render(
       <MessageList
         messages={[
@@ -1767,7 +1769,11 @@ describe('MessageList', () => {
     expect(link).not.toHaveClass('hover:bg-blue-100')
     expect(link).not.toHaveClass('ring-1')
     expect(link).not.toHaveClass('text-primary')
+    expect(link).not.toHaveAttribute('target')
     expect(screen.getByTestId('assistant-markdown-link-icon')).toBeInTheDocument()
+
+    fireEvent.click(link)
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/MessageList.tsx')
   })
 
   test('keeps angle-bracket external link destinations as external links', () => {

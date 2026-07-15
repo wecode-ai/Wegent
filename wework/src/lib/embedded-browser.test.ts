@@ -1,9 +1,20 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
-import { evalEmbeddedBrowserJson, relabelEmbeddedBrowser } from './embedded-browser'
+import {
+  evalEmbeddedBrowserJson,
+  listenEmbeddedBrowserOpenRequests,
+  relabelEmbeddedBrowser,
+  requestEmbeddedBrowserOpen,
+} from './embedded-browser'
+
+const unlistenMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
+}))
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn().mockResolvedValue(unlistenMock),
 }))
 
 vi.mock('./runtime-environment', () => ({
@@ -54,5 +65,19 @@ describe('embedded-browser', () => {
       fromLabel: 'workspace-browser-blank-0',
       toLabel: 'workspace-browser-task-1',
     })
+  })
+
+  test('routes frontend open requests to the active embedded browser listener', async () => {
+    const handler = vi.fn()
+    const unlisten = listenEmbeddedBrowserOpenRequests(handler)
+
+    expect(requestEmbeddedBrowserOpen('http://localhost:3000')).toBe(true)
+    expect(handler).toHaveBeenCalledWith({
+      label: 'workspace-browser',
+      url: 'http://localhost:3000',
+    })
+
+    const release = await unlisten
+    release?.()
   })
 })
