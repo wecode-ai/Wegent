@@ -4,11 +4,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
+PROJECT_TAURI_TARGET_DIR="$WEWORK_DIR/src-tauri/target"
 
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
 # shellcheck source=lib/wework-macos-signing.sh
 source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
+# shellcheck source=lib/wework-macos-sidecar.sh
+source "$SCRIPT_DIR/lib/wework-macos-sidecar.sh"
 
 TARGET="local"
 VERSION_OVERRIDE=""
@@ -286,6 +290,30 @@ bundle_root() {
   printf '%s\n' "$WEWORK_DIR/src-tauri/target/release/bundle"
 }
 
+detach_stale_bundle_disk_images() {
+  local root
+  local devices
+  root="$(bundle_root)"
+  devices="$(hdiutil info | awk -v root="$root/" '
+    /^image-path[[:space:]]*:/ {
+      image_path = $0
+      sub(/^image-path[[:space:]]*:[[:space:]]*/, "", image_path)
+      in_scope = index(image_path, root) == 1
+      next
+    }
+    in_scope && $1 ~ /^\/dev\/disk[0-9]+$/ {
+      print $1
+      in_scope = 0
+    }
+  ')"
+
+  while IFS= read -r device; do
+    [ -n "$device" ] || continue
+    echo "Detaching stale Wework bundle disk image: $device"
+    hdiutil detach "$device" -quiet || hdiutil detach "$device" -force -quiet
+  done <<< "$devices"
+}
+
 require_macos_build_target() {
   if [ "$MACOS_BUILD_TARGET" != "universal-apple-darwin" ]; then
     return
@@ -502,6 +530,10 @@ ensure_notary_profile
 verify_notary_profile
 require_macos_build_target
 
+# Release artifacts must stay under the project so bundle discovery and upload
+# always consume the output produced by this invocation.
+export CARGO_TARGET_DIR="$PROJECT_TAURI_TARGET_DIR"
+
 BACKEND_PORT="${BACKEND_PORT:-9100}"
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 DEFAULT_SOCKET_BASE_URL="${WEGENT_SOCKET_URL:-$BACKEND_BASE_URL}"
@@ -518,9 +550,10 @@ if [ "$TARGET" = "prod" ]; then
 fi
 mkdir -p "$dist_dir"
 
-config_override="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.XXXXXX.json")"
+config_override="$(mktemp "$WEWORK_DIR/src-tauri/tauri.release.json.XXXXXX")"
 cleanup() {
   rm -f "$config_override"
+  detach_stale_bundle_disk_images || true
 }
 trap cleanup EXIT
 
@@ -580,6 +613,7 @@ PY
 echo "Release target: $TARGET"
 echo "Releasing version: $next_version"
 echo "macOS build target: $MACOS_BUILD_TARGET"
+echo "Cargo target directory: $CARGO_TARGET_DIR"
 echo "Updater platforms: $(updater_platforms)"
 echo "Release devtools: ${RELEASE_DEVTOOLS:-0}"
 if [ -n "$app_sign_identity" ]; then
@@ -599,6 +633,7 @@ echo "VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
 echo "VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
 
 cd "$WEWORK_DIR"
+detach_stale_bundle_disk_images
 rm -rf "$(bundle_root)"
 TAURI_BUILD_ARGS=(build)
 if [ -n "$MACOS_BUILD_TARGET" ]; then
@@ -608,12 +643,18 @@ if [ "$RELEASE_DEVTOOLS" = "1" ]; then
   TAURI_BUILD_ARGS+=(--features release-devtools)
 fi
 TAURI_BUILD_ARGS+=(--config "$config_override")
+wework_build_macos_executor_sidecar \
+  "$PROJECT_DIR" \
+  "$WEWORK_DIR" \
+  "$MACOS_BUILD_TARGET" \
+  release
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
 wework_sign_prepared_codex_macos_binaries \
   "$WEWORK_DIR" \
   "$MACOS_BUILD_TARGET" \
   "$app_sign_identity"
 pnpm exec tauri "${TAURI_BUILD_ARGS[@]}"
+wework_verify_macos_app_executor_sidecar "$(bundle_root)"
 
 archive_path="$(find_update_archive)"
 if [ -z "$archive_path" ] || [ ! -f "$archive_path" ]; then
