@@ -1596,6 +1596,7 @@ function RuntimeTaskRow({
     <>
       <SidebarHoverCard
         testId={`runtime-local-task-hover-card-${task.taskId}`}
+        interactive
         content={
           <TaskSidebarHoverCardContent
             taskId={task.taskId}
