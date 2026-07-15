@@ -343,6 +343,10 @@ impl AppIpcServer {
     }
 
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
+        if method == "executor.health" {
+            return Ok(json!({"status": "healthy"}));
+        }
+
         if method == "device.execute_command" {
             return self.handle_device_command(params).await;
         }

@@ -2359,6 +2359,54 @@ describe('DesktopSidebar', () => {
     expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
   })
 
+  test('anchors the away reminder menu to the full-width account area', async () => {
+    // Regression guard (POPOVER-CONTAINING-BLOCK-MISMATCH): the menu must portal
+    // into the full-width account/settings container (group/account), not remain
+    // a child of the narrow 32px icon-action group, otherwise `left-4 right-4`
+    // resolves against the icon group and the panel collapses to a sliver.
+    const user = userEvent.setup()
+
+    renderSidebar({
+      imNotificationSettings: {
+        global: {
+          enabled: false,
+          sessionKey: 'session-telegram',
+          session: {
+            sessionKey: 'session-telegram',
+            channelType: 'telegram',
+            channelLabel: 'Telegram',
+            channelId: 9,
+            conversationId: 'telegram-1',
+            senderId: '100200300',
+            displayName: 'Alice',
+          },
+        },
+        runtimeTaskSubscriptions: [],
+      },
+      onToggleGlobalImNotification: vi.fn(),
+    })
+
+    await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
+
+    const menu = screen.getByTestId('sidebar-global-im-notification-menu')
+
+    // The menu DOM owner must be the account area, reachable through the
+    // group/account container — never the icon-action group wrapper.
+    const accountArea = menu.closest('.group\\/account')
+    expect(accountArea, 'menu must be portalled into the account area').not.toBeNull()
+
+    const iconGroup = screen.getByTestId('sidebar-global-im-notification-button').parentElement
+    expect(
+      iconGroup?.contains(menu),
+      'menu must NOT stay inside the narrow icon-action group'
+    ).toBe(false)
+
+    // jsdom does not compute CSS layout, so a numeric width floor is not
+    // enforceable here; the DOM-ownership assertions above are the durable
+    // guard against the containing-block regression.
+    expect(menu).toBeInTheDocument()
+  })
+
   test('opens away reminder channel settings from the bell menu', async () => {
     const user = userEvent.setup()
     const onToggleGlobalImNotification = vi.fn()
