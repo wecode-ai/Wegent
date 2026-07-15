@@ -825,7 +825,6 @@ export function WorkbenchProvider({
           handlers.onContextUsageUpdated?.(contextUsage)
         },
         onAssistantSettled: () => {
-          dispatch({ type: 'runtime_task_settled', address })
           handlers.onAssistantSettled?.()
         },
       })
