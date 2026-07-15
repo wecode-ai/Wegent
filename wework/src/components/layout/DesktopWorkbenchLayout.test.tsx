@@ -4090,6 +4090,20 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
   })
 
+  test('deactivates the right workspace browser while settings are open', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    expect(screen.getByTestId('workspace-browser-panel')).not.toHaveClass('hidden')
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveClass('hidden')
+  })
+
   test('preserves the browser tab after closing and reopening the right workspace area', async () => {
     renderWorkspacePanelLayout()
 

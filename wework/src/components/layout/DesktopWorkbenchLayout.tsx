@@ -585,6 +585,7 @@ export function DesktopWorkbenchLayout() {
       )}
       <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
         <DesktopWorkbenchMain
+          visible={!settingsOpen}
           sidebarCollapsed={effectiveSidebarCollapsed}
           sidebarResizing={sidebarResizing}
           onSidebarCollapsedChange={updateSidebarCollapsed}

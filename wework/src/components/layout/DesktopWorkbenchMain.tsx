@@ -216,6 +216,7 @@ function createBottomPanelWorkspaceKey({
 
 interface DesktopWorkbenchMainProps {
   activePane: WorkbenchPaneIdentity
+  visible?: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -299,6 +300,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       renderPane={pane => (
         <DesktopWorkbenchPane
           pane={pane}
+          workbenchVisible={props.visible ?? true}
           sidebarCollapsed={props.sidebarCollapsed}
           sidebarResizing={props.sidebarResizing ?? false}
           onSidebarCollapsedChange={props.onSidebarCollapsedChange}
@@ -325,6 +327,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
 
 const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   pane,
+  workbenchVisible,
   sidebarCollapsed,
   sidebarResizing = false,
   onSidebarCollapsedChange,
@@ -332,6 +335,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onTerminalPaneUnpinned,
 }: {
   pane: WorkbenchPaneIdentity
+  workbenchVisible: boolean
   sidebarCollapsed: boolean
   sidebarResizing?: boolean
   onSidebarCollapsedChange: (collapsed: boolean) => void
@@ -1767,7 +1771,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         >
           {shouldRenderRightPanel && (
             <RightWorkspacePanel
-              visible={paneActive && rightPanelOpen}
+              visible={workbenchVisible && paneActive && rightPanelOpen}
               activeView={rightPanelView}
               openTabs={effectiveRightPanelTabs}
               currentProject={workspaceProject}
