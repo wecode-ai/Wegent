@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
 import { TodoWorkspace } from './TodoWorkspace'
@@ -60,6 +60,10 @@ const runtimeWork: RuntimeWorkListResponse = {
 describe('TodoWorkspace V4-01', () => {
   beforeEach(() => window.localStorage.clear())
 
+  afterEach(() => {
+    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  })
+
   it('renders the four Pencil V4 kanban columns and maps runtime states', () => {
     render(
       <TodoWorkspace
@@ -74,6 +78,8 @@ describe('TodoWorkspace V4-01', () => {
     expect(screen.getByTestId('todo-column-started')).toHaveTextContent('1')
     expect(screen.getByTestId('todo-column-review')).toHaveTextContent('1')
     expect(screen.getByTestId('todo-column-completed')).toHaveTextContent('1')
+    expect(screen.getByTestId('todo-board-scroll')).toHaveClass('overflow-auto')
+    expect(screen.getByTestId('todo-board-grid')).toHaveClass('min-w-[960px]', 'grid-cols-4')
     expect(screen.getByText('Synchronize runtime state')).toBeInTheDocument()
   })
 
@@ -91,6 +97,48 @@ describe('TodoWorkspace V4-01', () => {
 
     expect(screen.getAllByText('Agent Runtime').length).toBeGreaterThan(0)
     expect(screen.queryByText('Synchronize runtime state')).not.toBeInTheDocument()
+  })
+
+  it('keeps the collapsed TODO sidebar control clear of macOS traffic lights', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    expect(screen.getByTestId('todo-workspace')).toHaveClass('w-full', 'flex-1')
+    expect(screen.getByTestId('todo-sidebar-chrome-controls')).toHaveClass('h-[38px]')
+    expect(screen.getByTestId('todo-main-header')).toHaveClass('h-[38px]', 'pl-0', 'pr-[3px]')
+    expect(screen.getByTestId('todo-sidebar-create')).toHaveClass('h-8')
+    expect(screen.getByTestId('todo-main-header-left-controls')).toHaveClass(
+      'h-full',
+      'gap-1',
+      'pl-[92px]',
+      'pr-2'
+    )
+    expect(screen.getByTestId('todo-main-header-left-controls')).toContainElement(
+      screen.getByTestId('todo-expand-sidebar')
+    )
+    expect(screen.getByTestId('todo-expand-sidebar')).toHaveClass('h-8', 'w-8', 'rounded-lg')
+    expect(screen.getByTestId('todo-main-header-left-controls')).toContainElement(
+      screen.getByTestId('todo-collapsed-app-wework')
+    )
+    expect(screen.getByTestId('todo-main-header-left-controls')).toContainElement(
+      screen.getByTestId('todo-collapsed-app-current')
+    )
+    expect(screen.getByTestId('todo-main-header-left-controls')).toContainElement(
+      screen.getByTestId('todo-collapsed-app-apps')
+    )
   })
 
   it('opens the V4-02 project switcher and filters projects', async () => {

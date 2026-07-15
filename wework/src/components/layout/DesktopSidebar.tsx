@@ -10,8 +10,6 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
-  Grid3X3,
-  ListTodo,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -88,6 +86,7 @@ import type {
 } from '@/features/workbench/workbenchContextTypes'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { SidebarSortableList } from './SidebarSortableList'
 import { SidebarHoverCard } from './SidebarHoverCard'
@@ -251,10 +250,6 @@ const PROJECT_APPEARANCE_COLOR_VALUES: Record<string, string> = {
   yellow: '#eab308',
 }
 const MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS = 'left-[92px]'
-const SIDEBAR_CHROME_TAB_BUTTON_CLASS =
-  'group relative flex h-8 w-8 min-w-0 items-center justify-center rounded-lg px-0 text-center text-[13px] font-medium leading-none transition-colors'
-const SIDEBAR_CHROME_TAB_TOOLTIP_CLASS =
-  'pointer-events-none absolute left-1/2 top-[calc(100%+0.375rem)] z-popover -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-background px-2 py-1 text-xs font-medium leading-none text-text-primary opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.14)] transition-opacity group-hover:opacity-100'
 
 function getSidebarAccountSummary(user: UserProfile | null, fallback: string) {
   const userName = user?.user_name?.trim()
@@ -2483,8 +2478,6 @@ export function DesktopSidebar({
         usesCloudAccount ? cloud.user : user,
         t('workbench.account_fallback', '当前账号')
       )
-  const workbenchAppLabel = t('workbench.app_wework')
-  const appsAppLabel = t('workbench.apps')
   const windowFocused = useSidebarWindowFocus()
 
   const storageScope = getDesktopSidebarStorageScope(user)
@@ -2963,57 +2956,16 @@ export function DesktopSidebar({
                 onToggleSidebar={onToggleSidebar}
                 className="gap-1"
               />
-              <button
-                type="button"
-                data-testid="chrome-tab-wework"
-                onClick={onOpenWorkbench}
-                title={workbenchAppLabel}
-                aria-label={workbenchAppLabel}
-                className={cn(
-                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
-                  activeItem === 'chat'
-                    ? 'bg-black/[0.045] text-text-primary'
-                    : 'text-text-secondary hover:bg-black/[0.04]'
-                )}
-              >
-                <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-                <span className="sr-only">{workbenchAppLabel}</span>
-                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{workbenchAppLabel}</span>
-              </button>
-              <button
-                type="button"
-                data-testid="chrome-tab-todo"
-                onClick={onOpenTodo}
-                title={t('todo.navigation', 'TODO')}
-                aria-label={t('todo.navigation', 'TODO')}
-                className={cn(
-                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
-                  activeItem === 'todo'
-                    ? 'bg-black/[0.045] text-text-primary'
-                    : 'text-text-secondary hover:bg-black/[0.04]'
-                )}
-              >
-                <ListTodo aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-                <span className="sr-only">{t('todo.navigation', 'TODO')}</span>
-                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>
-                  {t('todo.navigation', 'TODO')}
-                </span>
-              </button>
-              <button
-                type="button"
-                data-testid="chrome-tab-apps"
-                onClick={onOpenApps}
-                title={appsAppLabel}
-                aria-label={appsAppLabel}
-                className={cn(
-                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
-                  'text-text-secondary hover:bg-black/[0.04]'
-                )}
-              >
-                <Grid3X3 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-                <span className="sr-only">{appsAppLabel}</span>
-                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{appsAppLabel}</span>
-              </button>
+              <DesktopAppSwitcher
+                activeApp={
+                  activeItem === 'todo' ? 'todo' : activeItem === 'plugins' ? 'apps' : 'wework'
+                }
+                onNavigate={app => {
+                  if (app === 'wework') onOpenWorkbench?.()
+                  if (app === 'todo') onOpenTodo?.()
+                  if (app === 'apps') onOpenApps?.()
+                }}
+              />
             </div>
           )}
           <nav className="space-y-0.5">

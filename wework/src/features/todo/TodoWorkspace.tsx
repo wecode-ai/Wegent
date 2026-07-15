@@ -9,14 +9,12 @@ import {
   Ellipsis,
   Filter,
   FolderOpen,
-  Globe2,
   Grid2X2,
   Grid3X3,
   LayoutDashboard,
   List,
   ListChecks,
   ListTodo,
-  PanelLeft,
   Plus,
   Search,
   Settings2,
@@ -25,10 +23,12 @@ import {
   UserRound,
 } from 'lucide-react'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
+import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { isTauriRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
@@ -234,6 +234,7 @@ export function TodoWorkspace({
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
   const [createDialogState, setCreateDialogState] = useState<TodoState | null>(null)
   const [drafts, setDrafts] = useState<TodoDraft[]>(() => loadTodoDrafts(user?.id))
+  const usesOverlayTitlebar = isTauriRuntime()
   const selectedProject =
     projectEntries.find(entry => entry.project.id === selectedProjectId) ??
     projectEntries[0] ??
@@ -396,7 +397,10 @@ export function TodoWorkspace({
   }, [])
 
   return (
-    <div data-testid="todo-workspace" className="flex h-full min-w-0 overflow-hidden bg-white">
+    <div
+      data-testid="todo-workspace"
+      className="flex h-full w-full min-w-0 flex-1 overflow-hidden bg-white"
+    >
       <TodoSidebar
         user={user}
         projects={projectEntries.map(entry => entry.project)}
@@ -408,19 +412,41 @@ export function TodoWorkspace({
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col bg-[#F7F8F9] dark:bg-background">
-        <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[44px]" />
-        <header className="relative z-10 flex h-[52px] shrink-0 items-center justify-between border-b border-[#E3E6E8] bg-white px-3.5 dark:border-border dark:bg-background">
+        <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
+        <header
+          data-testid="todo-main-header"
+          className={cn(
+            'relative z-10 flex h-[38px] shrink-0 items-center justify-between border-b border-[#E3E6E8] bg-white pr-[3px] dark:border-border dark:bg-background',
+            sidebarCollapsed ? 'pl-0' : 'pl-3.5'
+          )}
+        >
           <div className="flex min-w-0 items-center gap-2">
             {sidebarCollapsed && (
-              <button
-                type="button"
-                data-testid="todo-expand-sidebar"
-                onClick={() => setSidebarCollapsed(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-md text-[#626B73] hover:bg-[#F1F2F4]"
-                aria-label={t('workbench.expand_sidebar', '展开侧栏')}
+              <div
+                data-testid="todo-main-header-left-controls"
+                className={cn(
+                  'flex h-full shrink-0 items-center gap-1 pr-2',
+                  usesOverlayTitlebar && 'pl-[92px]'
+                )}
               >
-                <PanelLeft className="h-4 w-4" />
-              </button>
+                <DesktopWindowControls
+                  sidebarCollapsed
+                  onToggleSidebar={() => setSidebarCollapsed(false)}
+                  toggleTestId="todo-expand-sidebar"
+                  className="gap-1"
+                />
+                <DesktopAppSwitcher
+                  activeApp="todo"
+                  onNavigate={app =>
+                    navigateTo(app === 'wework' ? '/' : app === 'todo' ? '/todo' : '/apps')
+                  }
+                  testIds={{
+                    wework: 'todo-collapsed-app-wework',
+                    todo: 'todo-collapsed-app-current',
+                    apps: 'todo-collapsed-app-apps',
+                  }}
+                />
+              </div>
             )}
             <button
               type="button"
@@ -521,8 +547,14 @@ export function TodoWorkspace({
           </span>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto bg-[#F7F8F9] p-3 dark:bg-background">
-          <div className="grid min-h-full min-w-[1020px] grid-cols-4 gap-2.5">
+        <div
+          data-testid="todo-board-scroll"
+          className="min-h-0 flex-1 overflow-auto bg-[#F7F8F9] p-3 dark:bg-background"
+        >
+          <div
+            data-testid="todo-board-grid"
+            className="grid min-h-full min-w-[960px] grid-cols-4 gap-2.5"
+          >
             {(Object.keys(STATE_META) as TodoState[]).map(state => (
               <TodoColumn
                 key={state}
@@ -724,28 +756,29 @@ function TodoSidebar({
     >
       <div className="relative h-full w-[252px]">
         <MacOSTitleBarDragRegion className="absolute inset-x-0 top-0 z-0 h-[38px]" />
-        <div className="absolute left-[92px] top-0 z-10 flex h-[44px] items-center gap-1">
+        <div
+          data-testid="todo-sidebar-chrome-controls"
+          className="absolute left-[92px] top-0 z-10 flex h-[38px] items-center gap-1"
+        >
           <DesktopWindowControls
             sidebarCollapsed={false}
             onToggleSidebar={onToggleCollapsed}
             className="gap-1"
           />
-          <AppButton
-            testId="todo-app-wework"
-            label="Wework"
-            icon={Globe2}
-            onClick={() => navigateTo('/')}
-          />
-          <AppButton testId="todo-app-current" label="TODO" icon={ListTodo} active />
-          <AppButton
-            testId="todo-app-apps"
-            label={t('workbench.apps', '应用')}
-            icon={Grid3X3}
-            onClick={() => navigateTo('/apps')}
+          <DesktopAppSwitcher
+            activeApp="todo"
+            onNavigate={app =>
+              navigateTo(app === 'wework' ? '/' : app === 'todo' ? '/todo' : '/apps')
+            }
+            testIds={{
+              wework: 'todo-app-wework',
+              todo: 'todo-app-current',
+              apps: 'todo-app-apps',
+            }}
           />
         </div>
 
-        <nav className="absolute inset-x-2 top-14 space-y-0.5">
+        <nav className="absolute inset-x-2 top-[44px] space-y-0.5">
           <SidebarAction
             testId="todo-sidebar-create"
             icon={Plus}
@@ -933,36 +966,6 @@ function TodoCard({ item, onClick }: { item: TodoItem; onClick: () => void }) {
   )
 }
 
-function AppButton({
-  testId,
-  label,
-  icon: Icon,
-  active = false,
-  onClick,
-}: {
-  testId: string
-  label: string
-  icon: typeof Globe2
-  active?: boolean
-  onClick?: () => void
-}) {
-  return (
-    <button
-      type="button"
-      data-testid={testId}
-      onClick={onClick}
-      className={cn(
-        'flex h-8 w-8 items-center justify-center rounded-lg text-[#626B73] hover:bg-black/[0.04]',
-        active && 'bg-[#DDE2E2] text-[#0F8F82]'
-      )}
-      aria-label={label}
-      title={label}
-    >
-      <Icon className="h-4 w-4" />
-    </button>
-  )
-}
-
 function SidebarAction({
   testId,
   icon: Icon,
@@ -979,10 +982,10 @@ function SidebarAction({
       type="button"
       data-testid={testId}
       onClick={onClick}
-      className="flex h-9 w-full items-center gap-2.5 rounded-md px-2 text-left text-[13px] font-medium text-[#30353A] hover:bg-[#E7E9EB] dark:text-text-primary dark:hover:bg-muted"
+      className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-normal leading-[18px] text-[#30353A] hover:bg-[#E7E9EB] dark:text-text-primary dark:hover:bg-muted"
     >
-      <Icon className="h-4 w-4" />
-      {label}
+      <Icon className="h-4 w-4 text-current" />
+      <span>{label}</span>
     </button>
   )
 }

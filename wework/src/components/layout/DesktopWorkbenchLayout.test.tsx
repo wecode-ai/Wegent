@@ -2255,6 +2255,9 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('chrome-tab-wework')
     )
     expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('chrome-tab-todo')
+    )
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
       screen.getByTestId('chrome-tab-apps')
     )
     expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('h-8', 'w-8', 'bg-black/[0.045]')
@@ -2327,6 +2330,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-main-header-left-controls')).toContainElement(
       screen.getByTestId('expand-sidebar-button')
     )
+    const collapsedHeaderControls = within(
+      screen.getByTestId('workbench-main-header-left-controls')
+    )
+    expect(collapsedHeaderControls.getByTestId('chrome-tab-wework')).toBeInTheDocument()
+    expect(collapsedHeaderControls.getByTestId('chrome-tab-todo')).toBeInTheDocument()
+    expect(collapsedHeaderControls.getByTestId('chrome-tab-apps')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
       'relative',
       'h-full',

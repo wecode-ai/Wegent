@@ -1,7 +1,6 @@
 import { cn } from '@/lib/utils'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { AppTab } from '@/config/apps'
-import { Grid3X3, Globe2 } from 'lucide-react'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_CENTER_PORTAL_ID,
@@ -9,6 +8,7 @@ import {
 } from './TitlebarActionsPortal'
 import { TitlebarExtensionSlot } from '@extensions/titlebar'
 import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
+import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
 import type { ReactNode } from 'react'
 
 function getPlatform(): 'mac' | 'win' | 'linux' {
@@ -53,7 +53,7 @@ export function ChromeTitlebar({
       {/* macOS: traffic light spacer (left) */}
       {isTauri && platform === 'mac' && (
         <div
-          className="w-[95px] shrink-0 self-stretch"
+          className="w-[92px] shrink-0 self-stretch"
           data-testid="macos-traffic-light-spacer"
           data-tauri-drag-region
         >
@@ -68,17 +68,14 @@ export function ChromeTitlebar({
       )}
 
       {/* Tab strip */}
-      <div
-        className={cn(
-          'flex min-w-0 items-center gap-1',
-          iconOnlyTabs ? 'overflow-visible' : 'overflow-hidden'
-        )}
-      >
-        {tabs.map(tab => {
-          const tabSupportsIconOnly = tab.key === 'wework' || tab.key === 'apps'
-          const showIconOnly = iconOnlyTabs && tabSupportsIconOnly
-
-          return (
+      {iconOnlyTabs ? (
+        <DesktopAppSwitcher
+          activeApp={activeKey === 'apps' ? 'apps' : activeKey === 'todo' ? 'todo' : 'wework'}
+          onNavigate={onNavigate}
+        />
+      ) : (
+        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
+          {tabs.map(tab => (
             <button
               key={tab.key}
               type="button"
@@ -87,29 +84,17 @@ export function ChromeTitlebar({
               title={tab.label}
               aria-label={tab.label}
               className={cn(
-                'group relative flex h-8 items-center justify-center rounded-lg text-center text-[13px] font-medium leading-none transition-colors',
-                showIconOnly ? 'w-8 min-w-0 px-0' : 'max-w-[220px] min-w-24 gap-2.5 px-3',
+                'group relative flex h-8 max-w-[220px] min-w-24 items-center justify-center gap-2.5 rounded-lg px-3 text-center text-[13px] font-medium leading-none transition-colors',
                 activeKey === tab.key
                   ? 'bg-black/[0.045] text-text-primary'
                   : 'text-text-secondary hover:bg-black/[0.04]'
               )}
             >
-              {tab.key === 'wework' && (
-                <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-              )}
-              {tab.key === 'apps' && (
-                <Grid3X3 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-              )}
-              <span className={showIconOnly ? 'sr-only' : 'truncate'}>{tab.label}</span>
-              {showIconOnly && (
-                <span className="pointer-events-none absolute left-1/2 top-[calc(100%+0.375rem)] z-popover -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-background px-2 py-1 text-xs font-medium leading-none text-text-primary opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.14)] transition-opacity group-hover:opacity-100">
-                  {tab.label}
-                </span>
-              )}
+              <span className="truncate">{tab.label}</span>
             </button>
-          )
-        })}
-      </div>
+          ))}
+        </div>
+      )}
       {afterTabs && (
         <div data-testid="chrome-titlebar-after-tabs" className="ml-3 flex shrink-0 items-center">
           {afterTabs}
