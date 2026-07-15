@@ -629,7 +629,7 @@ describe('App plugins route', () => {
           limit: 20,
         }),
     } as Response)
-    vi.mocked(workbenchValue.startNewSkillChat).mockReturnValue(true)
+    vi.mocked(workbenchValue.startNewSkillChat).mockResolvedValue(true)
     window.history.pushState({}, '', '/sites')
 
     render(<App />)
@@ -643,7 +643,7 @@ describe('App plugins route', () => {
     expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
 
     await userEvent.click(screen.getByTestId('sites-create-button'))
-    expect(workbenchValue.startNewSkillChat).toHaveBeenCalledWith(['sites-building'])
+    expect(workbenchValue.startNewSkillChat).toHaveBeenCalledWith(['sites:sites-building'])
   })
 
   test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {

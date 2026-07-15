@@ -18,7 +18,8 @@ import { openExternalUrl } from '@/lib/external-links'
 interface SitesWorkspaceProps {
   api: SitesApi
   username: string
-  onCreate: () => void
+  onCreate: () => void | Promise<void>
+  creating?: boolean
   pageSize?: number
   sidebarCollapsed?: boolean
   topBarLeftActions?: ReactNode
@@ -146,6 +147,7 @@ export function SitesWorkspace({
   api,
   username,
   onCreate,
+  creating = false,
   pageSize = 20,
   sidebarCollapsed = false,
   topBarLeftActions,
@@ -275,10 +277,15 @@ export function SitesWorkspace({
             <button
               type="button"
               data-testid="sites-create-button"
-              onClick={onCreate}
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-[13px] font-medium text-text-primary transition-colors hover:bg-surface"
+              disabled={creating}
+              onClick={() => void onCreate()}
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-[13px] font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-wait disabled:opacity-60"
             >
-              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              {creating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
               {t('create', '创建')}
             </button>
           </div>

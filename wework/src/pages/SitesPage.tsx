@@ -35,6 +35,7 @@ export function SitesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const {
     state,
@@ -104,9 +105,16 @@ export function SitesPage() {
     startNewProjectChat(projectId)
   }
 
-  const handleCreate = () => {
-    const started = startNewSkillChat(['sites-building'])
-    setCreateError(started ? null : t('skill_missing', 'Sites 插件尚未安装或启用'))
+  const handleCreate = async () => {
+    setCreating(true)
+    try {
+      const started = await startNewSkillChat(['sites:sites-building'])
+      setCreateError(started ? null : t('skill_missing', 'Sites 插件尚未安装或启用'))
+    } catch {
+      setCreateError(t('skill_missing', 'Sites 插件尚未安装或启用'))
+    } finally {
+      setCreating(false)
+    }
   }
 
   if (settingsOpen) {
@@ -226,6 +234,7 @@ export function SitesPage() {
         api={sitesApi}
         username={username}
         onCreate={handleCreate}
+        creating={creating}
         createError={createError}
         onOpenPlugins={() => navigateTo('/plugins')}
         sidebarCollapsed={sidebarCollapsed && !isMobile}

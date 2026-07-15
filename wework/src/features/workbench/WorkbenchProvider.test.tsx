@@ -1505,10 +1505,13 @@ function StartSkillChatProbe() {
       </span>
       <span data-testid="skill-chat-key">{workbench.state.standaloneChatKey}</span>
       <span data-testid="skill-chat-start-result">{result}</span>
+      <span data-testid="skill-chat-input">{workbench.projectChat.input}</span>
       <button
         type="button"
         onClick={() =>
-          setResult(workbench.startNewSkillChat(['sites-building']) ? 'started' : 'missing')
+          void Promise.resolve(workbench.startNewSkillChat(['sites:sites-building'])).then(
+            started => setResult(started ? 'started' : 'missing')
+          )
         }
       >
         start sites chat
@@ -1600,6 +1603,64 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('selected-skill-refs')).toHaveTextContent(
       'sites:sites-building:false'
     )
+    expect(screen.getByTestId('skill-chat-input')).toHaveTextContent('')
+  })
+
+  test('starts a fresh blank chat with a requested local skill mentioned', async () => {
+    setTauriRuntime()
+    localExecutorMocks.requestLocalExecutor.mockImplementation(
+      async (method: string, params?: unknown) => {
+        if (method === 'runtime.tasks.list') {
+          return { projects: [], chats: [], totalTasks: 0 }
+        }
+        if (
+          method === 'codex.app_server_request' &&
+          params &&
+          typeof params === 'object' &&
+          (params as { method?: unknown }).method === 'skills/list'
+        ) {
+          return {
+            data: [
+              {
+                cwd: '',
+                skills: [
+                  {
+                    name: 'sites:sites-building',
+                    description: 'Build websites with Sites',
+                    path: '/Users/alice/.codex/plugins/sites/skills/sites-building/SKILL.md',
+                    scope: 'user',
+                    source: 'codex-plugin',
+                    enabled: true,
+                  },
+                ],
+                errors: [],
+              },
+            ],
+          }
+        }
+        return {}
+      }
+    )
+
+    renderWorkbench(<StartSkillChatProbe />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'start sites chat' }))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('started')
+    )
+    expect(screen.getByTestId('skill-chat-key')).toHaveTextContent('1')
+    expect(screen.getByTestId('selected-skill-refs')).toHaveTextContent('')
+    expect(screen.getByTestId('skill-chat-input')).toHaveTextContent(
+      '[$sites](/Users/alice/.codex/plugins/sites/skills/sites-building/SKILL.md)'
+    )
+    expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith(
+      'codex.app_server_request',
+      {
+        method: 'skills/list',
+        params: { cwds: [], forceReload: true },
+      }
+    )
   })
 
   test('does not leave the current view when a requested skill is unavailable', async () => {
@@ -1608,7 +1669,9 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'start sites chat' }))
 
-    expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('missing')
+    await waitFor(() =>
+      expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('missing')
+    )
     expect(screen.getByTestId('skill-chat-key')).toHaveTextContent('0')
     expect(window.location.pathname).toBe('/sites')
   })

@@ -195,22 +195,22 @@ git commit -m "feat(wework): add sites list and publishing"
 ### Task 3: Scoped Sites skill preselection for new chats
 
 **Files:**
-- Modify: `wework/src/features/workbench/useWorkbenchSkills.ts`
 - Modify: `wework/src/features/workbench/workbenchContextTypes.ts`
 - Modify: `wework/src/features/workbench/WorkbenchProvider.tsx`
 - Modify: `wework/src/features/workbench/WorkbenchProvider.test.tsx`
+- Create: `wework/src/lib/local-skill-reference.ts`
 
 - [ ] **Step 1: Write a failing Workbench provider test**
 
 Add a test harness action that calls:
 
 ```ts
-workbench.startNewChat({ fresh: true, selectedSkillNames: ['sites-building'] })
+await workbench.startNewSkillChat(['sites:sites-building'])
 ```
 
-With a loaded `sites-building` skill, assert the standalone chat key increments, the current
-route becomes `/`, and `projectChat.selectedSkills` contains the skill's actual name,
-namespace, and `is_public` values. Also assert the old blank scope retains its selection.
+With a loaded Sites skill, assert the standalone chat key increments and the current route
+becomes `/`. Cover both a unified `SkillRef` and a local app-server skill mention whose path
+points to `SKILL.md`. Also assert the old blank scope retains its selection.
 
 - [ ] **Step 2: Run the provider test and confirm RED**
 
@@ -229,14 +229,14 @@ const setSelectedSkillsForScope = useCallback((targetScopeKey: string, skills: S
 }, [locked])
 ```
 
-Add `StartNewChatOptions` with `fresh` and `selectedSkillNames`. Resolve requested skills from
-`skillSelection.skills`, compute the target blank scope before dispatch, set only that scope,
-then navigate and request composer focus. Return `false` without navigating when a requested
-skill is unavailable.
+Add `startNewSkillChat`. Resolve requested skills first from `skillSelection.skills`, then from
+a force-refreshed local Codex skill list. Compute the target blank scope before dispatch, set
+only that scope, then navigate and request composer focus. Return `false` without navigating
+when a requested skill is unavailable.
 
 - [ ] **Step 4: Add and pass the unavailable-skill test**
 
-Assert the chat key and location stay unchanged when `sites-building` is missing.
+Assert the chat key and location stay unchanged when `sites:sites-building` is missing.
 
 - [ ] **Step 5: Commit the scoped chat change**
 
@@ -282,14 +282,14 @@ Create `SitesPage` by following the existing `PluginsPage` shell pattern and ren
 - [ ] **Step 4: Write a failing Create action test**
 
 On the Sites page, click `sites-create-button` and assert the route changes to `/`, a fresh
-chat is active, and the `sites-building` skill is selected. When the skill is absent, assert
+chat is active, and the `sites:sites-building` skill is selected. When the skill is absent, assert
 the route remains `/sites` and an alert plus `sites-open-plugins-button` appears.
 
 - [ ] **Step 5: Implement Create and recovery behavior**
 
-Call `startNewChat({fresh:true, selectedSkillNames:['sites-building']})`. If it returns false,
-show an accessible inline error with a button navigating to `/plugins`. The standard composer
-renders the existing selected-skill chip; do not prefill or send text.
+Await `startNewSkillChat(['sites:sites-building'])`. If it returns false, show an accessible
+inline error with a button navigating to `/plugins`. The standard composer renders the Sites
+chip; do not prefill a prompt or send text.
 
 - [ ] **Step 6: Make route and sidebar tests GREEN and commit**
 
