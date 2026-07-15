@@ -116,7 +116,9 @@ export function DocumentDetailDialog({
   const editStartContentRef = useRef<string>('')
   // View mode: 'preview' for markdown rendering/formatted JSON, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
-  const [contentSourceMode, setContentSourceMode] = useState<'parsed' | 'source'>('parsed')
+  const [contentSourceMode, setContentSourceMode] = useState<'parsed' | 'source'>(() =>
+    document && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
+  )
   // Fullscreen mode for editing
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Chunk storage configuration - controls whether chunks section is visible
@@ -171,8 +173,8 @@ export function DocumentDetailDialog({
     setIsEditing(false)
     setEditedContent('')
     setIsFullscreen(false)
-    setContentSourceMode('parsed')
-  }, [document?.id, open])
+    setContentSourceMode(canPreviewSource ? 'source' : 'parsed')
+  }, [canPreviewSource, document?.id, open])
 
   // Build the full accessible URL using virtual path
   const documentFullUrl = document

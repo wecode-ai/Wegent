@@ -54,6 +54,10 @@ describe('source preview rules', () => {
     ).toBe(false)
   })
 
+  it('allows source files up to 100 MB', () => {
+    expect(KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES).toBe(100 * 1024 * 1024)
+  })
+
   it('only treats files above the configured limit as too large', () => {
     expect(isKnowledgeSourcePreviewTooLarge(KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES)).toBe(false)
     expect(isKnowledgeSourcePreviewTooLarge(KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES + 1)).toBe(true)

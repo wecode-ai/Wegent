@@ -200,7 +200,7 @@ describe('DocumentDetailDialog original file preview', () => {
     source_type: 'file',
   }
 
-  it('shows source preview only after the user selects the original file tab', async () => {
+  it('shows the original file by default and allows switching to parsed content', async () => {
     const user = userEvent.setup()
     render(
       <DocumentDetailDialog
@@ -214,11 +214,11 @@ describe('DocumentDetailDialog original file preview', () => {
     expect(screen.getByTestId('knowledge-document-source-tab')).toBeInTheDocument()
     expect(screen.getByTestId('knowledge-document-parsed-tab')).toHaveClass('max-md:min-h-[44px]')
     expect(screen.getByTestId('knowledge-document-source-tab')).toHaveClass('max-md:min-h-[44px]')
-    expect(screen.queryByTestId('mock-knowledge-source-preview')).not.toBeInTheDocument()
-
-    await user.click(screen.getByTestId('knowledge-document-source-tab'))
-
     expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
+
+    expect(screen.queryByTestId('mock-knowledge-source-preview')).not.toBeInTheDocument()
   })
 
   it('hides the source preview tab for non-file documents', () => {
@@ -245,7 +245,6 @@ describe('DocumentDetailDialog original file preview', () => {
       />
     )
 
-    await user.click(screen.getByTestId('knowledge-document-source-tab'))
     await user.click(screen.getByTestId('mock-source-fullscreen'))
 
     expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()

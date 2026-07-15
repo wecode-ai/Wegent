@@ -55,6 +55,7 @@ export function FlyfishOfficePreview({ blob, filename, onError }: FlyfishOfficeP
     [blob, filename]
   )
   const extension = filename.split('.').pop()?.toLowerCase()
+  const hasScrollablePages = ['doc', 'docx', 'ppt', 'pptx'].includes(extension ?? '')
 
   const handleStateChange = (state: ViewerState) => {
     if (!state.error || !onError) return
@@ -68,7 +69,7 @@ export function FlyfishOfficePreview({ blob, filename, onError }: FlyfishOfficeP
       filename={file.name}
       type={extension}
       size={file.size}
-      className="h-full w-full"
+      className={`h-full w-full${hasScrollablePages ? ' overflow-auto' : ''}`}
       options={OFFICE_VIEWER_OPTIONS}
       onStateChange={handleStateChange}
       data-testid="flyfish-office-file-viewer"

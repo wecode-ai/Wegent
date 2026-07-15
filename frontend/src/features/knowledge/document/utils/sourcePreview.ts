@@ -4,7 +4,7 @@
 
 import type { KnowledgeDocument } from '@/types/knowledge'
 
-export const KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES = 30 * 1024 * 1024
+export const KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES = 100 * 1024 * 1024
 
 const SUPPORTED_SOURCE_PREVIEW_EXTENSIONS = new Set([
   'pdf',

@@ -46,6 +46,7 @@ describe('FlyfishOfficePreview', () => {
     expect(file).toBeInstanceOf(File)
     expect(file.name).toBe('deck.pptx')
     expect(props.type).toBe('pptx')
+    expect(props.className).toContain('overflow-auto')
     expect(options.docx.workerUrl).toContain('/file-viewer/2.1.27-office-v2/')
     expect(options.spreadsheet.workerUrl).toContain('/file-viewer/2.1.27-office-v2/')
     expect(options.presentation.workerUrl).toContain('/file-viewer/2.1.27-office-v2/')
@@ -56,5 +57,27 @@ describe('FlyfishOfficePreview', () => {
 
     expect(isFilePreviewable(mimeType, 'deck.pptx')).toBe(true)
     expect(getPreviewType(mimeType, 'deck.pptx')).toBe('office')
+  })
+
+  it('adds the shared page scroll container to Word files', () => {
+    render(
+      <FlyfishOfficePreview
+        blob={new Blob(['document'], { type: 'application/octet-stream' })}
+        filename="report.docx"
+      />
+    )
+
+    expect(mockFileViewer.mock.calls[0][0].className).toContain('overflow-auto')
+  })
+
+  it('does not add the page scroll container to spreadsheets', () => {
+    render(
+      <FlyfishOfficePreview
+        blob={new Blob(['spreadsheet'], { type: 'application/octet-stream' })}
+        filename="report.xlsx"
+      />
+    )
+
+    expect(mockFileViewer.mock.calls[0][0].className).not.toContain('overflow-auto')
   })
 })
