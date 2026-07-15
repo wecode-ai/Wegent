@@ -748,7 +748,10 @@ fn claude_follow_up_resume_spec(
             skip_next = false;
             continue;
         }
-        if arg == "-p" || arg == "--print" || arg == "--resume" || arg == "--input-format" {
+        if arg == "-p" || arg == "--print" {
+            continue;
+        }
+        if arg == "--resume" || arg == "--input-format" {
             skip_next = true;
             continue;
         }
@@ -1521,6 +1524,38 @@ mod tests {
                 std::env::remove_var(self.key);
             }
         }
+    }
+
+    #[test]
+    fn claude_follow_up_resume_spec_removes_original_stream_json_input_args() {
+        let base_spec = CommandSpec::new("claude")
+            .arg("-p")
+            .arg("--input-format")
+            .arg("stream-json")
+            .arg("--output-format")
+            .arg("stream-json")
+            .arg("--verbose")
+            .stdin("original query\n");
+
+        let spec = claude_follow_up_resume_spec(
+            &base_spec,
+            "session-1",
+            ClaudeFollowUpQuery::Prompt("Retry to proceed".to_owned()),
+        );
+
+        assert_eq!(
+            spec.args(),
+            &[
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--resume",
+                "session-1",
+                "-p",
+                "Retry to proceed"
+            ]
+        );
+        assert!(spec.stdin_input().is_none());
     }
 
     #[test]

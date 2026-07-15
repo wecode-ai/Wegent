@@ -50,7 +50,7 @@ impl Drop for EnvGuard {
 }
 
 #[test]
-fn claude_command_uses_headless_stream_json_mode() {
+fn claude_command_sends_text_prompt_through_stream_json_stdin() {
     let request = ExecutionRequest {
         prompt: json!("implement feature"),
         model_config: json!({"model_id": "claude-sonnet-4-6"}),
@@ -64,7 +64,8 @@ fn claude_command_uses_headless_stream_json_mode() {
         spec.args(),
         &[
             "-p",
-            "implement feature",
+            "--input-format",
+            "stream-json",
             "--output-format",
             "stream-json",
             "--verbose",
@@ -73,6 +74,30 @@ fn claude_command_uses_headless_stream_json_mode() {
             "--model",
             "claude-sonnet-4-6"
         ]
+    );
+    assert_eq!(
+        spec.stdin_input().unwrap(),
+        "{\"message\":{\"content\":\"implement feature\",\"role\":\"user\"},\"parent_tool_use_id\":null,\"session_id\":\"\",\"type\":\"user\"}\n"
+    );
+}
+
+#[test]
+fn claude_command_sends_leading_hyphen_prompt_through_stream_json_stdin() {
+    let prompt = "--- 转发的消息 ---\n\n[用户]:\n测试";
+    let request = ExecutionRequest {
+        prompt: json!(prompt),
+        ..ExecutionRequest::default()
+    };
+
+    let spec = build_claude_command(&request, "claude");
+
+    assert!(!spec.args().iter().any(|arg| arg == prompt));
+    assert_eq!(spec.args()[0], "-p");
+    assert_eq!(spec.args()[1], "--input-format");
+    assert_eq!(spec.args()[2], "stream-json");
+    assert_eq!(
+        spec.stdin_input().unwrap(),
+        "{\"message\":{\"content\":\"--- 转发的消息 ---\\n\\n[用户]:\\n测试\",\"role\":\"user\"},\"parent_tool_use_id\":null,\"session_id\":\"\",\"type\":\"user\"}\n"
     );
 }
 
@@ -266,10 +291,15 @@ fn claude_command_appends_execution_system_prompt() {
         .position(|arg| arg == "--append-system-prompt")
         .expect("Claude system prompt append flag should be present");
     let appended_prompt = &spec.args()[append_flag_index + 1];
+    let query: serde_json::Value = serde_json::from_str(spec.stdin_input().unwrap().trim())
+        .expect("Claude stdin should contain a stream-json user message");
+    let prompt = query["message"]["content"]
+        .as_str()
+        .expect("Claude stdin user message should contain text");
 
     assert!(appended_prompt.contains("MANUAL_PIPELINE_STAGE_TWO_SYSTEM_PROMPT"));
     assert!(appended_prompt.contains("MANUAL_PIPELINE_STAGE_TWO_MEMBER_PROMPT"));
-    assert!(spec.args()[1].contains("MANUAL_PIPELINE_STAGE_ONE_OUTPUT_CTX_MANUAL_STAGE"));
+    assert!(prompt.contains("MANUAL_PIPELINE_STAGE_ONE_OUTPUT_CTX_MANUAL_STAGE"));
 }
 
 #[test]
@@ -820,7 +850,11 @@ fn claude_command_injects_kb_meta_prompt_for_chat_tasks() {
     };
 
     let spec = build_claude_command(&request, "claude");
-    let prompt = &spec.args()[1];
+    let query: serde_json::Value = serde_json::from_str(spec.stdin_input().unwrap().trim())
+        .expect("Claude stdin should contain a stream-json user message");
+    let prompt = query["message"]["content"]
+        .as_str()
+        .expect("Claude stdin user message should contain text");
 
     assert!(prompt.starts_with("<knowledge_base_guidance>\n"));
     assert!(prompt.contains("<knowledge_base_context>\n"));
