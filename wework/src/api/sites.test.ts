@@ -64,4 +64,16 @@ describe('createSitesApi', () => {
       headers: { 'Content-Type': 'application/json' },
     })
   })
+
+  test('deletes a site using its encoded unique site id', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 204 })
+
+    const api = createSitesApi('http://127.0.0.1:8765/')
+    await api.deleteSite('site/1')
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8765/api/v1/sites/site%2F1', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    })
+  })
 })

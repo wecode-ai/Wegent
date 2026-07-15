@@ -32,6 +32,7 @@ export interface ListSitesInput {
 export interface SitesApi {
   listSites(input: ListSitesInput): Promise<SiteListResponse>
   publishSite(siteid: string): Promise<Site>
+  deleteSite(siteid: string): Promise<void>
 }
 
 export function createSitesApi(baseUrl: string): SitesApi {
@@ -60,6 +61,9 @@ export function createSitesApi(baseUrl: string): SitesApi {
     },
     publishSite(siteid) {
       return client.post(`/api/v1/sites/${encodeURIComponent(siteid)}/publish`)
+    },
+    deleteSite(siteid) {
+      return client.delete<void>(`/api/v1/sites/${encodeURIComponent(siteid)}`)
     },
   }
 }
