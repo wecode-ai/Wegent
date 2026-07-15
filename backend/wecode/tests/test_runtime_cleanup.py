@@ -840,6 +840,7 @@ async def test_cleanup_stale_orphan_sandbox_deletes_and_archives():
             task_id=5000,
             pod_name="sandbox-5000-abc",
             inactive_hours=24,
+            sandbox_payload={"last_activity_at": 0},
         )
 
     assert result["deleted"] is True
@@ -868,6 +869,7 @@ async def test_cleanup_stale_orphan_sandbox_failed():
             task_id=5001,
             pod_name="sandbox-5001-xyz",
             inactive_hours=24,
+            sandbox_payload={"last_activity_at": 0},
         )
 
     assert result["deleted"] is False
@@ -897,6 +899,7 @@ async def test_cleanup_stale_orphan_sandbox_not_deleted():
             task_id=5002,
             pod_name="sandbox-5002-zzz",
             inactive_hours=24,
+            sandbox_payload={"last_activity_at": 0},
         )
 
     assert result["deleted"] is False
@@ -926,6 +929,7 @@ async def test_cleanup_stale_orphan_sandbox_redis_cleared_but_pod_alive():
             task_id=5003,
             pod_name="sandbox-5003-aaa",
             inactive_hours=24,
+            sandbox_payload={"last_activity_at": 0},
         )
 
     assert result["deleted"] is False
