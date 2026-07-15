@@ -62,13 +62,15 @@ export function isFilePreviewable(mimeType: string, filename: string): boolean {
   ) {
     return true
   }
-  // Office documents (excluding PPT)
+  // Office documents
   if (
     mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
     mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
     mimeType === 'application/msword' ||
     mimeType === 'application/vnd.ms-excel' ||
-    filename.match(/\.(xlsx|xls|csv|docx|doc)$/i)
+    mimeType === 'application/vnd.ms-powerpoint' ||
+    filename.match(/\.(xlsx|xls|csv|docx|doc|pptx|ppt)$/i)
   ) {
     return true
   }
@@ -105,7 +107,7 @@ export function getPreviewType(mimeType: string, filename: string): PreviewType 
   ) {
     return 'text'
   }
-  // Office documents (Word/Excel only, PPT excluded)
+  // Office documents
   return 'office'
 }
 

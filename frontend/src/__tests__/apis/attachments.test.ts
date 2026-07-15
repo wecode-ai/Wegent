@@ -2,7 +2,77 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { getErrorMessageFromCode } from '@/apis/attachments'
+import { fetchAttachmentFile, getErrorMessageFromCode } from '@/apis/attachments'
+
+describe('fetchAttachmentFile', () => {
+  const originalFetch = global.fetch
+
+  beforeEach(() => {
+    localStorage.setItem('auth_token', 'test-token')
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    localStorage.clear()
+    jest.clearAllMocks()
+  })
+
+  it('fetches a protected attachment as a named File', async () => {
+    const signal = new AbortController().signal
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': "attachment; filename*=UTF-8''%E6%8A%A5%E5%91%8A.pdf",
+      }),
+      blob: async () => new Blob(['pdf-data'], { type: 'application/pdf' }),
+    })
+    global.fetch = fetchMock as typeof fetch
+
+    const file = await fetchAttachmentFile(42, { signal })
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/attachments/42/download', {
+      method: 'GET',
+      headers: { Authorization: 'Bearer test-token' },
+      signal,
+    })
+    expect(file).toBeInstanceOf(File)
+    expect(file.name).toBe('报告.pdf')
+    expect(file.type).toBe('application/pdf')
+  })
+
+  it('uses the caller-provided filename and omits JWT for share access', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'Content-Type': 'application/octet-stream' }),
+      blob: async () => new Blob(['office-data']),
+    })
+    global.fetch = fetchMock as typeof fetch
+
+    const file = await fetchAttachmentFile(9, {
+      filename: 'source.docx',
+      shareToken: 'share-token',
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/attachments/9/download?share_token=share-token',
+      expect.objectContaining({ headers: {} })
+    )
+    expect(file.name).toBe('source.docx')
+  })
+
+  it('rejects failed attachment responses', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: new Headers(),
+    }) as typeof fetch
+
+    await expect(fetchAttachmentFile(404)).rejects.toThrow('Failed to fetch attachment (404)')
+  })
+})
 
 describe('getErrorMessageFromCode', () => {
   // Mock translation function

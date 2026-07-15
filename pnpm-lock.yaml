@@ -83,6 +83,12 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@19.2.7)
+      '@file-viewer/preset-office':
+        specifier: 2.1.26
+        version: 2.1.26
+      '@file-viewer/react':
+        specifier: 2.1.26
+        version: 2.1.26(react@19.2.7)
       '@headlessui/react':
         specifier: ^2.2.0
         version: 2.2.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -417,6 +423,9 @@ importers:
       eslint-config-next:
         specifier: 15.1.3
         version: 15.1.3(eslint@9.39.4(jiti@1.21.7))(typescript@5.9.3)
+      file-viewer-copy-assets:
+        specifier: 2.1.27
+        version: 2.1.27
       husky:
         specifier: ^9.1.7
         version: 9.1.7
@@ -5089,6 +5098,11 @@ packages:
   file-entry-cache@8.0.0:
     resolution: {integrity: sha512-XXTUwCvisa5oacNGRP9SfNtYBNAMi+RPwBFmblZEF7N7swHYQS6/Zfk7SRwx4D5j3CH211YNRco1DEMNVfZCnQ==}
     engines: {node: '>=16.0.0'}
+
+  file-viewer-copy-assets@2.1.27:
+    resolution: {integrity: sha512-kAOVm/eEfaZzi6w49A1oqGEFGZFJIlwN9iqJYISFB4DnJ9IsdC0KhFVu2+09IUj57fr7h4Br+mhoRK97QCZLkQ==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   fill-range@7.1.1:
     resolution: {integrity: sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==}
@@ -13350,6 +13364,8 @@ snapshots:
   file-entry-cache@8.0.0:
     dependencies:
       flat-cache: 4.0.1
+
+  file-viewer-copy-assets@2.1.27: {}
 
   fill-range@7.1.1:
     dependencies:

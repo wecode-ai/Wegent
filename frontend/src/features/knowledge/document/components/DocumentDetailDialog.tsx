@@ -39,10 +39,12 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
 import { ChunksSection } from './ChunksSection'
 import { DocumentSummarySection } from './DocumentSummarySection'
 import { DocumentContentViewer } from './DocumentContentViewer'
+import { KnowledgeSourcePreview } from './KnowledgeSourcePreview'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
@@ -58,6 +60,7 @@ import {
 import { formatDateTime } from '@/utils/dateTime'
 import { parseUTCDate } from '@/lib/utils'
 import { isDocumentEditable } from '../utils/documentUtils'
+import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
@@ -113,6 +116,7 @@ export function DocumentDetailDialog({
   const editStartContentRef = useRef<string>('')
   // View mode: 'preview' for markdown rendering/formatted JSON, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
+  const [contentSourceMode, setContentSourceMode] = useState<'parsed' | 'source'>('parsed')
   // Fullscreen mode for editing
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Chunk storage configuration - controls whether chunks section is visible
@@ -151,25 +155,22 @@ export function DocumentDetailDialog({
     () => isDocumentEditable(document?.source_type, document?.file_extension, canEdit),
     [document?.source_type, document?.file_extension, canEdit]
   )
+  const canPreviewSource = useMemo(
+    () => Boolean(document && isKnowledgeSourcePreviewSupported(document)),
+    [document]
+  )
+  const isSourceView = contentSourceMode === 'source' && canPreviewSource
 
   // Track if content has changed (compare against content at edit start)
   const hasChanges = editedContent !== (editStartContentRef.current || fullContent || '')
 
-  // Reset editing state when dialog closes or document changes
+  // Reset transient state when the dialog closes or switches documents.
   useEffect(() => {
-    if (!open) {
-      setIsEditing(false)
-      setEditedContent('')
-      setIsFullscreen(false)
-    }
-  }, [open])
-
-  // Reset fullscreen when exiting edit mode
-  useEffect(() => {
-    if (!isEditing) {
-      setIsFullscreen(false)
-    }
-  }, [isEditing])
+    setIsEditing(false)
+    setEditedContent('')
+    setIsFullscreen(false)
+    setContentSourceMode('parsed')
+  }, [document?.id, open])
 
   // Build the full accessible URL using virtual path
   const documentFullUrl = document
@@ -242,7 +243,7 @@ export function DocumentDetailDialog({
     // Store the content at edit start for accurate change detection
     editStartContentRef.current = contentToEdit
     setIsEditing(true)
-  }, [isEditable, hasMoreContent, loadAllContent, fullContent])
+  }, [document?.file_extension, isEditable, hasMoreContent, loadAllContent, fullContent])
 
   const handleSave = async () => {
     if (!document || !isEditable) return
@@ -252,6 +253,7 @@ export function DocumentDetailDialog({
       await knowledgeBaseApi.updateDocumentContent(document.id, editedContent)
       toast.success(t('document.document.detail.saveSuccess'))
       setIsEditing(false)
+      setIsFullscreen(false)
       // Refresh to get the updated content
       refresh()
     } catch (err) {
@@ -294,12 +296,14 @@ export function DocumentDetailDialog({
       setShowDiscardDialog(true)
     } else {
       setIsEditing(false)
+      setIsFullscreen(false)
     }
   }, [hasChanges])
 
   const handleDiscardChanges = () => {
     setShowDiscardDialog(false)
     setIsEditing(false)
+    setIsFullscreen(false)
     setEditedContent('')
     editStartContentRef.current = ''
   }
@@ -318,10 +322,12 @@ export function DocumentDetailDialog({
             'flex flex-col p-0',
             isFullscreen
               ? 'max-w-[100vw] w-[100vw] max-h-[100vh] h-[100vh] rounded-none'
-              : 'max-w-4xl max-h-[85vh]'
+              : isSourceView
+                ? 'max-w-6xl w-[96vw] max-h-[90vh] h-[90vh]'
+                : 'max-w-4xl max-h-[85vh]'
           )}
           hideCloseButton={isFullscreen}
-          preventEscapeClose={isEditing}
+          preventEscapeClose={isEditing || isFullscreen}
           preventOutsideClick={true}
         >
           {/* Header - hidden in fullscreen mode */}
@@ -351,15 +357,52 @@ export function DocumentDetailDialog({
             </DialogHeader>
           )}
 
+          {!isFullscreen && !isEditing && canPreviewSource && (
+            <Tabs
+              value={contentSourceMode}
+              onValueChange={value => {
+                setContentSourceMode(value as 'parsed' | 'source')
+                setIsFullscreen(false)
+              }}
+              className="flex-shrink-0 border-b border-border px-6 py-2"
+            >
+              <TabsList className="h-8">
+                <TabsTrigger
+                  value="parsed"
+                  className="h-7 px-3 text-xs"
+                  data-testid="knowledge-document-parsed-tab"
+                >
+                  {t('document.document.detail.parsedContent')}
+                </TabsTrigger>
+                <TabsTrigger
+                  value="source"
+                  className="h-7 px-3 text-xs"
+                  data-testid="knowledge-document-source-tab"
+                >
+                  {t('document.document.detail.sourceFile')}
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
+
           {/* Content */}
           <div
             className={cn(
-              'flex-1 px-6 py-4',
-              isEditing && isFullscreen ? 'flex flex-col overflow-hidden' : 'overflow-y-auto',
+              'flex-1 min-h-0 px-6 py-4',
+              isSourceView || (isEditing && isFullscreen)
+                ? 'flex flex-col overflow-hidden'
+                : 'overflow-y-auto',
               isEditing && !isFullscreen && 'flex flex-col'
             )}
           >
-            {loading ? (
+            {isSourceView ? (
+              <KnowledgeSourcePreview
+                document={document}
+                active={open && isSourceView}
+                isFullscreen={isFullscreen}
+                onFullscreenChange={setIsFullscreen}
+              />
+            ) : loading ? (
               <div className="flex items-center justify-center py-12">
                 <Spinner />
               </div>

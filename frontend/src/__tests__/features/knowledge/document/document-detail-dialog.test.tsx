@@ -4,6 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
 import type { KnowledgeDocument } from '@/types/knowledge'
 
@@ -77,6 +78,24 @@ jest.mock('@/features/knowledge/document/hooks/useDocumentDetail', () => ({
 
 jest.mock('@/features/knowledge/document/components/ChunksSection', () => ({
   ChunksSection: () => <div data-testid="chunks-section" />,
+}))
+
+jest.mock('@/features/knowledge/document/components/KnowledgeSourcePreview', () => ({
+  KnowledgeSourcePreview: ({
+    onFullscreenChange,
+  }: {
+    onFullscreenChange: (fullscreen: boolean) => void
+  }) => (
+    <div data-testid="mock-knowledge-source-preview">
+      <button
+        type="button"
+        data-testid="mock-source-fullscreen"
+        onClick={() => onFullscreenChange(true)}
+      >
+        fullscreen
+      </button>
+    </div>
+  ),
 }))
 
 jest.mock('@/components/ui/dialog', () => ({
@@ -167,6 +186,68 @@ describe('DocumentDetailDialog permissions', () => {
     )
 
     expect(screen.getByText('document.document.detail.edit')).toBeInTheDocument()
+  })
+})
+
+describe('DocumentDetailDialog original file preview', () => {
+  const officeDocument: KnowledgeDocument = {
+    ...baseDocument,
+    id: 22,
+    attachment_id: 32,
+    name: 'report.docx',
+    file_extension: 'docx',
+    file_size: 1024,
+    source_type: 'file',
+  }
+
+  it('shows source preview only after the user selects the original file tab', async () => {
+    const user = userEvent.setup()
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    expect(screen.getByTestId('knowledge-document-source-tab')).toBeInTheDocument()
+    expect(screen.queryByTestId('mock-knowledge-source-preview')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('knowledge-document-source-tab'))
+
+    expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
+  })
+
+  it('hides the source preview tab for non-file documents', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={baseDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    expect(screen.queryByTestId('knowledge-document-source-tab')).not.toBeInTheDocument()
+  })
+
+  it('enters source preview fullscreen without closing the dialog', async () => {
+    const user = userEvent.setup()
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    await user.click(screen.getByTestId('knowledge-document-source-tab'))
+    await user.click(screen.getByTestId('mock-source-fullscreen'))
+
+    expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-document-source-tab')).not.toBeInTheDocument()
   })
 })
 

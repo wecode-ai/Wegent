@@ -397,6 +397,8 @@
         "topics": "主题标签",
         "metaInfo": "元信息",
         "content": "文档内容",
+        "parsedContent": "解析内容",
+        "sourceFile": "原始文件",
         "truncated": "内容已截断",
         "copy": "复制",
         "copied": "已复制",
@@ -429,7 +431,16 @@
         "splitterType": "分段类型",
         "splitterSubtype": "分段子类型",
         "qaPairsDetected": "已识别 {{count}} 个问答对",
-        "contentUpdatedAt": "变更时间"
+        "contentUpdatedAt": "变更时间",
+        "sourcePreview": {
+          "loading": "正在加载原始文件...",
+          "download": "下载原文件",
+          "downloadFailed": "原文件下载失败",
+          "tooLargeTitle": "文件过大，暂不支持在线预览",
+          "tooLargeDescription": "文件大小为 {{size}}，超过当前在线预览上限 {{limit}}，请下载后查看。",
+          "failedTitle": "原始文件预览失败",
+          "failedDescription": "文件可能已损坏、加密或包含暂不支持的 Office 特性，可重试或下载后查看。"
+        }
       },
       "downloadFailed": "下载文件失败",
       "fetchFailed": "获取文档失败",

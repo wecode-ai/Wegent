@@ -550,6 +550,66 @@ export function getAttachmentDownloadUrl(attachmentId: number, shareToken?: stri
   return baseUrl
 }
 
+interface FetchAttachmentFileOptions {
+  filename?: string
+  shareToken?: string
+  signal?: AbortSignal
+}
+
+function getAttachmentFilename(
+  response: Response,
+  attachmentId: number,
+  providedFilename?: string
+): string {
+  if (providedFilename) return providedFilename
+
+  const contentDisposition = response.headers.get('Content-Disposition')
+  if (contentDisposition) {
+    const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+    if (rfc5987Match?.[1]) {
+      try {
+        return decodeURIComponent(rfc5987Match[1])
+      } catch {
+        return rfc5987Match[1]
+      }
+    }
+
+    const standardMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/i)
+    if (standardMatch?.[1]) {
+      return standardMatch[1].replace(/['"]/g, '')
+    }
+  }
+
+  return `attachment-${attachmentId}.file`
+}
+
+/**
+ * Fetch an attachment as a named File without triggering a browser download.
+ */
+export async function fetchAttachmentFile(
+  attachmentId: number,
+  options: FetchAttachmentFileOptions = {}
+): Promise<File> {
+  const token = getToken()
+  const response = await fetch(getAttachmentDownloadUrl(attachmentId, options.shareToken), {
+    method: 'GET',
+    headers: {
+      ...(!options.shareToken && token && { Authorization: `Bearer ${token}` }),
+    },
+    signal: options.signal,
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch attachment (${response.status})`)
+  }
+
+  const filename = getAttachmentFilename(response, attachmentId, options.filename)
+  const blob = await response.blob()
+  return new File([blob], filename, {
+    type: blob.type || response.headers.get('Content-Type') || 'application/octet-stream',
+  })
+}
+
 /**
  * Download attachment file
  *
@@ -562,58 +622,11 @@ export async function downloadAttachment(
   filename?: string,
   shareToken?: string
 ): Promise<void> {
-  const token = getToken()
-  const downloadUrl = getAttachmentDownloadUrl(attachmentId, shareToken)
-
-  const response = await fetch(downloadUrl, {
-    method: 'GET',
-    headers: {
-      // Only include Authorization header if we have a token and no shareToken
-      // shareToken-based access doesn't require JWT authentication
-      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error('Failed to download attachment')
-  }
-
-  // Extract filename from Content-Disposition header if not provided
-  let downloadFilename = filename
-  if (!downloadFilename) {
-    const contentDisposition = response.headers.get('Content-Disposition')
-    if (contentDisposition) {
-      // Parse filename from Content-Disposition header
-      // Format: attachment; filename="example.pdf" or attachment; filename*=UTF-8''example.pdf
-      // Try RFC 5987 format first (filename*=UTF-8''encoded_filename)
-      const rfc5987Match = contentDisposition.match(/filename\*=UTF-8''(.+)/)
-      if (rfc5987Match && rfc5987Match[1]) {
-        downloadFilename = rfc5987Match[1]
-        // Decode URI component if it's encoded
-        try {
-          downloadFilename = decodeURIComponent(downloadFilename)
-        } catch {
-          // Keep original if decode fails
-        }
-      } else {
-        // Fallback to standard format (filename="example.pdf")
-        const standardMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/)
-        if (standardMatch && standardMatch[1]) {
-          downloadFilename = standardMatch[1].replace(/['"]/g, '')
-        }
-      }
-    }
-    // Fallback filename if extraction fails
-    if (!downloadFilename) {
-      downloadFilename = `attachment-${attachmentId}.file`
-    }
-  }
-
-  const blob = await response.blob()
-  const url = URL.createObjectURL(blob)
+  const file = await fetchAttachmentFile(attachmentId, { filename, shareToken })
+  const url = URL.createObjectURL(file)
   const a = document.createElement('a')
   a.href = url
-  a.download = downloadFilename
+  a.download = file.name
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
