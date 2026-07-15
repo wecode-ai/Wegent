@@ -253,7 +253,7 @@ fi
 install_wegent_sccache_with_homebrew
 configure_wegent_cargo_target_dir "$PROJECT_DIR" "wework-src-tauri"
 
-TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
+TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.json.XXXXXX)"
 trap 'rm -f "$TAURI_DEV_CONFIG"' EXIT
 
 WEWORK_PORT_VALUE="$WEWORK_PORT" \
