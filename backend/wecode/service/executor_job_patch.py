@@ -129,77 +129,62 @@ async def _cleanup_stale_orphan_sandbox(
 
     When sandbox_payload is provided, validates last_activity_at against
     inactive_hours before proceeding, mirroring _cleanup_stale_sandbox_for_task.
-    Routes to executor_manager's sandbox cleanup-by-task endpoint which
-    archives the sandbox workspace (best-effort) before terminating it.
-    Archiving succeeds when the sandbox metadata still exists; the pod is
-    deleted regardless.
     """
+    result: Dict[str, Any] = {
+        "task_id": task_id,
+        "pod_name": pod_name,
+        "deleted": False,
+        "skipped": True,
+    }
+
     if sandbox_payload is not None:
         try:
             last_activity_at = float(sandbox_payload["last_activity_at"])
         except (KeyError, TypeError, ValueError):
             logger.warning(
-                f"+++ [executor_job] Invalid sandbox_payload task_id={task_id}, proceeding without staleness gate"
+                f"+++ [executor_job] Invalid sandbox_payload task_id={task_id}"
             )
-        else:
-            eligible_after = last_activity_at + inactive_hours * 3600
-            if datetime.now(timezone.utc).timestamp() < eligible_after:
-                logger.info(
-                    f"+++ [executor_job] Orphan sandbox not yet stale task_id={task_id} pod_name={pod_name} last_activity_at={last_activity_at} eligible_after={eligible_after}"
-                )
-                return {
-                    "task_id": task_id,
-                    "pod_name": pod_name,
-                    "deleted": False,
-                    "skipped": True,
-                    "reason": "not_stale",
-                }
+            return {**result, "reason": "invalid_sandbox_payload"}
+
+        eligible_after = last_activity_at + inactive_hours * 3600
+        if datetime.now(timezone.utc).timestamp() < eligible_after:
+            logger.info(
+                f"+++ [executor_job] Orphan sandbox not yet stale task_id={task_id} pod_name={pod_name} last_activity_at={last_activity_at} eligible_after={eligible_after}"
+            )
+            return {**result, "reason": "not_stale"}
 
     ek_service = _executor_job_mod.executor_kinds_service
     try:
-        result = await ek_service.cleanup_sandbox_by_task_id_async(
+        cleanup_result = await ek_service.cleanup_sandbox_by_task_id_async(
             task_id, archive_before_delete=True
         )
     except Exception as exc:
         logger.warning(
             f"+++ [executor_job] Failed to clean up orphan sandbox task_id={task_id} pod_name={pod_name} error={exc}"
         )
-        return {
-            "task_id": task_id,
-            "pod_name": pod_name,
-            "deleted": False,
-            "skipped": False,
-            "reason": "sandbox_cleanup_failed",
-        }
+        return {**result, "skipped": False, "reason": "sandbox_cleanup_failed"}
 
-    deleted = bool(result.get("deleted"))
-    redis_cleared = bool(result.get("redis_cleared"))
-    archived = result.get("archived", False)
-    reason = result.get("reason", "")
+    deleted = bool(cleanup_result.get("deleted"))
+    redis_cleared = bool(cleanup_result.get("redis_cleared"))
+    archived = cleanup_result.get("archived", False)
+    reason = cleanup_result.get("reason", "")
 
     logger.info(
         f"+++ [executor_job] Orphan sandbox cleanup task_id={task_id} pod_name={pod_name} archived={archived} deleted={deleted} redis_cleared={redis_cleared} reason={reason}"
     )
 
     if deleted:
-        skipped = False
+        result["deleted"] = True
+        result["skipped"] = False
+        result["reason"] = reason or "sandbox_deleted"
     elif redis_cleared:
-        # redis_cleared without pod deletion means the pod is still running —
-        # treat as failed so it will be retried in the next cleanup cycle
-        skipped = False
-        reason = "pod_delete_failed_metadata_cleared"
+        result["skipped"] = False
+        result["reason"] = "pod_delete_failed_metadata_cleared"
     else:
-        skipped = True
-        reason = reason or "sandbox_cleanup_skipped"
+        result["reason"] = reason or "sandbox_cleanup_skipped"
 
-    return {
-        "task_id": task_id,
-        "pod_name": pod_name,
-        "deleted": deleted,
-        "skipped": skipped,
-        "reason": reason,
-        "archived": archived,
-    }
+    result["archived"] = archived
+    return result
 
 
 async def cleanup_orphan_pods(
