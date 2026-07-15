@@ -9,8 +9,7 @@ Provides internal API for chat_shell's RemoteStore to access chat history.
 These endpoints are intended for service-to-service communication, not user access.
 
 Authentication:
-- Uses Internal Service Token (X-Service-Name header)
-- In production, should be protected by network-level security
+- Uses Internal Service Token in the Authorization header
 """
 
 import json
@@ -33,6 +32,7 @@ from app.models.subtask_context import (
     SubtaskContext,
 )
 from app.models.user import User
+from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.chat.guidance_queue import guidance_queue
 from app.services.chat.webpage_ws_chat_emitter import get_webpage_ws_emitter
 from app.services.task_fork_history import task_fork_history_resolver
@@ -42,7 +42,11 @@ from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["internal-chat"])
+router = APIRouter(
+    prefix="/chat",
+    tags=["internal-chat"],
+    dependencies=[Depends(verify_internal_service_token)],
+)
 
 # Knowledge base injection mode constant for kb_head (not in enum as it's tool-specific)
 INJECTION_MODE_KB_HEAD = "kb_head"
