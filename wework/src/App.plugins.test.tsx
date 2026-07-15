@@ -679,6 +679,99 @@ describe('App plugins route', () => {
     expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
   })
 
+  test('shows Sites as unavailable instead of calling a relative API in disconnected local mode', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      runtimeMode: 'local-first',
+    }
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('Internal server error'),
+    } as Response)
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
+      '站点功能尚未推出'
+    )
+    expect(fetch).not.toHaveBeenCalled()
+    expect(screen.queryByText('Internal server error')).not.toBeInTheDocument()
+  })
+
+  test('loads Sites from the authenticated cloud Backend in local mode', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      configurable: true,
+      value: {},
+    })
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      runtimeMode: 'local-first',
+    }
+    localStorage.setItem(
+      'wework.cloudConnection',
+      JSON.stringify({
+        backendUrl: 'http://127.0.0.1:9100',
+        apiBaseUrl: 'http://127.0.0.1:9100/api',
+        socketBaseUrl: 'http://127.0.0.1:9100',
+        socketPath: '/socket.io',
+        token: 'cloud-secret',
+        tokenExpiresAt: null,
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-07-15T00:00:00.000Z',
+      })
+    )
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.endsWith('/users/me')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ id: 7, user_name: 'alice', email: 'alice@example.com' }),
+        } as Response
+      }
+      if (url.includes('/v1/sites?')) {
+        return {
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              items: [
+                {
+                  siteid: 'site-cloud-1',
+                  name: '云端站点',
+                  internal_url: 'http://sites.internal/cloud',
+                  external_url: null,
+                  publish_status: 'unpublished',
+                  thumbnail_url: null,
+                },
+              ],
+              total: 1,
+              offset: 0,
+              limit: 20,
+            }),
+        } as Response
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    expect(await screen.findByText('云端站点')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:9100/api/v1/sites?offset=0&limit=20',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
+      })
+    )
+  })
+
   test('renders Sites and starts a chat with the installed Codex Sites plugin', async () => {
     localStorage.setItem('auth_token', 'wegent-secret')
     vi.mocked(fetch).mockResolvedValue({

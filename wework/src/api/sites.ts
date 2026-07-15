@@ -37,9 +37,16 @@ export interface SitesApi {
   deleteSite(siteid: string): Promise<void>
 }
 
-export function createSitesApi(baseUrl: string): SitesApi {
+interface SitesApiOptions {
+  getToken?: () => string | null
+  redirectOnUnauthorized?: boolean
+}
+
+export function createSitesApi(baseUrl: string, options: SitesApiOptions = {}): SitesApi {
   const client = createHttpClient({
     baseUrl: baseUrl.replace(/\/+$/, ''),
+    getToken: options.getToken,
+    redirectOnUnauthorized: options.redirectOnUnauthorized,
   })
 
   return {
@@ -60,6 +67,17 @@ export function createSitesApi(baseUrl: string): SitesApi {
     deleteSite(siteid) {
       return client.delete<void>(`/v1/sites/${encodeURIComponent(siteid)}`)
     },
+  }
+}
+
+export function createUnavailableSitesApi(): SitesApi {
+  const unavailable = () =>
+    Promise.reject(new ApiError('Sites is not available yet', 503, 'sites_not_available'))
+
+  return {
+    listSites: unavailable,
+    publishSite: unavailable,
+    deleteSite: unavailable,
   }
 }
 

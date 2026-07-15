@@ -37,6 +37,27 @@ describe('createSitesApi', () => {
     )
   })
 
+  test('uses the authenticated cloud connection token instead of the local auth token', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ items: [], total: 0, offset: 0, limit: 20 }),
+    })
+
+    const api = createSitesApi('http://127.0.0.1:9100/api', {
+      getToken: () => 'cloud-secret',
+      redirectOnUnauthorized: false,
+    })
+    await api.listSites({ offset: 0, limit: 20 })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:9100/api/v1/sites?offset=0&limit=20',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer cloud-secret' }),
+      })
+    )
+  })
+
   test('publishes a site using its encoded unique site id', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

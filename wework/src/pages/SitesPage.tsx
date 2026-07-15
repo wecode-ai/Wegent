@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Menu } from 'lucide-react'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
-import { createSitesApi } from '@/api/sites'
+import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
@@ -12,6 +12,7 @@ import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { SitesWorkspace } from '@/components/sites/SitesWorkspace'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useAuth } from '@/features/auth/useAuth'
+import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -19,6 +20,7 @@ import { queuePluginReferenceTrial, queuePluginTrial } from '@/features/plugins/
 import { localPathExists } from '@/lib/local-terminal'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { InstalledPlugin, LocalDeviceSkill, RuntimeTaskAddress } from '@/types/api'
 
 const CODEX_SITES_PLUGIN_NAME = 'sites'
@@ -78,6 +80,7 @@ export function SitesPage() {
   const { t } = useTranslation('sites')
   const { t: commonT } = useTranslation('common')
   const { logout } = useAuth()
+  const cloudConnection = useCloudConnection()
   const isMobile = useIsMobile()
   const isTauri = isTauriRuntime()
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -120,7 +123,25 @@ export function SitesPage() {
   } = useWorkbench()
 
   const apiBaseUrl = getRuntimeConfig().apiBaseUrl
-  const sitesApi = useMemo(() => createSitesApi(apiBaseUrl), [apiBaseUrl])
+  const isLocalFirst = isLocalFirstAppRuntime()
+  const sitesApi = useMemo(() => {
+    if (!isLocalFirst) return createSitesApi(apiBaseUrl)
+    if (!cloudConnection.isConnected || !cloudConnection.apiBaseUrl || !cloudConnection.token) {
+      return createUnavailableSitesApi()
+    }
+
+    const token = cloudConnection.token
+    return createSitesApi(cloudConnection.apiBaseUrl, {
+      getToken: () => token,
+      redirectOnUnauthorized: false,
+    })
+  }, [
+    apiBaseUrl,
+    cloudConnection.apiBaseUrl,
+    cloudConnection.isConnected,
+    cloudConnection.token,
+    isLocalFirst,
+  ])
   const localCodexPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
 
   const handleSelectProject = (projectId: number) => {
