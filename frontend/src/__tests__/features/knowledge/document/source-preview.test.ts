@@ -54,6 +54,16 @@ describe('source preview rules', () => {
     ).toBe(false)
   })
 
+  it.each([null, undefined])('rejects a missing extension (%s)', fileExtension => {
+    expect(
+      isKnowledgeSourcePreviewSupported({
+        source_type: 'file',
+        attachment_id: 10,
+        file_extension: fileExtension as unknown as string,
+      })
+    ).toBe(false)
+  })
+
   it('allows source files up to 100 MB', () => {
     expect(KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES).toBe(100 * 1024 * 1024)
   })

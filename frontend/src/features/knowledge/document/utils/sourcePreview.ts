@@ -27,7 +27,7 @@ export function isKnowledgeSourcePreviewSupported(
     document.source_type === 'file' &&
     Boolean(document.attachment_id) &&
     SUPPORTED_SOURCE_PREVIEW_EXTENSIONS.has(
-      normalizeSourcePreviewExtension(document.file_extension)
+      normalizeSourcePreviewExtension(document.file_extension ?? '')
     )
   )
 }
