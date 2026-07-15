@@ -525,6 +525,7 @@ export interface RuntimeTranscriptResponse {
   taskId?: string
   workspacePath: string
   runtime: RuntimeName
+  running?: boolean
   title?: string | null
   messages: NormalizedRuntimeMessage[]
   contextUsage?: RuntimeContextUsage | null

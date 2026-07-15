@@ -297,7 +297,12 @@ function mergeRuntimeTasks(
   const merged = currentTasks
     .map(task => {
       const nextTask = nextById.get(task.taskId)
-      if (nextTask) return nextTask
+      if (nextTask) {
+        if (task.running && !nextTask.running && !isTerminalRuntimeTaskStatus(nextTask.status)) {
+          return { ...nextTask, running: true }
+        }
+        return nextTask
+      }
       if (
         isFreshOptimisticRuntimeTask(task) &&
         !resolvedTaskKeys.has(runtimeTaskKey(deviceId, task)) &&
@@ -315,6 +320,21 @@ function mergeRuntimeTasks(
     }
   })
   return merged
+}
+
+function isTerminalRuntimeTaskStatus(status: string | null | undefined): boolean {
+  const normalized = status?.replaceAll(/[_-]/g, '').toLowerCase()
+  return (
+    normalized === 'done' ||
+    normalized === 'complete' ||
+    normalized === 'completed' ||
+    normalized === 'failed' ||
+    normalized === 'error' ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled' ||
+    normalized === 'archived' ||
+    normalized === 'deleted'
+  )
 }
 
 function isOptimisticRuntimeTask(task: RuntimeTaskSummary): boolean {
