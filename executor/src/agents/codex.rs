@@ -21,7 +21,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::{broadcast, mpsc, oneshot, Mutex},
-    time::timeout,
+    time::{timeout, timeout_at, Instant},
 };
 
 use crate::{
@@ -42,6 +42,7 @@ use crate::{
 use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
+const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
@@ -268,6 +269,26 @@ impl CodexAppServerClient {
 
     pub async fn restart(&self) {
         self.state.lock().await.process = None;
+    }
+
+    async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
+        let process = {
+            let mut state = self.state.lock().await;
+            if state.active_threads.len() != 1 || !state.active_threads.contains(thread_id) {
+                return false;
+            }
+            state.process.take()
+        };
+        let Some(process) = process else {
+            return false;
+        };
+        fail_all_pending(
+            &process.pending,
+            "codex app-server was restarted after a stalled turn".to_owned(),
+        )
+        .await;
+        drop(process);
+        true
     }
 
     pub async fn steer_turn(
@@ -933,16 +954,26 @@ async fn run_codex_app_server_turn_on_shared_client(
         }
         log_executor_event("codex shared turn request started", &turn_fields);
         client.mark_thread_active(&thread_id).await;
-        let turn = match client
-            .request(
+        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
+        let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
+        let turn = match timeout_at(
+            startup_deadline,
+            client.request(
                 "turn/start",
                 turn_start_params(&thread_id, request, &launch_config, turn_input),
-            )
-            .await
+            ),
+        )
+        .await
         {
-            Ok(turn) => turn,
-            Err(error) => {
-                return Err(error);
+            Ok(Ok(turn)) => turn,
+            Ok(Err(error)) => return Err(error),
+            Err(_) => {
+                return Err(recover_stalled_shared_turn(
+                    client,
+                    &thread_id,
+                    startup_timeout_seconds,
+                )
+                .await);
             }
         };
         let active_turn_id = turn_start_response_turn_id(&turn);
@@ -956,6 +987,8 @@ async fn run_codex_app_server_turn_on_shared_client(
             &mut notification_rx,
             &thread_id,
             &mut state,
+            startup_timeout_seconds,
+            startup_deadline,
             SharedTurnNotificationOptions {
                 active_turn_id,
                 notifications,
@@ -1252,33 +1285,55 @@ async fn read_shared_turn_notifications(
     notification_rx: &mut broadcast::Receiver<Value>,
     thread_id: &str,
     state: &mut CodexRunState,
+    startup_timeout_seconds: u64,
+    startup_deadline: Instant,
     mut options: SharedTurnNotificationOptions,
 ) -> Result<ExecutionOutcome, String> {
     let mut last_outcome: Option<ExecutionOutcome> = None;
+    let mut waiting_for_initial_progress = true;
     loop {
-        let notification = if let Some(cancel_rx) = options.cancellation.as_mut() {
-            tokio::select! {
-                _ = cancel_rx => {
-                    options.cancellation = None;
-                    if let Some(turn_id) = options.active_turn_id.as_deref() {
-                        if let Err(error) = interrupt_shared_turn(client, thread_id, turn_id).await {
-                            log_executor_event(
-                                "codex shared turn interrupt failed",
-                                &[
-                                    ("thread_id", thread_id.to_owned()),
-                                    ("turn_id", turn_id.to_owned()),
-                                    ("error", error),
-                                ],
-                            );
-                        }
-                    }
-                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+        let receive_notification = async {
+            if let Some(cancel_rx) = options.cancellation.as_mut() {
+                tokio::select! {
+                    _ = cancel_rx => None,
+                    message = notification_rx.recv() => Some(message),
                 }
-                message = notification_rx.recv() => shared_notification_result(message, last_outcome.clone())?,
+            } else {
+                Some(notification_rx.recv().await)
+            }
+        };
+        let received = if waiting_for_initial_progress {
+            match timeout_at(startup_deadline, receive_notification).await {
+                Ok(received) => received,
+                Err(_) => {
+                    return Err(recover_stalled_shared_turn(
+                        client,
+                        thread_id,
+                        startup_timeout_seconds,
+                    )
+                    .await);
+                }
             }
         } else {
-            shared_notification_result(notification_rx.recv().await, last_outcome.clone())?
+            receive_notification.await
         };
+        let Some(received) = received else {
+            options.cancellation = None;
+            if let Some(turn_id) = options.active_turn_id.as_deref() {
+                if let Err(error) = interrupt_shared_turn(client, thread_id, turn_id).await {
+                    log_executor_event(
+                        "codex shared turn interrupt failed",
+                        &[
+                            ("thread_id", thread_id.to_owned()),
+                            ("turn_id", turn_id.to_owned()),
+                            ("error", error),
+                        ],
+                    );
+                }
+            }
+            return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
+        };
+        let notification = shared_notification_result(received, last_outcome.clone())?;
         let message = match notification {
             SharedNotification::Message(message) => message,
             SharedNotification::Completed(outcome) => return Ok(outcome),
@@ -1297,6 +1352,10 @@ async fn read_shared_turn_notifications(
 
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
+        }
+        if waiting_for_initial_progress && codex_notification_has_initial_progress(&message, state)
+        {
+            waiting_for_initial_progress = false;
         }
         log_codex_raw_turn_message(&message);
 
@@ -1342,6 +1401,56 @@ async fn read_shared_turn_notifications(
             state.reset_turn_output();
         }
     }
+}
+
+async fn recover_stalled_shared_turn(
+    client: &CodexAppServerClient,
+    thread_id: &str,
+    timeout_seconds: u64,
+) -> String {
+    let restarted = client.restart_stalled_turn_process(thread_id).await;
+    log_executor_event(
+        "codex shared turn startup stalled",
+        &[
+            ("thread_id", thread_id.to_owned()),
+            ("timeout_seconds", timeout_seconds.to_string()),
+            ("app_server_restarted", restarted.to_string()),
+        ],
+    );
+    if restarted {
+        format!(
+            "codex app-server turn made no model or tool progress for {timeout_seconds}s; the shared app-server was restarted"
+        )
+    } else {
+        format!(
+            "codex app-server turn made no model or tool progress for {timeout_seconds}s; restart was skipped to preserve other active turns"
+        )
+    }
+}
+
+fn codex_notification_has_initial_progress(message: &Value, state: &CodexRunState) -> bool {
+    let params = message_params(message);
+    if state.is_subagent_message(params) {
+        return false;
+    }
+    let Some(method) = message.get("method").and_then(Value::as_str) else {
+        return false;
+    };
+    if method == "turn/completed" {
+        return true;
+    }
+    if !method.starts_with("item/") {
+        return false;
+    }
+
+    let item = params.get("item").unwrap_or(params);
+    let item_type = item
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .replace('_', "")
+        .to_ascii_lowercase();
+    !matches!(item_type.as_str(), "user" | "usermessage")
 }
 
 enum SharedNotification {
@@ -1738,6 +1847,14 @@ fn codex_rpc_timeout_seconds() -> u64 {
         .unwrap_or(DEFAULT_CODEX_RPC_TIMEOUT_SECONDS)
 }
 
+fn codex_turn_startup_timeout_seconds() -> u64 {
+    env::var("WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS)
+}
+
 struct JsonRpcConnection {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
@@ -1822,13 +1939,32 @@ impl JsonRpcConnection {
         mut request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     ) -> Result<ExecutionOutcome, String> {
         let mut saw_turn_response = false;
+        let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
+        let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
+        let mut waiting_for_initial_progress = true;
         loop {
-            let message = self.read_message().await?;
+            let message = if waiting_for_initial_progress {
+                match timeout_at(startup_deadline, self.read_message()).await {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        return Err(format!(
+                            "codex app-server turn made no model or tool progress for {startup_timeout_seconds}s"
+                        ));
+                    }
+                }
+            } else {
+                self.read_message().await?
+            };
             log_codex_raw_turn_message(&message);
             if response_id(&message) == Some(turn_request_id) {
                 response_result(message)?;
                 saw_turn_response = true;
                 continue;
+            }
+            if waiting_for_initial_progress
+                && codex_notification_has_initial_progress(&message, state)
+            {
+                waiting_for_initial_progress = false;
             }
             if let Some(sender) = &notifications {
                 let _ = sender.send(message.clone());
@@ -2019,6 +2155,9 @@ impl CodexRunState {
             Some("error") => {
                 let params = message_params(message);
                 log_codex_run_state_error(params);
+                if codex_error_will_retry(params) {
+                    return None;
+                }
                 Some(ExecutionOutcome::Failed {
                     message: codex_error_message(params),
                 })
@@ -2164,6 +2303,14 @@ impl CodexRunState {
             },
         }
     }
+}
+
+fn codex_error_will_retry(params: &Value) -> bool {
+    params
+        .get("willRetry")
+        .or_else(|| params.get("will_retry"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn is_root_codex_turn_event(params: &Value) -> bool {
@@ -5095,6 +5242,56 @@ mod tests {
             }
         });
         assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
+    }
+
+    #[test]
+    fn initial_progress_excludes_user_echo_retry_errors_and_subagents() {
+        let mut state = CodexRunState::default();
+        state.set_root_thread_id("thread-root");
+
+        let user_echo = json!({
+            "method": "item/completed",
+            "params": {
+                "threadId": "thread-root",
+                "item": { "type": "userMessage", "text": "hello" }
+            }
+        });
+        assert!(!codex_notification_has_initial_progress(&user_echo, &state));
+
+        let retryable_error = json!({
+            "method": "error",
+            "params": {
+                "threadId": "thread-root",
+                "message": "Reconnecting... 1/5",
+                "willRetry": true
+            }
+        });
+        assert!(!codex_notification_has_initial_progress(
+            &retryable_error,
+            &state
+        ));
+
+        let subagent_tool = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-root",
+                "agentPath": "/root/worker",
+                "item": { "type": "commandExecution" }
+            }
+        });
+        assert!(!codex_notification_has_initial_progress(
+            &subagent_tool,
+            &state
+        ));
+
+        let root_tool = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-root",
+                "item": { "type": "commandExecution" }
+            }
+        });
+        assert!(codex_notification_has_initial_progress(&root_tool, &state));
     }
 
     #[test]

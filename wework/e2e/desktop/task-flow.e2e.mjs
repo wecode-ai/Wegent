@@ -31,6 +31,9 @@ const MODEL_ID = 'gpt-5.4'
 const MODEL_LABEL = 'GPT 5.4'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
+const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
+const ACTIVE_COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
+const ACTIVE_SEND_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..', '..')
@@ -134,7 +137,7 @@ async function appendProcessOutput(stream, destination) {
 
 async function sendPrompt(control, selector, prompt) {
   await control.command('fill', selector, { value: prompt })
-  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: UI_TIMEOUT_MS,
   })
@@ -624,11 +627,13 @@ class DesktopE2EServer {
         ])
         return
       }
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(RETRY_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      setTimeout(() => {
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(RETRY_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+      }, 500)
       return
     }
 
@@ -860,7 +865,7 @@ async function main() {
     await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
     await control.command('click', '[data-testid="confirm-device-folder-picker-button"]')
 
-    const composerSelector = '[data-testid="chat-message-input"][contenteditable="true"]'
+    const composerSelector = ACTIVE_COMPOSER_SELECTOR
     await control.command('waitFor', composerSelector, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
@@ -1023,17 +1028,36 @@ async function main() {
     phase = 'retry'
     control.setScenario('retry')
     await sendPromptUntilScenarioRequest(control, composerSelector, RETRY_PROMPT, 'retry')
-    await control.command('waitFor', '[data-testid="assistant-error-card"]', {
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('clickWhenEnabled', '[data-testid="assistant-error-retry"]', {
-      stableMs: COMPOSER_READY_STABILITY_MS,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
-    await control.command('waitFor', '[data-testid="message-assistant"]', {
-      text: RETRY_COMPLETION_TEXT,
-      timeoutMs: UI_TIMEOUT_MS,
-    })
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-card"]`,
+      {
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command(
+      'clickWhenEnabled',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-retry"]`,
+      {
+        stableMs: COMPOSER_READY_STABILITY_MS,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant-waiting"]`,
+      {
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
+    await control.command(
+      'waitFor',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+      {
+        text: RETRY_COMPLETION_TEXT,
+        timeoutMs: UI_TIMEOUT_MS,
+      }
+    )
     assert.equal(
       control.scenarioRequests.get('retry')?.length,
       2,
