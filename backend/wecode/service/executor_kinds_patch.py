@@ -175,7 +175,13 @@ async def cleanup_sandbox_by_task_id_async(
                 headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
-            return _validate_delete_response(response.json(), "sandbox-cleanup-by-task")
+            result = _validate_delete_response(
+                response.json(), "sandbox-cleanup-by-task"
+            )
+            logger.info(
+                f"+++ sandbox.cleanup_by_task async response task_id={task_id} result={result}"
+            )
+            return result
     except httpx.HTTPError as e:
         raise HTTPException(
             status_code=500,
