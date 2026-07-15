@@ -516,10 +516,10 @@ async def test_cleanup_stale_task_executor_orphan_pod_error_fallback():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_delegates_each_pod_to_cleanup_orphan_pod():
-    """Every eligible old pod is delegated to _cleanup_orphan_pod and aggregated.
+async def test_cleanup_stale_orphan_executors_delegates_each_pod_to_cleanup_stale_orphan_executor():
+    """Every eligible old pod is delegated to _cleanup_stale_orphan_executor and aggregated.
 
-    The subtask-record decision lives inside _cleanup_orphan_pod (via
+    The subtask-record decision lives inside _cleanup_stale_orphan_executor (via
     cleanup_stale_task_executor), so cleanup_orphan_pods itself simply iterates
     all pods above the task_id threshold and aggregates the per-pod outcome.
     """
@@ -538,7 +538,7 @@ async def test_cleanup_orphan_pods_delegates_each_pod_to_cleanup_orphan_pod():
         ) as executor_service,
         patch.object(
             job_service_instance,
-            "_cleanup_orphan_pod",
+            "_cleanup_stale_orphan_executor",
             new_callable=AsyncMock,
             side_effect=[
                 {
@@ -583,7 +583,7 @@ async def test_cleanup_orphan_pods_delegates_each_pod_to_cleanup_orphan_pod():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_dry_run_skips_deletion():
+async def test_cleanup_stale_orphan_executors_dry_run_skips_deletion():
     """dry_run=True should skip all deletions and report them as dry_run skips."""
     job_service_instance = JobService(Mock())
     old_pods = [{"task_id": "1200", "pod_name": "wegent-task-1200-dry"}]
@@ -600,7 +600,7 @@ async def test_cleanup_orphan_pods_dry_run_skips_deletion():
         ),
         patch.object(
             job_service_instance,
-            "_cleanup_orphan_pod",
+            "_cleanup_stale_orphan_executor",
             new_callable=AsyncMock,
         ) as mock_cleanup,
     ):
@@ -619,7 +619,7 @@ async def test_cleanup_orphan_pods_dry_run_skips_deletion():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_pod_already_gone():
+async def test_cleanup_stale_orphan_executors_pod_already_gone():
     """When direct pod delete returns not_found, report as failed (delete_failed)."""
     job_service_instance = JobService(Mock())
     old_pods = [{"task_id": "1100", "pod_name": "wegent-task-1100-gone"}]
@@ -639,7 +639,7 @@ async def test_cleanup_orphan_pods_pod_already_gone():
         ),
         patch.object(
             job_service_instance,
-            "_cleanup_orphan_pod",
+            "_cleanup_stale_orphan_executor",
             new_callable=AsyncMock,
             return_value={
                 "task_id": 1100,
@@ -667,7 +667,7 @@ async def test_cleanup_orphan_pods_pod_already_gone():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_empty_k8s_response():
+async def test_cleanup_stale_orphan_executors_empty_k8s_response():
     """When K8s returns no old pods, result should be a no-op."""
     job_service_instance = JobService(Mock())
 
@@ -688,7 +688,7 @@ async def test_cleanup_orphan_pods_empty_k8s_response():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_no_task_id_skipped():
+async def test_cleanup_stale_orphan_executors_no_task_id_skipped():
     """Pods without a task_id label must be skipped, mirroring cleanup_stale_tasks.sh."""
     job_service_instance = JobService(Mock())
     old_pods = [{"task_id": None, "pod_name": "sandbox-unlabeled-xyz"}]
@@ -711,7 +711,7 @@ async def test_cleanup_orphan_pods_no_task_id_skipped():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_task_id_below_threshold_skipped():
+async def test_cleanup_stale_orphan_executors_task_id_below_threshold_skipped():
     """Pods with task_id <= 1000 must be skipped, mirroring awk '$1+0 > 1000' in delete_notfound_pods.sh."""
     job_service_instance = JobService(Mock())
     old_pods = [
@@ -732,7 +732,8 @@ async def test_cleanup_orphan_pods_task_id_below_threshold_skipped():
     assert result["deleted"] == []
     assert result["failed"] == []
     assert len(result["skipped"]) == 2
-    assert all(s["reason"] == "task_id_below_threshold" for s in result["skipped"])
+    assert result["skipped"][0]["reason"] == "invalid_task_id(500)"
+    assert result["skipped"][1]["reason"] == "invalid_task_id(1000)"
 
 
 def _mock_distributed_lock(async_redis_client):
@@ -934,7 +935,7 @@ async def test_cleanup_stale_orphan_sandbox_redis_cleared_but_pod_alive():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_routes_sandbox_to_cleanup_stale_orphan_sandbox():
+async def test_cleanup_stale_orphan_executors_routes_sandbox_to_cleanup_stale_orphan_sandbox():
     """Sandbox-first routing via get_sandbox: sandbox found -> _cleanup_stale_orphan_sandbox."""
     job_service_instance = JobService(Mock())
     old_pods = [
@@ -969,7 +970,7 @@ async def test_cleanup_orphan_pods_routes_sandbox_to_cleanup_stale_orphan_sandbo
         ) as mock_sandbox_cleanup,
         patch.object(
             job_service_instance,
-            "_cleanup_orphan_pod",
+            "_cleanup_stale_orphan_executor",
             new_callable=AsyncMock,
             return_value={
                 "task_id": 6002,
@@ -1000,7 +1001,7 @@ async def test_cleanup_orphan_pods_routes_sandbox_to_cleanup_stale_orphan_sandbo
         inactive_hours=24,
         sandbox_payload=ANY,
     )
-    # executor pod -> _cleanup_orphan_pod
+    # executor pod -> _cleanup_stale_orphan_executor
     mock_pod_cleanup.assert_awaited_once_with(
         task_id=6002,
         pod_name="wegent-task-6002-xyz",
@@ -1011,8 +1012,8 @@ async def test_cleanup_orphan_pods_routes_sandbox_to_cleanup_stale_orphan_sandbo
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_cleanup_orphan_pods_sandbox_lookup_failed_recorded_as_failed():
-    """When get_sandbox returns an error, the pod is failed (not misrouted)."""
+async def test_cleanup_stale_orphan_executors_sandbox_lookup_error_falls_back_to_executor():
+    """When get_sandbox returns an error, fall back to _cleanup_stale_orphan_executor."""
     job_service_instance = JobService(Mock())
     old_pods = [{"task_id": "8001", "pod_name": "wegent-task-8001-x"}]
 
@@ -1025,8 +1026,15 @@ async def test_cleanup_orphan_pods_sandbox_lookup_failed_recorded_as_failed():
         ) as executor_service,
         patch.object(
             job_service_instance,
-            "_cleanup_orphan_pod",
+            "_cleanup_stale_orphan_executor",
             new_callable=AsyncMock,
+            return_value={
+                "task_id": 8001,
+                "pod_name": "wegent-task-8001-x",
+                "deleted": True,
+                "skipped": False,
+                "reason": "pod_deleted",
+            },
         ) as mock_pod,
         patch.object(
             job_service_instance,
@@ -1046,8 +1054,9 @@ async def test_cleanup_orphan_pods_sandbox_lookup_failed_recorded_as_failed():
             AsyncMock(spec=AsyncSession), older_than_hours=48
         )
 
-    assert result["failed"][0]["reason"] == "sandbox_lookup_failed"
-    mock_pod.assert_not_called()
+    assert len(result["deleted"]) == 1
+    assert result["deleted"][0]["task_id"] == 8001
+    mock_pod.assert_awaited_once()
     mock_sandbox.assert_not_called()
 
 
