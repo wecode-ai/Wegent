@@ -4,6 +4,7 @@ This directory implements the Wework desktop workbench: Tauri, Vite, React, Type
 
 ## UI and component rules
 
+- Before changing Wework UI or interaction behavior, read and follow [`DESIGN.md`](DESIGN.md). It is the source of truth for product-level visual, interaction, accessibility, and responsive-design decisions.
 - Mobile is `<=767px`, tablet `768px–1023px`, desktop `>=1024px`. Split mobile and desktop components when layout or interaction differs materially; otherwise use responsive classes. Mobile controls must be at least `44px × 44px`.
 - Follow the calm UI tokens: low contrast, sparse shadows, teal primary (`#14B8A6`), `bg-base`, `bg-surface`, `text-text-primary`, and `border-border`. Dialog primary actions use `variant="primary"`.
 - Desktop workbench controls use `h-8`; icon-only controls use `h-8 w-8`, standard icons use `h-4 w-4`, and toolbar gaps use `gap-1` or `gap-1.5`. Do not introduce other desktop button heights without a documented reason.

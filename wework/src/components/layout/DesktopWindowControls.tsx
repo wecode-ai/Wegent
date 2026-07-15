@@ -8,6 +8,7 @@ interface DesktopWindowControlsProps {
   onToggleSidebar: () => void
   onNewChat?: () => void
   className?: string
+  toggleTestId?: string
 }
 
 export function DesktopWindowControls({
@@ -15,6 +16,7 @@ export function DesktopWindowControls({
   onToggleSidebar,
   onNewChat,
   className = '',
+  toggleTestId,
 }: DesktopWindowControlsProps) {
   const { t } = useTranslation('common')
   const toggleLabel = sidebarCollapsed
@@ -22,16 +24,11 @@ export function DesktopWindowControls({
     : t('workbench.collapse_sidebar', '收起侧边栏')
 
   return (
-    <div
-      data-testid="desktop-window-controls"
-      className={cn('flex items-center gap-3', className)}
-    >
+    <div data-testid="desktop-window-controls" className={cn('flex items-center gap-3', className)}>
       <button
         type="button"
         data-testid={
-          sidebarCollapsed
-            ? 'expand-sidebar-button'
-            : 'collapse-sidebar-button'
+          toggleTestId ?? (sidebarCollapsed ? 'expand-sidebar-button' : 'collapse-sidebar-button')
         }
         onClick={onToggleSidebar}
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}

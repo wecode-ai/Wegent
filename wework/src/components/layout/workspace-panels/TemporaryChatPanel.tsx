@@ -37,6 +37,7 @@ interface TemporaryChatPanelProps {
   source: RuntimeTaskAddress | null
   instanceId: string
   testId?: string
+  initialInput?: string
 }
 
 export function TemporaryChatPanel({
@@ -44,6 +45,7 @@ export function TemporaryChatPanel({
   source,
   instanceId,
   testId = 'right-workspace-chat-panel',
+  initialInput = '',
 }: TemporaryChatPanelProps) {
   const {
     state,
@@ -56,12 +58,22 @@ export function TemporaryChatPanel({
   } = useWorkbenchPaneContext()
   const [address, setAddress] = useState<RuntimeTaskAddress | null>(null)
   const [messages, setMessages] = useState<WorkbenchMessage[]>([])
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(initialInput)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [loadingFullTranscript, setLoadingFullTranscript] = useState(false)
   const pendingMessageActionsRef = useRef<RuntimePaneMessageAction[]>([])
   const messageActionFrameRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!initialInput) return
+    const frame = requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(`[data-testid="${testId}"] [data-testid="chat-message-input"]`)
+        ?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [initialInput, testId])
 
   const applyMessageActions = useCallback((actions: RuntimePaneMessageAction[]) => {
     if (actions.length === 0) return

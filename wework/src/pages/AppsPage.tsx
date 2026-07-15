@@ -10,6 +10,8 @@ import { appsPageSectionExtensions } from '@extensions/apps'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import type { DeviceInfo } from '@/types/devices'
+import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
+import { cn } from '@/lib/utils'
 
 interface AppsPageState {
   devices: DeviceInfo[]
@@ -457,6 +459,7 @@ function buildRecommendedApps(state: AppsPageState): AppCardData[] {
 
 export function AppsPage() {
   const { t } = useTranslation('common')
+  const { sidebarCollapsed } = useDesktopSidebarCollapsed()
   const [state, setState] = useState<AppsPageState>(initialState)
   const [activeSection, setActiveSection] = useState<AppsSection>(() =>
     getAppsSectionFromLocation()
@@ -531,9 +534,15 @@ export function AppsPage() {
   return (
     <div
       data-testid="apps-page"
-      className="grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5 md:grid-cols-[220px_minmax(0,1fr)]"
+      data-sidebar-collapsed={sidebarCollapsed}
+      className={cn(
+        'grid h-full min-h-0 grid-cols-1 gap-1.5 overflow-hidden bg-transparent p-1.5',
+        sidebarCollapsed ? 'md:grid-cols-1' : 'md:grid-cols-[220px_minmax(0,1fr)]'
+      )}
     >
-      <SidebarNav activeSection={activeSection} onSelect={setActiveSection} />
+      {!sidebarCollapsed && (
+        <SidebarNav activeSection={activeSection} onSelect={setActiveSection} />
+      )}
 
       <section
         data-testid="apps-scroll-container"
