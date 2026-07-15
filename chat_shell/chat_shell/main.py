@@ -94,8 +94,13 @@ async def lifespan(app: FastAPI):
     if storage_type == StorageType.SQLITE:
         storage_kwargs["db_path"] = settings.SQLITE_DB_PATH
     elif storage_type == StorageType.REMOTE:
+        if not settings.backend_internal_token:
+            raise RuntimeError(
+                "CHAT_SHELL_REMOTE_STORAGE_TOKEN or "
+                "CHAT_SHELL_INTERNAL_SERVICE_TOKEN is required for remote storage"
+            )
         storage_kwargs["base_url"] = settings.REMOTE_STORAGE_URL
-        storage_kwargs["auth_token"] = settings.REMOTE_STORAGE_TOKEN
+        storage_kwargs["auth_token"] = settings.backend_internal_token
 
     _storage_provider = create_storage_provider(storage_type, **storage_kwargs)
     await _storage_provider.initialize()

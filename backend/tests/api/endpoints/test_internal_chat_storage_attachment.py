@@ -4,13 +4,24 @@
 
 from datetime import datetime
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
 from app.models.task import TaskResource
 from app.models.user import User
+
+
+@pytest.fixture(autouse=True)
+def configure_internal_chat_auth(
+    monkeypatch: pytest.MonkeyPatch,
+    test_client: TestClient,
+) -> None:
+    monkeypatch.setattr(settings, "INTERNAL_SERVICE_TOKEN", "test-internal-token")
+    test_client.headers["Authorization"] = "Bearer test-internal-token"
 
 
 def _create_task(db: Session, *, user_id: int, task_id: int) -> TaskResource:
