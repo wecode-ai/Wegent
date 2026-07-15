@@ -10,14 +10,15 @@ sidebar_position: 6
 
 ## 📋 本模块文档
 
-| 文档                                                  | 说明                                                 |
-| ----------------------------------------------------- | ---------------------------------------------------- |
-| [智能体设置](./agent-settings.md)                     | 配置智能体（Agent）、机器人（Bot）、提示词和协作模式 |
-| [配置模型](./configuring-models.md)                   | 配置 AI 模型（Anthropic Claude、OpenAI GPT 等）      |
-| [配置执行器](./configuring-shells.md)                 | 配置运行时环境（ClaudeCode、Dify、Chat）             |
-| [管理 Skills](./managing-skills.md)                   | 上传、管理和使用 Skills 能力扩展包                   |
-| [键盘快捷键](./keyboard-shortcuts.md)                 | 管理 Wework 桌面版本机快捷键                         |
-| [桌面应用偏好](./desktop-app-preferences.md)          | 配置 Wework 桌面版启动、后台运行和托盘行为           |
+| 文档                                         | 说明                                                 |
+| -------------------------------------------- | ---------------------------------------------------- |
+| [智能体设置](./agent-settings.md)            | 配置智能体（Agent）、机器人（Bot）、提示词和协作模式 |
+| [配置模型](./configuring-models.md)          | 配置 AI 模型（Anthropic Claude、OpenAI GPT 等）      |
+| [配置执行器](./configuring-shells.md)        | 配置运行时环境（ClaudeCode、Dify、Chat）             |
+| [管理 Skills](./managing-skills.md)          | 上传、管理和使用 Skills 能力扩展包                   |
+| [键盘快捷键](./keyboard-shortcuts.md)        | 管理 Wework 桌面版本机快捷键                         |
+| [桌面应用偏好](./desktop-app-preferences.md) | 配置 Wework 桌面版启动、后台运行和托盘行为           |
+| [浏览器设置](./browser-settings.md)          | 配置内置浏览器的链接、隐私和下载行为                 |
 
 ---
 

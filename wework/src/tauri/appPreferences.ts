@@ -11,9 +11,14 @@ export interface AppPreferences {
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
   trayUsageEnabled: boolean
+  browserExternalLinkTarget: BrowserLinkTarget
+  browserLocalLinkTarget: BrowserLinkTarget
+  browserDownloadDirectory: string | null
+  browserAskBeforeDownload: boolean
 }
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
+export type BrowserLinkTarget = 'system' | 'wework'
 
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
@@ -25,6 +30,10 @@ export interface AppPreferencesPatch {
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
   trayUsageEnabled?: boolean
+  browserExternalLinkTarget?: BrowserLinkTarget
+  browserLocalLinkTarget?: BrowserLinkTarget
+  browserDownloadDirectory?: string | null
+  browserAskBeforeDownload?: boolean
 }
 
 export const defaultAppPreferences: AppPreferences = {
@@ -37,11 +46,16 @@ export const defaultAppPreferences: AppPreferences = {
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  browserExternalLinkTarget: 'system',
+  browserLocalLinkTarget: 'wework',
+  browserDownloadDirectory: null,
+  browserAskBeforeDownload: false,
 }
 
 export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
 
 const supportedLanguagePreferences = new Set<AppLanguagePreference>(['system', 'zh-CN', 'en'])
+const supportedBrowserLinkTargets = new Set<BrowserLinkTarget>(['system', 'wework'])
 
 function canInvokeAppPreferencesCommand() {
   if (typeof window === 'undefined') {
@@ -101,6 +115,24 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.trayUsageEnabled === 'boolean'
         ? record.trayUsageEnabled
         : defaultAppPreferences.trayUsageEnabled,
+    browserExternalLinkTarget:
+      typeof record.browserExternalLinkTarget === 'string' &&
+      supportedBrowserLinkTargets.has(record.browserExternalLinkTarget as BrowserLinkTarget)
+        ? (record.browserExternalLinkTarget as BrowserLinkTarget)
+        : defaultAppPreferences.browserExternalLinkTarget,
+    browserLocalLinkTarget:
+      typeof record.browserLocalLinkTarget === 'string' &&
+      supportedBrowserLinkTargets.has(record.browserLocalLinkTarget as BrowserLinkTarget)
+        ? (record.browserLocalLinkTarget as BrowserLinkTarget)
+        : defaultAppPreferences.browserLocalLinkTarget,
+    browserDownloadDirectory:
+      typeof record.browserDownloadDirectory === 'string' && record.browserDownloadDirectory.trim()
+        ? record.browserDownloadDirectory.trim()
+        : defaultAppPreferences.browserDownloadDirectory,
+    browserAskBeforeDownload:
+      typeof record.browserAskBeforeDownload === 'boolean'
+        ? record.browserAskBeforeDownload
+        : defaultAppPreferences.browserAskBeforeDownload,
   }
 }
 
@@ -123,7 +155,14 @@ export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<
     return preferences
   }
 
-  const preferences = mergeAppPreferences(await invoke('update_app_preferences', { patch }))
+  const nativePatch =
+    Object.prototype.hasOwnProperty.call(patch, 'browserDownloadDirectory') &&
+    patch.browserDownloadDirectory === null
+      ? { ...patch, browserDownloadDirectory: '' }
+      : patch
+  const preferences = mergeAppPreferences(
+    await invoke('update_app_preferences', { patch: nativePatch })
+  )
   emitAppPreferencesChanged(preferences)
   return preferences
 }
