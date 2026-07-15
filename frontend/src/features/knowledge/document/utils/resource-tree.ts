@@ -232,3 +232,15 @@ export function deletedFolderAffectsActiveFolder(
   if (activeFolderId === undefined) return false
   return collectFolderAndDescendantIds(folders, deletedFolderId).has(activeFolderId)
 }
+
+export function getAllFolderKeys(folders: KnowledgeFolder[]): Set<string> {
+  const keys = new Set<string>()
+  const collect = (list: KnowledgeFolder[]) => {
+    for (const folder of list) {
+      keys.add(`folder:${folder.id}`)
+      collect(folder.children)
+    }
+  }
+  collect(folders)
+  return keys
+}

@@ -275,6 +275,10 @@
       "batchMoveFailed": "Failed to move documents",
       "batchMovePartial": "Batch move completed: {{success}} succeeded, {{failed}} failed. Failed documents remain selected and highlighted for retry"
     },
+    "nav": {
+      "allDocuments": "All Documents",
+      "searchResults": "Search results"
+    },
     "document": {
       "title": "Documents",
       "upload": "Add sources",

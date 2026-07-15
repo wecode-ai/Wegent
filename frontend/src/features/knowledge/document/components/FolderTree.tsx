@@ -18,6 +18,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { DocumentItem } from './DocumentItem'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getAllFolderKeys } from '../utils/resource-tree'
 
 /** A node in the document browser: real folder or current document result */
 interface FolderNode {
@@ -76,6 +77,10 @@ interface FolderTreeProps {
   onSelectFolder?: (folderId: number, selected: boolean) => void
   activeFolderId?: number
   onActivateFolder?: (folderId: number) => void
+  /** When true, all folders (including nested) are expanded by default */
+  expandAll?: boolean
+  /** When true, folders are navigation items only — no expand arrow, always closed icon */
+  folderNavMode?: boolean
 }
 
 export type SortField = 'name' | 'size' | 'createdAt' | 'updatedAt'
@@ -184,6 +189,8 @@ interface FolderRowProps {
   onFolderCheck?: (checked: boolean) => void
   active?: boolean
   onActivate?: (folderId: number) => void
+  /** When true, folder is a navigation item only — no expand arrow */
+  folderNavMode?: boolean
 }
 
 function FolderRow({
@@ -202,6 +209,7 @@ function FolderRow({
   onFolderCheck,
   active,
   onActivate,
+  folderNavMode = false,
 }: FolderRowProps) {
   const { t } = useTranslation('knowledge')
   const indent = depth * (compact ? 12 : 16)
@@ -286,24 +294,25 @@ function FolderRow({
         title={node.name}
       >
         {folderCheckbox}
-        {expanded ? (
-          <ChevronDown
-            className="w-3 h-3 text-text-muted flex-shrink-0"
-            onClick={e => {
-              e.stopPropagation()
-              onToggle(node.path)
-            }}
-          />
-        ) : (
-          <ChevronRight
-            className="w-3 h-3 text-text-muted flex-shrink-0"
-            onClick={e => {
-              e.stopPropagation()
-              onToggle(node.path)
-            }}
-          />
-        )}
-        {expanded ? (
+        {!folderNavMode &&
+          (expanded ? (
+            <ChevronDown
+              className="w-3 h-3 text-text-muted flex-shrink-0"
+              onClick={e => {
+                e.stopPropagation()
+                onToggle(node.path)
+              }}
+            />
+          ) : (
+            <ChevronRight
+              className="w-3 h-3 text-text-muted flex-shrink-0"
+              onClick={e => {
+                e.stopPropagation()
+                onToggle(node.path)
+              }}
+            />
+          ))}
+        {expanded && !folderNavMode ? (
           <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
         ) : (
           <Folder className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
@@ -408,6 +417,7 @@ interface FolderTreeNodeProps {
   onSelectFolder?: (folderId: number, selected: boolean) => void
   activeFolderId?: number
   onActivateFolder?: (folderId: number) => void
+  folderNavMode?: boolean
 }
 
 function FolderTreeNode({
@@ -442,6 +452,7 @@ function FolderTreeNode({
   onSelectFolder,
   activeFolderId,
   onActivateFolder,
+  folderNavMode = false,
 }: FolderTreeNodeProps) {
   // Hooks must be called unconditionally (before any early returns)
   const handleFolderCheck = useCallback(
@@ -537,6 +548,7 @@ function FolderTreeNode({
         onFolderCheck={handleFolderCheck}
         active={activeFolderId === node.id}
         onActivate={onActivateFolder}
+        folderNavMode={folderNavMode}
       />
       {isExpanded && (
         <div>
@@ -573,6 +585,7 @@ function FolderTreeNode({
               onSelectFolder={onSelectFolder}
               activeFolderId={activeFolderId}
               onActivateFolder={onActivateFolder}
+              folderNavMode={folderNavMode}
             />
           ))}
         </div>
@@ -614,13 +627,16 @@ export function FolderTree({
   onSelectFolder,
   activeFolderId,
   onActivateFolder,
+  expandAll = false,
+  folderNavMode = false,
 }: FolderTreeProps) {
   const tree = useMemo(() => buildMergedTree(folders, documents), [folders, documents])
 
-  const defaultExpandedFolderPaths = useMemo(
-    () => folders.map(folder => `folder:${folder.id}`),
-    [folders]
-  )
+  const defaultExpandedFolderPaths = useMemo(() => {
+    if (folderNavMode) return []
+    if (expandAll) return Array.from(getAllFolderKeys(folders))
+    return folders.map(folder => `folder:${folder.id}`)
+  }, [expandAll, folderNavMode, folders])
   const activeFolderPaths = useMemo(
     () => findFolderPathIds(folders, activeFolderId).map(id => `folder:${id}`),
     [folders, activeFolderId]
@@ -717,6 +733,7 @@ export function FolderTree({
             onSelectFolder={onSelectFolder}
             activeFolderId={activeFolderId}
             onActivateFolder={onActivateFolder}
+            folderNavMode={folderNavMode}
           />
         ))}
       </div>

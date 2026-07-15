@@ -39,6 +39,8 @@ import { useDocuments } from '../hooks/useDocuments'
 import { useFolders } from '../hooks/useFolders'
 import { FolderTree, type SortField, type SortOrder } from './FolderTree'
 import { KnowledgeDocumentTreeGrid } from './knowledge-document-tree-grid'
+import { KnowledgeFolderBreadcrumb } from './knowledge-folder-breadcrumb'
+import { KnowledgeFolderNavView } from './knowledge-folder-nav-view'
 import { CreateFolderDialog } from './CreateFolderDialog'
 import { DeleteFolderDialog } from './DeleteFolderDialog'
 import { MoveDocumentDialog } from './MoveDocumentDialog'
@@ -47,6 +49,7 @@ import {
   useKnowledgeResourceSelection,
   shouldDisableDocumentBatchActions,
 } from '../hooks/useKnowledgeResourceSelection'
+import { useFolderNavigation } from '../hooks/useFolderNavigation'
 import { Pagination } from '@/components/ui/pagination'
 import { listDocuments } from '@/apis/knowledge'
 import { toast } from '@/hooks/use-toast'
@@ -74,6 +77,8 @@ import {
   deletedFolderAffectsActiveFolder,
   folderTreeContainsId,
 } from '../utils/resource-tree'
+
+const EXPAND_ALL_THRESHOLD = 100
 
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
@@ -257,6 +262,14 @@ export function DocumentList({
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [activeFolderId, setActiveFolderId] = useState<number | undefined>(undefined)
 
+  // Display mode: expand-all for small KBs, folder-nav for large ones.
+  // Only applies to the normal (non-compact) view.
+  const displayMode = useMemo<'expand-all' | 'folder-nav'>(() => {
+    return knowledgeBase.document_count < EXPAND_ALL_THRESHOLD ? 'expand-all' : 'folder-nav'
+  }, [knowledgeBase.document_count])
+
+  const isFolderNavMode = displayMode === 'folder-nav'
+
   // Folder state
   const {
     folders,
@@ -269,6 +282,11 @@ export function DocumentList({
   } = useFolders({ knowledgeBaseId: knowledgeBase.id })
 
   const folderResourceTree = useMemo(() => buildKnowledgeResourceTree(folders, []), [folders])
+
+  const { navFolderId, breadcrumbs, directChildFolders, navigateTo } = useFolderNavigation(
+    folders,
+    knowledgeBase.id
+  )
 
   const activeFolderScopeIds = useMemo(
     () =>
@@ -297,9 +315,12 @@ export function DocumentList({
   } = useDocuments({
     knowledgeBaseId: knowledgeBase.id,
     paginationEnabled,
-    folderId: activeFolderId,
-    includeSubfolders: activeFolderId !== undefined,
-    folderScopeIds: activeFolderScopeIds,
+    // folder-nav mode (no search): scope to current folder's direct documents only.
+    // folder-nav mode (searching): folderId=undefined → global search across all docs.
+    // expand-all / compact modes: use activeFolderId (legacy filter behavior).
+    folderId: isFolderNavMode && !searchQuery ? (navFolderId ?? 0) : activeFolderId,
+    includeSubfolders: isFolderNavMode ? false : activeFolderId !== undefined,
+    folderScopeIds: isFolderNavMode ? undefined : activeFolderScopeIds,
     keyword: searchQuery,
     sortBy: sortField,
     sortOrder,
@@ -333,10 +354,6 @@ export function DocumentList({
   const searchPlaceholder = activeFolderName
     ? t('document.document.searchInFolder', { folder: activeFolderName })
     : t('document.document.search')
-
-  const handleActivateFolder = useCallback((folderId: number) => {
-    setActiveFolderId(currentFolderId => (currentFolderId === folderId ? undefined : folderId))
-  }, [])
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
@@ -495,6 +512,13 @@ export function DocumentList({
     }
   }, [folders, activeFolderId, resetSelection])
 
+  // In folder-nav mode, navigate back to root if the current folder was deleted
+  useEffect(() => {
+    if (isFolderNavMode && navFolderId !== null && !folderTreeContainsId(folders, navFolderId)) {
+      navigateTo(null)
+    }
+  }, [folders, isFolderNavMode, navFolderId, navigateTo])
+
   const canManageAnyDocuments = canUpload || canManageAllDocuments
   const canManageDocumentArea = canManageAnyDocuments
   const canManageFolderStructure = canManageDocumentArea
@@ -511,9 +535,9 @@ export function DocumentList({
   })
 
   const handleOpenUpload = useCallback(() => {
-    setSelectedUploadFolderId(activeFolderId ?? 0)
+    setSelectedUploadFolderId(isFolderNavMode ? (navFolderId ?? 0) : (activeFolderId ?? 0))
     setShowUpload(true)
-  }, [activeFolderId])
+  }, [activeFolderId, isFolderNavMode, navFolderId])
 
   const handleGoToPage = useCallback(
     (targetPage: number) => {
@@ -1075,12 +1099,12 @@ export function DocumentList({
           </Tooltip>
         </TooltipProvider>
 
-        {/* Create folder button */}
+        {/* Create folder button - in folder-nav mode, create inside current folder */}
         {canManageFolderStructure && (
           <Button
             variant="outline"
             className="h-11 min-w-[44px]"
-            onClick={() => handleCreateFolder(0)}
+            onClick={() => handleCreateFolder(isFolderNavMode ? (navFolderId ?? 0) : 0)}
           >
             <FolderPlus className="w-4 h-4 mr-1" />
             {t('document.folder.create')}
@@ -1189,134 +1213,241 @@ export function DocumentList({
             </div>
           )}
 
-          {/* Compact mode: Card layout */}
+          {/* Compact mode: Card layout — dual-mode same as normal mode */}
           {compact ? (
             <div className="space-y-2">
-              {/* Select all control bar for notebook mode */}
-              {onSelectionChange && documents.length > 0 && (
-                <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
-                  <button
-                    onClick={() => handleSelectAll(!isAllSelected)}
-                    className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
-                  >
-                    {isAllSelected ? (
-                      <CheckSquare className="w-3.5 h-3.5 text-primary" />
-                    ) : (
-                      <Square className="w-3.5 h-3.5" />
-                    )}
-                    <span>
-                      {paginationEnabled
-                        ? t('document.document.batch.selectCurrentPage')
-                        : t('document.document.batch.selectAll')}
-                    </span>
-                  </button>
-                  <span className="text-text-muted">
-                    ({documents.filter(doc => selectedDocumentIds.has(doc.id)).length}/
-                    {documents.length})
-                  </span>
-                </div>
-              )}
-              <FolderTree
-                folders={folders}
-                documents={documents}
-                compact={true}
-                onViewDetail={setViewingDoc}
-                onEdit={setEditingDoc}
-                onDelete={setDeletingDoc}
-                onRefresh={handleRefreshWebDocument}
-                onReindex={handleReindexDocument}
-                onMove={handleMoveDocument}
-                refreshingDocId={refreshingDocId}
-                reindexingDocId={reindexingDocId}
-                canManage={canManageDocument}
-                canSelect={canSelectDocument}
-                selectedIds={selectedDocumentIds}
-                includedInFolderScope={isDocumentIncludedInFolderScope}
-                onSelect={handleSelectDoc}
-                ragConfigured={ragConfigured}
-                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
-                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
-                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
-                canManageFolders={canManageFolderStructure}
-                canSelectFolders={canManageFolderStructure && !onSelectionChange}
-                selectedFolderIds={selectedFolderIds}
-                onSelectFolder={handleSelectFolder}
-                activeFolderId={activeFolderId}
-                onActivateFolder={handleActivateFolder}
-              />
-              {paginationEnabled && (
-                <Pagination
-                  page={page}
-                  totalPages={totalPages}
-                  totalCount={totalCount}
-                  pageSize={pageSize}
-                  onGoToPage={handleGoToPage}
-                  onPageSizeChange={handlePageSizeChange}
-                  disabled={loading}
-                />
+              {displayMode === 'expand-all' ? (
+                /* Compact expand-all: all folders open, no pagination */
+                <>
+                  {onSelectionChange && documents.length > 0 && (
+                    <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
+                      <button
+                        onClick={() => handleSelectAll(!isAllSelected)}
+                        className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
+                      >
+                        {isAllSelected ? (
+                          <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                        ) : (
+                          <Square className="w-3.5 h-3.5" />
+                        )}
+                        <span>{t('document.document.batch.selectAll')}</span>
+                      </button>
+                      <span className="text-text-muted">
+                        ({documents.filter(doc => selectedDocumentIds.has(doc.id)).length}/
+                        {documents.length})
+                      </span>
+                    </div>
+                  )}
+                  <FolderTree
+                    folders={folders}
+                    documents={documents}
+                    compact={true}
+                    expandAll={true}
+                    onViewDetail={setViewingDoc}
+                    onEdit={setEditingDoc}
+                    onDelete={setDeletingDoc}
+                    onRefresh={handleRefreshWebDocument}
+                    onReindex={handleReindexDocument}
+                    onMove={handleMoveDocument}
+                    refreshingDocId={refreshingDocId}
+                    reindexingDocId={reindexingDocId}
+                    canManage={canManageDocument}
+                    canSelect={canSelectDocument}
+                    selectedIds={selectedDocumentIds}
+                    includedInFolderScope={isDocumentIncludedInFolderScope}
+                    onSelect={handleSelectDoc}
+                    ragConfigured={ragConfigured}
+                    onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                    onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                    onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                    canManageFolders={canManageFolderStructure}
+                    canSelectFolders={canManageFolderStructure && !onSelectionChange}
+                    selectedFolderIds={selectedFolderIds}
+                    onSelectFolder={handleSelectFolder}
+                  />
+                </>
+              ) : (
+                /* Compact folder-nav: breadcrumb + direct children only */
+                <>
+                  <KnowledgeFolderBreadcrumb breadcrumbs={breadcrumbs} onNavigate={navigateTo} />
+                  {onSelectionChange && documents.length > 0 && (
+                    <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-text-muted">
+                      <button
+                        onClick={() => handleSelectAll(!isAllSelected)}
+                        className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
+                      >
+                        {isAllSelected ? (
+                          <CheckSquare className="w-3.5 h-3.5 text-primary" />
+                        ) : (
+                          <Square className="w-3.5 h-3.5" />
+                        )}
+                        <span>
+                          {paginationEnabled
+                            ? t('document.document.batch.selectCurrentPage')
+                            : t('document.document.batch.selectAll')}
+                        </span>
+                      </button>
+                      <span className="text-text-muted">
+                        ({documents.filter(doc => selectedDocumentIds.has(doc.id)).length}/
+                        {documents.length})
+                      </span>
+                    </div>
+                  )}
+                  <FolderTree
+                    folders={
+                      searchQuery ? [] : directChildFolders.map(f => ({ ...f, children: [] }))
+                    }
+                    documents={documents}
+                    compact={true}
+                    folderNavMode={true}
+                    onViewDetail={setViewingDoc}
+                    onEdit={setEditingDoc}
+                    onDelete={setDeletingDoc}
+                    onRefresh={handleRefreshWebDocument}
+                    onReindex={handleReindexDocument}
+                    onMove={handleMoveDocument}
+                    refreshingDocId={refreshingDocId}
+                    reindexingDocId={reindexingDocId}
+                    canManage={canManageDocument}
+                    canSelect={canSelectDocument}
+                    selectedIds={selectedDocumentIds}
+                    includedInFolderScope={isDocumentIncludedInFolderScope}
+                    onSelect={handleSelectDoc}
+                    ragConfigured={ragConfigured}
+                    onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                    onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                    onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                    canManageFolders={canManageFolderStructure}
+                    canSelectFolders={canManageFolderStructure && !onSelectionChange}
+                    selectedFolderIds={selectedFolderIds}
+                    onSelectFolder={handleSelectFolder}
+                    onActivateFolder={navigateTo}
+                  />
+                  {paginationEnabled && (
+                    <Pagination
+                      page={page}
+                      totalPages={totalPages}
+                      totalCount={totalCount}
+                      pageSize={pageSize}
+                      onGoToPage={handleGoToPage}
+                      onPageSizeChange={handlePageSizeChange}
+                      disabled={loading}
+                    />
+                  )}
+                </>
               )}
             </div>
           ) : (
-            /* Normal mode: Table layout with folder tree - single bordered container */
+            /* Normal mode: dual-mode based on document count */
             <div className="border border-border rounded-lg overflow-x-auto">
-              <KnowledgeDocumentTreeGrid
-                nodes={resourceTree.nodes}
-                treeIndex={resourceTree.index}
-                folders={folders}
-                documents={documents}
-                showSelectionColumn={canManageDocumentArea}
-                showActionsColumn={canManageAnyDocuments}
-                sortField={sortField}
-                sortOrder={sortOrder}
-                onSortChange={(field, order) => {
-                  setSortField(field)
-                  setSortOrder(order)
-                }}
-                isAllSelected={isAllSelected}
-                isPartialSelected={isPartialSelected}
-                onSelectAll={handleSelectAll}
-                selectAllLabel={
-                  paginationEnabled
-                    ? t('document.document.batch.selectCurrentPage')
-                    : t('document.document.batch.selectAll')
-                }
-                onViewDetail={setViewingDoc}
-                onEdit={setEditingDoc}
-                onDelete={setDeletingDoc}
-                onRefresh={handleRefreshWebDocument}
-                onReindex={handleReindexDocument}
-                onMove={handleMoveDocument}
-                refreshingDocId={refreshingDocId}
-                reindexingDocId={reindexingDocId}
-                canManage={canManageDocument}
-                canSelect={canSelectDocument}
-                selectedDocumentIds={selectedDocumentIds}
-                includedInFolderScope={isDocumentIncludedInFolderScope}
-                onSelect={canManageDocumentArea ? handleSelectDoc : undefined}
-                ragConfigured={ragConfigured}
-                onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
-                onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
-                onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
-                canManageFolders={canManageFolderStructure}
-                canSelectFolders={canManageFolderStructure && !onSelectionChange}
-                selectedFolderIds={selectedFolderIds}
-                onSelectFolder={handleSelectFolder}
-                activeFolderId={activeFolderId}
-                onActivateFolder={handleActivateFolder}
-              />
-              {/* Pagination bar for classic mode */}
-              {paginationEnabled && (
-                <div className="min-w-[880px] bg-base">
-                  <Pagination
-                    page={page}
-                    totalPages={totalPages}
-                    totalCount={totalCount}
-                    pageSize={pageSize}
-                    onGoToPage={handleGoToPage}
-                    onPageSizeChange={handlePageSizeChange}
-                    disabled={loading}
+              {displayMode === 'expand-all' ? (
+                /* Expand-all mode: all folders open, no pagination */
+                <KnowledgeDocumentTreeGrid
+                  nodes={resourceTree.nodes}
+                  treeIndex={resourceTree.index}
+                  folders={folders}
+                  documents={documents}
+                  showSelectionColumn={canManageDocumentArea}
+                  showActionsColumn={canManageAnyDocuments}
+                  sortField={sortField}
+                  sortOrder={sortOrder}
+                  onSortChange={(field, order) => {
+                    setSortField(field)
+                    setSortOrder(order)
+                  }}
+                  isAllSelected={isAllSelected}
+                  isPartialSelected={isPartialSelected}
+                  onSelectAll={handleSelectAll}
+                  selectAllLabel={t('document.document.batch.selectAll')}
+                  onViewDetail={setViewingDoc}
+                  onEdit={setEditingDoc}
+                  onDelete={setDeletingDoc}
+                  onRefresh={handleRefreshWebDocument}
+                  onReindex={handleReindexDocument}
+                  onMove={handleMoveDocument}
+                  refreshingDocId={refreshingDocId}
+                  reindexingDocId={reindexingDocId}
+                  canManage={canManageDocument}
+                  canSelect={canSelectDocument}
+                  selectedDocumentIds={selectedDocumentIds}
+                  includedInFolderScope={isDocumentIncludedInFolderScope}
+                  onSelect={canManageDocumentArea ? handleSelectDoc : undefined}
+                  ragConfigured={ragConfigured}
+                  onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                  onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                  onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                  canManageFolders={canManageFolderStructure}
+                  canSelectFolders={canManageFolderStructure && !onSelectionChange}
+                  selectedFolderIds={selectedFolderIds}
+                  onSelectFolder={handleSelectFolder}
+                  expandAll={true}
+                />
+              ) : (
+                /* Folder-nav mode: breadcrumb + flat subfolder/document list */
+                <>
+                  {searchQuery ? (
+                    <div className="flex items-center gap-2 px-4 h-9 border-b border-border bg-surface/50 text-sm text-text-secondary">
+                      <Search className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="truncate">
+                        {t('document.nav.searchResults')}: {searchQuery}
+                      </span>
+                    </div>
+                  ) : (
+                    <KnowledgeFolderBreadcrumb breadcrumbs={breadcrumbs} onNavigate={navigateTo} />
+                  )}
+                  <KnowledgeFolderNavView
+                    subfolders={searchQuery ? [] : directChildFolders}
+                    documents={documents}
+                    onNavigateFolder={navigateTo}
+                    showSelectionColumn={canManageDocumentArea}
+                    showActionsColumn={canManageAnyDocuments}
+                    sortField={sortField}
+                    sortOrder={sortOrder}
+                    onSortChange={(field, order) => {
+                      setSortField(field)
+                      setSortOrder(order)
+                    }}
+                    isAllSelected={isAllSelected}
+                    isPartialSelected={isPartialSelected}
+                    onSelectAll={handleSelectAll}
+                    selectAllLabel={
+                      paginationEnabled
+                        ? t('document.document.batch.selectCurrentPage')
+                        : t('document.document.batch.selectAll')
+                    }
+                    onViewDetail={setViewingDoc}
+                    onEdit={setEditingDoc}
+                    onDelete={setDeletingDoc}
+                    onRefresh={handleRefreshWebDocument}
+                    onReindex={handleReindexDocument}
+                    onMove={handleMoveDocument}
+                    refreshingDocId={refreshingDocId}
+                    reindexingDocId={reindexingDocId}
+                    canManage={canManageDocument}
+                    canSelect={canSelectDocument}
+                    selectedDocumentIds={selectedDocumentIds}
+                    includedInFolderScope={isDocumentIncludedInFolderScope}
+                    onSelect={canManageDocumentArea ? handleSelectDoc : undefined}
+                    ragConfigured={ragConfigured}
+                    onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
+                    onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
+                    onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
+                    canManageFolders={canManageFolderStructure}
                   />
-                </div>
+                  {paginationEnabled && (
+                    <div className="min-w-[880px] bg-base">
+                      <Pagination
+                        page={page}
+                        totalPages={totalPages}
+                        totalCount={totalCount}
+                        pageSize={pageSize}
+                        onGoToPage={handleGoToPage}
+                        onPageSizeChange={handlePageSizeChange}
+                        disabled={loading}
+                      />
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

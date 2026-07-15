@@ -275,6 +275,10 @@
       "batchMoveFailed": "移动文档失败",
       "batchMovePartial": "批量移动完成：成功 {{success}} 个，失败 {{failed}} 个。失败文档仍保留选中状态，请查看高亮项后重试"
     },
+    "nav": {
+      "allDocuments": "全部文档",
+      "searchResults": "搜索结果"
+    },
     "document": {
       "title": "文档",
       "upload": "添加来源",
