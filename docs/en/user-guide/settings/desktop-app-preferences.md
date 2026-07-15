@@ -35,6 +35,8 @@ The first time you close the main window, Wework explains that tasks can continu
 
 When Wework moves to the background, it destroys the main window WebView to release resources used by the UI. The task executor is not stopped. Reopening from the tray creates a new main window and restores the current task state.
 
+When no conversation is open, the newly created main window keeps the task launcher within the window bounds. The message area scrolls as needed only after a conversation is opened.
+
 ## Quit the App
 
 To fully quit Wework, choose quit from the system tray menu. Quitting the app stops local executor processes.

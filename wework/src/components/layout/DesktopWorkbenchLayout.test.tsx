@@ -1534,7 +1534,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const desktopContent = screen.getByTestId('desktop-workbench-content')
-    expect(desktopContent).toHaveClass('pt-11')
+    expect(desktopContent).toHaveClass('overflow-y-auto', 'pt-11')
     expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
@@ -2592,6 +2592,13 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByRole('heading', { name: '我们该做什么？' })).toBe(composerHeading)
     expect(composerHeading).toBeVisible()
+  })
+
+  test('does not show a page scrollbar for the empty task launcher', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('overflow-hidden')
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('overflow-y-auto')
   })
 
   test('closes the settings menu when clicking outside it', async () => {
