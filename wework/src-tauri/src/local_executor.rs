@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -46,6 +46,7 @@ const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
 const LOCAL_EXECUTOR_KEEPALIVE_INTERVAL_SECS: u64 = 10;
+const LOCAL_EXECUTOR_HEALTH_CHECK_TIMEOUT_SECS: u64 = 5;
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
@@ -908,7 +909,9 @@ fn has_connected_stream(inner: &LocalExecutorInner) -> bool {
 }
 
 fn clear_connected_stream(inner: &mut LocalExecutorInner) {
-    inner.stream = None;
+    if let Some(stream) = inner.stream.take() {
+        let _ = stream.shutdown(Shutdown::Both);
+    }
 }
 
 fn status_from_inner(inner: &LocalExecutorInner) -> LocalExecutorStatus {
@@ -2008,20 +2011,40 @@ fn ensure_local_executor_keepalive(app: tauri::AppHandle, state: &LocalExecutorS
                 return;
             }
 
-            if local_executor_is_healthy(&state) {
+            let transport_was_healthy = local_executor_is_healthy(&state);
+            if transport_was_healthy
+                && send_executor_request_with_timeout(
+                    app.clone(),
+                    &state,
+                    LocalExecutorRequest {
+                        method: "executor.health".to_string(),
+                        params: json!({}),
+                    },
+                    Duration::from_secs(LOCAL_EXECUTOR_HEALTH_CHECK_TIMEOUT_SECS),
+                )
+                .await
+                .is_ok()
+            {
                 continue;
             }
 
-            if development_sidecar_is_restarting(&state) {
+            if !transport_was_healthy && development_sidecar_is_restarting(&state) {
                 log::info!(
                     "Local executor IPC is unavailable while the development sidecar is restarting"
                 );
                 continue;
             }
 
-            log::warn!("Local executor keepalive detected an unhealthy executor; restarting");
-            if let Err(error) = restart_executor(app.clone(), &state).await {
-                log::warn!("Local executor keepalive restart failed: {error}");
+            log::warn!("Local executor health check failed; reconnecting IPC");
+            let _guard = state.start_lock.lock().await;
+            let message = "Local executor IPC reconnecting after failed health check".to_string();
+            if let Ok(mut inner) = state.inner.lock() {
+                clear_connected_stream(&mut inner);
+                inner.ready = false;
+            }
+            fail_pending_requests(&state, message);
+            if let Err(error) = start_executor_if_needed_unlocked(app.clone(), &state).await {
+                log::warn!("Local executor IPC reconnect failed: {error}");
             }
         }
     });
@@ -2059,10 +2082,26 @@ async fn send_executor_request(
     state: &LocalExecutorState,
     request: LocalExecutorRequest,
 ) -> Result<Value, String> {
+    send_executor_request_with_timeout(
+        app,
+        state,
+        request,
+        Duration::from_secs(LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS),
+    )
+    .await
+}
+
+async fn send_executor_request_with_timeout(
+    app: tauri::AppHandle,
+    state: &LocalExecutorState,
+    request: LocalExecutorRequest,
+    timeout: Duration,
+) -> Result<Value, String> {
     start_executor_if_needed(app, state).await?;
 
     let request_id = next_request_id(state);
     let method = request.method.clone();
+    let log_request = method != "executor.health";
     let started_at = Instant::now();
     let (sender, receiver) = mpsc::channel::<Result<Value, String>>();
     let message = json!({
@@ -2083,9 +2122,11 @@ async fn send_executor_request(
             .map_err(|_| "Failed to lock local executor state".to_string())?;
         inner.pending.insert(request_id.clone(), sender);
         let pending_count = inner.pending.len();
-        log::info!(
-            "Local executor IPC request started: request_id={request_id}, method={method}, pending_count={pending_count}"
-        );
+        if log_request {
+            log::info!(
+                "Local executor IPC request started: request_id={request_id}, method={method}, pending_count={pending_count}"
+            );
+        }
         if let Err(error) = write_request_line(&mut inner, &line) {
             inner.pending.remove(&request_id);
             log::warn!(
@@ -2098,12 +2139,14 @@ async fn send_executor_request(
     let inner = state.inner.clone();
     let wait_request_id = request_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        match receiver.recv_timeout(Duration::from_secs(LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS)) {
+        match receiver.recv_timeout(timeout) {
             Ok(result) => {
-                log::info!(
-                    "Local executor IPC request finished: request_id={wait_request_id}, method={method}, elapsed_ms={}",
-                    started_at.elapsed().as_millis()
-                );
+                if log_request {
+                    log::info!(
+                        "Local executor IPC request finished: request_id={wait_request_id}, method={method}, elapsed_ms={}",
+                        started_at.elapsed().as_millis()
+                    );
+                }
                 result
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -2115,7 +2158,8 @@ async fn send_executor_request(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let message = format!(
-                    "Local executor request {method} timed out after {LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS}s"
+                    "Local executor request {method} timed out after {}s",
+                    timeout.as_secs()
                 );
                 log::warn!(
                     "Local executor IPC request timed out: request_id={wait_request_id}, method={method}, elapsed_ms={}",
