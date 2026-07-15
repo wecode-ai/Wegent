@@ -45,8 +45,10 @@ import {
 } from '@/components/topnav/TitlebarActionsPortal'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { isTauriRuntime } from '@/lib/runtime-environment'
+import { navigateTo } from '@/lib/navigation'
 import {
   DEFAULT_EMBEDDED_BROWSER_LABEL,
   listenEmbeddedBrowserOpenRequests,
@@ -1379,15 +1381,20 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           data-testid="workbench-main-header-left-controls"
           className={cn(
-            'relative z-0 flex h-full shrink-0 items-center pr-1',
+            'relative z-0 flex h-full shrink-0 items-center gap-1 pr-1',
             MACOS_TRAFFIC_LIGHTS_CLEARANCE_CLASS
           )}
         >
           <DesktopWindowControls
             sidebarCollapsed
             onToggleSidebar={() => onSidebarCollapsedChange(false)}
-            onNewChat={startNewChat}
             className="gap-1"
+          />
+          <DesktopAppSwitcher
+            activeApp="wework"
+            onNavigate={app =>
+              navigateTo(app === 'wework' ? '/' : app === 'todo' ? '/todo' : '/apps')
+            }
           />
         </div>
       )}

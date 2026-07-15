@@ -162,11 +162,9 @@ describe('App center route', () => {
 
     await waitFor(() => expect(window.location.pathname).toBe('/apps'))
     expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('w-8', 'min-w-0', 'px-0')
-    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
-    expect(screen.getByTestId('titlebar-sidebar-toggle-placeholder')).toHaveClass(
-      'invisible',
-      'pointer-events-none'
-    )
+    expect(screen.getByTestId('chrome-tab-todo')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(screen.getByTestId('collapse-sidebar-button')).toBeInTheDocument()
     expect(screen.getByTestId('apps-page')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '管理你的办公与编码应用' })).toBeInTheDocument()
     expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
@@ -227,6 +225,31 @@ describe('App center route', () => {
     expect(sidebar).not.toHaveClass('xl:flex')
     expect(sectionTabs).toHaveClass('md:hidden')
     expect(sectionTabs).not.toHaveClass('xl:hidden')
+  })
+
+  test('uses the fixed titlebar switcher and collapses the app center sidebar', async () => {
+    window.history.pushState({}, '', '/apps')
+
+    render(<App />)
+
+    await waitForStartupScreenToClose()
+    expect(await screen.findByText('Executor 状态')).toBeInTheDocument()
+
+    const weworkTab = screen.getByTestId('chrome-tab-wework')
+    const todoTab = screen.getByTestId('chrome-tab-todo')
+    const appsTab = screen.getByTestId('chrome-tab-apps')
+    expect(
+      weworkTab.compareDocumentPosition(todoTab) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(todoTab.compareDocumentPosition(appsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+    fireEvent.click(screen.getByTestId('collapse-sidebar-button'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('apps-page')).toHaveAttribute('data-sidebar-collapsed', 'true')
+    })
+    expect(screen.queryByTestId('apps-sidebar-nav')).not.toBeInTheDocument()
+    expect(screen.getByTestId('expand-sidebar-button')).toBeInTheDocument()
   })
 
   test('collapses the apps page header while scrolling the overview', async () => {
