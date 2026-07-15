@@ -125,6 +125,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     getRuntimeGoal,
     setRuntimeGoal,
     clearRuntimeGoal,
+    markRuntimeTaskStarted,
     sendRuntimePaneMessage,
     sendRuntimePaneGuidance,
     compactRuntimePaneTask,
@@ -297,6 +298,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     [currentRuntimeTask, messages, sendPhase, taskExecution]
   )
   const activeAssistantMessage = paneStatus.activeAssistantMessage
+
   const goal = useMemo(() => {
     let resolvedGoal: RuntimeGoal | null
     if (!currentRuntimeTaskLoadTarget) {
@@ -489,6 +491,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
       .current(address, { limit: RUNTIME_TRANSCRIPT_PAGE_SIZE })
       .then(transcript => {
         if (!cancelled) {
+          if (transcript.running) {
+            markRuntimeTaskStarted(address)
+          }
           const nextMessages = transcript.messages.length > 0 ? transcript.messages : seededMessages
           loadedRuntimeTranscriptKeyRef.current = loadKey
           setTranscriptFullContent(transcript.fullContent === true)
@@ -538,7 +543,7 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return () => {
       cancelled = true
     }
-  }, [dispatchMessages, runtimeTaskLoadTarget])
+  }, [dispatchMessages, markRuntimeTaskStarted, runtimeTaskLoadTarget])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* eslint-disable react-hooks/set-state-in-effect -- Queued runtime messages are advanced when the active runtime response becomes idle. */

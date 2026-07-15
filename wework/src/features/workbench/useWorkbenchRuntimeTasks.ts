@@ -136,6 +136,7 @@ export function useWorkbenchRuntimeTasks({
             messages: runtimeMessagesToWorkbenchMessages(
               Array.isArray(transcript.messages) ? transcript.messages : []
             ),
+            running: transcript.running === true,
             contextUsage: transcript.contextUsage ?? null,
             turnNavigation: Array.isArray(transcript.turnNavigation)
               ? transcript.turnNavigation

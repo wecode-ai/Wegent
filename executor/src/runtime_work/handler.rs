@@ -1119,6 +1119,7 @@ impl RuntimeWorkRpcHandler {
             .and_then(runtime_session_id_from_link)
             .or_else(|| runtime_session_id_from_payload(&payload));
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
+        let local_execution_running = self.is_active_local_task(&local_task_id);
         if let Some(link) = local_link.as_ref().filter(|link| {
             !runtime_has_provider_transcript_reader(&link.runtime) || session_id.is_none()
         }) {
@@ -1140,6 +1141,7 @@ impl RuntimeWorkRpcHandler {
                 link,
                 messages,
                 None,
+                local_execution_running,
                 limit,
                 before_cursor.as_deref(),
                 after_cursor.as_deref(),
@@ -1168,6 +1170,7 @@ impl RuntimeWorkRpcHandler {
                 runtime,
                 messages: Vec::new(),
                 context_usage: None,
+                running: false,
                 limit,
                 before_cursor,
                 after_cursor,
@@ -1186,11 +1189,8 @@ impl RuntimeWorkRpcHandler {
                         )
                     })
                     .unwrap_or_else(|| cached.messages.clone());
-                let running = transcript_running(
-                    local_link.as_ref(),
-                    running_hint || cached.running,
-                    &messages,
-                );
+                let running = !local_link.as_ref().is_some_and(local_task_finished)
+                    && (local_execution_running || cached.running);
                 log_runtime_transcript_finished(RuntimeTranscriptLog {
                     started_at,
                     local_task_id: &local_task_id,
@@ -1210,6 +1210,7 @@ impl RuntimeWorkRpcHandler {
                     runtime: cached.runtime,
                     messages,
                     context_usage: cached.context_usage,
+                    running,
                     limit,
                     before_cursor,
                     after_cursor,
@@ -1243,13 +1244,15 @@ impl RuntimeWorkRpcHandler {
 
         if refresh && !include_full_content {
             if let Some(cached) = self.transcript_cache.peek(&thread_id) {
-                if let Some(updated) = self.incremental_cached_transcript(
+                if let Some(mut updated) = self.incremental_cached_transcript(
                     cached,
                     &thread,
                     local_link.as_ref(),
                     running_hint,
                     &workspace_path,
                 ) {
+                    updated.running = !local_link.as_ref().is_some_and(local_task_finished)
+                        && (local_execution_running || codex_thread_is_running(&thread));
                     let messages = updated.messages.clone();
                     let context_usage = updated.context_usage.clone();
                     let running = updated.running;
@@ -1273,6 +1276,7 @@ impl RuntimeWorkRpcHandler {
                         runtime: "codex".to_owned(),
                         messages,
                         context_usage,
+                        running,
                         limit,
                         before_cursor,
                         after_cursor,
@@ -1298,7 +1302,8 @@ impl RuntimeWorkRpcHandler {
                 )
             })
             .unwrap_or(transcript_messages);
-        let running = transcript_running(local_link.as_ref(), running_hint, &messages);
+        let running = !local_link.as_ref().is_some_and(local_task_finished)
+            && (local_execution_running || codex_thread_is_running(&thread));
         let message_count = messages.len();
         if !include_full_content {
             self.transcript_cache.insert(
@@ -1334,6 +1339,7 @@ impl RuntimeWorkRpcHandler {
             runtime: "codex".to_owned(),
             messages,
             context_usage,
+            running,
             limit: if include_full_content { None } else { limit },
             before_cursor: if include_full_content {
                 None
@@ -4634,6 +4640,7 @@ fn cached_transcript_response(
     link: &RuntimeTaskLink,
     messages: Vec<Value>,
     context_usage: Option<Value>,
+    running: bool,
     limit: Option<usize>,
     before_cursor: Option<&str>,
     after_cursor: Option<&str>,
@@ -4644,6 +4651,7 @@ fn cached_transcript_response(
         runtime: link.runtime.clone(),
         messages,
         context_usage,
+        running,
         limit,
         before_cursor: before_cursor.map(ToOwned::to_owned),
         after_cursor: after_cursor.map(ToOwned::to_owned),
@@ -4657,6 +4665,7 @@ struct TranscriptResponseInput {
     runtime: String,
     messages: Vec<Value>,
     context_usage: Option<Value>,
+    running: bool,
     limit: Option<usize>,
     before_cursor: Option<String>,
     after_cursor: Option<String>,
@@ -4670,6 +4679,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         runtime,
         messages,
         context_usage,
+        running,
         limit,
         before_cursor,
         after_cursor,
@@ -4687,6 +4697,7 @@ fn transcript_response(input: TranscriptResponseInput) -> Value {
         "taskId": local_task_id,
         "workspacePath": workspace_path,
         "runtime": runtime,
+        "running": running,
         "messages": page.messages,
         "fullContent": full_content,
         "contextUsage": context_usage.unwrap_or(Value::Null),
@@ -4803,6 +4814,20 @@ fn runtime_message_running(message: &Value) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+fn codex_thread_is_running(thread: &Value) -> bool {
+    let Some(status) = thread.get("status") else {
+        return false;
+    };
+    status
+        .as_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case("active"))
+        || status
+            .as_object()
+            .and_then(|value| value.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.eq_ignore_ascii_case("active"))
 }
 
 fn transcript_running(
@@ -6504,6 +6529,17 @@ mod tests {
         })];
 
         assert!(!transcript_running(Some(&link), true, &messages));
+    }
+
+    #[test]
+    fn codex_thread_running_state_requires_an_active_app_server_thread() {
+        assert!(codex_thread_is_running(&json!({"status": "active"})));
+        assert!(codex_thread_is_running(
+            &json!({"status": {"type": "active", "activeFlags": []}})
+        ));
+        assert!(!codex_thread_is_running(&json!({"status": "idle"})));
+        assert!(!codex_thread_is_running(&json!({"status": "notLoaded"})));
+        assert!(!codex_thread_is_running(&json!({})));
     }
 
     #[test]
