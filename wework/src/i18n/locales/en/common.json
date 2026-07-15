@@ -296,6 +296,7 @@
     "project_workspace_kind_worktree": "Worktree",
     "project_workspace_kind_workspace": "Regular path",
     "project_directory_loading": "Loading directories...",
+    "project_home_directory_load_failed": "Failed to load the home directory",
     "project_directory_load_failed": "Failed to load directories",
     "project_directory_select_failed": "Failed to open project",
     "project_directory_empty": "No subdirectories in the current directory",
