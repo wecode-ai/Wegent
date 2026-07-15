@@ -92,13 +92,13 @@ async fn pick_workspace_paths(
             ));
         })
         .map_err(|error| format!("Failed to open the workspace picker: {error}"))?;
-        return tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::spawn_blocking(move || {
             receiver
                 .recv()
                 .map_err(|_| "Workspace picker closed unexpectedly".to_string())?
         })
         .await
-        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?;
+        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?
     }
 
     #[cfg(not(all(desktop, target_os = "macos")))]
@@ -280,7 +280,7 @@ fn create_log_plugin(
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory.clone(),
-                file_name: Some(rust_log_file_name.into()),
+                file_name: Some(rust_log_file_name),
             })
             .filter(|metadata| {
                 !metadata
@@ -291,7 +291,7 @@ fn create_log_plugin(
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory,
-                file_name: Some(webview_log_file_name.into()),
+                file_name: Some(webview_log_file_name),
             })
             .filter(|metadata| {
                 metadata
@@ -1607,7 +1607,7 @@ fn reveal_local_file(path: String) -> Result<(), String> {
         if !status.success() {
             return Err("Failed to reveal local file".to_string());
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -2431,6 +2431,15 @@ struct TrayMenuLabels {
 }
 
 #[cfg(desktop)]
+struct TrayTaskSection<'a> {
+    title: &'a str,
+    empty_text: &'a str,
+    items: &'a [TrayMenuTaskItem],
+    more_items: &'a [TrayMenuTaskItem],
+    always_visible: bool,
+}
+
+#[cfg(desktop)]
 fn build_system_tray_menu<M: Manager<tauri::Wry>>(
     manager: &M,
     state: &TrayMenuStatePayload,
@@ -2441,46 +2450,54 @@ fn build_system_tray_menu<M: Manager<tauri::Wry>>(
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.unread_completed,
         labels.untitled_task,
-        "",
         labels.more,
-        &state.unread,
-        &state.unread_more,
-        false,
+        TrayTaskSection {
+            title: labels.unread_completed,
+            empty_text: "",
+            items: &state.unread,
+            more_items: &state.unread_more,
+            always_visible: false,
+        },
     )?;
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.running,
         labels.untitled_task,
-        "",
         labels.more,
-        &state.running,
-        &state.running_more,
-        false,
+        TrayTaskSection {
+            title: labels.running,
+            empty_text: "",
+            items: &state.running,
+            more_items: &state.running_more,
+            always_visible: false,
+        },
     )?;
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.pinned,
         labels.untitled_task,
-        labels.no_pinned_tasks,
         labels.more,
-        &state.pinned,
-        &state.pinned_more,
-        true,
+        TrayTaskSection {
+            title: labels.pinned,
+            empty_text: labels.no_pinned_tasks,
+            items: &state.pinned,
+            more_items: &state.pinned_more,
+            always_visible: true,
+        },
     )?;
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.tasks,
         labels.untitled_task,
-        labels.no_tasks,
         labels.more,
-        &state.recent,
-        &state.recent_more,
-        true,
+        TrayTaskSection {
+            title: labels.tasks,
+            empty_text: labels.no_tasks,
+            items: &state.recent,
+            more_items: &state.recent_more,
+            always_visible: true,
+        },
     )?;
 
     builder
@@ -2496,32 +2513,28 @@ fn build_system_tray_menu<M: Manager<tauri::Wry>>(
 fn append_tray_task_section<'m, M: Manager<tauri::Wry>>(
     mut builder: MenuBuilder<'m, tauri::Wry, M>,
     manager: &M,
-    title: &str,
     untitled_task: &str,
-    empty_text: &str,
     more: &str,
-    items: &[TrayMenuTaskItem],
-    more_items: &[TrayMenuTaskItem],
-    always_visible: bool,
+    section: TrayTaskSection<'_>,
 ) -> tauri::Result<MenuBuilder<'m, tauri::Wry, M>> {
-    if items.is_empty() && more_items.is_empty() && !always_visible {
+    if section.items.is_empty() && section.more_items.is_empty() && !section.always_visible {
         return Ok(builder);
     }
 
-    let heading = MenuItem::new(manager, title, false, None::<&str>)?;
+    let heading = MenuItem::new(manager, section.title, false, None::<&str>)?;
     builder = builder.item(&heading);
 
-    if items.is_empty() && more_items.is_empty() {
-        let empty_item = MenuItem::new(manager, empty_text, false, None::<&str>)?;
+    if section.items.is_empty() && section.more_items.is_empty() {
+        let empty_item = MenuItem::new(manager, section.empty_text, false, None::<&str>)?;
         builder = builder.item(&empty_item);
     } else {
-        for item in items {
+        for item in section.items {
             let title = normalized_menu_task_title(item, untitled_task);
             builder = builder.text(format!("{TRAY_MENU_TASK_PREFIX}{}", item.id), title);
         }
-        if !more_items.is_empty() {
+        if !section.more_items.is_empty() {
             let mut submenu = SubmenuBuilder::new(manager, more);
-            for item in more_items {
+            for item in section.more_items {
                 let title = normalized_menu_task_title(item, untitled_task);
                 submenu = submenu.text(format!("{TRAY_MENU_TASK_PREFIX}{}", item.id), title);
             }
@@ -2710,12 +2723,12 @@ fn draw_tray_text_scaled(
     buffer: &mut [u8],
     width: u32,
     height: u32,
-    x: u32,
-    y: u32,
+    origin: (u32, u32),
     text: &str,
     scale: (u32, u32),
     rgba: [u8; 4],
 ) {
+    let (x, y) = origin;
     let (numerator, denominator) = scale;
     let mut source_cursor_x = 0;
     for character in text.chars() {
@@ -2894,8 +2907,7 @@ fn draw_tray_unread_badge(
         buffer,
         width,
         height,
-        text_x,
-        text_y,
+        (text_x, text_y),
         &text,
         (3, 2),
         if cfg!(target_os = "macos") {
@@ -3196,6 +3208,7 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root, install_wework_cli_impl,
@@ -3660,10 +3673,8 @@ pub fn run() {
             }
 
             #[cfg(desktop)]
-            app.handle().plugin(
-                create_log_plugin(app.handle())
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?,
-            )?;
+            app.handle()
+                .plugin(create_log_plugin(app.handle()).map_err(std::io::Error::other)?)?;
 
             #[cfg(desktop)]
             println!(
@@ -3701,8 +3712,7 @@ pub fn run() {
                 maybe_show_main_window_on_launch(app.handle());
             }
             #[cfg(desktop)]
-            install_shutdown_signal_handler(app.handle().clone())
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            install_shutdown_signal_handler(app.handle().clone()).map_err(std::io::Error::other)?;
             #[cfg(desktop)]
             if let Err(error) =
                 embedded_browser::start_embedded_browser_bridge(app.handle().clone())
@@ -3789,13 +3799,11 @@ pub fn run() {
         match event {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen {
-                has_visible_windows,
+                has_visible_windows: false,
                 ..
             } => {
-                if !has_visible_windows {
-                    if let Err(error) = ensure_main_window(app_handle, None) {
-                        log::warn!("Failed to reopen main window from macOS activation: {error}");
-                    }
+                if let Err(error) = ensure_main_window(app_handle, None) {
+                    log::warn!("Failed to reopen main window from macOS activation: {error}");
                 }
             }
             tauri::RunEvent::ExitRequested { api, .. } => {

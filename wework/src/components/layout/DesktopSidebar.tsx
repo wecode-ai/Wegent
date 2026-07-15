@@ -10,7 +10,6 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
-  Grid3X3,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -29,6 +28,7 @@ import type {
   ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
@@ -135,7 +135,6 @@ interface DesktopSidebarProps {
   onPointerLeave?: PointerEventHandler<HTMLElement>
   onToggleSidebar?: () => void
   onOpenWorkbench?: () => void
-  onOpenApps?: () => void
   onNewChat: () => void
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
@@ -501,8 +500,8 @@ function useSidebarWindowFocus(): boolean {
     let disposed = false
     let unlisten: (() => void) | undefined
     let browserFallbackActive = false
-    void import('@tauri-apps/api/window')
-      .then(async ({ getCurrentWindow }) => {
+    void Promise.resolve()
+      .then(async () => {
         const currentWindow = getCurrentWindow()
         if (
           typeof currentWindow?.isFocused !== 'function' ||
@@ -2453,7 +2452,6 @@ export function DesktopSidebar({
   onPointerLeave,
   onToggleSidebar,
   onOpenWorkbench,
-  onOpenApps,
 }: DesktopSidebarProps) {
   useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
@@ -2478,7 +2476,6 @@ export function DesktopSidebar({
         t('workbench.account_fallback', '当前账号')
       )
   const workbenchAppLabel = t('workbench.app_wework')
-  const appsAppLabel = t('workbench.apps')
   const windowFocused = useSidebarWindowFocus()
 
   const storageScope = getDesktopSidebarStorageScope(user)
@@ -2971,21 +2968,6 @@ export function DesktopSidebar({
                 <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
                 <span className="sr-only">{workbenchAppLabel}</span>
                 <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{workbenchAppLabel}</span>
-              </button>
-              <button
-                type="button"
-                data-testid="chrome-tab-apps"
-                onClick={onOpenApps}
-                title={appsAppLabel}
-                aria-label={appsAppLabel}
-                className={cn(
-                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
-                  'text-text-secondary hover:bg-black/[0.04]'
-                )}
-              >
-                <Grid3X3 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-                <span className="sr-only">{appsAppLabel}</span>
-                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{appsAppLabel}</span>
               </button>
             </div>
           )}

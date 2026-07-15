@@ -7,9 +7,9 @@
 
 import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
@@ -27,7 +27,7 @@ const corsHeaders = {
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|pointer-move|press|wait-for|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify <capture|snapshot|click|close-to-tray|fill|hover|pointer-move|press|select-text|wait-for|text|status|stop> --session PATH [options]
 
 Options:
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
@@ -200,7 +200,6 @@ async function runServer(sessionPath, token) {
   const executorHome = join(session.directory, 'executor-home')
   const codexHome = join(executorHome, 'codex')
   await mkdir(codexHome, { recursive: true })
-  await symlink(join(homedir(), '.codex', 'auth.json'), join(codexHome, 'auth.json'))
   app = spawn('bash', ['scripts/dev-mac-app.sh'], {
     cwd: weworkDir,
     detached: true,
@@ -318,6 +317,7 @@ async function main() {
     hover: 'hover',
     'pointer-move': 'pointerMove',
     press: 'press',
+    'select-text': 'selectText',
     'wait-for': 'waitFor',
     text: 'getText',
   }[command]
