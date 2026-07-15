@@ -155,6 +155,9 @@ upload_artifacts() {
 verify_uploaded_artifacts() {
   local archive_path
   local archive_url
+  local dmg_filename
+  local dmg_path
+  local latest_dmg_url
 
   archive_path="$(find "$OUTPUT_DIR" -maxdepth 1 -type f \
     -name "WeWork_${VERSION}_*.app.tar.gz" -print | sort | tail -1)"
@@ -164,12 +167,22 @@ verify_uploaded_artifacts() {
   fi
 
   archive_url="$UPDATE_BASE_URL/$(basename "$archive_path")"
+  dmg_path="$(find "$OUTPUT_DIR" -maxdepth 1 -type f \
+    -name "WeWork_${VERSION}_*.dmg" -print | sort | tail -1)"
+  if [ -z "$dmg_path" ]; then
+    echo "No DMG found for version $VERSION." >&2
+    exit 1
+  fi
+  dmg_filename="$(basename "$dmg_path")"
+  latest_dmg_url="$UPDATE_BASE_URL/WeWork_latest_${dmg_filename#WeWork_${VERSION}_}"
   if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/latest.json" || \
-    ! curl -fsSI -o /dev/null "$archive_url"; then
+    ! curl -fsSI -o /dev/null "$archive_url" || \
+    ! curl -fsSI -o /dev/null "$latest_dmg_url"; then
     echo "MinIO upload succeeded, but updater files are not publicly readable." >&2
     echo "Allow unauthenticated GET access to: $UPDATE_BASE_URL" >&2
     exit 1
   fi
+  echo "Latest DMG: $latest_dmg_url"
 }
 
 while [ "$#" -gt 0 ]; do
