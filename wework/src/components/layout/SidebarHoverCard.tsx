@@ -71,10 +71,9 @@ export function SidebarHoverCard({
       window.clearTimeout(openTimerRef.current)
       openTimerRef.current = null
     }
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current)
+    if (closeTimerRef.current === null) {
+      closeTimerRef.current = window.setTimeout(close, HOVER_CLOSE_DELAY_MS)
     }
-    closeTimerRef.current = window.setTimeout(close, HOVER_CLOSE_DELAY_MS)
   }, [close, interactive])
 
   const keepOpen = useCallback(() => {

@@ -359,7 +359,15 @@ describe('DesktopSidebar', () => {
     expect(content).not.toHaveTextContent('done')
     expect(content).not.toHaveTextContent('local-device /Users/alice/repo/Wegent')
 
+    fireEvent.mouseLeave(taskRow)
+    fireEvent.pointerMove(content)
+    await act(async () => vi.advanceTimersByTime(120))
+    expect(content).toBeInTheDocument()
+
     fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(60))
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(60))
     expect(
       screen.queryByTestId('runtime-local-task-hover-content-hover-task')
     ).not.toBeInTheDocument()
