@@ -283,6 +283,14 @@ class TaskLiteListResponse(BaseModel):
     items: list[TaskLite]
 
 
+class TaskLiteCursorResponse(BaseModel):
+    """Cursor-paginated lightweight task response."""
+
+    items: list[TaskLite]
+    next_cursor: Optional[str] = None
+    has_more: bool
+
+
 class TaskLiteGroup(BaseModel):
     """A current-page task group for lightweight history display."""
 

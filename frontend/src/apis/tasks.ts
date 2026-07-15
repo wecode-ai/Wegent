@@ -59,6 +59,12 @@ export interface TaskListResponse {
   items: Task[]
 }
 
+export interface TaskCursorResponse {
+  items: Task[]
+  next_cursor?: string | null
+  has_more?: boolean
+}
+
 // Diff related types
 export interface BranchDiffRequest {
   git_repo: string
@@ -278,11 +284,12 @@ export const taskApis = {
   },
 
   getPersonalTasksLite: async (
-    params?: PaginationParams & { status?: TaskStatus; types?: string[] }
-  ): Promise<TaskListResponse> => {
+    params?: PaginationParams & { cursor?: string; status?: TaskStatus; types?: string[] }
+  ): Promise<TaskCursorResponse> => {
     const query = new URLSearchParams()
     if (params?.limit) query.append('limit', params.limit.toString())
     if (params?.page) query.append('page', params.page.toString())
+    if (params?.cursor) query.append('cursor', params.cursor)
     if (params?.status) query.append('status', params.status)
     if (params?.types && params.types.length > 0) {
       query.append('types', params.types.join(','))
