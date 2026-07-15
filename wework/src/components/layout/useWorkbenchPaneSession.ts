@@ -476,10 +476,13 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     }
     rebuildingTranscriptRef.current = true
     rebuildingTranscriptIdentityRef.current = runtimeTaskLoadTarget.identityKey
+    const cachedSeededMessages = getRuntimePaneMessageSeed(address)
     const seededMessages =
       displayedTranscriptIdentityRef.current === runtimeTaskLoadTarget.identityKey
-        ? messagesRef.current
-        : getRuntimePaneMessageSeed(address)
+        ? messagesRef.current.length > 0
+          ? messagesRef.current
+          : cachedSeededMessages
+        : cachedSeededMessages
     displayedTranscriptIdentityRef.current = runtimeTaskLoadTarget.identityKey
     debugRuntimePaneMessageFlow('transcript-load-start', {
       address: runtimeAddressDebug(address),

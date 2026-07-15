@@ -89,6 +89,13 @@ export interface CreateTemporaryRuntimeTaskOptions {
   onError?: (error: string) => void
 }
 
+export interface CreateProjectRuntimeTaskOptions {
+  project: ProjectWithTasks
+  attachments?: Attachment[]
+  initialGoal?: RuntimeGoalCreateInput | null
+  onError?: (error: string) => void
+}
+
 export interface RuntimePaneActionOptions {
   onError?: (error: string) => void
 }
@@ -291,6 +298,10 @@ export interface WorkbenchContextValue {
   createTemporaryRuntimeTask: (
     input: string,
     options?: CreateTemporaryRuntimeTaskOptions
+  ) => Promise<RuntimeTaskAddress | false>
+  createProjectRuntimeTask: (
+    input: string,
+    options: CreateProjectRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>
   retryFailedMessage: (messageId: string, messagesOverride?: WorkbenchMessage[]) => Promise<void>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>

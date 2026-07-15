@@ -31,6 +31,7 @@ import {
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { navigateTo } from '@/lib/navigation'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { defaultAppPreferences, getAppPreferences } from '@/tauri/appPreferences'
 import { applyLanguagePreference } from '@/i18n/languagePreference'
@@ -353,14 +354,10 @@ function AppShell() {
             <ChromeTitlebar
               tabs={tabs}
               activeKey={activeAppKey}
-              onNavigate={navigateToApp}
-              beforeTabs={
-                activeAppKey === 'wework' ? (
-                  <TitlebarSidebarToggle />
-                ) : (
-                  <TitlebarSidebarTogglePlaceholder />
-                )
+              onNavigate={appKey =>
+                appKey === 'todo' ? navigateTo('/todo') : navigateToApp(appKey)
               }
+              beforeTabs={<TitlebarSidebarToggle />}
               afterTabs={<AppUpdateTitlebarButton />}
               iconOnlyTabs={isTauri}
               className={
@@ -440,16 +437,6 @@ function WeworkDevInstanceBadge() {
         </div>
       </div>
     </div>
-  )
-}
-
-function TitlebarSidebarTogglePlaceholder() {
-  return (
-    <div
-      data-testid="titlebar-sidebar-toggle-placeholder"
-      aria-hidden="true"
-      className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, 'invisible pointer-events-none')}
-    />
   )
 }
 

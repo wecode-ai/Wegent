@@ -41,6 +41,7 @@ import type {
 import type { WorkbenchMessage, WorkbenchState } from '@/types/workbench'
 import { normalizeTurnFileChanges } from './turnFileChanges'
 import type {
+  CreateProjectRuntimeTaskOptions,
   CreateTemporaryRuntimeTaskOptions,
   RuntimePaneActionOptions,
   RuntimePaneGuidanceResult,
@@ -1021,6 +1022,58 @@ export function useWorkbenchRuntimeMessaging({
     ]
   )
 
+  const createProjectRuntimeTask = useCallback(
+    async (
+      input: string,
+      options: CreateProjectRuntimeTaskOptions
+    ): Promise<RuntimeTaskAddress | false> => {
+      const message = input.trim()
+      if (!message) {
+        reportSendBlocked('请输入内容后再发送', undefined, options)
+        return false
+      }
+
+      const prepared = buildSendPayload(message, options.attachments, options.project)
+      if (!prepared) {
+        reportSendBlocked(
+          'Wework default team is not configured',
+          { hasDefaultTeam: Boolean(state.defaultTeam) },
+          options
+        )
+        return false
+      }
+      if (prepared.activeDeviceId) {
+        const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
+        if (!isWorkbenchDeviceOnline(activeDevice)) {
+          const deviceName = getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)
+          reportSendBlocked(`${deviceName} 当前不可用`, undefined, options)
+          return false
+        }
+        if (activeDevice && isDeviceBelowWeWorkVersion(activeDevice)) {
+          reportSendBlocked(
+            `${getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)} 版本低于 ${WEWORK_MIN_EXECUTOR_VERSION}`,
+            undefined,
+            options
+          )
+          return false
+        }
+      }
+
+      return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
+        initialGoal: options.initialGoal,
+        onError: options.onError,
+        openInMainPane: false,
+      })
+    },
+    [
+      buildSendPayload,
+      reportSendBlocked,
+      sendPreparedRuntimeMessage,
+      state.defaultTeam,
+      state.devices,
+    ]
+  )
+
   const loadTurnFileChangesDiff = useCallback(
     async (
       subtaskId: string,
@@ -1158,6 +1211,7 @@ export function useWorkbenchRuntimeMessaging({
     cancelRuntimePaneTask,
     sendCurrentInput,
     createTemporaryRuntimeTask,
+    createProjectRuntimeTask,
     retryFailedMessage,
     pauseCurrentResponse,
     loadTurnFileChangesDiff,
