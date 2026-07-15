@@ -71,6 +71,26 @@ describe('ComposerProseMirrorEditor', () => {
     expect(serializeComposerSlice(doc.slice(0, doc.content.size))).toBe(value)
   })
 
+  test.each([
+    ['LF text/plain', 'first line\nsecond line\nthird line', 'text/plain'],
+    ['LF text alias', 'first line\nsecond line\nthird line', 'text'],
+    ['CRLF text/plain', 'first line\r\nsecond line\r\nthird line', 'text/plain'],
+  ])('keeps every line when pasting %s', (_variant, pastedText, clipboardType) => {
+    const { editorRef, onChange } = renderEditor('')
+    const editor = screen.getByTestId('composer-editor')
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        files: [],
+        getData: (type: string) => (type === clipboardType ? pastedText : ''),
+        types: ['text/plain', 'text/html'],
+      },
+    })
+
+    expect(editorRef.current?.getSnapshot().value).toBe('first line\nsecond line\nthird line')
+    expect(onChange).toHaveBeenLastCalledWith('first line\nsecond line\nthird line')
+  })
+
   test('keeps the caret outside the skill while repeatedly moving left', () => {
     const { editorRef, onChange } = renderEditor()
     const editor = screen.getByTestId('composer-editor')

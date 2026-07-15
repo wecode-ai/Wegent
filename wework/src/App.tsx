@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Check, Copy, PanelLeft } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
@@ -60,6 +60,7 @@ import {
   getWeworkDevInstanceRows,
   getWeworkDocumentTitle,
 } from '@/lib/wework-dev-instance'
+import { AppshotBridge } from '@/features/appshots/AppshotBridge'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 
@@ -77,9 +78,10 @@ function useCurrentPath() {
 
 interface AppRoutesProps {
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
+  onOpenWeworkForAppshot?: () => void
 }
 
-function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
+function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
   const { activeTab, isNativeApp } = useChromeTabs(path)
@@ -126,6 +128,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange }: AppRoutesProps = {}) {
   // reconstructing them after every route change is both lossy and expensive.
   return (
     <WorkbenchProvider user={user} onStartupReadyChange={onWorkbenchStartupReadyChange}>
+      {onOpenWeworkForAppshot ? <AppshotBridge onOpenWework={onOpenWeworkForAppshot} /> : null}
       {(!auxiliaryPage || hasMountedWorkbench) && (
         <div
           className={cn('h-full', auxiliaryPage && 'hidden')}
@@ -189,6 +192,9 @@ function AppShell() {
   const showChromeTitlebar = isTauri && activeAppKey !== 'wework'
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+  const openWeworkForAppshot = useCallback(() => {
+    navigateToApp('wework')
+  }, [navigateToApp])
 
   useEffect(() => {
     if (!isTauri) return undefined
@@ -360,7 +366,10 @@ function AppShell() {
           <div
             className={cn('min-h-0 overflow-hidden', titlebarOverlaysContent ? 'h-full' : 'flex-1')}
           >
-            <AppRoutes onWorkbenchStartupReadyChange={setWorkbenchStartupReady} />
+            <AppRoutes
+              onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
+              onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
+            />
           </div>
           <WeworkDevInstanceBadge />
         </div>

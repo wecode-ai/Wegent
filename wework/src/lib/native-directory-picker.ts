@@ -1,3 +1,4 @@
+import { openNativeWorkspacePathPicker } from './native-workspace-path-picker'
 import { isTauriRuntime } from './runtime-environment'
 
 export async function openNativeDirectoryPicker(defaultPath?: string): Promise<string | null> {
@@ -20,6 +21,14 @@ export async function openNativeDirectoryPicker(defaultPath?: string): Promise<s
   return null
 }
 
-export function openNativeProjectDirectoryPicker(): Promise<string | null> {
-  return openNativeDirectoryPicker()
+export async function openNativeProjectDirectoryPicker(
+  initialDirectory?: string
+): Promise<string | null> {
+  const selected = await openNativeWorkspacePathPicker(initialDirectory, {
+    directoriesOnly: true,
+    multiple: false,
+    defaultToHome: true,
+  })
+  const directory = selected.find(item => item.isDirectory)
+  return directory?.path.trim() || null
 }

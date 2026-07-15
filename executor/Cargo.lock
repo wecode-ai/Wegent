@@ -2570,6 +2570,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tar",
+ "tempfile",
  "tf-rust-socketio",
  "thiserror 2.0.18",
  "tokio",

@@ -592,7 +592,7 @@ export function DesktopWorkbenchLayout() {
         />
       )}
       <div style={{ display: settingsOpen ? 'none' : 'contents' }} aria-hidden={settingsOpen}>
-        {todoOpen ? (
+        {todoOpen && (
           <TodoWorkspace
             user={state.user}
             projects={state.projects}
@@ -612,8 +612,10 @@ export function DesktopWorkbenchLayout() {
               await onOpenRuntimeTask?.(address)
             }}
           />
-        ) : (
+        )}
+        <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
           <DesktopWorkbenchMain
+            visible={!settingsOpen && !todoOpen}
             sidebarCollapsed={effectiveSidebarCollapsed}
             sidebarResizing={sidebarResizing}
             onSidebarCollapsedChange={updateSidebarCollapsed}
@@ -623,7 +625,7 @@ export function DesktopWorkbenchLayout() {
               standaloneChatKey: state.standaloneChatKey,
             }}
           />
-        )}
+        </div>
       </div>
       <StandaloneBlankProjectDialog
         open={blankProjectDialogOpen}

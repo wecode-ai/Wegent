@@ -102,7 +102,7 @@ interface UseWorkbenchRuntimeMessagingOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   runtimeTasks: WorkbenchRuntimeTasks
-  currentRuntimeTaskRunning: boolean
+  authoritativeRuntimeTaskRunning: boolean
   projectExecutionMode: string
   projectWorktreeBranch: string | null
   isOptionsLocked: boolean
@@ -142,7 +142,7 @@ export function useWorkbenchRuntimeMessaging({
   executorClient,
   services,
   runtimeTasks,
-  currentRuntimeTaskRunning,
+  authoritativeRuntimeTaskRunning,
   projectExecutionMode,
   projectWorktreeBranch,
   isOptionsLocked,
@@ -774,7 +774,7 @@ export function useWorkbenchRuntimeMessaging({
           reportSendBlocked('当前 LocalTask 暂不支持代码评论', undefined, options)
           return false
         }
-        if (currentRuntimeTaskRunning) {
+        if (authoritativeRuntimeTaskRunning) {
           reportSendBlocked(i18n.t('workbench.runtime_task_running_message'), undefined, options)
           return false
         }
@@ -882,7 +882,7 @@ export function useWorkbenchRuntimeMessaging({
     [
       attachmentSelection,
       buildSendPayload,
-      currentRuntimeTaskRunning,
+      authoritativeRuntimeTaskRunning,
       modelSelection,
       reportSendBlocked,
       sendPreparedRuntimeMessage,
@@ -916,7 +916,7 @@ export function useWorkbenchRuntimeMessaging({
       }
 
       if (state.currentRuntimeTask) {
-        if (currentRuntimeTaskRunning) {
+        if (authoritativeRuntimeTaskRunning) {
           reportSendBlocked(i18n.t('workbench.runtime_task_running_message'))
           return
         }
@@ -955,7 +955,7 @@ export function useWorkbenchRuntimeMessaging({
       reportSendBlocked('当前没有可重试的 LocalTask')
     },
     [
-      currentRuntimeTaskRunning,
+      authoritativeRuntimeTaskRunning,
       dispatch,
       executorClient,
       modelSelection,

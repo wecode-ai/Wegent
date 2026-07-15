@@ -1,3 +1,4 @@
+mod appshots;
 mod desktop_capture;
 mod embedded_browser;
 mod local_executor;
@@ -22,6 +23,8 @@ struct PickedWorkspacePath {
 #[cfg(all(desktop, target_os = "macos"))]
 fn pick_workspace_paths_on_macos(
     initial_directory: Option<String>,
+    directories_only: bool,
+    multiple: bool,
 ) -> Result<Vec<PickedWorkspacePath>, String> {
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
@@ -30,16 +33,17 @@ fn pick_workspace_paths_on_macos(
     let main_thread = MainThreadMarker::new()
         .ok_or_else(|| "The workspace picker must run on the main thread".to_string())?;
     let panel = NSOpenPanel::openPanel(main_thread);
-    panel.setCanChooseFiles(true);
+    panel.setCanChooseFiles(!directories_only);
     panel.setCanChooseDirectories(true);
-    panel.setAllowsMultipleSelection(true);
+    panel.setAllowsMultipleSelection(multiple);
     panel.setCanCreateDirectories(true);
     if let Some(directory) = initial_directory.filter(|path| !path.trim().is_empty()) {
         let directory = NSString::from_str(&directory);
         let url = NSURL::fileURLWithPath_isDirectory(&directory, true);
         panel.setDirectoryURL(Some(&url));
     }
-    if panel.runModal() != NSModalResponseOK {
+    let response = panel.runModal();
+    if response != NSModalResponseOK {
         return Ok(Vec::new());
     }
 
@@ -61,21 +65,40 @@ fn pick_workspace_paths_on_macos(
 async fn pick_workspace_paths(
     app: tauri::AppHandle,
     initial_directory: Option<String>,
+    directories_only: Option<bool>,
+    multiple: Option<bool>,
+    default_to_home: Option<bool>,
 ) -> Result<Vec<PickedWorkspacePath>, String> {
+    let directories_only = directories_only.unwrap_or(false);
+    let multiple = multiple.unwrap_or(true);
+    let initial_directory = initial_directory
+        .filter(|path| !path.trim().is_empty())
+        .or_else(|| {
+            default_to_home
+                .unwrap_or(false)
+                .then(|| app.path().home_dir().ok())
+                .flatten()
+                .map(|path| path.to_string_lossy().into_owned())
+        });
+
     #[cfg(all(desktop, target_os = "macos"))]
     {
         let (sender, receiver) = std::sync::mpsc::channel();
         app.run_on_main_thread(move || {
-            let _ = sender.send(pick_workspace_paths_on_macos(initial_directory));
+            let _ = sender.send(pick_workspace_paths_on_macos(
+                initial_directory,
+                directories_only,
+                multiple,
+            ));
         })
         .map_err(|error| format!("Failed to open the workspace picker: {error}"))?;
-        return tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::spawn_blocking(move || {
             receiver
                 .recv()
                 .map_err(|_| "Workspace picker closed unexpectedly".to_string())?
         })
         .await
-        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?;
+        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?
     }
 
     #[cfg(not(all(desktop, target_os = "macos")))]
@@ -83,13 +106,24 @@ async fn pick_workspace_paths(
         use tauri_plugin_dialog::DialogExt;
 
         let mut picker = app.dialog().file();
-        if let Some(directory) = initial_directory.filter(|path| !path.trim().is_empty()) {
+        if let Some(directory) = initial_directory {
             picker = picker.set_directory(directory);
         }
-        let files = tauri::async_runtime::spawn_blocking(move || picker.blocking_pick_files())
-            .await
-            .map_err(|error| format!("Failed to join workspace picker task: {error}"))?
-            .unwrap_or_default();
+        let files = tauri::async_runtime::spawn_blocking(move || {
+            if directories_only {
+                if multiple {
+                    picker.blocking_pick_folders().unwrap_or_default()
+                } else {
+                    picker.blocking_pick_folder().into_iter().collect()
+                }
+            } else if multiple {
+                picker.blocking_pick_files().unwrap_or_default()
+            } else {
+                picker.blocking_pick_file().into_iter().collect()
+            }
+        })
+        .await
+        .map_err(|error| format!("Failed to join workspace picker task: {error}"))?;
         return Ok(files
             .into_iter()
             .filter_map(|file| file.into_path().ok())
@@ -246,7 +280,7 @@ fn create_log_plugin(
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory.clone(),
-                file_name: Some(rust_log_file_name.into()),
+                file_name: Some(rust_log_file_name),
             })
             .filter(|metadata| {
                 !metadata
@@ -257,7 +291,7 @@ fn create_log_plugin(
         .target(
             tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
                 path: log_directory,
-                file_name: Some(webview_log_file_name.into()),
+                file_name: Some(webview_log_file_name),
             })
             .filter(|metadata| {
                 metadata
@@ -361,6 +395,8 @@ struct AppPreferences {
     browser_download_directory: Option<String>,
     #[serde(default)]
     browser_ask_before_download: bool,
+    #[serde(default = "default_true")]
+    appshots_play_sound: bool,
 }
 
 #[cfg(desktop)]
@@ -400,6 +436,7 @@ impl Default for AppPreferences {
             browser_local_link_target: default_browser_local_link_target(),
             browser_download_directory: None,
             browser_ask_before_download: false,
+            appshots_play_sound: true,
         }
     }
 }
@@ -421,6 +458,7 @@ struct AppPreferencesPatch {
     browser_local_link_target: Option<String>,
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
+    appshots_play_sound: Option<bool>,
 }
 
 #[cfg(desktop)]
@@ -826,6 +864,9 @@ fn update_app_preferences(
         preferences.browser_ask_before_download = value;
     }
     preferences = normalize_app_preferences(preferences);
+    if let Some(value) = patch.appshots_play_sound {
+        preferences.appshots_play_sound = value;
+    }
     write_app_preferences_impl(&app, &preferences)?;
     Ok(preferences)
 }
@@ -847,6 +888,7 @@ struct AppPreferences {
     browser_local_link_target: String,
     browser_download_directory: Option<String>,
     browser_ask_before_download: bool,
+    appshots_play_sound: bool,
 }
 
 #[cfg(not(desktop))]
@@ -866,6 +908,7 @@ struct AppPreferencesPatch {
     browser_local_link_target: Option<String>,
     browser_download_directory: Option<String>,
     browser_ask_before_download: Option<bool>,
+    appshots_play_sound: Option<bool>,
 }
 
 #[cfg(not(desktop))]
@@ -885,6 +928,7 @@ fn get_app_preferences(_app: tauri::AppHandle) -> Result<AppPreferences, String>
         browser_local_link_target: "wework".to_string(),
         browser_download_directory: None,
         browser_ask_before_download: false,
+        appshots_play_sound: true,
     })
 }
 
@@ -920,6 +964,7 @@ fn update_app_preferences(
             .browser_download_directory
             .and_then(normalized_non_empty),
         browser_ask_before_download: patch.browser_ask_before_download.unwrap_or(false),
+        appshots_play_sound: patch.appshots_play_sound.unwrap_or(true),
     })
 }
 
@@ -1562,7 +1607,7 @@ fn reveal_local_file(path: String) -> Result<(), String> {
         if !status.success() {
             return Err("Failed to reveal local file".to_string());
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -2386,6 +2431,15 @@ struct TrayMenuLabels {
 }
 
 #[cfg(desktop)]
+struct TrayTaskSection<'a> {
+    title: &'a str,
+    empty_text: &'a str,
+    items: &'a [TrayMenuTaskItem],
+    more_items: &'a [TrayMenuTaskItem],
+    always_visible: bool,
+}
+
+#[cfg(desktop)]
 fn build_system_tray_menu<M: Manager<tauri::Wry>>(
     manager: &M,
     state: &TrayMenuStatePayload,
@@ -2396,46 +2450,54 @@ fn build_system_tray_menu<M: Manager<tauri::Wry>>(
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.unread_completed,
         labels.untitled_task,
-        "",
         labels.more,
-        &state.unread,
-        &state.unread_more,
-        false,
+        TrayTaskSection {
+            title: labels.unread_completed,
+            empty_text: "",
+            items: &state.unread,
+            more_items: &state.unread_more,
+            always_visible: false,
+        },
     )?;
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.running,
         labels.untitled_task,
-        "",
         labels.more,
-        &state.running,
-        &state.running_more,
-        false,
+        TrayTaskSection {
+            title: labels.running,
+            empty_text: "",
+            items: &state.running,
+            more_items: &state.running_more,
+            always_visible: false,
+        },
     )?;
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.pinned,
         labels.untitled_task,
-        labels.no_pinned_tasks,
         labels.more,
-        &state.pinned,
-        &state.pinned_more,
-        true,
+        TrayTaskSection {
+            title: labels.pinned,
+            empty_text: labels.no_pinned_tasks,
+            items: &state.pinned,
+            more_items: &state.pinned_more,
+            always_visible: true,
+        },
     )?;
     builder = append_tray_task_section(
         builder,
         manager,
-        labels.tasks,
         labels.untitled_task,
-        labels.no_tasks,
         labels.more,
-        &state.recent,
-        &state.recent_more,
-        true,
+        TrayTaskSection {
+            title: labels.tasks,
+            empty_text: labels.no_tasks,
+            items: &state.recent,
+            more_items: &state.recent_more,
+            always_visible: true,
+        },
     )?;
 
     builder
@@ -2451,32 +2513,28 @@ fn build_system_tray_menu<M: Manager<tauri::Wry>>(
 fn append_tray_task_section<'m, M: Manager<tauri::Wry>>(
     mut builder: MenuBuilder<'m, tauri::Wry, M>,
     manager: &M,
-    title: &str,
     untitled_task: &str,
-    empty_text: &str,
     more: &str,
-    items: &[TrayMenuTaskItem],
-    more_items: &[TrayMenuTaskItem],
-    always_visible: bool,
+    section: TrayTaskSection<'_>,
 ) -> tauri::Result<MenuBuilder<'m, tauri::Wry, M>> {
-    if items.is_empty() && more_items.is_empty() && !always_visible {
+    if section.items.is_empty() && section.more_items.is_empty() && !section.always_visible {
         return Ok(builder);
     }
 
-    let heading = MenuItem::new(manager, title, false, None::<&str>)?;
+    let heading = MenuItem::new(manager, section.title, false, None::<&str>)?;
     builder = builder.item(&heading);
 
-    if items.is_empty() && more_items.is_empty() {
-        let empty_item = MenuItem::new(manager, empty_text, false, None::<&str>)?;
+    if section.items.is_empty() && section.more_items.is_empty() {
+        let empty_item = MenuItem::new(manager, section.empty_text, false, None::<&str>)?;
         builder = builder.item(&empty_item);
     } else {
-        for item in items {
+        for item in section.items {
             let title = normalized_menu_task_title(item, untitled_task);
             builder = builder.text(format!("{TRAY_MENU_TASK_PREFIX}{}", item.id), title);
         }
-        if !more_items.is_empty() {
+        if !section.more_items.is_empty() {
             let mut submenu = SubmenuBuilder::new(manager, more);
-            for item in more_items {
+            for item in section.more_items {
                 let title = normalized_menu_task_title(item, untitled_task);
                 submenu = submenu.text(format!("{TRAY_MENU_TASK_PREFIX}{}", item.id), title);
             }
@@ -2665,12 +2723,12 @@ fn draw_tray_text_scaled(
     buffer: &mut [u8],
     width: u32,
     height: u32,
-    x: u32,
-    y: u32,
+    origin: (u32, u32),
     text: &str,
     scale: (u32, u32),
     rgba: [u8; 4],
 ) {
+    let (x, y) = origin;
     let (numerator, denominator) = scale;
     let mut source_cursor_x = 0;
     for character in text.chars() {
@@ -2849,8 +2907,7 @@ fn draw_tray_unread_badge(
         buffer,
         width,
         height,
-        text_x,
-        text_y,
+        (text_x, text_y),
         &text,
         (3, 2),
         if cfg!(target_os = "macos") {
@@ -3151,6 +3208,7 @@ fn set_tray_menu_state(_state: TrayMenuStatePayload) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::{
         can_replace_wework_cli_path, executor_home_attachment_root, install_wework_cli_impl,
@@ -3544,6 +3602,21 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init());
 
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, shortcut, event| {
+                use tauri_plugin_global_shortcut::{Code, Modifiers, ShortcutState};
+
+                if event.state == ShortcutState::Pressed
+                    && shortcut.matches(Modifiers::SUPER | Modifiers::SHIFT, Code::Digit2)
+                {
+                    appshots::handle_shortcut(app);
+                }
+            })
+            .build(),
+    );
+
     #[cfg(all(desktop, not(debug_assertions)))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
         let action = if let Some(request) = parse_local_workspace_open_request(&argv) {
@@ -3558,6 +3631,7 @@ pub fn run() {
     }));
 
     let app = builder
+        .manage(appshots::AppshotState::default())
         .manage(embedded_browser::EmbeddedBrowserState::default())
         .manage(MainWindowLifecycleState::default())
         .manage(LocalWorkspaceOpenState::default())
@@ -3599,10 +3673,8 @@ pub fn run() {
             }
 
             #[cfg(desktop)]
-            app.handle().plugin(
-                create_log_plugin(app.handle())
-                    .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?,
-            )?;
+            app.handle()
+                .plugin(create_log_plugin(app.handle()).map_err(std::io::Error::other)?)?;
 
             #[cfg(desktop)]
             println!(
@@ -3619,6 +3691,8 @@ pub fn run() {
 
             #[cfg(desktop)]
             setup_system_tray(app)?;
+            #[cfg(desktop)]
+            appshots::setup(app.handle());
             #[cfg(desktop)]
             match install_wework_cli_link(app.handle()) {
                 Ok(path) => log::info!("Installed Wework CLI launcher: {}", path.display()),
@@ -3638,8 +3712,7 @@ pub fn run() {
                 maybe_show_main_window_on_launch(app.handle());
             }
             #[cfg(desktop)]
-            install_shutdown_signal_handler(app.handle().clone())
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            install_shutdown_signal_handler(app.handle().clone()).map_err(std::io::Error::other)?;
             #[cfg(desktop)]
             if let Err(error) =
                 embedded_browser::start_embedded_browser_bridge(app.handle().clone())
@@ -3655,6 +3728,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            appshots::acknowledge_appshot,
+            appshots::get_appshots_status,
+            appshots::open_appshots_permission_settings,
+            appshots::take_pending_appshots,
+            appshots::take_pending_appshots_permission,
             desktop_capture::capture_main_webview,
             embedded_browser::embedded_browser_close,
             embedded_browser::embedded_browser_clear_data,
@@ -3721,13 +3799,11 @@ pub fn run() {
         match event {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen {
-                has_visible_windows,
+                has_visible_windows: false,
                 ..
             } => {
-                if !has_visible_windows {
-                    if let Err(error) = ensure_main_window(app_handle, None) {
-                        log::warn!("Failed to reopen main window from macOS activation: {error}");
-                    }
+                if let Err(error) = ensure_main_window(app_handle, None) {
+                    log::warn!("Failed to reopen main window from macOS activation: {error}");
                 }
             }
             tauri::RunEvent::ExitRequested { api, .. } => {

@@ -35,6 +35,20 @@ The first time you close the main window, Wework explains that tasks can continu
 
 When Wework moves to the background, it destroys the main window WebView to release resources used by the UI. The task executor is not stopped. Reopening from the tray creates a new main window and restores the current task state.
 
+When no conversation is open, the newly created main window keeps the task launcher within the window bounds. The message area scrolls as needed only after a conversation is opened.
+
+## Appshots
+
+On macOS desktop, **Settings → Integrations → Appshots** shows the Appshots status and sound preference. The default shortcut is `⌘⇧2`. When pressed, Wework captures the frontmost application window and uses macOS Accessibility to read text exposed by that window, which can include text outside the visible scroll area. It then adds both the PNG and text context to the current composer attachments.
+
+On first use, macOS requests Screen & System Audio Recording and Accessibility access. The former captures the image; the latter reads available window text. Allow both, restart Wework, and press the shortcut again. If access was previously denied, Wework shows recovery guidance with a direct link to the relevant System Settings page.
+
+Text extraction depends on the accessibility information exposed by the target application. Some apps and websites expose only visible content, so complete off-screen text is not guaranteed for every window.
+
+Appshots are stored in Wework's local attachment draft directory and are used only as current composer attachments. They are not uploaded to Backend unless the user later sends a message containing the attachment.
+
+The **Play sound** switch controls whether macOS plays the system screenshot sound after a successful capture. Turning it off still creates the snapshot and adds it to the composer.
+
 ## Quit the App
 
 To fully quit Wework, choose quit from the system tray menu. Quitting the app stops local executor processes.

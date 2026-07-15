@@ -3,15 +3,15 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpStream};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -46,6 +46,7 @@ const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
 const LOCAL_EXECUTOR_KEEPALIVE_INTERVAL_SECS: u64 = 10;
+const LOCAL_EXECUTOR_HEALTH_CHECK_TIMEOUT_SECS: u64 = 5;
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
@@ -482,6 +483,14 @@ fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
     Ok(home)
 }
 
+fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) {
+        return local_executor_runtime_dir_path();
+    }
+
+    local_executor_home_path()
+}
+
 fn local_executor_home_path() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
         let trimmed = path.trim();
@@ -495,7 +504,7 @@ fn local_executor_home_path() -> Result<PathBuf, String> {
 }
 
 fn app_ipc_addr_file_path() -> Result<PathBuf, String> {
-    Ok(local_executor_home_path()?.join(LOCAL_EXECUTOR_ADDR_FILE_NAME))
+    Ok(local_executor_runtime_home_path()?.join(LOCAL_EXECUTOR_ADDR_FILE_NAME))
 }
 
 fn resolve_app_ipc_addr() -> Result<SocketAddr, String> {
@@ -737,13 +746,9 @@ fn remove_stale_app_ipc_addr_file_at(path: &Path) -> Result<(), String> {
         return Ok(());
     }
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() => {
-            std::fs::remove_file(path).map_err(|error| {
-                format!(
-                    "Failed to remove stale local executor IPC address file {path:?}: {error}"
-                )
-            })
-        }
+        Ok(metadata) if metadata.is_file() => std::fs::remove_file(path).map_err(|error| {
+            format!("Failed to remove stale local executor IPC address file {path:?}: {error}")
+        }),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
@@ -904,7 +909,9 @@ fn has_connected_stream(inner: &LocalExecutorInner) -> bool {
 }
 
 fn clear_connected_stream(inner: &mut LocalExecutorInner) {
-    inner.stream = None;
+    if let Some(stream) = inner.stream.take() {
+        let _ = stream.shutdown(Shutdown::Both);
+    }
 }
 
 fn status_from_inner(inner: &LocalExecutorInner) -> LocalExecutorStatus {
@@ -953,13 +960,16 @@ fn configured_file_edit_hook_command() -> String {
 }
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
-    let executor_home = path_or_error(local_executor_home_path());
+    let executor_home = path_or_error(local_executor_runtime_home_path());
     let codex_home = path_or_error(wework_codex_home_path(&executor_home));
     let log_dir = path_or_error(local_executor_log_dir_path());
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
         (CODEX_HOME_ENV.to_string(), codex_home),
-        (LOCAL_EXECUTOR_ADDR_ENV.to_string(), LOCAL_EXECUTOR_DEFAULT_ADDR.to_string()),
+        (
+            LOCAL_EXECUTOR_ADDR_ENV.to_string(),
+            LOCAL_EXECUTOR_DEFAULT_ADDR.to_string(),
+        ),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (
             "PATH".to_string(),
@@ -1018,6 +1028,60 @@ fn wework_codex_home_path(executor_home: &str) -> Result<PathBuf, String> {
 fn native_codex_home_path() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
     Ok(home.join(".codex"))
+}
+
+fn link_native_codex_auth(
+    native_codex_home: &Path,
+    wework_codex_home: &Path,
+) -> Result<(), String> {
+    let source = native_codex_home.join("auth.json");
+    let target = wework_codex_home.join("auth.json");
+    if source == target || !source.is_file() {
+        return Ok(());
+    }
+
+    if let Ok(metadata) = fs::symlink_metadata(&target) {
+        if metadata.file_type().is_symlink() && !target.exists() {
+            fs::remove_file(&target).map_err(|error| {
+                format!(
+                    "failed to remove stale Codex auth link {}: {error}",
+                    target.display()
+                )
+            })?;
+        } else {
+            return Ok(());
+        }
+    }
+
+    fs::create_dir_all(wework_codex_home)
+        .map_err(|error| format!("failed to create {}: {error}", wework_codex_home.display()))?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&source, &target).map_err(|error| {
+        format!(
+            "failed to link Codex auth {} -> {}: {error}",
+            target.display(),
+            source.display()
+        )
+    })?;
+    #[cfg(not(unix))]
+    fs::copy(&source, &target).map_err(|error| {
+        format!(
+            "failed to copy Codex auth {} to {}: {error}",
+            source.display(),
+            target.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn prepare_local_executor_codex_auth(envs: &[(String, String)]) -> Result<(), String> {
+    let Some(codex_home) = envs
+        .iter()
+        .find_map(|(key, value)| (key == CODEX_HOME_ENV).then_some(PathBuf::from(value)))
+    else {
+        return Ok(());
+    };
+    link_native_codex_auth(&native_codex_home_path()?, &codex_home)
 }
 
 fn codex_home_migration_status() -> Result<CodexHomeMigrationStatus, String> {
@@ -1603,8 +1667,9 @@ fn handle_executor_line_inner(
 fn connect_sidecar_socket() -> Result<TcpStream, String> {
     let addr = resolve_app_ipc_addr()?;
     if addr.port() != 0 {
-        return TcpStream::connect(addr)
-            .map_err(|error| format!("Failed to connect local executor TCP socket {addr}: {error}"));
+        return TcpStream::connect(addr).map_err(|error| {
+            format!("Failed to connect local executor TCP socket {addr}: {error}")
+        });
     }
 
     let addr = wait_for_app_ipc_addr(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS))?;
@@ -1615,7 +1680,9 @@ fn connect_sidecar_socket() -> Result<TcpStream, String> {
 fn prepare_connected_stream(stream: TcpStream) -> Result<PreparedExecutorStream, String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS)))
-        .map_err(|error| format!("Failed to configure local executor TCP socket timeout: {error}"))?;
+        .map_err(|error| {
+            format!("Failed to configure local executor TCP socket timeout: {error}")
+        })?;
     let mut reader = BufReader::new(stream);
     let mut ready_line = String::new();
     reader
@@ -1804,6 +1871,7 @@ async fn spawn_sidecar_if_needed(
         }
         local_executor_sidecar_env(&inner, &app)
     };
+    prepare_local_executor_codex_auth(&envs)?;
 
     if let Some(path) = configured_sidecar_path() {
         let child = spawn_configured_sidecar(path, &envs)?;
@@ -1998,20 +2066,40 @@ fn ensure_local_executor_keepalive(app: tauri::AppHandle, state: &LocalExecutorS
                 return;
             }
 
-            if local_executor_is_healthy(&state) {
+            let transport_was_healthy = local_executor_is_healthy(&state);
+            if transport_was_healthy
+                && send_executor_request_with_timeout(
+                    app.clone(),
+                    &state,
+                    LocalExecutorRequest {
+                        method: "executor.health".to_string(),
+                        params: json!({}),
+                    },
+                    Duration::from_secs(LOCAL_EXECUTOR_HEALTH_CHECK_TIMEOUT_SECS),
+                )
+                .await
+                .is_ok()
+            {
                 continue;
             }
 
-            if development_sidecar_is_restarting(&state) {
+            if !transport_was_healthy && development_sidecar_is_restarting(&state) {
                 log::info!(
                     "Local executor IPC is unavailable while the development sidecar is restarting"
                 );
                 continue;
             }
 
-            log::warn!("Local executor keepalive detected an unhealthy executor; restarting");
-            if let Err(error) = restart_executor(app.clone(), &state).await {
-                log::warn!("Local executor keepalive restart failed: {error}");
+            log::warn!("Local executor health check failed; reconnecting IPC");
+            let _guard = state.start_lock.lock().await;
+            let message = "Local executor IPC reconnecting after failed health check".to_string();
+            if let Ok(mut inner) = state.inner.lock() {
+                clear_connected_stream(&mut inner);
+                inner.ready = false;
+            }
+            fail_pending_requests(&state, message);
+            if let Err(error) = start_executor_if_needed_unlocked(app.clone(), &state).await {
+                log::warn!("Local executor IPC reconnect failed: {error}");
             }
         }
     });
@@ -2049,10 +2137,26 @@ async fn send_executor_request(
     state: &LocalExecutorState,
     request: LocalExecutorRequest,
 ) -> Result<Value, String> {
+    send_executor_request_with_timeout(
+        app,
+        state,
+        request,
+        Duration::from_secs(LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS),
+    )
+    .await
+}
+
+async fn send_executor_request_with_timeout(
+    app: tauri::AppHandle,
+    state: &LocalExecutorState,
+    request: LocalExecutorRequest,
+    timeout: Duration,
+) -> Result<Value, String> {
     start_executor_if_needed(app, state).await?;
 
     let request_id = next_request_id(state);
     let method = request.method.clone();
+    let log_request = method != "executor.health";
     let started_at = Instant::now();
     let (sender, receiver) = mpsc::channel::<Result<Value, String>>();
     let message = json!({
@@ -2073,9 +2177,11 @@ async fn send_executor_request(
             .map_err(|_| "Failed to lock local executor state".to_string())?;
         inner.pending.insert(request_id.clone(), sender);
         let pending_count = inner.pending.len();
-        log::info!(
-            "Local executor IPC request started: request_id={request_id}, method={method}, pending_count={pending_count}"
-        );
+        if log_request {
+            log::info!(
+                "Local executor IPC request started: request_id={request_id}, method={method}, pending_count={pending_count}"
+            );
+        }
         if let Err(error) = write_request_line(&mut inner, &line) {
             inner.pending.remove(&request_id);
             log::warn!(
@@ -2088,12 +2194,14 @@ async fn send_executor_request(
     let inner = state.inner.clone();
     let wait_request_id = request_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        match receiver.recv_timeout(Duration::from_secs(LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS)) {
+        match receiver.recv_timeout(timeout) {
             Ok(result) => {
-                log::info!(
-                    "Local executor IPC request finished: request_id={wait_request_id}, method={method}, elapsed_ms={}",
-                    started_at.elapsed().as_millis()
-                );
+                if log_request {
+                    log::info!(
+                        "Local executor IPC request finished: request_id={wait_request_id}, method={method}, elapsed_ms={}",
+                        started_at.elapsed().as_millis()
+                    );
+                }
                 result
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -2105,7 +2213,8 @@ async fn send_executor_request(
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let message = format!(
-                    "Local executor request {method} timed out after {LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS}s"
+                    "Local executor request {method} timed out after {}s",
+                    timeout.as_secs()
                 );
                 log::warn!(
                     "Local executor IPC request timed out: request_id={wait_request_id}, method={method}, elapsed_ms={}",
@@ -2447,7 +2556,10 @@ mod tests {
 
         let result = import_external_content_from_paths("codex", &home, &destination).unwrap();
 
-        assert_eq!(fs::read_to_string(destination.join("config.toml")).unwrap(), "model = \"gpt-5\"");
+        assert_eq!(
+            fs::read_to_string(destination.join("config.toml")).unwrap(),
+            "model = \"gpt-5\""
+        );
         assert!(destination.join("skills/example/SKILL.md").is_file());
         assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
         fs::remove_dir_all(root).unwrap();
@@ -2465,7 +2577,10 @@ mod tests {
         let result =
             import_external_content_from_paths("claude-code", &home, &destination).unwrap();
 
-        assert_eq!(fs::read_to_string(destination.join("AGENTS.md")).unwrap(), "Claude instructions");
+        assert_eq!(
+            fs::read_to_string(destination.join("AGENTS.md")).unwrap(),
+            "Claude instructions"
+        );
         assert!(destination.join("skills/example/SKILL.md").is_file());
         assert_eq!(result.imported_entries, vec!["CLAUDE.md", "skills"]);
         fs::remove_dir_all(root).unwrap();
@@ -2538,6 +2653,80 @@ command = "example"
         assert_eq!(path, "wegent-executor");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn links_native_codex_auth_into_isolated_home() {
+        let root = import_test_root("codex-auth-link");
+        let native_home = root.join("native");
+        let wework_home = root.join("wework");
+        fs::create_dir_all(&native_home).unwrap();
+        fs::write(native_home.join("auth.json"), "native-auth").unwrap();
+
+        link_native_codex_auth(&native_home, &wework_home).unwrap();
+
+        let target = wework_home.join("auth.json");
+        assert!(fs::symlink_metadata(&target)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(target).unwrap(), "native-auth");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaces_stale_isolated_codex_auth_link() {
+        let root = import_test_root("codex-auth-stale-link");
+        let native_home = root.join("native");
+        let wework_home = root.join("wework");
+        fs::create_dir_all(&native_home).unwrap();
+        fs::create_dir_all(&wework_home).unwrap();
+        fs::write(native_home.join("auth.json"), "current-auth").unwrap();
+        std::os::unix::fs::symlink(
+            root.join("missing-auth.json"),
+            wework_home.join("auth.json"),
+        )
+        .unwrap();
+
+        link_native_codex_auth(&native_home, &wework_home).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(wework_home.join("auth.json")).unwrap(),
+            "current-auth"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn preserves_existing_isolated_codex_auth_file() {
+        let root = import_test_root("codex-auth-existing");
+        let native_home = root.join("native");
+        let wework_home = root.join("wework");
+        fs::create_dir_all(&native_home).unwrap();
+        fs::create_dir_all(&wework_home).unwrap();
+        fs::write(native_home.join("auth.json"), "native-auth").unwrap();
+        fs::write(wework_home.join("auth.json"), "isolated-auth").unwrap();
+
+        link_native_codex_auth(&native_home, &wework_home).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(wework_home.join("auth.json")).unwrap(),
+            "isolated-auth"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skips_codex_auth_link_when_native_auth_is_missing() {
+        let root = import_test_root("codex-auth-missing");
+        let native_home = root.join("native");
+        let wework_home = root.join("wework");
+
+        link_native_codex_auth(&native_home, &wework_home).unwrap();
+
+        assert!(!wework_home.join("auth.json").exists());
+    }
+
     #[test]
     fn app_ipc_addr_file_path_uses_executor_home() {
         let _guard = env_lock();
@@ -2546,9 +2735,17 @@ command = "example"
         let path = app_ipc_addr_file_path().expect("addr file path should resolve");
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
 
+        if cfg!(debug_assertions) {
+            assert!(path
+                .display()
+                .to_string()
+                .starts_with("/tmp/wegent-home/app-runtime/wework-"));
+        } else {
+            assert_eq!(path, PathBuf::from("/tmp/wegent-home/app-ipc.addr"));
+        }
         assert_eq!(
-            path,
-            PathBuf::from("/tmp/wegent-home/app-ipc.addr")
+            path.file_name().and_then(|name| name.to_str()),
+            Some(LOCAL_EXECUTOR_ADDR_FILE_NAME)
         );
     }
 
@@ -2564,9 +2761,20 @@ command = "example"
         restore_env("HOME", previous_home);
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
 
+        if cfg!(debug_assertions) {
+            assert!(path
+                .display()
+                .to_string()
+                .starts_with("/tmp/wework-test-home/.wegent-executor/app-runtime/wework-"));
+        } else {
+            assert_eq!(
+                path,
+                PathBuf::from("/tmp/wework-test-home/.wegent-executor/app-ipc.addr")
+            );
+        }
         assert_eq!(
-            path,
-            PathBuf::from("/tmp/wework-test-home/.wegent-executor/app-ipc.addr")
+            path.file_name().and_then(|name| name.to_str()),
+            Some(LOCAL_EXECUTOR_ADDR_FILE_NAME)
         );
     }
 
@@ -2619,8 +2827,13 @@ command = "example"
             home,
             PathBuf::from("/tmp/wework-test-home/.wegent-executor")
         );
-        assert_eq!(addr_file, home.join(LOCAL_EXECUTOR_ADDR_FILE_NAME));
         if cfg!(debug_assertions) {
+            assert_eq!(
+                addr_file,
+                home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+                    .join(local_executor_instance_name())
+                    .join(LOCAL_EXECUTOR_ADDR_FILE_NAME)
+            );
             assert_eq!(
                 log,
                 home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
@@ -2629,6 +2842,7 @@ command = "example"
                     .join(LOCAL_EXECUTOR_LOG_FILE_NAME)
             );
         } else {
+            assert_eq!(addr_file, home.join(LOCAL_EXECUTOR_ADDR_FILE_NAME));
             assert_eq!(log, home.join("logs").join(LOCAL_EXECUTOR_LOG_FILE_NAME));
         }
         assert_eq!(
@@ -2721,7 +2935,10 @@ command = "example"
         let release_text = "WEGENT_EXECUTOR_APP_IPC_ADDR=/Users/me/.wegent-executor/app-ipc.addr";
 
         assert!(!process_text_uses_addr_file(debug_text, &release_addr_file));
-        assert!(process_text_uses_addr_file(release_text, &release_addr_file));
+        assert!(process_text_uses_addr_file(
+            release_text,
+            &release_addr_file
+        ));
     }
 
     #[test]
@@ -2739,8 +2956,7 @@ command = "example"
 
         remove_stale_app_ipc_addr_file_at(&addr_file_path)
             .expect("addr file cleanup should succeed");
-        remove_stale_app_ipc_addr_file_at(&regular_path)
-            .expect("regular cleanup should succeed");
+        remove_stale_app_ipc_addr_file_at(&regular_path).expect("regular cleanup should succeed");
 
         assert!(!addr_file_path.exists());
         assert!(regular_path.exists());
@@ -2816,14 +3032,12 @@ command = "example"
             Some("local-device-abc")
         );
         assert_eq!(envs.get("DEVICE_TYPE").map(String::as_str), Some("app"));
-        assert_eq!(
-            envs.get(LOCAL_EXECUTOR_HOME_ENV).map(String::as_str),
-            Some("/tmp/wework-instance-executor")
-        );
-        assert_eq!(
-            envs.get(CODEX_HOME_ENV).map(String::as_str),
-            Some("/tmp/wework-instance-executor/codex")
-        );
+        let executor_home_env = envs
+            .get(LOCAL_EXECUTOR_HOME_ENV)
+            .expect("executor home env should be passed to sidecar");
+        let codex_home_env = envs
+            .get(CODEX_HOME_ENV)
+            .expect("codex home env should be passed to sidecar");
         let addr_env = envs
             .get(LOCAL_EXECUTOR_ADDR_ENV)
             .expect("addr env should be passed to sidecar");
@@ -2832,8 +3046,14 @@ command = "example"
             .expect("log dir env should be passed to sidecar");
         assert_eq!(addr_env, LOCAL_EXECUTOR_DEFAULT_ADDR);
         if cfg!(debug_assertions) {
+            assert!(
+                executor_home_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-")
+            );
+            assert_eq!(codex_home_env, &format!("{executor_home_env}/codex"));
             assert!(log_dir_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
         } else {
+            assert_eq!(executor_home_env, "/tmp/wework-instance-executor");
+            assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
         }
     }

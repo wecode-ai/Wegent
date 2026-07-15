@@ -15,6 +15,7 @@ export interface AppPreferences {
   browserLocalLinkTarget: BrowserLinkTarget
   browserDownloadDirectory: string | null
   browserAskBeforeDownload: boolean
+  appshotsPlaySound: boolean
 }
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
@@ -34,6 +35,7 @@ export interface AppPreferencesPatch {
   browserLocalLinkTarget?: BrowserLinkTarget
   browserDownloadDirectory?: string | null
   browserAskBeforeDownload?: boolean
+  appshotsPlaySound?: boolean
 }
 
 export const defaultAppPreferences: AppPreferences = {
@@ -50,6 +52,7 @@ export const defaultAppPreferences: AppPreferences = {
   browserLocalLinkTarget: 'wework',
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
 }
 
 export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
@@ -133,6 +136,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.browserAskBeforeDownload === 'boolean'
         ? record.browserAskBeforeDownload
         : defaultAppPreferences.browserAskBeforeDownload,
+    appshotsPlaySound:
+      typeof record.appshotsPlaySound === 'boolean'
+        ? record.appshotsPlaySound
+        : defaultAppPreferences.appshotsPlaySound,
   }
 }
 

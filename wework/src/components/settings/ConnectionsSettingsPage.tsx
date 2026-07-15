@@ -23,6 +23,7 @@ import {
   Plus,
   RotateCcw,
   Server,
+  ScanLine,
   SlidersHorizontal,
   Terminal,
   Trash2,
@@ -73,6 +74,7 @@ import { GeneralSettingsPage } from './GeneralSettingsPage'
 import { ContextSettingsPage } from './ContextSettingsPage'
 import { AboutSettingsPage } from './AboutSettingsPage'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
+import { AppshotsSettingsPage } from './AppshotsSettingsPage'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
@@ -154,6 +156,13 @@ const settingsNavItems: SettingsNavItem[] = [
     label: 'settings_nav_about',
     fallback: '关于',
     category: 'personal',
+  },
+  {
+    key: 'appshots',
+    icon: ScanLine,
+    label: 'settings_nav_appshots',
+    fallback: '应用快照',
+    category: 'integrations',
   },
   {
     key: 'plugins',
@@ -1418,7 +1427,7 @@ export function ConnectionsSettingsPage({
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const usesOverlayTitlebar = isTauriRuntime()
   const visibleSettingsNavItems = settingsNavItems.filter(
-    item => item.key !== 'keyboard-shortcuts' || usesOverlayTitlebar
+    item => !['keyboard-shortcuts', 'appshots'].includes(item.key) || usesOverlayTitlebar
   )
   const [activeNav, setActiveNav] = useState(() => getSettingsNavFromPath(window.location.pathname))
 
@@ -1538,6 +1547,8 @@ export function ConnectionsSettingsPage({
           <ProxySettingsPage />
         ) : activeNav === 'keyboard-shortcuts' ? (
           <KeyboardShortcutsSettingsPage />
+        ) : activeNav === 'appshots' ? (
+          <AppshotsSettingsPage />
         ) : activeNav === 'plugins' ? (
           <PluginSettingsPage />
         ) : activeNav === 'browser' ? (

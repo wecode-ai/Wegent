@@ -28,6 +28,7 @@ import type {
   ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
@@ -495,8 +496,8 @@ function useSidebarWindowFocus(): boolean {
     let disposed = false
     let unlisten: (() => void) | undefined
     let browserFallbackActive = false
-    void import('@tauri-apps/api/window')
-      .then(async ({ getCurrentWindow }) => {
+    void Promise.resolve()
+      .then(async () => {
         const currentWindow = getCurrentWindow()
         if (
           typeof currentWindow?.isFocused !== 'function' ||
@@ -703,9 +704,7 @@ function getDeviceRouteTitle(deviceState: SidebarDeviceState): string {
 
 function getDisplayableNetworkHost(value?: string | null): string | null {
   if (!value) return null
-  const host = extractNetworkHost(value.trim())
-  if (!host || isLoopbackNetworkHost(host)) return null
-  return host
+  return extractNetworkHost(value.trim()) || null
 }
 
 function extractNetworkHost(value: string): string {
@@ -716,11 +715,6 @@ function extractNetworkHost(value: string): string {
     return colonParts[0]
   }
   return value
-}
-
-function isLoopbackNetworkHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase()
-  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.')
 }
 
 function getRuntimeProjectDeviceState(
