@@ -84,11 +84,11 @@ importers:
         specifier: ^3.2.2
         version: 3.2.2(react@19.2.7)
       '@file-viewer/preset-office':
-        specifier: 2.1.26
-        version: 2.1.26
+        specifier: 2.1.27
+        version: 2.1.27
       '@file-viewer/react':
-        specifier: 2.1.26
-        version: 2.1.26(react@19.2.7)
+        specifier: 2.1.27
+        version: 2.1.27(react@19.2.7)
       '@headlessui/react':
         specifier: ^2.2.0
         version: 2.2.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -365,9 +365,6 @@ importers:
       vaul:
         specifier: ^1.1.2
         version: 1.1.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      xlsx:
-        specifier: ^0.18.5
-        version: 0.18.5
       zod:
         specifier: ^4.1.12
         version: 4.4.3
@@ -1413,8 +1410,14 @@ packages:
   '@file-viewer/core@2.1.26':
     resolution: {integrity: sha512-Bvhv9vX+Sl2gNjXy/GORPN+iJextwwaAdgO8PhD+iD+tcFEMEdMvgt3uwClqOEQDcevr9xmwAk3PEsrpyHXjlw==}
 
+  '@file-viewer/core@2.1.27':
+    resolution: {integrity: sha512-4yi3KzLyqzra14mBqxGYZ1eKHcYtTZP6ID4sRjle6DZP7nWJBvaDoZGcDUgkPDKkcXiGZKtmg39CIYhE3vvvsw==}
+
   '@file-viewer/doc@2.1.26':
     resolution: {integrity: sha512-rl5h3SETH4AU9ozpvM7IaA3spzJN2yJmdHzBxzlSS1hjsecnl2nfchmjN/w1AhMzDqxI1Wx2dVNVTFqSHmrjAw==}
+
+  '@file-viewer/doc@2.1.27':
+    resolution: {integrity: sha512-vdedUn/Cgp4LrGr75cn/9wL0VFFfANXbKXBn3hbiGml/mBmRT7YX6Ulc0pnfKpFkwF9ILZbqDGKgWRf7zholMw==}
 
   '@file-viewer/docx@0.3.19':
     resolution: {integrity: sha512-LgJn6Qnhibd2HHbfdDYkO7uv4UxgRVYbAR1bw01eQJNAUMQ6n4zl28thddPXMmqptwh7/v8Vw0dSM6DkzkdeeQ==}
@@ -1431,6 +1434,9 @@ packages:
   '@file-viewer/pptx@2.1.26':
     resolution: {integrity: sha512-ag7nUDW0BHYjr1kilrFUai58pSza9fy7vcw7arCnbQSXAFsiKaQyOxb8XgX2lbgCwfEGVKD/y+v6X05yOSfJig==}
 
+  '@file-viewer/pptx@2.1.27':
+    resolution: {integrity: sha512-zdih1kwj/6nF2uLwt1/eOoHta+87JaJNrrT4p/J/Ta6J5ENhQT7aynOSpwec88JjMwWXmku7jggsqC4LhB8S8Q==}
+
   '@file-viewer/preset-engineering@2.1.26':
     resolution: {integrity: sha512-WNOOjpbE9cgAMYLEXq5rEMhNoXQMWHLxFoIpc6RUOQYBtZW3zDJj2yk8YHkGIcJUPlpMJFf8Ii3IJ54zj/OHVA==}
 
@@ -1440,8 +1446,16 @@ packages:
   '@file-viewer/preset-office@2.1.26':
     resolution: {integrity: sha512-KiTyc8MdQyTKWHh8QZq8KQKT/CIkbV7RGfoOwm7qvk5Ix6N7n9Mzu9TVdiBQv11lCYON3lcXNDHX9dVYQY2ijg==}
 
+  '@file-viewer/preset-office@2.1.27':
+    resolution: {integrity: sha512-g70uOEjwvLdDviKVPWA3RABp1XpDYhmQLl6XoyPvq9bVVxHjMyI2bUgyInbPpdOc9I7yhcsVCXHr1k1nRKl49Q==}
+
   '@file-viewer/react@2.1.26':
     resolution: {integrity: sha512-r0AJBL5QO/oK5u8+jU1I7PxYSgmZJccNkrQ07SvOfn4jlVuSq2ngmphFkOUdObzAnb6+bz0O83J1Z4bkCjhcQA==}
+    peerDependencies:
+      react: '>=17 <20'
+
+  '@file-viewer/react@2.1.27':
+    resolution: {integrity: sha512-d4NuevgFh8h40weUs6EDvn9QTnatVLuRCrDQChrbe4k/v9yafqNwDHFV0f/8Pslm+2H6cykljpS+/aRnAsfTpg==}
     peerDependencies:
       react: '>=17 <20'
 
@@ -1478,14 +1492,26 @@ packages:
   '@file-viewer/renderer-ofd@2.1.26':
     resolution: {integrity: sha512-Hr+m9dSq+qb69uL3qIAb3FcQEJOGHa2E6YZfmteEFl/xD8rWQq9eBR6FVKLb/xfDa5cxNUz4Nl7jzootO9dLlQ==}
 
+  '@file-viewer/renderer-ofd@2.1.27':
+    resolution: {integrity: sha512-dWit7rRxc8HaG1CUP5e/U8FRVvCzWnYWjBl4eP0EtmWekRVJllmhjEbtUDSq8aBLwGHryf1+zyskGMPh4hxj9w==}
+
   '@file-viewer/renderer-pdf@2.1.26':
     resolution: {integrity: sha512-lFN5+VW2D14SRBHM/EHYVgZPbJZeXtFpl1nkVXJ4zAF40h1p/FBzXyjUCG0YtRU3FyZlMcUZ0Q1pi5Mcqcc2hg==}
+
+  '@file-viewer/renderer-pdf@2.1.27':
+    resolution: {integrity: sha512-Fj+WQE6TOFv3D/aq7YtQfOV0p+rruB6sua3DqWFHY1ARJigLtI/nQahLBj1C2CDFzXfaNRt+4mOV4ctziEBOUw==}
 
   '@file-viewer/renderer-presentation@2.1.26':
     resolution: {integrity: sha512-9t4uuitoDUUoprHHtzMuWVMP9XopalSVvr+cfg6NnOQY8pBQ+0WB3ItbAaYlPPjivKsdC8rLeFQ7nEKhN50isw==}
 
+  '@file-viewer/renderer-presentation@2.1.27':
+    resolution: {integrity: sha512-t7zS/ryzTEXYr0iIGe8fWLXIQFEma0O0d0i671NVPTnm0ihScIakf/gI9jymJ6Z4g8N5jVGWZb4BhoGKAkfWNg==}
+
   '@file-viewer/renderer-spreadsheet@2.1.26':
     resolution: {integrity: sha512-rgYJRZo+I5xyXHMOCKutIOUyyeE9DnugmWfKrqgGtn4mfTT2urdPrU8qjpXkZCpsXozB+082bXvTRBSE0ME9Mg==}
+
+  '@file-viewer/renderer-spreadsheet@2.1.27':
+    resolution: {integrity: sha512-Gzz6+cQ4Dwk9WARu7vdyY72vv9OIAPfHtY70W1hYJc98uNmGYyvzIq9IvivZ3p280hMHgi9cryW/40d5i/CPbw==}
 
   '@file-viewer/renderer-text@2.1.26':
     resolution: {integrity: sha512-/TvYYkdeNny/yEFfXtIa5zR6UX8fsmob5LnC70iRxMs/cyJOcdAokTWlCVO6c/G1qLmcOV2c5vook8Uee8uCiw==}
@@ -1495,6 +1521,9 @@ packages:
 
   '@file-viewer/renderer-word@2.1.26':
     resolution: {integrity: sha512-Drog6c9pH99T1UpAUDEkFtTIgqKvF0zoZrDHZ+cR+Su8I6zAwSfezOvPJphCuo/MDZ2ZBRjYHZ82xU4scw0ZEQ==}
+
+  '@file-viewer/renderer-word@2.1.27':
+    resolution: {integrity: sha512-5E4sunmAJtkc4toUlTXgFRoH2vKcbzUEVW48OZUd/ZGz//GGdEu8cC/83HK4BLUKgvVGtK7ybPKYdRTKzT7oow==}
 
   '@file-viewer/vite-plugin@2.1.26':
     resolution: {integrity: sha512-CZlihxE0Y0oZZiT42QhQs2BpeygSFq97r8RaaYuSwGgHmZVyY6nITT/ZzKOvmcVk865XKoJ/LFAoailBn1jCOA==}
@@ -5150,10 +5179,6 @@ packages:
     resolution: {integrity: sha512-wzsgA6WOq+09wrU1tsJ09udeR/YZRaeArL9e1wPbFg3GG2yDnC2ldKpxs4xunpFF9DgqCqOIra3bc1HWrJ37Ww==}
     engines: {node: '>=0.4.x'}
 
-  frac@1.1.2:
-    resolution: {integrity: sha512-w/XBfkibaTl3YDqASwfDUqkna4Z2p9cFSr1aHDt0WoMTECnRfBOv2WArlZILlqgWlmdIlALXGpM2AOhEk5W3IA==}
-    engines: {node: '>=0.8'}
-
   fraction.js@5.3.4:
     resolution: {integrity: sha512-1X1NTtiJphryn/uLQz3whtY6jK3fTqoE3ohKs0tT+Ujr1W59oopxmoEh7Lu5p6vBaPbgoM0bzveAW4Qi5RyWDQ==}
 
@@ -7460,10 +7485,6 @@ packages:
   sql.js@1.14.1:
     resolution: {integrity: sha512-gcj8zBWU5cFsi9WUP+4bFNXAyF1iRpA3LLyS/DP5xlrNzGmPIizUeBggKa8DbDwdqaKwUcTEnChtd2grWo/x/A==}
 
-  ssf@0.11.2:
-    resolution: {integrity: sha512-+idbmIXoYET47hH+d7dfm2epdOMUDjqcB4648sTZ+t2JwoyBFL/insLfB/racrDmsKB3diwsDA696pZMieAC5g==}
-    engines: {node: '>=0.8'}
-
   stable-hash@0.0.5:
     resolution: {integrity: sha512-+L3ccpzibovGXFK+Ap/f8LOS0ahMrHTf3xu7mMLSpEGU0EO9ucaysSylKo9eRDFNhWve/y275iPmIZ4z39a9iA==}
 
@@ -8171,17 +8192,9 @@ packages:
   wkt-parser@1.5.5:
     resolution: {integrity: sha512-/zMYi94/7D7fxcOSlVmWn6vnOMj3Gq5d1xvVjaYOS9n6h0qOJ4I7YYVxBWYcH1vq9+suhqzXkn05Yx47zQNUIA==}
 
-  wmf@1.0.2:
-    resolution: {integrity: sha512-/p9K7bEh0Dj6WbXg4JG0xvLQmIadrner1bi45VMJTfnbVHsc7yIajZyoSoK60/dtVBs12Fm6WkUI5/3WAVsNMw==}
-    engines: {node: '>=0.8'}
-
   word-wrap@1.2.5:
     resolution: {integrity: sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA==}
     engines: {node: '>=0.10.0'}
-
-  word@0.3.0:
-    resolution: {integrity: sha512-OELeY0Q61OXpdUfTp+oweA/vtLVg5VDOXh+3he3PNzLGG/y0oylSOC1xRVj0+l4vQ3tj/bB1HVHv1ocXkQceFA==}
-    engines: {node: '>=0.8'}
 
   wrap-ansi@6.2.0:
     resolution: {integrity: sha512-r6lPcBGxZXlIcymEu7InxDMhdW0KDxpLgoFLcguasxCaJ/SOIZwINatK9KY/tf+ZrlywOKU0UDj3ATXUBfxJXA==}
@@ -8228,11 +8241,6 @@ packages:
         optional: true
       utf-8-validate:
         optional: true
-
-  xlsx@0.18.5:
-    resolution: {integrity: sha512-dmg3LCjBPHZnQp5/F/+nnTa+miPJxUXB6vtk42YjBBKayDNagxGEeIdWApkYPOf3Z3pm3k62Knjzp7lMeTEtFQ==}
-    engines: {node: '>=0.8'}
-    hasBin: true
 
   xml-name-validator@4.0.0:
     resolution: {integrity: sha512-ICP2e+jsHvAj2E2lIHxa5tjXRlKDJo4IdvPvCXbXQGdzSfmSpNVyIKMvoZHjDY9DP0zV17iI85o90vRFXNccRw==}
@@ -9130,7 +9138,11 @@ snapshots:
 
   '@file-viewer/core@2.1.26': {}
 
+  '@file-viewer/core@2.1.27': {}
+
   '@file-viewer/doc@2.1.26': {}
+
+  '@file-viewer/doc@2.1.27': {}
 
   '@file-viewer/docx@0.3.19':
     dependencies:
@@ -9143,6 +9155,15 @@ snapshots:
   '@file-viewer/geometry-engine@2.1.26': {}
 
   '@file-viewer/pptx@2.1.26':
+    dependencies:
+      billboard.js: 3.18.0
+      d3-format: 3.1.2
+      dingbat-to-unicode: 1.0.1
+      jszip: 3.10.1
+      tinycolor2: 1.6.0
+      utif: 3.1.0
+
+  '@file-viewer/pptx@2.1.27':
     dependencies:
       billboard.js: 3.18.0
       d3-format: 3.1.2
@@ -9183,9 +9204,23 @@ snapshots:
       '@file-viewer/renderer-spreadsheet': 2.1.26
       '@file-viewer/renderer-word': 2.1.26
 
+  '@file-viewer/preset-office@2.1.27':
+    dependencies:
+      '@file-viewer/core': 2.1.27
+      '@file-viewer/renderer-ofd': 2.1.27
+      '@file-viewer/renderer-pdf': 2.1.27
+      '@file-viewer/renderer-presentation': 2.1.27
+      '@file-viewer/renderer-spreadsheet': 2.1.27
+      '@file-viewer/renderer-word': 2.1.27
+
   '@file-viewer/react@2.1.26(react@19.2.7)':
     dependencies:
       '@file-viewer/core': 2.1.26
+      react: 19.2.7
+
+  '@file-viewer/react@2.1.27(react@19.2.7)':
+    dependencies:
+      '@file-viewer/core': 2.1.27
       react: 19.2.7
 
   '@file-viewer/renderer-3d@2.1.26':
@@ -9263,9 +9298,21 @@ snapshots:
       '@file-viewer/core': 2.1.26
       jszip: 3.10.1
 
+  '@file-viewer/renderer-ofd@2.1.27':
+    dependencies:
+      '@file-viewer/core': 2.1.27
+      jszip: 3.10.1
+
   '@file-viewer/renderer-pdf@2.1.26':
     dependencies:
       '@file-viewer/core': 2.1.26
+      '@fontsource-variable/noto-sans-sc': 5.2.10
+      pdf-lib: 1.17.1
+      pdfjs-dist: 5.4.624
+
+  '@file-viewer/renderer-pdf@2.1.27':
+    dependencies:
+      '@file-viewer/core': 2.1.27
       '@fontsource-variable/noto-sans-sc': 5.2.10
       pdf-lib: 1.17.1
       pdfjs-dist: 5.4.624
@@ -9275,9 +9322,23 @@ snapshots:
       '@file-viewer/core': 2.1.26
       '@file-viewer/pptx': 2.1.26
 
+  '@file-viewer/renderer-presentation@2.1.27':
+    dependencies:
+      '@file-viewer/core': 2.1.27
+      '@file-viewer/pptx': 2.1.27
+
   '@file-viewer/renderer-spreadsheet@2.1.26':
     dependencies:
       '@file-viewer/core': 2.1.26
+      '@xmldom/xmldom': 0.9.10
+      e-virt-table: 1.4.2
+      jszip: 3.10.1
+      styled-exceljs: 0.21.1
+      tinycolor2: 1.6.0
+
+  '@file-viewer/renderer-spreadsheet@2.1.27':
+    dependencies:
+      '@file-viewer/core': 2.1.27
       '@xmldom/xmldom': 0.9.10
       e-virt-table: 1.4.2
       jszip: 3.10.1
@@ -9304,6 +9365,14 @@ snapshots:
     dependencies:
       '@file-viewer/core': 2.1.26
       '@file-viewer/doc': 2.1.26
+      '@file-viewer/docx': 0.3.19
+      jszip: 3.10.1
+      rtf.js: 3.0.9
+
+  '@file-viewer/renderer-word@2.1.27':
+    dependencies:
+      '@file-viewer/core': 2.1.27
+      '@file-viewer/doc': 2.1.27
       '@file-viewer/docx': 0.3.19
       jszip: 3.10.1
       rtf.js: 3.0.9
@@ -13420,8 +13489,6 @@ snapshots:
 
   format@0.2.2: {}
 
-  frac@1.1.2: {}
-
   fraction.js@5.3.4: {}
 
   framer-motion@12.40.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
@@ -16568,10 +16635,6 @@ snapshots:
 
   sql.js@1.14.1: {}
 
-  ssf@0.11.2:
-    dependencies:
-      frac: 1.1.2
-
   stable-hash@0.0.5: {}
 
   stack-utils@2.0.6:
@@ -17380,11 +17443,7 @@ snapshots:
 
   wkt-parser@1.5.5: {}
 
-  wmf@1.0.2: {}
-
   word-wrap@1.2.5: {}
-
-  word@0.3.0: {}
 
   wrap-ansi@6.2.0:
     dependencies:
@@ -17421,16 +17480,6 @@ snapshots:
   ws@8.20.1: {}
 
   ws@8.21.0: {}
-
-  xlsx@0.18.5:
-    dependencies:
-      adler-32: 1.3.1
-      cfb: 1.2.2
-      codepage: 1.15.0
-      crc-32: 1.2.2
-      ssf: 0.11.2
-      wmf: 1.0.2
-      word: 0.3.0
 
   xml-name-validator@4.0.0: {}
 

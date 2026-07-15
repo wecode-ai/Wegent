@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
+import fileViewerPackage from '@file-viewer/react/package.json'
 import { render, screen } from '@testing-library/react'
 import { FlyfishOfficePreview } from '@/components/common/FilePreview/preview-renderers/FlyfishOfficePreview'
 import { getPreviewType, isFilePreviewable } from '@/components/common/FilePreview/utils'
@@ -39,7 +40,7 @@ describe('FlyfishOfficePreview', () => {
     const file = props.file as File
     const options = props.options as {
       styleIsolation: string
-      docx: { workerUrl: string }
+      docx: { workerUrl: string; workerJsZipUrl: string }
       spreadsheet: { workerUrl: string }
       presentation: { workerUrl: string }
     }
@@ -49,9 +50,12 @@ describe('FlyfishOfficePreview', () => {
     expect(props.type).toBe('pptx')
     expect(props.className).toContain('overflow-auto')
     expect(options.styleIsolation).toBe('scoped')
-    expect(options.docx.workerUrl).toContain('/file-viewer/2.1.27-office-v2/')
-    expect(options.spreadsheet.workerUrl).toContain('/file-viewer/2.1.27-office-v2/')
-    expect(options.presentation.workerUrl).toContain('/file-viewer/2.1.27-office-v2/')
+    expect(options).not.toHaveProperty('pdf')
+    const assetBase = `/file-viewer/${fileViewerPackage.version}-office-v2/`
+    expect(options.docx.workerUrl).toBe(`${assetBase}vendor/docx/docx.worker.js`)
+    expect(options.docx.workerJsZipUrl).toBe(`${assetBase}vendor/docx/jszip.min.js`)
+    expect(options.spreadsheet.workerUrl).toBe(`${assetBase}vendor/xlsx/sheet.worker.js`)
+    expect(options.presentation.workerUrl).toBe(`${assetBase}vendor/pptx/pptx.worker.js`)
   })
 
   it('routes PowerPoint files to the shared Office preview', () => {

@@ -11,8 +11,13 @@ import type { KnowledgeDocument } from '@/types/knowledge'
 import { fetchAttachmentFile } from '@/apis/attachments'
 
 jest.mock('@/components/common/FilePreview', () => ({
-  FilePreview: ({ fileBlob }: { fileBlob: File }) => (
-    <div data-testid="mock-file-preview">{fileBlob.name}</div>
+  FilePreview: ({ fileBlob, onError }: { fileBlob: File; onError?: (error: Error) => void }) => (
+    <div data-testid="mock-file-preview">
+      {fileBlob.name}
+      <button type="button" onClick={() => onError?.(new Error('render error'))}>
+        fail render
+      </button>
+    </div>
   ),
 }))
 
@@ -146,7 +151,7 @@ describe('KnowledgeSourcePreview', () => {
     await waitFor(() => expect(onDownload).toHaveBeenCalledTimes(1))
   })
 
-  it('can retry after loading the original file fails', async () => {
+  it('offers only retry after loading the original file fails', async () => {
     const user = userEvent.setup()
     ;(fetchAttachmentFile as jest.Mock)
       .mockRejectedValueOnce(new Error('network error'))
@@ -154,17 +159,46 @@ describe('KnowledgeSourcePreview', () => {
 
     render(<KnowledgeSourcePreview document={document} active={true} onDownload={onDownload} />)
 
-    const retry = await screen.findByTestId('knowledge-source-preview-retry')
+    const retry = await screen.findByTestId('knowledge-source-preview-fetch-retry')
     expect(retry).toHaveClass('max-md:min-h-[44px]', 'max-md:min-w-[44px]')
-    expect(screen.getByTestId('knowledge-source-preview-error-download')).toHaveClass(
-      'max-md:min-h-[44px]',
-      'max-md:min-w-[44px]'
-    )
-    await user.click(screen.getByTestId('knowledge-source-preview-error-download'))
-    expect(onDownload).toHaveBeenCalledTimes(1)
+    expect(
+      screen.getByText('document.document.detail.sourcePreview.fetchFailedTitle')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('document.document.detail.sourcePreview.fetchFailedDescription')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('knowledge-source-preview-render-error-download')
+    ).not.toBeInTheDocument()
+    expect(onDownload).not.toHaveBeenCalled()
     await user.click(retry)
 
     await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
     expect(fetchAttachmentFile).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a render failure without fetching the file again and keeps download available', async () => {
+    const user = userEvent.setup()
+
+    render(<KnowledgeSourcePreview document={document} active={true} onDownload={onDownload} />)
+
+    await user.click(await screen.findByRole('button', { name: 'fail render' }))
+
+    expect(
+      screen.getByText('document.document.detail.sourcePreview.renderFailedTitle')
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('document.document.detail.sourcePreview.renderFailedDescription')
+    ).toBeInTheDocument()
+    const retry = screen.getByTestId('knowledge-source-preview-render-retry')
+    const download = screen.getByTestId('knowledge-source-preview-render-error-download')
+    expect(retry).toHaveClass('max-md:min-h-[44px]', 'max-md:min-w-[44px]')
+    expect(download).toHaveClass('max-md:min-h-[44px]', 'max-md:min-w-[44px]')
+    await user.click(download)
+    expect(onDownload).toHaveBeenCalledTimes(1)
+    await user.click(retry)
+
+    await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
+    expect(fetchAttachmentFile).toHaveBeenCalledTimes(1)
   })
 })

@@ -5,10 +5,11 @@
 'use client'
 
 import FileViewer, { type ViewerOptions, type ViewerState } from '@file-viewer/react'
+import fileViewerPackage from '@file-viewer/react/package.json'
 import officePreset from '@file-viewer/preset-office'
 import { useMemo } from 'react'
 
-const FILE_VIEWER_ASSET_BASE = '/file-viewer/2.1.27-office-v2'
+const FILE_VIEWER_ASSET_BASE = `/file-viewer/${fileViewerPackage.version}-office-v2`
 
 const OFFICE_VIEWER_OPTIONS: ViewerOptions = {
   preset: officePreset,
@@ -20,9 +21,6 @@ const OFFICE_VIEWER_OPTIONS: ViewerOptions = {
     exportHtml: false,
     theme: false,
     position: 'bottom-right',
-  },
-  pdf: {
-    assetBaseUrl: `${FILE_VIEWER_ASSET_BASE}/`,
   },
   docx: {
     workerUrl: `${FILE_VIEWER_ASSET_BASE}/vendor/docx/docx.worker.js`,

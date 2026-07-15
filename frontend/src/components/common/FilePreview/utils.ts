@@ -123,16 +123,6 @@ export function formatFileSize(bytes?: number): string {
 }
 
 /**
- * Get Office document type
- */
-export function getOfficeType(filename: string): 'excel' | 'word' | 'powerpoint' {
-  const ext = filename.toLowerCase()
-  if (ext.match(/\.(xlsx|xls|csv)$/)) return 'excel'
-  if (ext.match(/\.(pptx|ppt)$/)) return 'powerpoint'
-  return 'word'
-}
-
-/**
  * Check if filename is a code file
  */
 export function isCodeFile(filename: string): boolean {

@@ -5,20 +5,17 @@
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { copyFileViewerAssets } from 'file-viewer-copy-assets'
+
+import { resolveFileViewerVersion } from './file-viewer-version.mjs'
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url))
 const FRONTEND_DIR = path.resolve(SCRIPT_DIR, '..')
-const ASSET_VERSION = '2.1.27-office-v2'
+const { version: FILE_VIEWER_VERSION } = await resolveFileViewerVersion(FRONTEND_DIR)
+const ASSET_VERSION = `${FILE_VIEWER_VERSION}-office-v2`
 const TARGET_DIR = path.join(FRONTEND_DIR, 'public', 'file-viewer', ASSET_VERSION)
 const STAMP_PATH = path.join(TARGET_DIR, '.office-assets-version')
 
 const REQUIRED_ASSETS = [
-  'vendor/pdf/pdf.worker.mjs',
-  'vendor/pdf/cmaps',
-  'vendor/pdf/fonts',
-  'vendor/pdf/standard_fonts',
-  'vendor/pdf/wasm',
   'vendor/docx/docx.worker.js',
   'vendor/docx/jszip.min.js',
   'vendor/xlsx/sheet.worker.js',
@@ -26,6 +23,7 @@ const REQUIRED_ASSETS = [
 ]
 
 const NON_OFFICE_ASSETS = [
+  'vendor/pdf',
   'vendor/drawio',
   'vendor/libarchive',
   'wasm',
@@ -48,10 +46,13 @@ async function isCurrent() {
   const version = (await readFile(STAMP_PATH, 'utf8')).trim()
   if (version !== ASSET_VERSION) return false
 
-  const checks = await Promise.all(
+  const requiredChecks = await Promise.all(
     REQUIRED_ASSETS.map(relativePath => exists(path.join(TARGET_DIR, relativePath)))
   )
-  return checks.every(Boolean)
+  const excludedChecks = await Promise.all(
+    NON_OFFICE_ASSETS.map(relativePath => exists(path.join(TARGET_DIR, relativePath)))
+  )
+  return requiredChecks.every(Boolean) && excludedChecks.every(present => !present)
 }
 
 async function prepareAssets() {
@@ -61,6 +62,7 @@ async function prepareAssets() {
   }
 
   await mkdir(TARGET_DIR, { recursive: true })
+  const { copyFileViewerAssets } = await import('file-viewer-copy-assets')
   await copyFileViewerAssets({ targetDir: TARGET_DIR, clean: true })
   await Promise.all(
     NON_OFFICE_ASSETS.map(relativePath =>

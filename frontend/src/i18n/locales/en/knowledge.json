@@ -440,8 +440,10 @@
           "downloadFailed": "Failed to download the original file",
           "tooLargeTitle": "File is too large for online preview",
           "tooLargeDescription": "This file is {{size}}, which exceeds the current {{limit}} preview limit. Download it to continue.",
-          "failedTitle": "Original file preview failed",
-          "failedDescription": "The file may be damaged, encrypted, or use unsupported Office features. Retry or download it to continue."
+          "fetchFailedTitle": "Unable to load the original file",
+          "fetchFailedDescription": "The original file could not be loaded. Check your network connection or access permissions, then retry.",
+          "renderFailedTitle": "Original file preview failed",
+          "renderFailedDescription": "The file may be damaged, encrypted, or use unsupported Office features. Retry the preview or download the original file."
         }
       },
       "downloadFailed": "Failed to download file",

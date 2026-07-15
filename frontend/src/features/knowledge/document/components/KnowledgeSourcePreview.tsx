@@ -35,7 +35,8 @@ export function KnowledgeSourcePreview({
   const { t } = useTranslation('knowledge')
   const [file, setFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<Error | null>(null)
+  const [fetchError, setFetchError] = useState<Error | null>(null)
+  const [renderError, setRenderError] = useState<Error | null>(null)
   const [retryKey, setRetryKey] = useState(0)
 
   const tooLarge = isKnowledgeSourcePreviewTooLarge(document.file_size)
@@ -44,14 +45,16 @@ export function KnowledgeSourcePreview({
     if (!active || !document.attachment_id || tooLarge) {
       setFile(null)
       setLoading(false)
-      setError(null)
+      setFetchError(null)
+      setRenderError(null)
       return
     }
 
     const controller = new AbortController()
     setFile(null)
     setLoading(true)
-    setError(null)
+    setFetchError(null)
+    setRenderError(null)
 
     fetchAttachmentFile(document.attachment_id, {
       filename: document.name,
@@ -60,7 +63,7 @@ export function KnowledgeSourcePreview({
       .then(setFile)
       .catch(fetchError => {
         if (controller.signal.aborted) return
-        setError(fetchError instanceof Error ? fetchError : new Error(String(fetchError)))
+        setFetchError(fetchError instanceof Error ? fetchError : new Error(String(fetchError)))
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false)
@@ -99,19 +102,38 @@ export function KnowledgeSourcePreview({
         <p className="text-sm">{t('document.document.detail.sourcePreview.loading')}</p>
       </div>
     )
-  } else if (error) {
+  } else if (fetchError) {
     content = (
       <PreviewState
-        title={t('document.document.detail.sourcePreview.failedTitle')}
-        description={t('document.document.detail.sourcePreview.failedDescription')}
+        title={t('document.document.detail.sourcePreview.fetchFailedTitle')}
+        description={t('document.document.detail.sourcePreview.fetchFailedDescription')}
+        action={
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setRetryKey(key => key + 1)}
+            className="max-md:min-h-[44px] max-md:min-w-[44px]"
+            data-testid="knowledge-source-preview-fetch-retry"
+          >
+            <RefreshCw className="h-4 w-4" />
+            {t('common:actions.retry')}
+          </Button>
+        }
+      />
+    )
+  } else if (renderError) {
+    content = (
+      <PreviewState
+        title={t('document.document.detail.sourcePreview.renderFailedTitle')}
+        description={t('document.document.detail.sourcePreview.renderFailedDescription')}
         action={
           <div className="flex items-center gap-2">
             <Button
               type="button"
               variant="outline"
-              onClick={() => setRetryKey(key => key + 1)}
+              onClick={() => setRenderError(null)}
               className="max-md:min-h-[44px] max-md:min-w-[44px]"
-              data-testid="knowledge-source-preview-retry"
+              data-testid="knowledge-source-preview-render-retry"
             >
               <RefreshCw className="h-4 w-4" />
               {t('common:actions.retry')}
@@ -121,7 +143,7 @@ export function KnowledgeSourcePreview({
               variant="primary"
               onClick={onDownload}
               className="max-md:min-h-[44px] max-md:min-w-[44px]"
-              data-testid="knowledge-source-preview-error-download"
+              data-testid="knowledge-source-preview-render-error-download"
             >
               <Download className="h-4 w-4" />
               {t('document.document.detail.sourcePreview.download')}
@@ -138,7 +160,7 @@ export function KnowledgeSourcePreview({
         mimeType={file.type}
         fileSize={file.size}
         showToolbar={false}
-        onError={setError}
+        onError={setRenderError}
       />
     )
   } else {

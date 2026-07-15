@@ -440,8 +440,10 @@
           "downloadFailed": "原文件下载失败",
           "tooLargeTitle": "文件过大，暂不支持在线预览",
           "tooLargeDescription": "文件大小为 {{size}}，超过当前在线预览上限 {{limit}}，请下载后查看。",
-          "failedTitle": "原始文件预览失败",
-          "failedDescription": "文件可能已损坏、加密或包含暂不支持的 Office 特性，可重试或下载后查看。"
+          "fetchFailedTitle": "无法加载原始文件",
+          "fetchFailedDescription": "原始文件获取失败，请检查网络连接或访问权限后重试。",
+          "renderFailedTitle": "原始文件预览失败",
+          "renderFailedDescription": "文件可能已损坏、加密或包含暂不支持的 Office 特性，可重试预览或下载原文件查看。"
         }
       },
       "downloadFailed": "下载文件失败",
