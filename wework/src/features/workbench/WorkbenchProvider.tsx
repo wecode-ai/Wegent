@@ -638,6 +638,51 @@ export function WorkbenchProvider({
     requestNewChatComposerFocus()
   }, [state.devices, state.standaloneDeviceId, user])
 
+  const startNewSkillChat = useCallback(
+    (skillNames: string[]): boolean => {
+      const requestedSkills = skillNames.map(name =>
+        skillSelection.skills.find(skill => skill.name === name && skill.is_active)
+      )
+      if (requestedSkills.some(skill => !skill)) {
+        return false
+      }
+
+      const nextScopeKey = getProjectChatScopeKey({
+        currentRuntimeTask: null,
+        standaloneChatKey: state.standaloneChatKey + 1,
+      })
+      skillSelection.setSelectedSkillsForScope(
+        nextScopeKey,
+        requestedSkills.map(skill => ({
+          name: skill!.name,
+          namespace: skill!.namespace,
+          is_public: skill!.is_public,
+        }))
+      )
+      dispatch({
+        type: 'project_cleared',
+        standaloneDeviceId: getRememberedStandaloneDeviceId(
+          user,
+          state.devices,
+          state.standaloneDeviceId
+        ),
+        standaloneWorkspacePath: null,
+        startFreshChat: true,
+      })
+      navigateTo('/')
+      requestNewChatComposerFocus()
+      return true
+    },
+    [
+      skillSelection.skills,
+      skillSelection.setSelectedSkillsForScope,
+      state.devices,
+      state.standaloneChatKey,
+      state.standaloneDeviceId,
+      user,
+    ]
+  )
+
   const startStandaloneChat = useCallback(() => {
     dispatch({
       type: 'project_cleared',
@@ -769,6 +814,7 @@ export function WorkbenchProvider({
   const stableSelectStandaloneDevice = useStableEvent(selectStandaloneDevice)
   const stableOpenStandaloneWorkspace = useStableEvent(openStandaloneWorkspace)
   const stableStartNewChat = useStableEvent(startNewChat)
+  const stableStartNewSkillChat = useStableEvent(startNewSkillChat)
   const stableStartStandaloneChat = useStableEvent(startStandaloneChat)
   const stableStartNewProjectChat = useStableEvent(startNewProjectChat)
   const stableOpenRuntimeTask = useStableEvent(runtimeTasks.openRuntimeTask)
@@ -1155,6 +1201,7 @@ export function WorkbenchProvider({
     selectStandaloneDevice,
     openStandaloneWorkspace,
     startNewChat,
+    startNewSkillChat,
     startStandaloneChat,
     startNewProjectChat,
     openRuntimeTask: runtimeTasks.openRuntimeTask,
@@ -1238,6 +1285,7 @@ export function WorkbenchProvider({
       selectStandaloneDevice: stableSelectStandaloneDevice,
       openStandaloneWorkspace: stableOpenStandaloneWorkspace,
       startNewChat: stableStartNewChat,
+      startNewSkillChat: stableStartNewSkillChat,
       startStandaloneChat: stableStartStandaloneChat,
       startNewProjectChat: stableStartNewProjectChat,
       openRuntimeTask: stableOpenRuntimeTask,

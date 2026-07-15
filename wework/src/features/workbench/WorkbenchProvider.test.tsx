@@ -1489,6 +1489,34 @@ function RuntimeTaskSkillsProbe() {
   )
 }
 
+function StartSkillChatProbe() {
+  const workbench = useWorkbench()
+  const [result, setResult] = useState('not-started')
+
+  return (
+    <div>
+      <span data-testid="available-skill-names">
+        {workbench.projectChat.skills.map(skill => skill.name).join('|')}
+      </span>
+      <span data-testid="selected-skill-refs">
+        {workbench.projectChat.selectedSkills
+          .map(skill => `${skill.namespace}:${skill.name}:${String(skill.is_public)}`)
+          .join('|')}
+      </span>
+      <span data-testid="skill-chat-key">{workbench.state.standaloneChatKey}</span>
+      <span data-testid="skill-chat-start-result">{result}</span>
+      <button
+        type="button"
+        onClick={() =>
+          setResult(workbench.startNewSkillChat(['sites-building']) ? 'started' : 'missing')
+        }
+      >
+        start sites chat
+      </button>
+    </div>
+  )
+}
+
 describe('WorkbenchProvider runtime tasks', () => {
   beforeEach(() => {
     vi.useRealTimers()
@@ -1541,6 +1569,48 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('3')
     expect(services.projectApi.listProjects).not.toHaveBeenCalled()
     expect(services.runtimeWorkApi?.listRuntimeWork).toHaveBeenCalledTimes(1)
+  })
+
+  test('starts a fresh blank chat with a requested loaded skill selected', async () => {
+    const services = createWorkbenchServices({
+      skillApi: {
+        listSkills: vi.fn().mockResolvedValue([
+          {
+            id: 101,
+            name: 'sites-building',
+            namespace: 'sites',
+            description: 'Build websites with Sites',
+            is_active: true,
+            is_public: false,
+            user_id: 1,
+          },
+        ]),
+        getTeamSkills: vi.fn().mockResolvedValue({ skills: [], preload_skills: [] }),
+      },
+    })
+    renderWorkbench(<StartSkillChatProbe />, services)
+    await waitFor(() =>
+      expect(screen.getByTestId('available-skill-names')).toHaveTextContent('sites-building')
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'start sites chat' }))
+
+    expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('started')
+    expect(screen.getByTestId('skill-chat-key')).toHaveTextContent('1')
+    expect(screen.getByTestId('selected-skill-refs')).toHaveTextContent(
+      'sites:sites-building:false'
+    )
+  })
+
+  test('does not leave the current view when a requested skill is unavailable', async () => {
+    renderWorkbench(<StartSkillChatProbe />)
+    window.history.pushState({}, '', '/sites')
+
+    await userEvent.click(screen.getByRole('button', { name: 'start sites chat' }))
+
+    expect(screen.getByTestId('skill-chat-start-result')).toHaveTextContent('missing')
+    expect(screen.getByTestId('skill-chat-key')).toHaveTextContent('0')
+    expect(window.location.pathname).toBe('/sites')
   })
 
   test('does not poll runtime work after bootstrap', async () => {

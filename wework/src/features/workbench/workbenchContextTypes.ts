@@ -154,6 +154,7 @@ export interface WorkbenchContextValue {
     label?: string
   ) => Promise<void>
   startNewChat: () => void
+  startNewSkillChat: (skillNames: string[]) => boolean
   startStandaloneChat: () => void
   startNewProjectChat: (projectId: number) => void
   openRuntimeTask: (address: RuntimeTaskAddress) => Promise<void>
