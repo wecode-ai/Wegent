@@ -123,7 +123,7 @@ async def _cleanup_stale_orphan_sandbox(
     task_id: int,
     pod_name: str,
     inactive_hours: int,
-    sandbox_payload: Optional[Dict[str, Any]] = None,
+    sandbox_payload: Dict[str, Any],
 ) -> Dict[str, object]:
     """Clean up a single orphan sandbox pod, archiving before deletion.
 
@@ -137,21 +137,21 @@ async def _cleanup_stale_orphan_sandbox(
         "skipped": True,
     }
 
-    if sandbox_payload is not None:
-        try:
-            last_activity_at = float(sandbox_payload["last_activity_at"])
-        except (KeyError, TypeError, ValueError) as exc:
-            logger.warning(
-                f"+++ [executor_job] Invalid sandbox_payload task_id={task_id} pod_name={pod_name} error={exc}"
-            )
-            return {**result, "reason": "invalid_sandbox_payload"}
+    # sandbox_payload is guaranteed non-None by caller (_cleanup_orphan_pod)
+    try:
+        last_activity_at = float(sandbox_payload["last_activity_at"])
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.warning(
+            f"+++ [executor_job] Invalid sandbox_payload task_id={task_id} pod_name={pod_name} error={exc}"
+        )
+        return {**result, "reason": "invalid_sandbox_payload"}
 
-        eligible_after = last_activity_at + inactive_hours * 3600
-        if datetime.now(timezone.utc).timestamp() < eligible_after:
-            logger.info(
-                f"+++ [executor_job] Orphan sandbox not yet stale task_id={task_id} pod_name={pod_name} last_activity_at={last_activity_at} eligible_after={eligible_after}"
-            )
-            return {**result, "reason": "not_stale"}
+    eligible_after = last_activity_at + inactive_hours * 3600
+    if datetime.now(timezone.utc).timestamp() < eligible_after:
+        logger.info(
+            f"+++ [executor_job] Orphan sandbox not yet stale task_id={task_id} pod_name={pod_name} last_activity_at={last_activity_at} eligible_after={eligible_after}"
+        )
+        return {**result, "reason": "not_stale"}
 
     ek_service = _executor_job_mod.executor_kinds_service
     try:
@@ -349,6 +349,9 @@ async def _cleanup_orphan_pod(
             failed_entry["detail"] = exc.detail
         result["failed"].append(failed_entry)
         return
+    logger.info(
+        f"+++ [executor_job] _cleanup_orphan_pod done task_id={task_id} pod_name={pod_name} cleanup_result={cleanup_result}"
+    )
     _append_pod_result(result, cleanup_result, task_id=task_id)
 
 
