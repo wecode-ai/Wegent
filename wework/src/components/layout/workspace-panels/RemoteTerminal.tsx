@@ -12,6 +12,7 @@ import {
 import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
+import { installXtermSelectionGuard } from './xtermSelectionGuard'
 
 interface RemoteTerminalProps {
   sessionId: string
@@ -121,6 +122,7 @@ export function RemoteTerminal({
     terminal.loadAddon(fitAddon)
     terminal.loadAddon(webLinksAddon)
     terminal.open(container)
+    const selectionGuard = installXtermSelectionGuard({ container, terminal })
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {
@@ -187,6 +189,7 @@ export function RemoteTerminal({
       resizeObserver.disconnect()
       dataDisposable.dispose()
       titleDisposable.dispose()
+      selectionGuard.dispose()
       inputFallback.dispose()
       unsubscribeOutput()
       unsubscribeExit()
