@@ -850,7 +850,11 @@ function normalizeModifiedAt(value: unknown, errorMessage: string): string | nul
   throw new Error(errorMessage)
 }
 
-function normalizeWorkspaceEntry(value: unknown, rootPath: string): WorkspaceFileEntry {
+function normalizeWorkspaceEntry(
+  value: unknown,
+  responseRootPath: string,
+  requestedRootPath: string
+): WorkspaceFileEntry {
   const record = recordValue(value)
   if (
     typeof record.name !== 'string' ||
@@ -861,10 +865,11 @@ function normalizeWorkspaceEntry(value: unknown, rootPath: string): WorkspaceFil
     throw new Error('Invalid workspace tree response')
   }
   const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  requireWorkspacePathWithin(path, rootPath, 'Invalid workspace tree response')
+  requireWorkspacePathWithin(path, responseRootPath, 'Invalid workspace tree response')
+  const requestedPath = `${requestedRootPath}${path.slice(responseRootPath.length)}`
   return {
     name: record.name,
-    path,
+    path: requestedPath,
     isDirectory: record.is_directory,
     size: record.size,
     modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace tree response'),
@@ -881,12 +886,14 @@ function normalizeWorkspaceTree(output: unknown, requestedPath: string): Workspa
     throw new Error('Invalid workspace tree response')
   }
   const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  if (path !== normalizedRequestedPath) {
+  if (path.split('/').pop() !== normalizedRequestedPath.split('/').pop()) {
     throw new Error('Invalid workspace tree response')
   }
   return {
-    path,
-    entries: record.entries.map(entry => normalizeWorkspaceEntry(entry, path)),
+    path: normalizedRequestedPath,
+    entries: record.entries.map(entry =>
+      normalizeWorkspaceEntry(entry, path, normalizedRequestedPath)
+    ),
   }
 }
 
@@ -908,12 +915,16 @@ function normalizeWorkspaceTextFile(
   ) {
     throw new Error('Invalid workspace text file response')
   }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace text file response')
-  if (path !== normalizedRequestedFilePath) {
+  const responsePath = normalizeAbsoluteWorkspacePath(
+    record.path,
+    'Invalid workspace text file response'
+  )
+  const requestedName = normalizedRequestedFilePath.split('/').pop()
+  if (record.name !== requestedName || responsePath.split('/').pop() !== requestedName) {
     throw new Error('Invalid workspace text file response')
   }
   return {
-    path,
+    path: normalizedRequestedFilePath,
     name: record.name,
     content: record.content,
     editable: record.editable === true && typeof record.revision === 'string',
@@ -929,6 +940,10 @@ function normalizeWorkspaceFileChunk(
   requestedFilePath: string,
   requestedOffset: number
 ): WorkspaceFileChunkResponse {
+  const normalizedRequestedFilePath = normalizeAbsoluteWorkspacePath(
+    requestedFilePath,
+    'Workspace file path must be absolute'
+  )
   const record = recordValue(output)
   if (
     typeof record.path !== 'string' ||
@@ -940,16 +955,20 @@ function normalizeWorkspaceFileChunk(
   ) {
     throw new Error('Invalid workspace file chunk response')
   }
-  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace file chunk response')
+  const responsePath = normalizeAbsoluteWorkspacePath(
+    record.path,
+    'Invalid workspace file chunk response'
+  )
+  const requestedName = normalizedRequestedFilePath.split('/').pop()
   if (
-    path !==
-      normalizeAbsoluteWorkspacePath(requestedFilePath, 'Workspace file path must be absolute') ||
+    record.name !== requestedName ||
+    responsePath.split('/').pop() !== requestedName ||
     record.offset !== requestedOffset
   ) {
     throw new Error('Invalid workspace file chunk response')
   }
   return {
-    path,
+    path: normalizedRequestedFilePath,
     name: record.name,
     contentBase64: record.content_base64,
     offset: record.offset,
