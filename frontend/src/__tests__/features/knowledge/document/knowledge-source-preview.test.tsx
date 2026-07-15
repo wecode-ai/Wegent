@@ -75,6 +75,42 @@ describe('KnowledgeSourcePreview', () => {
     })
   })
 
+  it('keeps the loaded file when the mounted preview is hidden', async () => {
+    const { rerender } = render(
+      <KnowledgeSourcePreview document={document} active={true} onDownload={onDownload} />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
+
+    rerender(
+      <KnowledgeSourcePreview
+        document={document}
+        active={true}
+        onDownload={onDownload}
+        className="hidden"
+      />
+    )
+
+    expect(screen.getByTestId('knowledge-source-preview')).toHaveClass('hidden')
+    expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument()
+    expect(fetchAttachmentFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the loaded file when deactivated and fetches it again after reactivation', async () => {
+    const { rerender } = render(
+      <KnowledgeSourcePreview document={document} active={true} onDownload={onDownload} />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
+
+    rerender(<KnowledgeSourcePreview document={document} active={false} onDownload={onDownload} />)
+    await waitFor(() => expect(screen.queryByTestId('mock-file-preview')).not.toBeInTheDocument())
+
+    rerender(<KnowledgeSourcePreview document={document} active={true} onDownload={onDownload} />)
+    await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
+    expect(fetchAttachmentFile).toHaveBeenCalledTimes(2)
+  })
+
   it('aborts an in-flight request when the preview is deactivated', () => {
     ;(fetchAttachmentFile as jest.Mock).mockReturnValue(new Promise(() => undefined))
     const { rerender } = render(

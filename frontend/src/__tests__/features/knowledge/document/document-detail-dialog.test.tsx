@@ -93,7 +93,13 @@ jest.mock('@/features/knowledge/document/components/ChunksSection', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeSourcePreview', () => ({
-  KnowledgeSourcePreview: () => <div data-testid="mock-knowledge-source-preview" />,
+  KnowledgeSourcePreview: ({ active, className }: { active: boolean; className?: string }) => (
+    <div
+      className={className}
+      data-active={String(active)}
+      data-testid="mock-knowledge-source-preview"
+    />
+  ),
 }))
 
 jest.mock('@/components/ui/dialog', () => ({
@@ -213,12 +219,14 @@ describe('DocumentDetailDialog original file preview', () => {
       />
     )
 
-    expect(screen.getByTestId('knowledge-document-source-tab')).toBeInTheDocument()
-    expect(screen.getByTestId('knowledge-document-parsed-tab')).toHaveClass('max-md:min-h-[44px]')
-    expect(screen.getByTestId('knowledge-document-source-tab')).toHaveClass('max-md:min-h-[44px]')
-    expect(screen.getByTestId('knowledge-document-source-tab').nextElementSibling).toBe(
-      screen.getByTestId('knowledge-document-parsed-tab')
-    )
+    const sourceTab = screen.getByTestId('knowledge-document-source-tab')
+    const parsedTab = screen.getByTestId('knowledge-document-parsed-tab')
+    const sourceActions = screen.getByTestId('knowledge-source-preview-actions')
+    expect(sourceTab).toBeInTheDocument()
+    expect(parsedTab).toHaveClass('max-md:min-h-[44px]')
+    expect(sourceTab).toHaveClass('max-md:min-h-[44px]')
+    expect(sourceTab.nextElementSibling).toBe(parsedTab)
+    expect(sourceActions.nextElementSibling).toContainElement(sourceTab)
     expect(screen.getByTestId('knowledge-source-preview-download')).toHaveClass(
       'max-md:min-h-[44px]',
       'max-md:min-w-[44px]'
@@ -231,10 +239,19 @@ describe('DocumentDetailDialog original file preview', () => {
 
     await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
 
-    expect(screen.queryByTestId('mock-knowledge-source-preview')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('knowledge-source-preview-fullscreen')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveClass('hidden')
+    expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+      'data-active',
+      'true'
+    )
+    expect(sourceActions).toHaveClass('invisible', 'pointer-events-none')
+    expect(sourceActions).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('knowledge-document-source-tab')).toBe(sourceTab)
     expect(String(mockDialogContent.mock.calls.at(-1)?.[0].className)).toContain('max-w-6xl')
+
+    await user.click(screen.getByTestId('knowledge-document-source-tab'))
+    expect(screen.getByTestId('mock-knowledge-source-preview')).not.toHaveClass('hidden')
+    expect(sourceActions).not.toHaveClass('invisible')
   })
 
   it('hides the source preview tab for non-file documents', () => {

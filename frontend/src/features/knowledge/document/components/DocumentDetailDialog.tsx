@@ -391,40 +391,15 @@ export function DocumentDetailDialog({
                 </div>
 
                 <div className="flex flex-shrink-0 items-center gap-2 max-md:w-full">
-                  {!isFullscreen && !isEditing && canPreviewSource && (
-                    <Tabs
-                      value={contentSourceMode}
-                      onValueChange={value => {
-                        const nextMode = value as 'parsed' | 'source'
-                        setContentSourceMode(nextMode)
-                        setIsFullscreen(false)
-                        if (!summaryManuallyToggledRef.current) {
-                          setIsSummaryOpen(nextMode === 'parsed')
-                        }
-                      }}
-                      className="max-md:flex-1"
+                  {!isEditing && canPreviewSource && (
+                    <div
+                      className={cn(
+                        'flex flex-shrink-0 items-center gap-2',
+                        !isSourceView && 'invisible pointer-events-none'
+                      )}
+                      aria-hidden={!isSourceView}
+                      data-testid="knowledge-source-preview-actions"
                     >
-                      <TabsList className="h-8 max-md:grid max-md:h-11 max-md:w-full max-md:grid-cols-2">
-                        <TabsTrigger
-                          value="source"
-                          className="h-7 px-3 text-xs max-md:min-h-[44px]"
-                          data-testid="knowledge-document-source-tab"
-                        >
-                          {t('document.document.detail.sourceFile')}
-                        </TabsTrigger>
-                        <TabsTrigger
-                          value="parsed"
-                          className="h-7 px-3 text-xs max-md:min-h-[44px]"
-                          data-testid="knowledge-document-parsed-tab"
-                        >
-                          {t('document.document.detail.parsedContent')}
-                        </TabsTrigger>
-                      </TabsList>
-                    </Tabs>
-                  )}
-
-                  {isSourceView && (
-                    <>
                       <Button
                         type="button"
                         variant="outline"
@@ -458,7 +433,39 @@ export function DocumentDetailDialog({
                           <Maximize2 className="h-3.5 w-3.5" />
                         )}
                       </Button>
-                    </>
+                    </div>
+                  )}
+
+                  {!isFullscreen && !isEditing && canPreviewSource && (
+                    <Tabs
+                      value={contentSourceMode}
+                      onValueChange={value => {
+                        const nextMode = value as 'parsed' | 'source'
+                        setContentSourceMode(nextMode)
+                        setIsFullscreen(false)
+                        if (!summaryManuallyToggledRef.current) {
+                          setIsSummaryOpen(nextMode === 'parsed')
+                        }
+                      }}
+                      className="max-md:flex-1"
+                    >
+                      <TabsList className="h-8 max-md:grid max-md:h-11 max-md:w-full max-md:grid-cols-2">
+                        <TabsTrigger
+                          value="source"
+                          className="h-7 px-3 text-xs max-md:min-h-[44px]"
+                          data-testid="knowledge-document-source-tab"
+                        >
+                          {t('document.document.detail.sourceFile')}
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="parsed"
+                          className="h-7 px-3 text-xs max-md:min-h-[44px]"
+                          data-testid="knowledge-document-parsed-tab"
+                        >
+                          {t('document.document.detail.parsedContent')}
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
                   )}
                 </div>
               </div>
@@ -489,13 +496,17 @@ export function DocumentDetailDialog({
               />
             )}
 
-            {isSourceView ? (
+            {canPreviewSource && (
               <KnowledgeSourcePreview
+                key={`${document.id}:${document.attachment_id}`}
                 document={document}
-                active={open && isSourceView}
+                active={open}
                 onDownload={handleSourceDownload}
+                className={cn(!isSourceView && 'hidden')}
               />
-            ) : loading ? (
+            )}
+
+            {isSourceView ? null : loading ? (
               <div className="flex items-center justify-center py-12">
                 <Spinner />
               </div>
