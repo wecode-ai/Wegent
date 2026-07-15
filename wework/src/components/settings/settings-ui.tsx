@@ -59,12 +59,14 @@ interface SettingsRowProps extends HTMLAttributes<HTMLDivElement> {
   label: ReactNode
   description?: ReactNode
   control?: ReactNode
+  labelClassName?: string
 }
 
 export function SettingsRow({
   label,
   description,
   control,
+  labelClassName = '',
   className = '',
   ...props
 }: SettingsRowProps) {
@@ -74,7 +76,9 @@ export function SettingsRow({
       {...props}
     >
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="min-w-0 text-sm font-medium text-text-primary">{label}</div>
+        <div className={`min-w-0 text-sm font-medium text-text-primary ${labelClassName}`.trim()}>
+          {label}
+        </div>
         {description && (
           <div className="min-w-0 text-xs leading-4 text-text-secondary">{description}</div>
         )}

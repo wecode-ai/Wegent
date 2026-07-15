@@ -6765,13 +6765,13 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('queued-notices')).not.toHaveTextContent('正在引导当前对话')
   })
 
-  test('sends queued guidance as a follow-up when the pane is already idle', async () => {
+  test('sends queued guidance as a follow-up when the active turn is unavailable', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
     })
-    const sendRuntimeMessage = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce({
+    const sendRuntimeMessage = vi.fn().mockResolvedValueOnce(false).mockResolvedValue({
       accepted: true,
       taskId: 'runtime-a',
     })
@@ -6877,6 +6877,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await userEvent.click(screen.getByText('guide first queued'))
 
+    await waitFor(() => expect(guideRuntimeTask).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
     expect(sendRuntimeMessage).toHaveBeenLastCalledWith({
       address: {
