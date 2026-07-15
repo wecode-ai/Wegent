@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.services.chat.config.model_resolver import _extract_model_config
+from app.services.chat.config.model_resolver import extract_and_process_model_config
 from app.services.group_permission import get_user_groups
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,80 @@ logger = logging.getLogger(__name__)
 MODEL_TYPE_HEADER = "x-wegent-model-type"
 MODEL_NAMESPACE_HEADER = "x-wegent-model-namespace"
 MODEL_USER_ID_HEADER = "x-wegent-model-user-id"
+UPSTREAM_HEADER_PREFIX = "x-wegent-upstream-header-"
 SUPPORTED_MODEL_TYPES = {"public", "user", "group"}
+PROTECTED_UPSTREAM_HEADERS = {
+    "accept",
+    "authorization",
+    "connection",
+    "content-length",
+    "content-type",
+    "cookie",
+    "host",
+    "proxy-authorization",
+    "set-cookie",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    MODEL_TYPE_HEADER,
+    MODEL_NAMESPACE_HEADER,
+    MODEL_USER_ID_HEADER,
+}
+PROTECTED_UPSTREAM_HEADER_MARKERS = (
+    "api-key",
+    "apikey",
+    "credential",
+    "secret",
+    "token",
+)
+
+
+def _is_protected_upstream_header(name: str) -> bool:
+    normalized = name.strip().lower().replace("_", "-")
+    parts = normalized.split("-")
+    return (
+        normalized in PROTECTED_UPSTREAM_HEADERS
+        or "auth" in parts
+        or "authentication" in parts
+        or any(marker in normalized for marker in PROTECTED_UPSTREAM_HEADER_MARKERS)
+    )
+
+
+def _extract_custom_upstream_headers(request: Request) -> dict[str, str]:
+    custom_headers: dict[str, str] = {}
+    for header_name, value in request.headers.items():
+        if not header_name.lower().startswith(UPSTREAM_HEADER_PREFIX):
+            continue
+        target_name = header_name[len(UPSTREAM_HEADER_PREFIX) :].strip()
+        if not target_name or target_name.startswith("-"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid custom upstream header name",
+            )
+        if _is_protected_upstream_header(target_name):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Custom upstream header is protected: {target_name}",
+            )
+        custom_headers[target_name] = value
+    return custom_headers
+
+
+def _merge_headers_case_insensitive(
+    *header_sources: dict[str, str],
+) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    names_by_lowercase: dict[str, str] = {}
+    for headers in header_sources:
+        for name, value in headers.items():
+            normalized = name.lower()
+            previous_name = names_by_lowercase.get(normalized)
+            if previous_name is not None:
+                merged.pop(previous_name, None)
+            merged[name] = value
+            names_by_lowercase[normalized] = name
+    return merged
 
 
 def _required_header(request: Request, name: str) -> str:
@@ -120,7 +193,11 @@ def resolve_llm_proxy_model_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cloud model not found",
         )
-    return _extract_model_config(kind.json.get("spec", {}))
+    return extract_and_process_model_config(
+        model_spec=kind.json.get("spec", {}),
+        user_id=current_user.id,
+        user_name=current_user.user_name or "",
+    )
 
 
 def _parse_request_body(body_bytes: bytes) -> tuple[dict[str, Any], str]:
@@ -168,7 +245,7 @@ async def proxy_llm_responses(
     provider_api_key = str(model_config.get("api_key") or "").strip()
     provider_model_id = str(model_config.get("model_id") or "").strip()
     default_headers = model_config.get("default_headers") or {}
-    if not provider_base_url or not provider_api_key or not provider_model_id:
+    if not provider_base_url or not provider_model_id:
         logger.error(
             "LLM proxy model configuration incomplete for user %s model %s",
             current_user.id,
@@ -183,18 +260,29 @@ async def proxy_llm_responses(
     body_bytes = json.dumps(body_json).encode("utf-8")
     upstream_url = f"{provider_base_url.rstrip('/')}/responses"
 
-    provider_headers = (
+    configured_headers = (
         {str(key): str(value) for key, value in default_headers.items()}
         if isinstance(default_headers, dict)
         else {}
     )
-    provider_headers["Authorization"] = f"Bearer {provider_api_key}"
+    custom_headers = _extract_custom_upstream_headers(request)
+    provider_headers = _merge_headers_case_insensitive(
+        configured_headers,
+        custom_headers,
+    )
+    protocol_headers: dict[str, str] = {}
+    if provider_api_key:
+        protocol_headers["Authorization"] = f"Bearer {provider_api_key}"
     content_type = request.headers.get("content-type")
     if content_type:
-        provider_headers["Content-Type"] = content_type
+        protocol_headers["Content-Type"] = content_type
     accept = request.headers.get("accept")
     if accept:
-        provider_headers["Accept"] = accept
+        protocol_headers["Accept"] = accept
+    provider_headers = _merge_headers_case_insensitive(
+        provider_headers,
+        protocol_headers,
+    )
 
     client = httpx.AsyncClient(timeout=httpx.Timeout(600.0))
     try:
