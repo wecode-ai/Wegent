@@ -47,8 +47,8 @@ use super::{
     events::{emit_response_event, CodexNotificationEventMapper},
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
-        archived_conversations_response, search_result_item, workspace_response, RuntimeTaskLink,
-        RuntimeWorkspaceLink, SearchResultMatch,
+        archived_conversations_response, codex_thread_is_active, search_result_item,
+        workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
         append_runtime_handle_message, cached_messages, retain_runtime_handle_user_messages,
@@ -1179,12 +1179,11 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| string_field(&payload, "workspace_path"))
             .unwrap_or_default();
 
-        let transcript_thread = codex_thread_state(&thread);
-        let context_usage = transcript_context_usage(&transcript_thread);
+        let context_usage = transcript_context_usage(&thread);
         let transcript_messages = if include_full_content {
-            full_transcript_messages(&transcript_thread, &self.device_id)
+            full_transcript_messages(&thread, &self.device_id)
         } else {
-            transcript_messages(&transcript_thread, &self.device_id)
+            transcript_messages(&thread, &self.device_id)
         };
         let messages = transcript_messages;
         let running = codex_thread_has_active_turn(&thread);
@@ -3574,8 +3573,7 @@ impl RuntimeWorkRpcHandler {
         {
             Ok(response) => {
                 let thread = response.get("thread").unwrap_or(&response);
-                let transcript_thread = codex_thread_state(thread);
-                transcript_messages(&transcript_thread, &self.device_id)
+                transcript_messages(thread, &self.device_id)
             }
             Err(error) => {
                 eprintln!("failed to read Codex app-server thread {thread_id}: {error}");
@@ -4429,21 +4427,7 @@ fn transcript_limit(payload: &Value) -> Option<usize> {
 }
 
 fn codex_thread_has_active_turn(thread: &Value) -> bool {
-    thread.get("status").is_some_and(|status| {
-        status
-            .as_str()
-            .or_else(|| status.get("type").and_then(Value::as_str))
-            .is_some_and(|status| {
-                matches!(
-                    status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-                    "running" | "active" | "inprogress"
-                )
-            })
-    })
-}
-
-fn codex_thread_state(thread: &Value) -> Value {
-    thread.clone()
+    codex_thread_is_active(thread)
 }
 
 fn cached_runtime_transcript_messages(link: &RuntimeTaskLink) -> Vec<Value> {

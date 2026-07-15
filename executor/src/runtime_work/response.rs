@@ -680,7 +680,7 @@ fn thread_status(thread: &Value) -> String {
     .to_owned()
 }
 
-fn codex_thread_is_active(thread: &Value) -> bool {
+pub(super) fn codex_thread_is_active(thread: &Value) -> bool {
     codex_thread_status_type(thread).is_some_and(|status| {
         matches!(
             status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
