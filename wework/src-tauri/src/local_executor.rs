@@ -21,6 +21,7 @@ use crate::process_environment;
 const LOCAL_EXECUTOR_EVENT: &str = "local-executor:event";
 const LOCAL_EXECUTOR_SIDECAR: &str = "wegent-executor";
 const LOCAL_EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
+const LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV: &str = "WEWORK_EXECUTOR_ISOLATION_OVERRIDE";
 const LOCAL_EXECUTOR_ADDR_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
@@ -474,7 +475,7 @@ fn local_executor_instance_name() -> &'static str {
 
 fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
     let home = local_executor_home_path()?;
-    if cfg!(debug_assertions) {
+    if local_executor_isolation_enabled()? {
         return Ok(home
             .join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
             .join(local_executor_instance_name()));
@@ -484,11 +485,21 @@ fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
 }
 
 fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
-    if cfg!(debug_assertions) {
-        return local_executor_runtime_dir_path();
-    }
+    local_executor_runtime_dir_path()
+}
 
-    local_executor_home_path()
+fn local_executor_isolation_enabled() -> Result<bool, String> {
+    let Ok(value) = std::env::var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV) else {
+        return Ok(cfg!(debug_assertions));
+    };
+    match value.trim() {
+        "" => Ok(cfg!(debug_assertions)),
+        "true" => Ok(true),
+        "false" => Ok(false),
+        value => Err(format!(
+            "{LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV} must be true or false, got {value:?}"
+        )),
+    }
 }
 
 fn local_executor_home_path() -> Result<PathBuf, String> {
@@ -2747,6 +2758,52 @@ command = "example"
         link_native_codex_auth(&native_home, &wework_home).unwrap();
 
         assert!(!wework_home.join("auth.json").exists());
+    }
+
+    #[test]
+    fn executor_isolation_override_controls_runtime_home() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        let home = PathBuf::from("/tmp/wework-isolation-override");
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, &home);
+
+        std::env::remove_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        assert_eq!(
+            local_executor_isolation_enabled().expect("default isolation should resolve"),
+            cfg!(debug_assertions)
+        );
+
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "true");
+        assert_eq!(
+            local_executor_runtime_home_path().expect("isolated home should resolve"),
+            home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+                .join(local_executor_instance_name())
+        );
+
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "false");
+        assert_eq!(
+            local_executor_runtime_home_path().expect("shared home should resolve"),
+            home
+        );
+
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
+    }
+
+    #[test]
+    fn executor_isolation_override_rejects_invalid_values() {
+        let _guard = env_lock();
+        let previous_override = std::env::var_os(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV);
+        std::env::set_var(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, "sometimes");
+
+        let error = local_executor_isolation_enabled().expect_err("invalid override should fail");
+
+        restore_env(LOCAL_EXECUTOR_ISOLATION_OVERRIDE_ENV, previous_override);
+        assert_eq!(
+            error,
+            "WEWORK_EXECUTOR_ISOLATION_OVERRIDE must be true or false, got \"sometimes\""
+        );
     }
 
     #[test]
