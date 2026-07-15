@@ -140,9 +140,9 @@ async def _cleanup_stale_orphan_sandbox(
     if sandbox_payload is not None:
         try:
             last_activity_at = float(sandbox_payload["last_activity_at"])
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError) as exc:
             logger.warning(
-                f"+++ [executor_job] Invalid sandbox_payload task_id={task_id}"
+                f"+++ [executor_job] Invalid sandbox_payload task_id={task_id} pod_name={pod_name} error={exc}"
             )
             return {**result, "reason": "invalid_sandbox_payload"}
 
