@@ -83,6 +83,68 @@ describe('MessageList', () => {
     expect(screen.queryByTestId('message-selection-actions')).not.toBeInTheDocument()
   })
 
+  test('reads the final selection after a mouse interaction completes', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-mouse-selection',
+            role: 'assistant',
+            content: 'Select this response',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={vi.fn()}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const content = screen.getByTestId('assistant-message-content')
+    const range = document.createRange()
+    range.setStart(firstTextNode(content), 0)
+    range.setEnd(firstTextNode(content), 6)
+    document.getSelection()?.removeAllRanges()
+    document.getSelection()?.addRange(range)
+    fireEvent.mouseUp(content)
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+  })
+
+  test('offers selection actions when the whole message body is selected', async () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'user-before-whole-body-selection',
+            role: 'user',
+            content: 'Previous message',
+            status: 'done',
+            createdAt: '2026-07-15T09:59:59Z',
+          },
+          {
+            id: 'assistant-whole-body-selection',
+            role: 'assistant',
+            content: 'Select the whole paragraph',
+            status: 'done',
+            createdAt: '2026-07-15T10:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={vi.fn()}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    const content = screen.getByTestId('assistant-message-content')
+    const nextMessage = screen.getByTestId('user-message-content')
+    const range = document.createRange()
+    range.setStart(firstTextNode(nextMessage), 0)
+    range.setEnd(firstTextNode(content), 0)
+    setDocumentSelection(range)
+
+    expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
+  })
+
   test('renders generated image artifacts from image generation blocks', () => {
     render(
       <MessageList

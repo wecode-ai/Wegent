@@ -260,9 +260,9 @@ export const MessageList = memo(function MessageList({
       setIsTextSelectionActive(!isTauri && selectionTouchesList)
       if (!onAddSelectionToConversation || !onAskSelectionInSidebar) return
 
-      const anchorText = closestSelectableMessageText(selection.anchorNode)
-      const focusText = closestSelectableMessageText(selection.focusNode)
-      if (!anchorText || anchorText !== focusText || !root.contains(anchorText)) {
+      const range = selection.getRangeAt(0)
+      const selectedMessageBodies = selectableMessageBodiesForRange(root, range)
+      if (selectedMessageBodies.length !== 1) {
         setTextSelection(null)
         return
       }
@@ -272,7 +272,7 @@ export const MessageList = memo(function MessageList({
         setTextSelection(null)
         return
       }
-      const rect = selection.getRangeAt(0).getBoundingClientRect()
+      const rect = range.getBoundingClientRect()
       setTextSelection({
         text,
         left: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 120),
@@ -281,7 +281,7 @@ export const MessageList = memo(function MessageList({
       })
     }
 
-    const handlePointerUp = () => {
+    const scheduleSelectionUpdate = () => {
       window.requestAnimationFrame(updateSelectionState)
     }
 
@@ -289,16 +289,20 @@ export const MessageList = memo(function MessageList({
       updateSelectionState()
     }
 
-    document.addEventListener('pointerup', handlePointerUp)
-    document.addEventListener('pointercancel', handlePointerUp)
-    document.addEventListener('selectionchange', updateSelectionState)
+    document.addEventListener('pointerup', scheduleSelectionUpdate)
+    document.addEventListener('pointercancel', scheduleSelectionUpdate)
+    document.addEventListener('mouseup', scheduleSelectionUpdate)
+    document.addEventListener('keyup', scheduleSelectionUpdate)
+    document.addEventListener('selectionchange', scheduleSelectionUpdate)
     window.addEventListener('scroll', updateSelectionState, true)
     window.addEventListener('blur', handleBlur)
 
     return () => {
-      document.removeEventListener('pointerup', handlePointerUp)
-      document.removeEventListener('pointercancel', handlePointerUp)
-      document.removeEventListener('selectionchange', updateSelectionState)
+      document.removeEventListener('pointerup', scheduleSelectionUpdate)
+      document.removeEventListener('pointercancel', scheduleSelectionUpdate)
+      document.removeEventListener('mouseup', scheduleSelectionUpdate)
+      document.removeEventListener('keyup', scheduleSelectionUpdate)
+      document.removeEventListener('selectionchange', scheduleSelectionUpdate)
       window.removeEventListener('scroll', updateSelectionState, true)
       window.removeEventListener('blur', handleBlur)
     }
@@ -430,9 +434,24 @@ function getMessageContainmentStyle(estimatedHeight: number | undefined): CSSPro
   } as CSSProperties
 }
 
-function closestSelectableMessageText(node: Node | null): HTMLElement | null {
-  const element = node instanceof Element ? node : node?.parentElement
-  return element?.closest<HTMLElement>('[data-message-selectable-text]') ?? null
+function selectableMessageBodiesForRange(root: HTMLElement, range: Range): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>('[data-message-selectable-text]')).filter(
+    element => selectedTextWithinElement(range, element).trim().length > 0
+  )
+}
+
+function selectedTextWithinElement(range: Range, element: HTMLElement): string {
+  if (!range.intersectsNode(element)) return ''
+
+  const intersection = document.createRange()
+  intersection.selectNodeContents(element)
+  if (intersection.compareBoundaryPoints(Range.START_TO_START, range) < 0) {
+    intersection.setStart(range.startContainer, range.startOffset)
+  }
+  if (intersection.compareBoundaryPoints(Range.END_TO_END, range) > 0) {
+    intersection.setEnd(range.endContainer, range.endOffset)
+  }
+  return intersection.toString()
 }
 
 function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
