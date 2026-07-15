@@ -8,6 +8,12 @@ import { localSkillReference } from '@/lib/local-skill-reference'
 import { supportsGitWorktreeExecution } from '@/lib/projectClassification'
 import { runtimeContextUsageMetrics } from '@/lib/runtime-context-usage'
 import { resolveLocalWorkbenchDeviceId } from '@/lib/workbench-device'
+import {
+  findActiveRuntimeProjectId,
+  getLocalRuntimeStateDeviceId,
+  getRuntimeProjectActivation,
+  getRuntimeRemoteProjectRegistrations,
+} from '@/lib/runtime-project-state'
 import { requestNewChatComposerFocus } from '@/lib/workbenchComposerFocus'
 import { installLocalWorkspaceOpenListener } from '@/tauri/localWorkspaceOpen'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
@@ -160,6 +166,10 @@ export function WorkbenchProvider({
     return createExecutorClientForWorkbenchServices(resolvedServices)
   }, [resolvedServices])
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
+  const remoteProjectSyncSignatureRef = useRef('')
+  const projectActivationSignatureRef = useRef('')
+  const lastProjectRestoreAttemptedRef = useRef(false)
+  const projectSelectionStartedRef = useRef(false)
   const [projectExecutionMode, setProjectExecutionMode] =
     useState<ProjectExecutionMode>('current_workspace')
   const [projectWorktreeBranch, setProjectWorktreeBranchState] = useState<string | null>(null)
@@ -443,6 +453,72 @@ export function WorkbenchProvider({
       services: resolvedServices,
     })
 
+  const localRuntimeStateDeviceId = useMemo(
+    () => getLocalRuntimeStateDeviceId(state.devices),
+    [state.devices]
+  )
+
+  useEffect(() => {
+    const projects = getRuntimeRemoteProjectRegistrations(
+      state.runtimeWork,
+      localRuntimeStateDeviceId
+    ).sort((left, right) => left.id.localeCompare(right.id))
+    if (!localRuntimeStateDeviceId || projects.length === 0) return
+    const signature = JSON.stringify({ deviceId: localRuntimeStateDeviceId, projects })
+    if (remoteProjectSyncSignatureRef.current === signature) return
+    remoteProjectSyncSignatureRef.current = signature
+    void executorClient.runtime
+      .syncRuntimeRemoteProjects({ deviceId: localRuntimeStateDeviceId, projects })
+      .then(refreshWorkLists)
+      .catch(error => {
+        remoteProjectSyncSignatureRef.current = ''
+        console.warn('[Wework] Failed to sync remote projects into Codex global state', error)
+      })
+  }, [executorClient, localRuntimeStateDeviceId, refreshWorkLists, state.runtimeWork])
+
+  useEffect(() => {
+    if (lastProjectRestoreAttemptedRef.current || !state.runtimeWork) return
+    if (
+      projectSelectionStartedRef.current ||
+      state.currentProject ||
+      state.currentRuntimeTask ||
+      state.standaloneWorkspacePath
+    ) {
+      lastProjectRestoreAttemptedRef.current = true
+      return
+    }
+    const activeProjectId = findActiveRuntimeProjectId(state.runtimeWork)
+    lastProjectRestoreAttemptedRef.current = true
+    if (!activeProjectId) return
+    const project = findSelectableProject(state.projects, state.runtimeWork, activeProjectId)
+    if (project) dispatch({ type: 'project_selected', project })
+  }, [
+    state.currentProject,
+    state.currentRuntimeTask,
+    state.projects,
+    state.runtimeWork,
+    state.standaloneWorkspacePath,
+  ])
+
+  useEffect(() => {
+    const activation = getRuntimeProjectActivation(
+      state.runtimeWork,
+      state.currentProject?.id,
+      localRuntimeStateDeviceId
+    )
+    if (!activation) {
+      projectActivationSignatureRef.current = ''
+      return
+    }
+    const signature = JSON.stringify(activation)
+    if (projectActivationSignatureRef.current === signature) return
+    projectActivationSignatureRef.current = signature
+    void executorClient.runtime.activateRuntimeProject(activation).catch(error => {
+      projectActivationSignatureRef.current = ''
+      console.warn('[Wework] Failed to save the active Codex project', error)
+    })
+  }, [executorClient, localRuntimeStateDeviceId, state.currentProject?.id, state.runtimeWork])
+
   useEffect(() => {
     updateWorkbenchDebugSnapshot({
       state,
@@ -502,6 +578,7 @@ export function WorkbenchProvider({
 
   const selectProject = useCallback(
     (projectId: number | null) => {
+      projectSelectionStartedRef.current = true
       if (projectId === null) {
         dispatch({
           type: 'project_cleared',
@@ -527,6 +604,7 @@ export function WorkbenchProvider({
 
   const selectProjectWorkspace = useCallback(
     (projectId: number, deviceWorkspaceId: number | null) => {
+      projectSelectionStartedRef.current = true
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (!project) return
       writeLastProjectId(user.id, project.id)
@@ -542,6 +620,7 @@ export function WorkbenchProvider({
 
   const selectStandaloneDevice = useCallback(
     (deviceId: string | null) => {
+      projectSelectionStartedRef.current = true
       const standaloneDeviceId = getPreferredStandaloneDeviceId(
         state.devices,
         deviceId ?? user.preferences?.default_execution_target ?? state.standaloneDeviceId
@@ -567,6 +646,7 @@ export function WorkbenchProvider({
 
   const openStandaloneWorkspace = useCallback(
     async (deviceId: string, workspacePath: string, label?: string) => {
+      projectSelectionStartedRef.current = true
       const requestDeviceId = deviceId.trim()
       const normalizedWorkspacePath = workspacePath.trim()
       if (!requestDeviceId || !normalizedWorkspacePath) return

@@ -464,4 +464,87 @@ describe('cloud runtime sync state', () => {
       'task-cloud',
     ])
   })
+
+  test('merges a local Codex remote descriptor with its remote executor project in global order', () => {
+    const remoteWorkspace = {
+      ...workspace('remote-device', []),
+      workspacePath: '/srv/repo',
+      workspaceSource: 'remote',
+      remoteHostId: 'remote-device',
+      available: false,
+    }
+    const localWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: '/local/a', name: 'Local A' },
+          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/local/a' }],
+        },
+        {
+          project: {
+            key: 'remote-project-id',
+            sidebarStateKey: 'remote-project-id',
+            name: 'Remote',
+            kind: 'remote',
+            source: 'remote_project',
+            stateDeviceId: 'local-device',
+            pinned: true,
+            pinnedOrder: 0,
+            active: true,
+          },
+          deviceWorkspaces: [remoteWorkspace],
+        },
+        {
+          project: { key: '/local/b', name: 'Local B' },
+          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/local/b' }],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const remoteWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: '/srv/repo', name: 'Remote executor project' },
+          deviceWorkspaces: [
+            {
+              ...remoteWorkspace,
+              workspaceSource: 'local',
+              remoteHostId: undefined,
+              available: true,
+              tasks: [{ taskId: 'remote-task', title: 'Remote task' }],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+
+    const merged = mergeRuntimeWorkLists(localWork, remoteWork, {
+      devices: [device({ device_id: 'remote-device', device_type: 'remote' })],
+    })
+
+    expect(merged.projects.map(project => project.project.name)).toEqual([
+      'Local A',
+      'Remote',
+      'Local B',
+    ])
+    expect(merged.projects[1].project).toMatchObject({
+      key: '/srv/repo',
+      sidebarStateKey: 'remote-project-id',
+      stateDeviceId: 'local-device',
+      pinned: true,
+      pinnedOrder: 0,
+      active: true,
+    })
+    expect(merged.projects[1].deviceWorkspaces).toEqual([
+      expect.objectContaining({
+        deviceId: 'remote-device',
+        workspacePath: '/srv/repo',
+        workspaceSource: 'remote',
+        remoteHostId: 'remote-device',
+        tasks: [expect.objectContaining({ taskId: 'remote-task' })],
+      }),
+    ])
+  })
 })

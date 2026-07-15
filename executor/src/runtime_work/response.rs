@@ -254,6 +254,8 @@ pub(crate) struct RuntimeWorkspaceLink {
     pub project_source: String,
     pub project_roots: Vec<String>,
     pub project_pinned: bool,
+    pub project_pinned_order: Option<usize>,
+    pub project_active: bool,
     pub project_appearance: Option<Value>,
 }
 
@@ -272,6 +274,8 @@ impl Default for RuntimeWorkspaceLink {
             project_source: "legacy_root".to_owned(),
             project_roots: Vec::new(),
             project_pinned: false,
+            project_pinned_order: None,
+            project_active: false,
             project_appearance: None,
         }
     }
@@ -370,6 +374,10 @@ pub(crate) fn workspace_response(
                 workspace_json["projectSource"] = Value::String(workspace.project_source.clone());
                 workspace_json["projectRoots"] = json!(workspace.project_roots);
                 workspace_json["projectPinned"] = Value::Bool(workspace.project_pinned);
+                if let Some(order) = workspace.project_pinned_order {
+                    workspace_json["projectPinnedOrder"] = json!(order);
+                }
+                workspace_json["projectActive"] = Value::Bool(workspace.project_active);
                 if let Some(appearance) = workspace.project_appearance.clone() {
                     workspace_json["projectAppearance"] = appearance;
                 }

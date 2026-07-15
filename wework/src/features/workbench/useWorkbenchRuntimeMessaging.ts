@@ -544,6 +544,13 @@ export function useWorkbenchRuntimeMessaging({
         modelId: payload.force_override_bot_model,
         modelType: payload.force_override_bot_model_type ?? null,
         modelOptions: payload.model_options ?? {},
+        modelSelection: selectedModel
+          ? {
+              modelName: selectedModel.name,
+              modelType: selectedModel.type,
+              options: selectedModelOptions,
+            }
+          : null,
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
@@ -1279,6 +1286,10 @@ function buildOptimisticRuntimeTask({
 function modelSelectionFromCreateRequest(
   request: RuntimeTaskCreateRequest
 ): ModelSelectionConfig | null {
+  if (request.modelSelection?.modelName) {
+    return request.modelSelection
+  }
+
   if (!request.modelId) {
     return null
   }
