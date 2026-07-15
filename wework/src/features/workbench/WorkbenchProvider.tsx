@@ -170,9 +170,19 @@ export function WorkbenchProvider({
   const localAppsCacheRef = useRef<{ expiresAt: number; apps: LocalDeviceApp[] } | null>(null)
   const localPluginApi = useMemo(() => createLocalCodexPluginApi(), [])
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
-  const currentRuntimeTaskRunning = useMemo(
+  const authoritativeRuntimeTaskRunning = useMemo(
     () => getRuntimePaneTaskExecution(state.runtimeWork, state.currentRuntimeTask).running,
     [state.currentRuntimeTask, state.runtimeWork]
+  )
+  const currentRuntimeTaskRunning = useMemo(
+    () =>
+      authoritativeRuntimeTaskRunning ||
+      (state.currentRuntimeTask !== null &&
+        state.activeRuntimeTasks.some(
+          address =>
+            getRuntimeTaskRouteKey(address) === getRuntimeTaskRouteKey(state.currentRuntimeTask!)
+        )),
+    [authoritativeRuntimeTaskRunning, state.activeRuntimeTasks, state.currentRuntimeTask]
   )
   const runtimeTaskReminders = useRuntimeTaskReminders({
     userId: user.id,
@@ -732,7 +742,7 @@ export function WorkbenchProvider({
     executorClient,
     services: resolvedServices,
     runtimeTasks,
-    currentRuntimeTaskRunning,
+    authoritativeRuntimeTaskRunning,
     projectExecutionMode,
     projectWorktreeBranch,
     isOptionsLocked,

@@ -2950,7 +2950,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('pane-goal-objective')).toHaveTextContent('修复 CI')
   })
 
-  test('keeps the sent user message when transcript loading effects replay', async () => {
+  test('uses the loaded transcript instead of an optimistic message from a replaced task id', async () => {
     const initialRuntimeWork = createRuntimeWork({
       projects: [
         {
@@ -3006,7 +3006,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         'device-1:runtime-created:/workspace/project-alpha'
       )
     )
-    expect(screen.getByTestId('pane-message-roles')).toHaveTextContent('user:修复 CI')
+    expect(screen.getByTestId('pane-message-roles')).toBeEmptyDOMElement()
   })
 
   test('starts a fresh project pane after creating a runtime task in the same project', async () => {
@@ -4107,9 +4107,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
 
     expect(screen.getByTestId('message-roles')).toHaveTextContent('user:修复 CI')
-    await waitFor(() =>
-      expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant:streamed answer')
-    )
+    expect(screen.getByTestId('message-roles')).not.toHaveTextContent('assistant:streamed answer')
 
     await act(async () => {
       transcript.resolve({
@@ -4128,6 +4126,10 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
       await transcript.promise
     })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('message-roles')).toHaveTextContent('assistant:streamed answer')
+    )
   })
 
   test('restores a runtime task from the URL with transcript blocks', async () => {
