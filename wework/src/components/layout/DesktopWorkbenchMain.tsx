@@ -1468,7 +1468,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
           className={cn(
-            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto] overflow-y-auto',
+            'relative grid min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
+            hasConversation ? 'overflow-y-auto' : 'overflow-hidden',
             rightSplitResizing ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
