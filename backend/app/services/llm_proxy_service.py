@@ -193,11 +193,32 @@ def resolve_llm_proxy_model_config(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Cloud model not found",
         )
-    return extract_and_process_model_config(
-        model_spec=kind.json.get("spec", {}),
+    model_spec = kind.json.get("spec", {})
+    model_config = extract_and_process_model_config(
+        model_spec=model_spec,
         user_id=current_user.id,
         user_name=current_user.user_name or "",
     )
+    raw_api_key = ((model_spec.get("modelConfig") or {}).get("env") or {}).get(
+        "api_key"
+    )
+    if isinstance(raw_api_key, str) and "${" in raw_api_key:
+        model_config["_api_key_template"] = raw_api_key
+    return model_config
+
+
+async def resolve_llm_proxy_provider_api_key(
+    model_config: dict[str, Any],
+    current_user: User,
+) -> str:
+    """Resolve the provider API key before forwarding an LLM proxy request.
+
+    Internal deployments may extend this function to resolve user-scoped secret
+    placeholders. The open-source path returns the already processed Model CRD
+    value unchanged.
+    """
+    del current_user
+    return str(model_config.get("api_key") or "").strip()
 
 
 def _parse_request_body(body_bytes: bytes) -> tuple[dict[str, Any], str]:
@@ -242,7 +263,10 @@ async def proxy_llm_responses(
     )
 
     provider_base_url = str(model_config.get("base_url") or "").strip()
-    provider_api_key = str(model_config.get("api_key") or "").strip()
+    provider_api_key = await resolve_llm_proxy_provider_api_key(
+        model_config,
+        current_user,
+    )
     provider_model_id = str(model_config.get("model_id") or "").strip()
     default_headers = model_config.get("default_headers") or {}
     if not provider_base_url or not provider_model_id:
