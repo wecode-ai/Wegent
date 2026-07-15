@@ -62,6 +62,10 @@ export function isFilePreviewable(mimeType: string, filename: string): boolean {
   ) {
     return true
   }
+  // Legacy PowerPoint files are not supported by the Office renderer.
+  if (mimeType === 'application/vnd.ms-powerpoint' || /\.ppt$/i.test(filename)) {
+    return false
+  }
   // Office documents
   if (
     mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
@@ -69,8 +73,7 @@ export function isFilePreviewable(mimeType: string, filename: string): boolean {
     mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
     mimeType === 'application/msword' ||
     mimeType === 'application/vnd.ms-excel' ||
-    mimeType === 'application/vnd.ms-powerpoint' ||
-    filename.match(/\.(xlsx|xls|csv|docx|doc|pptx|ppt)$/i)
+    filename.match(/\.(xlsx|xls|csv|docx|doc|pptx)$/i)
   ) {
     return true
   }

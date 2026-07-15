@@ -58,7 +58,7 @@ export function FlyfishOfficePreview({ blob, filename, onError }: FlyfishOfficeP
     [blob, filename]
   )
   const extension = filename.split('.').pop()?.toLowerCase()
-  const isPresentation = extension === 'ppt' || extension === 'pptx'
+  const isPresentation = extension === 'pptx'
 
   const handleStateChange = (state: ViewerState) => {
     if (!state.error || !onError) return

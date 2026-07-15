@@ -6,15 +6,7 @@ import type { KnowledgeDocument } from '@/types/knowledge'
 
 export const KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES = 100 * 1024 * 1024
 
-const SUPPORTED_SOURCE_PREVIEW_EXTENSIONS = new Set([
-  'pdf',
-  'doc',
-  'docx',
-  'xls',
-  'xlsx',
-  'ppt',
-  'pptx',
-])
+const SUPPORTED_SOURCE_PREVIEW_EXTENSIONS = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'pptx'])
 
 export function normalizeSourcePreviewExtension(extension: string): string {
   return extension.trim().replace(/^\./, '').toLowerCase()

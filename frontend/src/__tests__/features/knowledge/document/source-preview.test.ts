@@ -14,7 +14,7 @@ describe('source preview rules', () => {
     expect(normalizeSourcePreviewExtension(' .DOCX ')).toBe('docx')
   })
 
-  it.each(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'])(
+  it.each(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'pptx'])(
     'supports original %s files',
     extension => {
       expect(
@@ -45,13 +45,15 @@ describe('source preview rules', () => {
   })
 
   it('rejects unsupported extensions', () => {
-    expect(
-      isKnowledgeSourcePreviewSupported({
-        source_type: 'file',
-        attachment_id: 10,
-        file_extension: 'md',
-      })
-    ).toBe(false)
+    for (const fileExtension of ['md', 'ppt']) {
+      expect(
+        isKnowledgeSourcePreviewSupported({
+          source_type: 'file',
+          attachment_id: 10,
+          file_extension: fileExtension,
+        })
+      ).toBe(false)
+    }
   })
 
   it.each([null, undefined])('rejects a missing extension (%s)', fileExtension => {

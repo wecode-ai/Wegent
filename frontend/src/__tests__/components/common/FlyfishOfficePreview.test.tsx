@@ -65,6 +65,15 @@ describe('FlyfishOfficePreview', () => {
     expect(getPreviewType(mimeType, 'deck.pptx')).toBe('office')
   })
 
+  it.each([
+    ['application/vnd.ms-powerpoint', 'deck.ppt'],
+    ['application/vnd.ms-powerpoint', 'deck.pptx'],
+    ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'deck.ppt'],
+  ])('rejects legacy PowerPoint input (%s, %s)', (mimeType, filename) => {
+    expect(isFilePreviewable(mimeType, filename)).toBe(false)
+    expect(getPreviewType(mimeType, filename)).toBe('unknown')
+  })
+
   it('keeps Word files on the renderer-owned scroll container', () => {
     render(
       <FlyfishOfficePreview
