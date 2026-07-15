@@ -34,6 +34,7 @@ export interface BottomPanelRenderContext {
   devices: DeviceInfo[]
   workspaceTarget: WorkspaceTarget | null
   preferLocalTerminal: boolean
+  terminalContextTitle?: string | null
 }
 
 export function formatEnvironmentReviewErrorMessage({

@@ -9,8 +9,7 @@ Provides internal API for chat_shell's RemoteStore to access chat history.
 These endpoints are intended for service-to-service communication, not user access.
 
 Authentication:
-- Uses Internal Service Token (X-Service-Name header)
-- In production, should be protected by network-level security
+- Uses Internal Service Token in the Authorization header
 """
 
 import json
@@ -33,6 +32,7 @@ from app.models.subtask_context import (
     SubtaskContext,
 )
 from app.models.user import User
+from app.services.auth.internal_service_token import verify_internal_service_token
 from app.services.chat.guidance_queue import guidance_queue
 from app.services.chat.preprocessing.external_web_content import (
     build_external_web_content_images,
@@ -49,7 +49,11 @@ from shared.utils.attachment_block import build_attachment_header
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["internal-chat"])
+router = APIRouter(
+    prefix="/chat",
+    tags=["internal-chat"],
+    dependencies=[Depends(verify_internal_service_token)],
+)
 
 # Knowledge base injection mode constant for kb_head (not in enum as it's tool-specific)
 INJECTION_MODE_KB_HEAD = "kb_head"
@@ -434,12 +438,12 @@ def _build_user_message_content(
     ]
 
     model_capabilities = (model_config or {}).get("modelCapabilities") or {}
-    supports_image = model_capabilities.get("supportsImage")
-    supports_video = model_capabilities.get("supportsVideo", False)
+    supports_image = model_capabilities.get("supportsImage") is True
+    supports_video = model_capabilities.get("supportsVideo") is True
 
     # Process attachments first (they have priority)
     vision_parts: list[dict[str, Any]] = []
-    if supports_image is not False:
+    if supports_image:
         vision_parts = [
             {
                 "type": "image_url",
@@ -475,7 +479,7 @@ def _build_user_message_content(
             attachment_text_parts.append(f"{image_header}\n")
             total_attachment_text_length += len(image_header) + 1
 
-            if supports_image is False:
+            if not supports_image:
                 logger.debug(
                     "[history] Added metadata-only image attachment: id=%s",
                     attachment.id,
@@ -953,8 +957,8 @@ async def get_chat_history(
         None, description="Only return messages before this ID"
     ),
     is_group_chat: bool = Query(False, description="Whether this is a group chat"),
-    supports_image: Optional[bool] = Query(
-        None, description="Whether the model supports image input"
+    supports_image: bool = Query(
+        False, description="Whether the model supports image input"
     ),
     supports_video: bool = Query(
         False, description="Whether the model supports video input"
@@ -977,7 +981,6 @@ async def get_chat_history(
         before_message_id: Only return messages before this ID
         is_group_chat: Whether this is a group chat
         supports_image: Whether the model supports image input.
-            If omitted, history keeps the legacy image attachment behavior.
         supports_video: Whether the model supports video input.
         db: Database session
     """
@@ -1022,9 +1025,10 @@ async def get_chat_history(
 
     # Convert to message format with full context loading
     # Build model_config from query parameters for attachment capability checks.
-    model_capabilities: dict[str, Any] = {"supportsVideo": supports_video}
-    if supports_image is not None:
-        model_capabilities["supportsImage"] = supports_image
+    model_capabilities: dict[str, Any] = {
+        "supportsImage": supports_image,
+        "supportsVideo": supports_video,
+    }
     model_config = {"modelCapabilities": model_capabilities}
     messages = [
         msg

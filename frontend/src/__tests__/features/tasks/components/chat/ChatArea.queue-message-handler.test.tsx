@@ -378,6 +378,14 @@ describe('ChatArea queue message handler mounting', () => {
     expect(screen.getByTestId('queue-message-handler')).toBeInTheDocument()
   })
 
+  it('does not overlap code quick phrases with the getting started section', () => {
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="code" showRepositorySelector />)
+
+    expect(screen.getByTestId('slogan-display').parentElement?.parentElement).toHaveStyle({
+      marginBottom: 0,
+    })
+  })
+
   it('mounts QueueMessageHandler for task mode', () => {
     render(
       <ChatArea teams={[]} isTeamsLoading={false} taskType="task" showRepositorySelector={false} />

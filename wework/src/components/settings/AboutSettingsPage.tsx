@@ -3,6 +3,7 @@ import type { ComponentType } from 'react'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
+import { SettingsPage } from './settings-ui'
 
 const PROJECT_URL = 'https://github.com/wecode-ai/Wegent'
 const LICENSE_URL = `${PROJECT_URL}/blob/main/LICENSE`
@@ -10,6 +11,14 @@ const DISCORD_URL = 'https://discord.gg/MVzJzyqEUp'
 
 function formatVersionTemplate(template: string, version: string): string {
   return template.replace('{{version}}', version)
+}
+
+function calculateDownloadPercent(
+  downloadedBytes: number,
+  totalBytes: number | null
+): number | null {
+  if (!totalBytes || totalBytes <= 0) return null
+  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
 }
 
 function formatUpdateError(message: string | null, t: ReturnType<typeof useTranslation>['t']) {
@@ -70,9 +79,13 @@ export function AboutSettingsPage() {
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const updateStatus = appUpdate?.status ?? 'idle'
+  const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
   const formattedUpdateError = formatUpdateError(updateError, t)
   const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
+  const downloadPercent = downloadProgress
+    ? calculateDownloadPercent(downloadProgress.downloadedBytes, downloadProgress.totalBytes)
+    : null
   const updateButtonLabel = availableUpdate
     ? formatVersionTemplate(
         t('workbench.app_update_install', {
@@ -104,9 +117,10 @@ export function AboutSettingsPage() {
   }
 
   return (
-    <div
+    <SettingsPage
       data-testid="about-settings-page"
-      className="mx-auto flex w-full max-w-[560px] flex-col items-center px-4 pb-10 pt-8 text-center md:pt-14"
+      width="narrow"
+      className="flex flex-col items-center px-4 pt-8 text-center md:pt-14"
     >
       <div className="flex h-20 w-20 items-center justify-center rounded-[18px] border border-border bg-surface shadow-sm">
         <Bot className="h-10 w-10 text-primary" />
@@ -136,6 +150,37 @@ export function AboutSettingsPage() {
             {formattedUpdateError ?? updateMessage}
           </span>
         ) : null}
+        {updateStatus === 'installing' ? (
+          <div data-testid="about-update-download-progress" className="w-[240px] space-y-1.5">
+            <div
+              role="progressbar"
+              aria-label={t('workbench.app_update_downloading', {
+                defaultValue: '正在下载更新',
+              })}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              {...(downloadPercent !== null ? { 'aria-valuenow': downloadPercent } : {})}
+              className="h-1.5 overflow-hidden rounded-full bg-muted"
+            >
+              <div
+                className={
+                  downloadPercent === null
+                    ? 'h-full w-1/3 animate-pulse rounded-full bg-primary'
+                    : 'h-full rounded-full bg-primary transition-[width] duration-200'
+                }
+                style={downloadPercent === null ? undefined : { width: `${downloadPercent}%` }}
+              />
+            </div>
+            <span className="block text-xs leading-5 text-text-secondary">
+              {downloadPercent === null
+                ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
+                : t('workbench.app_update_downloading_progress', {
+                    defaultValue: '正在下载更新 {{progress}}%',
+                    progress: downloadPercent,
+                  })}
+            </span>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-10 flex flex-wrap items-center justify-center gap-1 border-t border-border pt-4">
@@ -145,6 +190,6 @@ export function AboutSettingsPage() {
         <span className="text-text-muted">·</span>
         <AboutLink label="Discord" url={DISCORD_URL} />
       </div>
-    </div>
+    </SettingsPage>
   )
 }

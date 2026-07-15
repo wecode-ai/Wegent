@@ -74,6 +74,7 @@ export type WorkbenchMessage = Omit<
   runtimeGoalRequest?: boolean | null
   runtimeGuidance?: boolean | null
   runtimeGuidanceSplitBefore?: boolean | null
+  runtimeGuidanceContinuation?: boolean | null
   codeComments?: CodeCommentContext[] | null
   references?: CodexReference[] | null
   memoryCitations?: CodexMemoryCitation[] | null
@@ -101,8 +102,10 @@ export interface GuidanceWorkbenchMessage {
 
 export interface RuntimePaneTranscript {
   messages: WorkbenchMessage[]
+  running?: boolean
   contextUsage?: RuntimeContextUsage | null
   turnNavigation?: RuntimeTurnNavigationItem[]
+  fullContent?: boolean
   rangeStart?: number | null
   rangeEnd?: number | null
   hasMoreBefore?: boolean
@@ -116,6 +119,7 @@ export interface RuntimePaneTranscriptLoadOptions {
   beforeCursor?: string | null
   afterCursor?: string | null
   refresh?: boolean
+  includeFullContent?: boolean
 }
 
 export type RuntimeTranscriptLoader = (
@@ -181,6 +185,7 @@ export interface WorkbenchState {
   runtimeWork: RuntimeWorkListResponse | null
   currentProject: ProjectWithTasks | null
   currentRuntimeTask: RuntimeTaskAddress | null
+  activeRuntimeTasks: RuntimeTaskAddress[]
   standaloneChatKey: number
   selectedDeviceWorkspaceId: number | null
   pendingProjectWorkspaceProjectId: number | null

@@ -1,0 +1,152 @@
+---
+sidebar_position: 45
+---
+
+# Wework Windows Desktop Build Guide
+
+This guide covers how to build and run the Wework desktop app (`wework`) on Windows, and how to cross-compile a Windows installer from macOS.
+
+---
+
+## Prerequisites
+
+### Native Windows build
+
+- **Windows 10/11**
+- **Rust 1.77+** with the `x86_64-pc-windows-msvc` target installed
+- **Node.js 20+** and **pnpm**
+- **Visual Studio Build Tools** (provides the MSVC toolchain)
+- **Git**
+
+### Cross-compiling the Windows installer from macOS
+
+- **macOS** (Apple Silicon or Intel)
+- **Rust 1.77+**
+- **cargo-xwin**: `cargo install cargo-xwin`
+- **LLVM** (for `clang`): `brew install llvm`, and ensure `/opt/homebrew/opt/llvm/bin` is on your `PATH`
+- **NSIS** (for installer generation): `brew install nsis`
+- **Node.js 20+** and **pnpm**
+
+---
+
+## Summary of changes for Windows support
+
+The main portability changes are:
+
+1. **Local IPC switched from Unix domain sockets to TCP loopback**: The Executor sidecar binds to `127.0.0.1:0` and the OS assigns an available port. The bound address is written to `~/.wegent-executor/app-ipc.addr`, which the Tauri front-end reads to discover the port.
+2. **Portable home directory resolution**: All Rust code uses `dirs::home_dir()`, which falls back to `USERPROFILE` on Windows instead of relying on the `HOME` environment variable.
+3. **File permission calls are Unix-only**: `chmod` / `set_mode` calls are gated with `#[cfg(unix)]` and ignored on Windows.
+4. **Local terminal defaults to PowerShell on Windows**: `pwsh.exe` is preferred, with `powershell.exe` as the fallback.
+5. **New Windows build script and Tauri config**: `wework/scripts/build-windows-app.sh` and `wework/src-tauri/tauri.windows.conf.json`.
+
+---
+
+## Native Windows development
+
+### 1. Install dependencies
+
+```powershell
+# Add the Windows target
+rustup target add x86_64-pc-windows-msvc
+
+# Install pnpm
+npm install -g pnpm
+
+# Install frontend dependencies
+pnpm install
+```
+
+### 2. Build the local Executor sidecar
+
+```powershell
+cd executor
+cargo build --release --target x86_64-pc-windows-msvc
+```
+
+Copy the resulting binary to the location Tauri expects:
+
+```powershell
+$target = "x86_64-pc-windows-msvc"
+cp "executor\target\$target\release\wegent-executor.exe" "wework\src-tauri\binaries\wegent-executor-$target.exe"
+```
+
+Or use the convenience helper from the repository root on macOS to cross-compile the sidecar only (faster than a full installer build):
+
+```bash
+cd wework
+pnpm run build:windows:sidecar
+```
+
+### 3. Prepare the bundled Codex binary
+
+```powershell
+cd wework
+$env:WEWORK_CODEX_TARGET = "x86_64-pc-windows-msvc"
+pnpm run prepare:codex
+```
+
+### 4. Start the dev mode
+
+```powershell
+pnpm exec tauri dev --target x86_64-pc-windows-msvc
+```
+
+---
+
+## Cross-compiling the Windows installer from macOS
+
+Use the repository build script:
+
+```bash
+bash wework/scripts/build-windows-app.sh
+```
+
+The script will:
+
+1. Build the Executor sidecar for `x86_64-pc-windows-msvc` using `cargo xwin build`.
+2. Copy `wegent-executor.exe` to `wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe`.
+3. Prepare the Windows Codex binary.
+4. Build Tauri with `cargo-xwin` and produce an NSIS installer.
+
+The installer is written to:
+
+```
+wework/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/
+```
+
+### Repository convenience command
+
+```bash
+cd wework
+pnpm run build:windows
+```
+
+This is equivalent to `bash scripts/build-windows-app.sh`.
+
+---
+
+## Runtime behavior
+
+- When the Executor sidecar starts it writes the bound TCP address (e.g. `127.0.0.1:54321`) to `~/.wegent-executor/app-ipc.addr`.
+- The Tauri front-end reads that file and connects over TCP.
+- If the default port is in use, the Executor binds to an OS-assigned port; Tauri discovers it dynamically through the address file.
+
+---
+
+## Known limitations
+
+- **Local terminal uses PowerShell** on Windows instead of `/bin/zsh`.
+- **IPC uses TCP loopback instead of Unix domain sockets**: other local processes on the same machine can theoretically connect to the `127.0.0.1` port. Use this only in trusted local environments.
+- **Stale process cleanup**: Windows does not enumerate and terminate leftover Executor processes via `/proc` like Unix does; cleanup relies on the Tauri app lifecycle.
+- **Some backend/sandbox paths remain Unix-oriented**: Docker socket paths, `/home/user`, `/workspace`, etc. are used by the remote Linux/macOS Executor Manager and are not part of the Windows desktop installer path.
+
+---
+
+## Troubleshooting
+
+- **`cargo xwin` cannot find a C compiler**: make sure LLVM is installed and `clang` is on your `PATH`.
+- **Tauri cannot find the sidecar**: verify that `wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe` exists.
+- **NSIS build fails**: confirm NSIS is installed (on either Windows or macOS).
+- **Runtime cannot connect to the Executor**: check that `~/.wegent-executor/app-ipc.addr` exists and is readable, and that no firewall is blocking the `127.0.0.1` loopback interface.
+- **"Program not found" when sending a message**: the local Executor sidecar may be missing or stale. Rebuild it with `pnpm run build:windows:sidecar` (cross-compile from macOS) or `cargo build --release --target x86_64-pc-windows-msvc` followed by copying `wegent-executor.exe` to `wework/src-tauri/binaries/wegent-executor-x86_64-pc-windows-msvc.exe`.
+- **Locally installed Codex reports "program not found"**: on Windows, resolving a bare `codex` name automatically tries executable extensions (`codex.exe`, `codex.cmd`, `codex.bat`, etc.) and falls back to common user directories such as `%APPDATA%\npm` and `~/.cargo/bin`, because GUI-launched processes may not inherit the shell `PATH`. If Codex is installed elsewhere, set the full path via environment variable: `$env:CODEX_BINARY_PATH = "C:\Path\To\codex.exe"`.

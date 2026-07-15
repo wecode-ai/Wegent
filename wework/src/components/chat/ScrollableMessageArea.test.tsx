@@ -1126,6 +1126,68 @@ describe('ScrollableMessageArea', () => {
     })
   })
 
+  test('keeps streaming content pinned within the bottom pixel tolerance', () => {
+    const streamingMessage = {
+      id: 'fractional-bottom-stream',
+      role: 'assistant' as const,
+      content: '正在处理',
+      status: 'streaming' as const,
+      createdAt: '2026-05-29T00:00:00.000Z',
+    }
+    const { rerender } = render(
+      <ScrollableMessageArea
+        conversationKey="fractional-bottom-scroll"
+        messages={[streamingMessage]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 600,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 396,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Number(top)
+    })
+
+    fireEvent.scroll(scroller)
+    Object.defineProperty(scroller, 'scrollHeight', {
+      value: 800,
+      configurable: true,
+    })
+
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="fractional-bottom-scroll"
+        messages={[
+          {
+            ...streamingMessage,
+            content: '正在处理\n\n核心逻辑\n\n更多流式内容',
+          },
+        ]}
+      />
+    )
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: 800,
+      behavior: 'auto',
+    })
+    expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
+  })
+
   test('does not follow streaming content after the user scrolls upward near the bottom', () => {
     const streamingMessage = {
       id: 'near-bottom-stream',

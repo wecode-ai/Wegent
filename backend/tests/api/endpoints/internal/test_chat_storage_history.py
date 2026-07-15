@@ -5,6 +5,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from app.api.endpoints.internal.chat_storage import _build_user_message_content
 from app.models.subtask_context import ContextStatus, ContextType
 
@@ -215,7 +217,17 @@ def test_history_skips_non_ready_external_web_content():
     assert content == "summarize this page"
 
 
-def test_history_replays_external_web_content_image_urls():
+@pytest.mark.parametrize(
+    ("model_config", "expects_image"),
+    [
+        ({"modelCapabilities": {"supportsImage": True}}, True),
+        ({"modelCapabilities": {}}, False),
+        ({"modelCapabilities": {"supportsImage": None}}, False),
+    ],
+)
+def test_history_gates_external_web_content_images_by_model_capability(
+    model_config, expects_image
+):
     subtask = SimpleNamespace(id=10, user_id=20, prompt="describe the image")
     aggregate_context = SimpleNamespace(
         id=40,
@@ -244,18 +256,21 @@ def test_history_replays_external_web_content_image_urls():
         subtask,
         sender_username=None,
         is_group_chat=False,
-        model_config={"modelCapabilities": {"supportsVideo": False}},
+        model_config=model_config,
     )
 
     assert "<attachment>" in content[0]["text"]
     assert "[External Web Content: External Note]" in content[0]["text"]
     assert "Image Attachment" not in content[0]["text"]
-    assert content[1]["type"] == "image_url"
-    assert (
-        content[1]["image_url"]["url"]
-        == "https://public.example.com/external-image.jpg"
-    )
-    assert content[2] == {"type": "text", "text": "describe the image"}
+    if expects_image:
+        assert content[1] == {
+            "type": "image_url",
+            "image_url": {"url": "https://public.example.com/external-image.jpg"},
+        }
+        assert content[2] == {"type": "text", "text": "describe the image"}
+    else:
+        assert [block["type"] for block in content] == ["text", "text"]
+        assert content[1] == {"type": "text", "text": "describe the image"}
 
 
 def test_history_omits_external_web_image_block_without_image_urls():

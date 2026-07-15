@@ -25,6 +25,8 @@ import type {
 } from '@/types/knowledge'
 import { RetrievalSettingsSection } from './RetrievalSettingsSection'
 import { SummaryModelSelector } from './SummaryModelSelector'
+import { MultimodalConfigSection } from '@/features/knowledge/multimodal/components/MultimodalConfigSection'
+import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 
 interface KnowledgeBaseFormProps {
   typeSection?: ReactNode
@@ -37,6 +39,15 @@ interface KnowledgeBaseFormProps {
   summaryModelRef: SummaryModelRef | null
   summaryModelError?: string
   onSummaryModelChange: (value: SummaryModelRef | null) => void
+  multimodalAnalysisEnabled: boolean
+  onMultimodalAnalysisEnabledChange: (value: boolean) => void
+  multimodalAnalysisModelRef: SummaryModelRef | null
+  multimodalAnalysisModelError?: string
+  onMultimodalAnalysisModelChange: (value: SummaryModelRef | null) => void
+  multimodalAnalysisVideoPrompt?: string | null
+  multimodalAnalysisImagePrompt?: string | null
+  onMultimodalVideoPromptChange?: (value: string | null) => void
+  onMultimodalImagePromptChange?: (value: string | null) => void
   knowledgeDefaultTeamId?: number | null
   /** Optional bind model name from team's bot config as fallback */
   bindModel?: string | null
@@ -130,6 +141,15 @@ export function KnowledgeBaseForm({
   summaryModelRef,
   summaryModelError,
   onSummaryModelChange,
+  multimodalAnalysisEnabled,
+  onMultimodalAnalysisEnabledChange,
+  multimodalAnalysisModelRef,
+  multimodalAnalysisModelError,
+  onMultimodalAnalysisModelChange,
+  multimodalAnalysisVideoPrompt,
+  multimodalAnalysisImagePrompt,
+  onMultimodalVideoPromptChange,
+  onMultimodalImagePromptChange,
   knowledgeDefaultTeamId,
   bindModel,
   callLimits,
@@ -149,6 +169,8 @@ export function KnowledgeBaseForm({
   onGuidedQuestionsChange,
 }: KnowledgeBaseFormProps) {
   const { t } = useTranslation()
+  // Hide the entire multimodal section when the global pipeline switch is off.
+  const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
 
   const handleMaxCallsChange = (value: number) => {
     const adjustedExempt = Math.min(callLimits.exemptCalls, Math.max(value - 1, 1))
@@ -232,6 +254,20 @@ export function KnowledgeBaseForm({
           </div>
         </div>
       </SimpleConfigRow>
+
+      {multimodalFeatureEnabled && (
+        <MultimodalConfigSection
+          enabled={multimodalAnalysisEnabled}
+          modelRef={multimodalAnalysisModelRef}
+          modelError={multimodalAnalysisModelError}
+          videoPrompt={multimodalAnalysisVideoPrompt}
+          imagePrompt={multimodalAnalysisImagePrompt}
+          onEnabledChange={onMultimodalAnalysisEnabledChange}
+          onModelChange={onMultimodalAnalysisModelChange}
+          onVideoPromptChange={onMultimodalVideoPromptChange}
+          onImagePromptChange={onMultimodalImagePromptChange}
+        />
+      )}
 
       {(retrievalModeSection || showRetrievalSection) && (
         <SimpleConfigRow label={t('knowledge:document.ragConfigMode.title')} align="start">

@@ -7,6 +7,8 @@ WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+# shellcheck source=lib/wework-macos-signing.sh
+source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 
 TARGET="local"
 VERSION_OVERRIDE=""
@@ -21,7 +23,6 @@ NOTARY_PROFILE="${MACOS_NOTARY_PROFILE:-}"
 APPLE_BUILD_ID="${APPLE_BUILD_ID:-}"
 APPLE_BUILD_TEAM_ID="${APPLE_BUILD_TEAM_ID:-}"
 APPLE_BUILD_PASSWORD="${APPLE_BUILD_PASSWORD:-}"
-DEFAULT_NOTARY_PROFILE="${DEFAULT_NOTARY_PROFILE:-wework-notary}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-universal-apple-darwin}"
 PRINT_NEXT_VERSION_ONLY="false"
 RELEASE_DEVTOOLS="${WEWORK_RELEASE_DEVTOOLS:-}"
@@ -51,8 +52,8 @@ Environment overrides:
   WEWORK_UPDATE_BASE_URL, WEWORK_UPDATE_PUBLISH_TOKEN, TAURI_SIGNING_PRIVATE_KEY,
   TAURI_SIGNING_PRIVATE_KEY_PATH, TAURI_SIGNING_PRIVATE_KEY_PASSWORD, TAURI_UPDATER_PUBKEY,
   MACOS_APP_SIGN_IDENTITY, MACOS_KEYCHAIN_PATH, MACOS_NOTARY_PROFILE,
-  APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, APPLE_BUILD_PASSWORD, DEFAULT_NOTARY_PROFILE,
-  MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS
+  APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, APPLE_BUILD_PASSWORD,
+  MACOS_BUILD_TARGET, WEWORK_RELEASE_DEVTOOLS, VITE_WEGENT_BACKEND_URL
 EOF
 }
 
@@ -114,35 +115,31 @@ require_notary_profile_for_prod() {
 }
 
 ensure_notary_profile() {
-  if [ -z "$NOTARY_PROFILE" ]; then
-    if [ -n "$APPLE_BUILD_ID" ] || [ -n "$APPLE_BUILD_TEAM_ID" ] || [ -n "$APPLE_BUILD_PASSWORD" ]; then
-      if [ -z "$APPLE_BUILD_ID" ] || [ -z "$APPLE_BUILD_TEAM_ID" ] || [ -z "$APPLE_BUILD_PASSWORD" ]; then
-        echo "APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, and APPLE_BUILD_PASSWORD must all be set for notarization." >&2
-        exit 1
-      fi
-      NOTARY_PROFILE="$DEFAULT_NOTARY_PROFILE"
-    else
-      return 0
+  if [ -n "$APPLE_BUILD_ID" ] || [ -n "$APPLE_BUILD_TEAM_ID" ] || [ -n "$APPLE_BUILD_PASSWORD" ]; then
+    if [ -z "$APPLE_BUILD_ID" ] || [ -z "$APPLE_BUILD_TEAM_ID" ] || [ -z "$APPLE_BUILD_PASSWORD" ]; then
+      echo "APPLE_BUILD_ID, APPLE_BUILD_TEAM_ID, and APPLE_BUILD_PASSWORD must all be set for notarization." >&2
+      exit 1
     fi
+    return 0
+  fi
+
+  if [ -z "$NOTARY_PROFILE" ]; then
+    return 0
   fi
 
   if xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1; then
     return 0
   fi
 
-  if [ -z "$APPLE_BUILD_ID" ] || [ -z "$APPLE_BUILD_TEAM_ID" ] || [ -z "$APPLE_BUILD_PASSWORD" ]; then
-    echo "Notary profile '$NOTARY_PROFILE' is not usable. Configure it with xcrun notarytool store-credentials or set APPLE_BUILD_*." >&2
-    exit 1
-  fi
-
-  log_signing "Configuring notary profile: $NOTARY_PROFILE"
-  xcrun notarytool store-credentials "$NOTARY_PROFILE" \
-    --apple-id "$APPLE_BUILD_ID" \
-    --team-id "$APPLE_BUILD_TEAM_ID" \
-    --password "$APPLE_BUILD_PASSWORD" >/dev/null
+  echo "Notary profile '$NOTARY_PROFILE' is not usable. Configure it with xcrun notarytool store-credentials or set APPLE_BUILD_*." >&2
+  exit 1
 }
 
 verify_notary_profile() {
+  if [ -n "$APPLE_BUILD_ID" ] && [ -n "$APPLE_BUILD_TEAM_ID" ] && [ -n "$APPLE_BUILD_PASSWORD" ]; then
+    return 0
+  fi
+
   if [ -z "$NOTARY_PROFILE" ]; then
     return 0
   fi
@@ -173,13 +170,20 @@ maybe_sign_dmg() {
 maybe_notarize_and_staple() {
   local artifact_path="$1"
 
-  if [ -z "$NOTARY_PROFILE" ]; then
+  if [ -n "$APPLE_BUILD_ID" ] && [ -n "$APPLE_BUILD_TEAM_ID" ] && [ -n "$APPLE_BUILD_PASSWORD" ]; then
+    log_signing "Submitting for notarization with Apple ID credentials"
+    xcrun notarytool submit "$artifact_path" \
+      --apple-id "$APPLE_BUILD_ID" \
+      --team-id "$APPLE_BUILD_TEAM_ID" \
+      --password "$APPLE_BUILD_PASSWORD" \
+      --wait
+  elif [ -n "$NOTARY_PROFILE" ]; then
+    log_signing "Submitting for notarization with profile: $NOTARY_PROFILE"
+    xcrun notarytool submit "$artifact_path" --keychain-profile "$NOTARY_PROFILE" --wait
+  else
     log_signing "MACOS_NOTARY_PROFILE not set. Skipping notarization for $(basename "$artifact_path")."
     return 0
   fi
-
-  log_signing "Submitting for notarization with profile: $NOTARY_PROFILE"
-  xcrun notarytool submit "$artifact_path" --keychain-profile "$NOTARY_PROFILE" --wait
 
   log_signing "Stapling ticket to $(basename "$artifact_path")"
   xcrun stapler staple "$artifact_path"
@@ -583,13 +587,16 @@ if [ -n "$app_sign_identity" ]; then
 elif [ "$TARGET" = "local" ]; then
   echo "Signing identity: not found (local release will be unsigned)"
 fi
-if [ -n "$NOTARY_PROFILE" ]; then
+if [ -n "$APPLE_BUILD_ID" ] && [ -n "$APPLE_BUILD_TEAM_ID" ] && [ -n "$APPLE_BUILD_PASSWORD" ]; then
+  echo "Notarization: Apple ID credentials"
+elif [ -n "$NOTARY_PROFILE" ]; then
   echo "Notary profile: $NOTARY_PROFILE"
 elif [ "$TARGET" = "local" ]; then
   echo "Notary profile: not set (local release will skip notarization)"
 fi
 echo "VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+echo "VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
 
 cd "$WEWORK_DIR"
 rm -rf "$(bundle_root)"
@@ -602,6 +609,10 @@ if [ "$RELEASE_DEVTOOLS" = "1" ]; then
 fi
 TAURI_BUILD_ARGS+=(--config "$config_override")
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
+wework_sign_prepared_codex_macos_binaries \
+  "$WEWORK_DIR" \
+  "$MACOS_BUILD_TARGET" \
+  "$app_sign_identity"
 pnpm exec tauri "${TAURI_BUILD_ARGS[@]}"
 
 archive_path="$(find_update_archive)"

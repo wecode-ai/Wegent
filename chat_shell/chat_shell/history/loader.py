@@ -74,18 +74,15 @@ def _get_remote_history_store() -> "RemoteHistoryStore":
                 "REMOTE_STORAGE_URL is required for HTTP mode. "
                 "Set CHAT_SHELL_REMOTE_STORAGE_URL environment variable."
             )
-        # Note: REMOTE_STORAGE_TOKEN is optional for internal API calls
-        # The internal API doesn't require authentication
-        if settings.REMOTE_STORAGE_TOKEN:
-            logger.debug("[history] Using REMOTE_STORAGE_TOKEN for remote storage auth")
-        else:
-            logger.debug(
-                "[history] No REMOTE_STORAGE_TOKEN set, internal API will use unauthenticated requests"
+        if not settings.backend_internal_token:
+            raise ValueError(
+                "CHAT_SHELL_REMOTE_STORAGE_TOKEN or "
+                "CHAT_SHELL_INTERNAL_SERVICE_TOKEN is required for remote history"
             )
 
         _remote_history_store = RemoteHistoryStore(
             base_url=settings.REMOTE_STORAGE_URL,
-            auth_token=settings.REMOTE_STORAGE_TOKEN,
+            auth_token=settings.backend_internal_token,
             timeout=30.0,
         )
         logger.debug(
@@ -243,7 +240,7 @@ async def get_chat_history(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
-    supports_image: bool | None = None,
+    supports_image: bool = False,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Get chat history for a task.
@@ -259,8 +256,6 @@ async def get_chat_history(
         limit: If provided, limit the number of messages returned (most recent N messages).
             Used by subscription tasks to control history context size.
         supports_image: Whether the model supports image input.
-            If True or None, image attachments keep the legacy image_url blocks.
-            If False, image attachments are replayed as metadata only.
         supports_video: Whether the model supports video input.
             If True, video attachments will include canonical video blocks.
             If False (default), video attachments cannot be resolved as model input.
@@ -325,7 +320,7 @@ async def _load_history_from_remote(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
-    supports_image: bool | None = None,
+    supports_image: bool = False,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from Backend via RemoteHistoryStore.
@@ -338,8 +333,6 @@ async def _load_history_from_remote(
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
         supports_image: Whether the model supports image input.
-            If True or None, image attachments keep the legacy image_url blocks.
-            If False, image attachments are replayed as metadata only.
         supports_video: Whether the model supports video input.
             If True, video attachments will include canonical video blocks.
             If False (default), video attachments cannot be resolved as model input.
@@ -442,7 +435,7 @@ async def _load_history_from_db(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
-    supports_image: bool | None = None,
+    supports_image: bool = False,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Load chat history from database (Package mode).
@@ -455,8 +448,6 @@ async def _load_history_from_db(
         exclude_after_message_id: If provided, exclude messages with message_id >= this value.
         limit: If provided, limit the number of messages returned (most recent N messages).
         supports_image: Whether the model supports image input.
-            If True or None, image attachments keep the legacy image_url blocks.
-            If False, image attachments are replayed as metadata only.
     """
     return await asyncio.to_thread(
         _load_history_from_db_sync,
@@ -474,7 +465,7 @@ def _load_history_from_db_sync(
     is_group_chat: bool,
     exclude_after_message_id: int | None = None,
     limit: int | None = None,
-    supports_image: bool | None = None,
+    supports_image: bool = False,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Synchronous implementation of chat history retrieval.
@@ -541,7 +532,7 @@ def _build_history_messages(
     subtask,
     sender_username: str | None,
     is_group_chat: bool = False,
-    supports_image: bool | None = None,
+    supports_image: bool = False,
     supports_video: bool = False,
 ) -> list[dict[str, Any]]:
     """Build history messages from a subtask.
@@ -655,7 +646,7 @@ def _build_history_messages(
                     attachment, task_id=task_id, subtask_id=subtask_id
                 )
                 image_metadata_headers.append(image_header)
-                if supports_image is False:
+                if not supports_image:
                     attachment_text_parts.append(image_header)
                     total_attachment_text_length += len(image_header)
                     logger.info(

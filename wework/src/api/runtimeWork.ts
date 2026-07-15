@@ -43,11 +43,25 @@ import type {
   RuntimeTranscriptResponse,
   RuntimeWorkSearchRequest,
   RuntimeWorkSearchResponse,
+  RuntimeWorkspaceSearchRequest,
+  RuntimeWorkspaceSearchResponse,
   RuntimeWorkspaceOpenRequest,
   RuntimeWorkspaceOpenResponse,
   RuntimeWorkspaceRemoveRequest,
   RuntimeWorkspaceRenameRequest,
   RuntimeWorkListResponse,
+  RuntimeProjectAppearanceRequest,
+  RuntimeProjectPinRequest,
+  RuntimeProjectReorderRequest,
+  RuntimeProjectTaskReorderRequest,
+  RuntimeSidebarMutationResponse,
+  RuntimeTaskPinRequest,
+  RuntimeWorktreeDeleteRequest,
+  RuntimeWorktreeListResponse,
+  RuntimeWorktreeMutationResponse,
+  RuntimeWorktreePrepareRequest,
+  RuntimeWorktreeSettings,
+  RuntimeWorktreeSettingsPatch,
 } from '@/types/api'
 import type { HttpClient } from './http'
 import type { KeybindingOverride } from '@/lib/keybindings'
@@ -89,6 +103,11 @@ export function createRuntimeWorkApi(client: HttpClient) {
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return client.post('/runtime-work/search', data)
     },
+    searchRuntimeWorkspace(
+      data: RuntimeWorkspaceSearchRequest
+    ): Promise<RuntimeWorkspaceSearchResponse> {
+      return client.post('/runtime-work/workspace/search', data)
+    },
     revertRuntimeFileChanges(
       request: RuntimeFileChangesRevertRequest
     ): Promise<RuntimeFileChangesRevertResponse> {
@@ -128,6 +147,47 @@ export function createRuntimeWorkApi(client: HttpClient) {
       data: RuntimeWorkspaceRemoveRequest
     ): Promise<RuntimeWorkspaceOpenResponse> {
       return client.post('/runtime-work/workspaces/remove', data)
+    },
+    reorderRuntimeProjects(
+      data: RuntimeProjectReorderRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/reorder', data)
+    },
+    setRuntimeProjectPinned(
+      data: RuntimeProjectPinRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/pin', data)
+    },
+    setRuntimeProjectAppearance(
+      data: RuntimeProjectAppearanceRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/projects/appearance', data)
+    },
+    reorderRuntimeProjectTasks(
+      data: RuntimeProjectTaskReorderRequest
+    ): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/tasks/reorder', data)
+    },
+    setRuntimeTaskPinned(data: RuntimeTaskPinRequest): Promise<RuntimeSidebarMutationResponse> {
+      return client.post('/runtime-work/sidebar/tasks/pin', data)
+    },
+    getWorktreeSettings(data: { deviceId: string }): Promise<RuntimeWorktreeSettings> {
+      return client.post('/runtime-work/worktrees/settings', data)
+    },
+    updateWorktreeSettings(data: RuntimeWorktreeSettingsPatch): Promise<RuntimeWorktreeSettings> {
+      return client.put('/runtime-work/worktrees/settings', data)
+    },
+    listWorktrees(data: { deviceId: string }): Promise<RuntimeWorktreeListResponse> {
+      return client.post('/runtime-work/worktrees/list', data)
+    },
+    prepareWorktree(data: RuntimeWorktreePrepareRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return client.post('/runtime-work/worktrees/prepare', data)
+    },
+    deleteWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return client.post('/runtime-work/worktrees/delete', data)
+    },
+    restoreWorktree(data: RuntimeWorktreeDeleteRequest): Promise<RuntimeWorktreeMutationResponse> {
+      return client.post('/runtime-work/worktrees/restore', data)
     },
     bindRuntimeTaskImSessions(
       data: BindRuntimeTaskIMSessionsRequest

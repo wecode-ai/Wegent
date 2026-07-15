@@ -5,6 +5,7 @@ import type {
 } from '@/types/api'
 import type {
   WorkspaceFileEntry,
+  WorkspaceFileChunkResponse,
   WorkspaceTextFileResponse,
   WorkspaceTreeResponse,
 } from '@/types/workspace-files'
@@ -202,9 +203,46 @@ function normalizeWorkspaceTextFile(
     path,
     name: record.name,
     content: record.content,
+    editable: record.editable === true && typeof record.revision === 'string',
+    revision: typeof record.revision === 'string' ? record.revision : '',
     truncated: record.truncated,
     size: record.size,
     modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace text file response'),
+  }
+}
+
+function normalizeWorkspaceFileChunk(
+  output: unknown,
+  requestedFilePath: string,
+  requestedOffset: number
+): WorkspaceFileChunkResponse {
+  const record = requireRecord(output, 'Invalid workspace file chunk response')
+  if (
+    typeof record.path !== 'string' ||
+    typeof record.name !== 'string' ||
+    typeof record.content_base64 !== 'string' ||
+    typeof record.offset !== 'number' ||
+    typeof record.eof !== 'boolean' ||
+    typeof record.size !== 'number'
+  ) {
+    throw new Error('Invalid workspace file chunk response')
+  }
+  const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace file chunk response')
+  if (
+    path !==
+      normalizeAbsoluteWorkspacePath(requestedFilePath, 'Workspace file path must be absolute') ||
+    record.offset !== requestedOffset
+  ) {
+    throw new Error('Invalid workspace file chunk response')
+  }
+  return {
+    path,
+    name: record.name,
+    contentBase64: record.content_base64,
+    offset: record.offset,
+    eof: record.eof,
+    size: record.size,
+    modifiedAt: normalizeModifiedAt(record.modified_at, 'Invalid workspace file chunk response'),
   }
 }
 
@@ -334,6 +372,28 @@ export function createDeviceApi(client: HttpClient) {
         throw new Error(response.error || response.stderr || 'Failed to read workspace file')
       }
       return normalizeWorkspaceTextFile(response.stdout, filePath)
+    },
+
+    async readWorkspaceFileChunk(
+      deviceId: string,
+      filePath: string,
+      offset: number
+    ): Promise<WorkspaceFileChunkResponse> {
+      const { parentPath, fileName } = splitAbsoluteWorkspaceFilePath(filePath)
+      const response = await client.post<DeviceCommandResponse>(
+        `/devices/${encodeURIComponent(deviceId)}/commands`,
+        {
+          command_key: 'workspace_read_file_chunk',
+          path: parentPath,
+          args: [fileName, String(offset)],
+          timeout_seconds: 30,
+          max_output_bytes: 1024 * 1024 * 2,
+        }
+      )
+      if (!response.success) {
+        throw new Error(response.error || response.stderr || 'Failed to read workspace file')
+      }
+      return normalizeWorkspaceFileChunk(response.stdout, filePath, offset)
     },
 
     async setupSharedSkills(deviceId: string): Promise<SkillDirectorySetupResult> {

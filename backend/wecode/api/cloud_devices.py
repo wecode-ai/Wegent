@@ -669,7 +669,6 @@ def _build_vnc_wss_url(sandbox_id: str) -> str:
     )
 
 
-@router.websocket("/{device_id}/vnc-ws")
 async def vnc_websocket_proxy(
     websocket: WebSocket,
     device_id: str,
@@ -682,9 +681,9 @@ async def vnc_websocket_proxy(
     and proxies bidirectional binary data between the browser (noVNC)
     and the upstream Nevis VNC WebSocket.
 
-    This endpoint is used when the frontend connects directly to the backend
-    (e.g., npm run dev mode). In proxy mode (server.cjs), the /vnc-proxy/
-    path in server.cjs handles the WebSocket proxy instead.
+    The ASGI VNC interceptor exposes this handler at
+    ``/vnc-proxy/{device_id}``. When server.cjs is used, it handles the same
+    public path and forwards the connection itself.
 
     Query params:
         token: JWT authentication token

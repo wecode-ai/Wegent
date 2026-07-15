@@ -15,6 +15,8 @@ EXPLICIT_VITE_SOCKET_BASE_URL_VALUE="${VITE_SOCKET_BASE_URL:-}"
 source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
+# shellcheck source=lib/wework-macos-signing.sh
+source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 
 BUILD_PROFILE="${WEWORK_BUILD_PROFILE:-release}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
@@ -41,12 +43,47 @@ Environment:
   WEWORK_TAURI_BUNDLES     Default bundle list when --bundles is not provided.
   WEWORK_RELEASE_DEVTOOLS  Set to 1 to compile Tauri devtools into release builds.
   WEWORK_NO_SIGN           Set to 1 to pass --no-sign.
+  VITE_WEGENT_BACKEND_URL  Default Backend URL shown in Connect cloud.
 
 Examples:
   bash wework/scripts/build-mac-app.sh --profile dev --target aarch64-apple-darwin
   bash wework/scripts/build-mac-app.sh --target aarch64-apple-darwin
   WEWORK_RELEASE_DEVTOOLS=1 bash wework/scripts/build-mac-app.sh --target aarch64-apple-darwin
 EOF
+}
+
+notarize_built_macos_dmgs() {
+  local build_started_at="$1"
+  if [ "$NO_SIGN" = "1" ]; then
+    return 0
+  fi
+  if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ] \
+    || [ -z "${APPLE_TEAM_ID:-}" ]; then
+    return 0
+  fi
+
+  local profile_dir="release"
+  if [ "$BUILD_PROFILE" = "dev" ]; then
+    profile_dir="debug"
+  fi
+
+  local bundle_root="${CARGO_TARGET_DIR:-$WEWORK_DIR/src-tauri/target}"
+  if [ -n "$MACOS_BUILD_TARGET" ]; then
+    bundle_root="$bundle_root/$MACOS_BUILD_TARGET"
+  fi
+
+  local dmg dmg_dir="$bundle_root/$profile_dir/bundle/dmg"
+  [ -d "$dmg_dir" ] || return 0
+  while IFS= read -r -d '' dmg; do
+    [ "$(stat -f '%m' "$dmg")" -ge "$build_started_at" ] || continue
+    echo "Notarizing DMG: $dmg"
+    xcrun notarytool submit "$dmg" \
+      --apple-id "$APPLE_ID" \
+      --team-id "$APPLE_TEAM_ID" \
+      --password "$APPLE_PASSWORD" \
+      --wait
+    xcrun stapler staple "$dmg"
+  done < <(find "$dmg_dir" -type f -name '*.dmg' -print0)
 }
 
 if [ -f "$ENV_FILE" ]; then
@@ -165,6 +202,7 @@ echo "  RELEASE_DEVTOOLS=${RELEASE_DEVTOOLS:-0}"
 echo "  NO_SIGN=${NO_SIGN:-0}"
 echo "  VITE_API_BASE_URL=$VITE_API_BASE_URL"
 echo "  VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL"
+echo "  VITE_WEGENT_BACKEND_URL=${VITE_WEGENT_BACKEND_URL:-<unset>}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 if [ "${WEWORK_ENABLE_DEVTOOLS:-}" = "1" ]; then
   echo "  WEWORK_ENABLE_DEVTOOLS=1"
@@ -235,4 +273,11 @@ if [ "${WEWORK_ENABLE_DEVTOOLS:-}" = "1" ]; then
 fi
 
 WEWORK_CODEX_TARGET="${MACOS_BUILD_TARGET:-}" pnpm run prepare:codex
-exec pnpm exec tauri "${TAURI_ARGS[@]}"
+wework_sign_prepared_codex_macos_binaries \
+  "$WEWORK_DIR" \
+  "$MACOS_BUILD_TARGET" \
+  "${APPLE_SIGNING_IDENTITY:-}" \
+  "$NO_SIGN"
+BUILD_STARTED_AT="$(date +%s)"
+pnpm exec tauri "${TAURI_ARGS[@]}"
+notarize_built_macos_dmgs "$BUILD_STARTED_AT"

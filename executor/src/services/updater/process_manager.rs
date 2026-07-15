@@ -297,9 +297,7 @@ fn unix_timestamp_seconds() -> f64 {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
+    dirs::home_dir().unwrap_or_else(std::env::temp_dir)
 }
 
 #[allow(dead_code)]

@@ -25,18 +25,30 @@ const PROCESSING_BLOCK_HEIGHT = 48
 const MESSAGE_VERTICAL_BUFFER = 12
 const WIDTH_BUCKET_SIZE = 32
 const MAX_LAYOUT_CACHE_SIZE = 1200
+const STREAMING_MESSAGE_INTRINSIC_HEIGHT = 220
 
 let pretextMeasurementAvailable = true
 const messageLayoutHeightCache = new Map<string, number>()
+let messageObjectLayoutHeightCache = new WeakMap<WorkbenchMessage, Map<number, number>>()
 
 export function getMessagePretextIntrinsicHeight(
   message: WorkbenchMessage,
   containerWidth: number
 ): number {
+  if (message.status === 'streaming') {
+    return STREAMING_MESSAGE_INTRINSIC_HEIGHT
+  }
+
   const width = normalizeLayoutWidth(containerWidth)
+  const objectCachedHeight = messageObjectLayoutHeightCache.get(message)?.get(width)
+  if (objectCachedHeight !== undefined) return objectCachedHeight
+
   const cacheKey = getMessageLayoutCacheKey(message, width)
   const cachedHeight = messageLayoutHeightCache.get(cacheKey)
-  if (cachedHeight !== undefined) return cachedHeight
+  if (cachedHeight !== undefined) {
+    setObjectCachedLayoutHeight(message, width, cachedHeight)
+    return cachedHeight
+  }
 
   const height =
     message.role === 'user'
@@ -44,12 +56,23 @@ export function getMessagePretextIntrinsicHeight(
       : estimateAssistantMessageHeight(message, width)
 
   setCachedLayoutHeight(cacheKey, height)
+  setObjectCachedLayoutHeight(message, width, height)
   return height
 }
 
 export function clearMessagePretextLayoutCache() {
   messageLayoutHeightCache.clear()
+  messageObjectLayoutHeightCache = new WeakMap()
   pretextMeasurementAvailable = true
+}
+
+function setObjectCachedLayoutHeight(message: WorkbenchMessage, width: number, height: number) {
+  const cachedByWidth = messageObjectLayoutHeightCache.get(message)
+  if (cachedByWidth) {
+    cachedByWidth.set(width, height)
+    return
+  }
+  messageObjectLayoutHeightCache.set(message, new Map([[width, height]]))
 }
 
 function estimateUserMessageHeight(message: WorkbenchMessage, containerWidth: number): number {

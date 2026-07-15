@@ -33,12 +33,14 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import { downloadAttachment } from '@/apis/attachments'
+import { downloadAttachment, isImageExtension, isVideoFileName } from '@/apis/attachments'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/hooks/use-toast'
 import { useTranslation } from '@/hooks/useTranslation'
+import { ReanalyzeIconButton } from '@/features/knowledge/multimodal/components/ReanalyzeActions'
+import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import type { KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import type { SortField, SortOrder } from './FolderTree'
 import type {
@@ -84,6 +86,7 @@ interface KnowledgeDocumentTreeGridProps {
   onDelete?: (doc: KnowledgeDocument) => void
   onRefresh?: (doc: KnowledgeDocument) => void
   onReindex?: (doc: KnowledgeDocument) => void
+  onReanalyze?: (doc: KnowledgeDocument) => void
   onMove?: (doc: KnowledgeDocument) => void
   refreshingDocId?: number | null
   reindexingDocId?: number | null
@@ -183,6 +186,7 @@ export function KnowledgeDocumentTreeGrid({
   onDelete,
   onRefresh,
   onReindex,
+  onReanalyze,
   onMove,
   refreshingDocId,
   reindexingDocId,
@@ -193,6 +197,7 @@ export function KnowledgeDocumentTreeGrid({
   ragConfigured = true,
 }: KnowledgeDocumentTreeGridProps) {
   const { t } = useTranslation('knowledge')
+  const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [columnSizing, setColumnSizing] = useState<ColumnSizingState>({})
 
@@ -634,13 +639,9 @@ export function KnowledgeDocumentTreeGrid({
             document.index_status === 'indexing' ||
             isConverting ||
             isPendingConversion
-          if (document.is_active) {
-            return (
-              <Badge variant="success" size="sm" className="whitespace-nowrap">
-                {t('document.document.indexStatus.available')}
-              </Badge>
-            )
-          }
+          // Indexing-in-progress takes precedence over is_active: a re-analyze/
+          // re-index keeps the old index queryable (is_active stays true) but the
+          // UI must surface the in-flight state. Mirrors DocumentItem compact mode.
           if (isIndexing || reindexingDocId === document.id) {
             return (
               <Badge
@@ -653,6 +654,13 @@ export function KnowledgeDocumentTreeGrid({
                   : isConverting
                     ? t('document.document.indexStatus.converting')
                     : t('document.document.indexStatus.indexing')}
+              </Badge>
+            )
+          }
+          if (document.is_active) {
+            return (
+              <Badge variant="success" size="sm" className="whitespace-nowrap">
+                {t('document.document.indexStatus.available')}
               </Badge>
             )
           }
@@ -730,6 +738,18 @@ export function KnowledgeDocumentTreeGrid({
             !!onReindex &&
             (isIndexFailed || isNotIndexed) &&
             !showIndexingState
+          const normalizedExt = `.${(document.file_extension || '').replace(/^\.+/, '')}`
+          const isMultimodalDoc = isVideoFileName(document.name) || isImageExtension(normalizedExt)
+          // Gate on source_type=file + attachment_id like showDownload: a table
+          // or web doc could have a multimodal-looking name (e.g. "demo.mp4")
+          // but has no attachment to stage/re-analyze.
+          const canReanalyze =
+            multimodalFeatureEnabled &&
+            isMultimodalDoc &&
+            document.source_type === 'file' &&
+            !!document.attachment_id &&
+            !!onReanalyze &&
+            !showIndexingState
           const showDownload = document.source_type === 'file' && !!document.attachment_id
           const moveLabel = t('document.folder.moveDocument')
           const refreshLabel =
@@ -791,6 +811,15 @@ export function KnowledgeDocumentTreeGrid({
                   <RotateCcw className="w-4 h-4" />
                 </button>
               )}
+              <ReanalyzeIconButton
+                show={canReanalyze}
+                disabled={showIndexingState}
+                documentId={document.id}
+                onClick={event => {
+                  event.stopPropagation()
+                  onReanalyze?.(document)
+                }}
+              />
               {showDownload && (
                 <button
                   className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
@@ -834,6 +863,7 @@ export function KnowledgeDocumentTreeGrid({
       includedInFolderScope,
       isAllSelected,
       isPartialSelected,
+      multimodalFeatureEnabled,
       onCreateFolder,
       onDelete,
       onDeleteFolder,
@@ -841,6 +871,7 @@ export function KnowledgeDocumentTreeGrid({
       onMove,
       onRefresh,
       onReindex,
+      onReanalyze,
       onRenameFolder,
       onSelect,
       onSelectAll,

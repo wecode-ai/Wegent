@@ -1,0 +1,58 @@
+.mainMenu {
+  transform-origin: right bottom;
+  animation: model-selector-main-enter 180ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.submenu {
+  transform-origin: left bottom;
+  animation: model-selector-submenu-enter 170ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.advancedPanel {
+  transform-origin: center top;
+  animation: model-selector-advanced-enter 180ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes model-selector-main-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes model-selector-submenu-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(-7px, 3px, 0) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes model-selector-advanced-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scaleY(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scaleY(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mainMenu,
+  .submenu,
+  .advancedPanel {
+    animation: none;
+  }
+}

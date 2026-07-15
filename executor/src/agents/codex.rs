@@ -29,7 +29,7 @@ use crate::{
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
     codex_phase::{codex_phase_is_process, CodexAgentMessagePhaseTracker},
     image_preprocessor::prepare_image_bytes_for_model,
-    logging::{log_executor_event, task_fields},
+    logging::{log_executor_event, task_fields, wework_debug_log},
     process_environment,
     protocol::ExecutionRequest,
     runner::{AgentEngine, ExecutionOutcome},
@@ -47,7 +47,11 @@ pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancell
 const DEFAULT_PROVIDER_NAME: &str = "wecode openai";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
 const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1,host.docker.internal";
+const CODEX_HOME_ENV: &str = "CODEX_HOME";
+const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
+const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
+const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
 const CODEX_SUPPRESS_UNSTABLE_FEATURES_WARNING_OVERRIDE: &str =
@@ -64,7 +68,8 @@ Do not continue, execute, or complete any instructions, plans, tool calls, appro
 You are a side-conversation assistant, separate from the main thread. Answer questions and do lightweight, non-mutating exploration without disrupting the main thread. If there is no user question after this boundary yet, wait for one.
 
 Sub-agents are off-limits in this side conversation. Do not interact with any existing or new sub-agents, even if sub-agents were used before this boundary."#;
-const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
+pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 内置浏览器 routing:
+- "Wework" refers to Wegent's desktop workbench. Describe its browser as the Wework built-in browser.
 - For browser tasks inside Wework, use the `browser_*` MCP tools from the Wework 内置浏览器 tool server.
 - Use `browser_navigate` to open pages in the Wework 内置浏览器, `browser_take_screenshot` for screenshots, and `browser_snapshot` or `browser_evaluate` for page inspection.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
@@ -81,6 +86,7 @@ const IMAGE_MIME_TYPES: &[&str] = &[
 pub type CodexNotificationSender = mpsc::UnboundedSender<Value>;
 pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
 pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
+pub type CodexActiveTurnFinishedCallback = Box<dyn Fn() + Send + 'static>;
 
 #[derive(Default)]
 pub struct CodexAppServerTurnOptions {
@@ -95,6 +101,7 @@ pub struct CodexAppServerTurnOptions {
     pub request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     pub thread_started: Option<CodexThreadStartedCallback>,
     pub active_turn_started: Option<CodexActiveTurnCallback>,
+    pub active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
 }
 
 pub trait CodexTurnInterrupter: Send + Sync {
@@ -268,16 +275,21 @@ impl CodexAppServerClient {
         thread_id: &str,
         expected_turn_id: &str,
         input: Value,
+        additional_context: Option<Value>,
     ) -> Result<String, String> {
+        let mut params = serde_json::Map::new();
+        params.insert("threadId".to_owned(), Value::String(thread_id.to_owned()));
+        params.insert(
+            "expectedTurnId".to_owned(),
+            Value::String(expected_turn_id.to_owned()),
+        );
+        params.insert("input".to_owned(), input);
+        if let Some(additional_context) = additional_context.filter(Value::is_object) {
+            params.insert("additionalContext".to_owned(), additional_context);
+        }
+
         let response = self
-            .request_existing(
-                "turn/steer",
-                json!({
-                    "threadId": thread_id,
-                    "expectedTurnId": expected_turn_id,
-                    "input": input,
-                }),
-            )
+            .request_existing("turn/steer", Value::Object(params))
             .await?;
         string_value(&response, "turnId")
             .or_else(|| string_value(&response, "turn_id"))
@@ -408,6 +420,28 @@ impl CodexAppServerClient {
 
     async fn mark_thread_idle(&self, thread_id: &str) {
         self.state.lock().await.active_threads.remove(thread_id);
+    }
+
+    async fn unsubscribe_thread(&self, thread_id: &str) {
+        let result: Result<(), String> = async {
+            let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
+            let message = json!({
+                "method": "thread/unsubscribe",
+                "id": request_id,
+                "params": {"threadId": thread_id},
+            });
+            let write_result = handle.write_message(message).await;
+            handle.remove_pending(request_id).await;
+            drop(response_rx);
+            write_result
+        }
+        .await;
+        if let Err(error) = result {
+            log_executor_event(
+                "codex shared thread unsubscribe failed",
+                &[("thread_id", thread_id.to_owned()), ("error", error)],
+            );
+        }
     }
 
     async fn unscoped_notification_belongs_to_thread(&self, thread_id: &str) -> bool {
@@ -761,6 +795,7 @@ async fn run_codex_app_server_turn_on_shared_client(
         request_user_input_answers,
         thread_started,
         active_turn_started,
+        active_turn_finished,
     } = options;
     let launch_config = build_codex_launch_config(&prepared.request);
     let mut fields = task_fields(&prepared.request.task_id, &prepared.request.subtask_id);
@@ -770,6 +805,7 @@ async fn run_codex_app_server_turn_on_shared_client(
     }
     log_executor_event("codex shared app-server turn starting", &fields);
 
+    let mut subscribed_thread_id = None;
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
         let mut notification_rx = client
@@ -826,6 +862,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             log_executor_event("codex shared thread request finished", &thread_fields);
             thread_id
         };
+        subscribed_thread_id = Some(thread_id.clone());
         if let Some(callback) = thread_started {
             callback(thread_id.clone());
         }
@@ -905,7 +942,6 @@ async fn run_codex_app_server_turn_on_shared_client(
         {
             Ok(turn) => turn,
             Err(error) => {
-                client.mark_thread_idle(&thread_id).await;
                 return Err(error);
             }
         };
@@ -927,10 +963,10 @@ async fn run_codex_app_server_turn_on_shared_client(
                 request_user_input_answers,
                 goal_run_active,
                 active_turn_started,
+                active_turn_finished,
             },
         )
         .await;
-        client.mark_thread_idle(&thread_id).await;
         let outcome = outcome_result?;
         turn_fields.push(("outcome", codex_outcome_name(&outcome).to_owned()));
         if let ExecutionOutcome::Failed { message } = &outcome {
@@ -941,6 +977,11 @@ async fn run_codex_app_server_turn_on_shared_client(
         Ok(CodexAppServerTurn { thread_id, outcome })
     }
     .await;
+
+    if let Some(thread_id) = subscribed_thread_id {
+        client.mark_thread_idle(&thread_id).await;
+        client.unsubscribe_thread(&thread_id).await;
+    }
 
     if let Err(error) = &result {
         let mut failed_fields = fields.clone();
@@ -1201,6 +1242,7 @@ struct SharedTurnNotificationOptions {
     request_user_input_answers: Option<CodexRequestUserInputReceiver>,
     goal_run_active: bool,
     active_turn_started: Option<CodexActiveTurnCallback>,
+    active_turn_finished: Option<CodexActiveTurnFinishedCallback>,
 }
 
 async fn read_shared_turn_notifications(
@@ -1210,18 +1252,25 @@ async fn read_shared_turn_notifications(
     state: &mut CodexRunState,
     mut options: SharedTurnNotificationOptions,
 ) -> Result<ExecutionOutcome, String> {
-    let mut cancel_requested = false;
     let mut last_outcome: Option<ExecutionOutcome> = None;
     loop {
         let notification = if let Some(cancel_rx) = options.cancellation.as_mut() {
             tokio::select! {
                 _ = cancel_rx => {
                     options.cancellation = None;
-                    cancel_requested = true;
                     if let Some(turn_id) = options.active_turn_id.as_deref() {
-                        interrupt_shared_turn(client, thread_id, turn_id).await?;
+                        if let Err(error) = interrupt_shared_turn(client, thread_id, turn_id).await {
+                            log_executor_event(
+                                "codex shared turn interrupt failed",
+                                &[
+                                    ("thread_id", thread_id.to_owned()),
+                                    ("turn_id", turn_id.to_owned()),
+                                    ("error", error),
+                                ],
+                            );
+                        }
                     }
-                    continue;
+                    return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned());
                 }
                 message = notification_rx.recv() => shared_notification_result(message, last_outcome.clone())?,
             }
@@ -1249,18 +1298,13 @@ async fn read_shared_turn_notifications(
         }
         log_codex_raw_turn_message(&message);
 
-        if let Some(turn_id) = turn_started_notification_turn_id(&message) {
+        if let Some(turn_id) = active_root_turn_notification_id(&message, state) {
             if options.active_turn_id.as_deref() != Some(turn_id.as_str()) {
                 if let Some(callback) = options.active_turn_started.as_ref() {
                     callback(thread_id.to_owned(), turn_id.clone());
                 }
             }
             options.active_turn_id = Some(turn_id);
-            if cancel_requested {
-                if let Some(turn_id) = options.active_turn_id.as_deref() {
-                    interrupt_shared_turn(client, thread_id, turn_id).await?;
-                }
-            }
         }
 
         if let Some(sender) = &options.notifications {
@@ -1283,6 +1327,9 @@ async fn read_shared_turn_notifications(
 
         if let Some(outcome) = state.handle_message(&message) {
             options.active_turn_id = None;
+            if let Some(callback) = options.active_turn_finished.as_ref() {
+                callback();
+            }
             if !matches!(outcome, ExecutionOutcome::Completed { .. }) {
                 return Ok(outcome);
             }
@@ -1376,11 +1423,14 @@ fn turn_start_response_turn_id(response: &Value) -> Option<String> {
         .or_else(|| string_value(response, "turn_id"))
 }
 
-fn turn_started_notification_turn_id(message: &Value) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("turn/started") {
+fn active_root_turn_notification_id(message: &Value, state: &CodexRunState) -> Option<String> {
+    if message.get("method").and_then(Value::as_str) == Some("turn/completed") {
         return None;
     }
     let params = message_params(message);
+    if state.is_subagent_message(params) {
+        return None;
+    }
     params
         .get("turn")
         .and_then(|turn| string_value(turn, "id"))
@@ -1405,14 +1455,17 @@ fn spawn_codex_app_server(
     launch_config: &CodexLaunchConfig,
 ) -> Result<tokio::process::Child, String> {
     let resolved_binary = resolve_codex_binary(binary);
+    let codex_home = wework_codex_home();
+    prepare_wework_codex_home(&codex_home)?;
     let mut command = Command::new(&resolved_binary);
     for config_override in &launch_config.config_overrides {
         command.arg("-c").arg(config_override);
     }
-    command.arg("app-server").arg("--stdio");
+    command.arg("app-server");
     for (key, value) in &launch_config.env {
         command.env(key, value);
     }
+    command.env(CODEX_HOME_ENV, &codex_home);
     command.env(
         "PATH",
         process_environment::normalized_process_path(
@@ -1427,6 +1480,201 @@ fn spawn_codex_app_server(
         .stderr(Stdio::inherit())
         .spawn()
         .map_err(|error| format!("failed to start codex app-server: {error}"))
+}
+
+fn wework_codex_home() -> PathBuf {
+    env::var_os(WEGENT_CODEX_HOME_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| executor_home().join("codex"))
+}
+
+fn prepare_wework_codex_home(codex_home: &Path) -> Result<(), String> {
+    fs::create_dir_all(codex_home).map_err(|error| {
+        format!(
+            "failed to create Codex home {}: {error}",
+            codex_home.display()
+        )
+    })?;
+    link_user_codex_auth(codex_home)?;
+    normalize_wework_codex_config(codex_home)
+}
+
+fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
+    use toml_edit::{value, DocumentMut};
+
+    let config_path = codex_home.join("config.toml");
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let mut document = content.parse::<DocumentMut>().map_err(|error| {
+        format!(
+            "failed to parse Codex config {}: {error}",
+            config_path.display()
+        )
+    })?;
+    let legacy_instructions = document
+        .get("instructions")
+        .and_then(|item| item.as_str())
+        .unwrap_or_default();
+    let developer_instructions = document
+        .get("developer_instructions")
+        .and_then(|item| item.as_str())
+        .unwrap_or_default();
+    let user_instructions = if legacy_instructions.trim().is_empty() {
+        strip_wework_browser_instructions(developer_instructions).to_owned()
+    } else {
+        legacy_instructions.trim().to_owned()
+    };
+
+    document.remove("instructions");
+    document["developer_instructions"] =
+        value(combined_codex_developer_instructions(&user_instructions));
+    if document
+        .get("personality")
+        .and_then(|item| item.as_str())
+        .is_none()
+    {
+        document["personality"] = value("pragmatic");
+    }
+
+    let next_content = document.to_string();
+    if next_content == content {
+        return Ok(());
+    }
+    let temporary_path = config_path.with_extension("toml.tmp");
+    fs::write(&temporary_path, next_content).map_err(|error| {
+        format!(
+            "failed to write Codex config {}: {error}",
+            temporary_path.display()
+        )
+    })?;
+    if let Ok(metadata) = fs::metadata(&config_path) {
+        fs::set_permissions(&temporary_path, metadata.permissions()).map_err(|error| {
+            format!(
+                "failed to preserve Codex config permissions {}: {error}",
+                temporary_path.display()
+            )
+        })?;
+    }
+    #[cfg(unix)]
+    if !config_path.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&temporary_path, fs::Permissions::from_mode(0o600)).map_err(
+            |error| {
+                format!(
+                    "failed to secure Codex config permissions {}: {error}",
+                    temporary_path.display()
+                )
+            },
+        )?;
+    }
+    fs::rename(&temporary_path, &config_path).map_err(|error| {
+        format!(
+            "failed to replace Codex config {}: {error}",
+            config_path.display()
+        )
+    })
+}
+
+pub(crate) fn combined_codex_developer_instructions(user_instructions: &str) -> String {
+    let user_instructions = user_instructions.trim();
+    if user_instructions.is_empty() {
+        return WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS.to_owned();
+    }
+    format!("{user_instructions}\n\n{WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS}")
+}
+
+pub(crate) fn strip_wework_browser_instructions(instructions: &str) -> &str {
+    instructions
+        .strip_suffix(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
+        .unwrap_or(instructions)
+        .trim()
+}
+
+fn link_user_codex_auth(codex_home: &Path) -> Result<(), String> {
+    let target = codex_home.join("auth.json");
+    if let Ok(metadata) = fs::symlink_metadata(&target) {
+        if metadata.file_type().is_symlink() && !target.exists() {
+            fs::remove_file(&target).map_err(|error| {
+                format!(
+                    "failed to remove stale Codex auth link {}: {error}",
+                    target.display()
+                )
+            })?;
+        } else {
+            return Ok(());
+        }
+    }
+    let Some(source) = user_codex_auth_path().filter(|path| path.is_file()) else {
+        return Ok(());
+    };
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&source, &target).map_err(|error| {
+            format!(
+                "failed to link Codex auth {} -> {}: {error}",
+                target.display(),
+                source.display()
+            )
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        fs::copy(&source, &target).map(|_| ()).map_err(|error| {
+            format!(
+                "failed to copy Codex auth {} -> {}: {error}",
+                source.display(),
+                target.display()
+            )
+        })
+    }
+}
+
+fn user_codex_auth_path() -> Option<PathBuf> {
+    env::var_os(CODEX_HOME_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|home| home.join("auth.json"))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex").join("auth.json")))
+}
+
+#[cfg(test)]
+fn unique_test_path(prefix: &str) -> PathBuf {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    env::temp_dir().join(format!("{prefix}-{}-{id}", std::process::id()))
+}
+
+#[cfg(test)]
+struct EnvRestore {
+    key: &'static str,
+    value: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl EnvRestore {
+    fn capture(key: &'static str) -> Self {
+        Self {
+            key,
+            value: env::var_os(key),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        restore_env(self.key, self.value.clone());
+    }
+}
+
+#[cfg(test)]
+fn restore_env(key: &'static str, value: Option<std::ffi::OsString>) {
+    if let Some(value) = value {
+        env::set_var(key, value);
+    } else {
+        env::remove_var(key);
+    }
 }
 
 #[cfg(unix)]
@@ -1626,6 +1874,18 @@ impl JsonRpcConnection {
         let mut line = serde_json::to_vec(&message)
             .map_err(|error| format!("failed to encode codex JSON-RPC message: {error}"))?;
         line.push(b'\n');
+        let preview = serde_json::to_string(&message).unwrap_or_default();
+        let preview = if preview.len() > 2048 {
+            format!("{}...", &preview[..2048])
+        } else {
+            preview
+        };
+        wework_debug_log(&format!(
+            "codex rpc send id={:?} method={:?} body={}",
+            message.get("id"),
+            message.get("method"),
+            preview
+        ));
         self.stdin
             .write_all(&line)
             .await
@@ -1646,8 +1906,20 @@ impl JsonRpcConnection {
         if bytes_read == 0 {
             return Err("codex app-server exited before completing the turn".to_owned());
         }
-        serde_json::from_str(&line)
-            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))
+        let message: Value = serde_json::from_str(&line)
+            .map_err(|error| format!("failed to parse codex JSON-RPC message: {error}"))?;
+        let preview = if line.len() > 2048 {
+            format!("{}...", &line[..2048])
+        } else {
+            line.clone()
+        };
+        wework_debug_log(&format!(
+            "codex rpc recv id={:?} method={:?} body={}",
+            message.get("id"),
+            message.get("method"),
+            preview.trim()
+        ));
+        Ok(message)
     }
 }
 
@@ -2001,6 +2273,8 @@ fn log_codex_raw_turn_message(message: &Value) {
         "item/agentMessage/delta"
             | "item/reasoning/delta"
             | "item/reasoningSummary/delta"
+            | "item/fileChange/patchUpdated"
+            | "turn/plan/updated"
             | "item/started"
             | "item/completed"
             | "turn/completed"
@@ -2204,6 +2478,7 @@ struct PreparedCodexExecutionRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CodexLocalImage {
     path: String,
+    source_path: String,
 }
 
 fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
@@ -2250,12 +2525,8 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
         api_key(&request.model_config),
     ) {
         let model_provider = model_provider(&request.model_config);
-        let provider_base_url = codex_provider_base_url(&request.model_config, &base_url, &api_key);
-        let provider_api_key = if provider_base_url == base_url.trim_end_matches('/') {
-            api_key.clone()
-        } else {
-            "wegent-codex-responses-proxy".to_owned()
-        };
+        let (provider_base_url, provider_api_key) =
+            resolve_codex_provider_config(&request.model_config, &base_url, &api_key);
         launch_config.model_provider = Some(model_provider.clone());
         launch_config.config_overrides.extend([
             "forced_login_method=api".to_owned(),
@@ -2299,6 +2570,27 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> CodexLaunchConfig {
     launch_config
         .config_overrides
         .extend(runtime_capabilities::request_mcp_config_overrides(request));
+
+    let base_url = non_empty_config(&request.model_config, "base_url");
+    let api_key_present = api_key(&request.model_config).is_some();
+    let use_user_config = use_user_runtime_config(&request.model_config);
+    let provider_id = explicit_model_provider(&request.model_config)
+        .unwrap_or_else(|| DEFAULT_PROVIDER_ID.to_owned());
+    wework_debug_log(&format!(
+        "build_codex_launch_config model_id={:?} base_url={:?} api_key_present={} \
+         use_user_config={} model_provider={} config_overrides={} model_config_keys={:?}",
+        model_id(request),
+        base_url,
+        api_key_present,
+        use_user_config,
+        provider_id,
+        launch_config.config_overrides.len(),
+        request
+            .model_config
+            .as_object()
+            .map(|object| object.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default()
+    ));
     launch_config
 }
 
@@ -2358,17 +2650,21 @@ fn codex_model_context_window(model_config: &Value) -> Option<i64> {
         .filter(|value| *value > 0)
 }
 
-fn codex_provider_base_url(model_config: &Value, base_url: &str, api_key: &str) -> String {
+fn resolve_codex_provider_config(
+    model_config: &Value,
+    base_url: &str,
+    api_key: &str,
+) -> (String, String) {
     let normalized_base_url = base_url.trim_end_matches('/').to_owned();
     let wire_api = wire_api(model_config);
     let use_compat_proxy = bool_value(model_config.get("codex_responses_compat_proxy"))
         .unwrap_or(false)
         || bool_value(model_config.get("codexResponsesCompatProxy")).unwrap_or(false);
     if wire_api != "responses" || !use_compat_proxy {
-        return normalized_base_url;
+        return (normalized_base_url, api_key.to_owned());
     }
 
-    let token = register_codex_responses_proxy(CodexResponsesProxyUpstream {
+    let local_token = register_codex_responses_proxy(CodexResponsesProxyUpstream {
         base_url: normalized_base_url,
         responses_url: non_empty_config(model_config, "responses_url")
             .or_else(|| non_empty_config(model_config, "responsesUrl")),
@@ -2376,9 +2672,12 @@ fn codex_provider_base_url(model_config: &Value, base_url: &str, api_key: &str) 
         default_headers: parse_header_map(model_config.get("default_headers")),
         proxy_url: runtime_proxy_url(model_config).map(str::to_owned),
     });
-    let base_url = executor_loopback_base_url()
+    let local_base_url = executor_loopback_base_url()
         .unwrap_or_else(|| format!("http://127.0.0.1:{}", executor_server_port()));
-    format!("{base_url}/v1/codex-responses-proxy/{token}")
+    (
+        format!("{local_base_url}/v1/codex-responses-proxy"),
+        local_token,
+    )
 }
 
 fn executor_server_port() -> u16 {
@@ -2558,7 +2857,21 @@ fn header_overrides(
     project_id: Option<&str>,
 ) -> Vec<String> {
     let Some(project_id) = project_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Vec::new();
+        let headers = parse_header_map(default_headers);
+        return if headers.is_empty() {
+            Vec::new()
+        } else {
+            headers
+                .into_iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{}={}",
+                        toml_key_path(&["model_providers", model_provider, "http_headers", &key]),
+                        toml_value(&value)
+                    )
+                })
+                .collect()
+        };
     };
 
     let mut headers = parse_header_map(default_headers);
@@ -2665,13 +2978,18 @@ fn normalize_reasoning_effort(value: Option<&str>) -> String {
         .replace(' ', "_");
     let aliased = match normalized.as_str() {
         "" | "none" | "off" | "false" | "disabled" | "关闭" => DEFAULT_REASONING_EFFORT,
-        "低" => "low",
+        "minimal" | "低" | "轻度" | "最低" => "low",
         "中" | "中等" => "medium",
         "高" => "high",
-        "超高" | "最高" | "extra_high" | "ultra" | "x-high" => "xhigh",
+        "超高" | "extra_high" | "extra-high" | "x_high" | "x-high" => "xhigh",
+        "最大" | "最高" | "maximum" => "max",
+        "极高" => "ultra",
         value => value,
     };
-    if matches!(aliased, "minimal" | "low" | "medium" | "high" | "xhigh") {
+    if matches!(
+        aliased,
+        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    ) {
         aliased.to_owned()
     } else {
         DEFAULT_REASONING_EFFORT.to_owned()
@@ -2724,12 +3042,14 @@ fn global_mcp_config_overrides() -> Vec<String> {
 }
 
 fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
-    let command = executor_home().join("bin/browser-mcp-server");
+    let command =
+        env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
+    let bridge_addr = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR.to_owned());
+    let bridge_url = format!("http://{bridge_addr}");
     let mut overrides = vec![
-        format!(
-            "developer_instructions={}",
-            toml_value(WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS)
-        ),
         format!(
             "skills.config={}",
             serde_json::to_string(&json!([
@@ -2749,6 +3069,11 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             "{}={}",
             toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "command"]),
             toml_value(&command.display().to_string())
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "args"]),
+            toml_json_value(&json!(["browser-mcp-server"]))
         ),
         format!(
             "{}={}",
@@ -2774,19 +3099,9 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
                 "mcp_servers",
                 WEWORK_BROWSER_MCP_SERVER_NAME,
                 "env",
-                "WEWORK_BROWSER_MCP_TARGET"
-            ]),
-            toml_value("embedded")
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "env",
                 "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
             ]),
-            toml_value("http://127.0.0.1:9231")
+            toml_value(&bridge_url)
         ),
     ];
 
@@ -2944,7 +3259,7 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            let mut success_attachment = attachment.clone();
+            let success_attachment = attachment.clone();
             if is_image_attachment(&success_attachment) {
                 let prepared_path = prepare_local_image_path(
                     local_path,
@@ -2955,9 +3270,9 @@ fn prepare_codex_execution_request(mut request: ExecutionRequest) -> PreparedCod
                     &mut generated_files,
                 )
                 .unwrap_or_else(|| local_path.to_owned());
-                success_attachment.local_path = Some(prepared_path.clone());
                 local_images.push(Some(CodexLocalImage {
                     path: prepared_path,
+                    source_path: local_path.to_owned(),
                 }));
             }
             success.push(success_attachment);
@@ -3164,11 +3479,11 @@ fn files_mentioned_text(local_images: &[Option<CodexLocalImage>], text_parts: &[
         .iter()
         .filter_map(|local_image| local_image.as_ref())
         .map(|local_image| {
-            let filename = Path::new(&local_image.path)
+            let filename = Path::new(&local_image.source_path)
                 .file_name()
                 .and_then(|value| value.to_str())
-                .unwrap_or(&local_image.path);
-            format!("## {filename}: {}", local_image.path)
+                .unwrap_or(&local_image.source_path);
+            format!("## {filename}: {}", local_image.source_path)
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -3404,7 +3719,7 @@ fn parse_config_override_value(value: &str) -> Value {
 fn executor_home() -> PathBuf {
     env::var_os("WEGENT_EXECUTOR_HOME")
         .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".wegent-executor")))
+        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
         .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
 }
 
@@ -3572,7 +3887,19 @@ fn turn_start_params(
     if let Some(collaboration_mode) = codex_collaboration_mode_payload(request, launch_config) {
         params.insert("collaborationMode".to_owned(), collaboration_mode);
     }
+    if let Some(additional_context) = codex_additional_context(request) {
+        params.insert("additionalContext".to_owned(), additional_context);
+    }
     Value::Object(params)
+}
+
+fn codex_additional_context(request: &ExecutionRequest) -> Option<Value> {
+    request
+        .extra
+        .get("additionalContext")
+        .or_else(|| request.extra.get("additional_context"))
+        .filter(|value| value.is_object())
+        .cloned()
 }
 
 fn codex_collaboration_mode_payload(
@@ -3605,38 +3932,55 @@ fn codex_collaboration_mode(request: &ExecutionRequest) -> Option<&str> {
 
 fn turn_input(prompt: &Value) -> Vec<Value> {
     let Value::Array(items) = prompt else {
-        return vec![text_input(prompt_text(prompt))];
+        return text_input_with_structured_mentions(prompt_text(prompt));
     };
 
-    let mut input = items.iter().filter_map(turn_input_item).collect::<Vec<_>>();
+    let mut input = items.iter().flat_map(turn_input_item).collect::<Vec<_>>();
     if input.is_empty() {
-        input.push(text_input(prompt_text(prompt)));
+        input.extend(text_input_with_structured_mentions(prompt_text(prompt)));
     }
     input
 }
 
-fn turn_input_item(item: &Value) -> Option<Value> {
-    let kind = item.get("type").and_then(Value::as_str)?;
+fn turn_input_item(item: &Value) -> Vec<Value> {
+    let Some(kind) = item.get("type").and_then(Value::as_str) else {
+        return Vec::new();
+    };
     match kind {
         "input_text" | "text" => item
             .get("text")
             .and_then(Value::as_str)
-            .map(|text| text_input(text.to_owned())),
+            .map(|text| text_input_with_structured_mentions(text.to_owned())),
         "input_image" => item
             .get("image_url")
             .or_else(|| item.get("url"))
             .and_then(Value::as_str)
-            .map(|url| json!({"type": "image", "url": url})),
-        "image" => image_input(item),
+            .map(|url| vec![json!({"type": "image", "url": url})]),
+        "image" => image_input(item).map(|item| vec![item]),
         "localImage" | "local_image" => item
             .get("path")
             .and_then(Value::as_str)
-            .map(|path| json!({"type": "localImage", "path": path})),
+            .map(|path| vec![json!({"type": "localImage", "path": path})]),
+        "skill" => match (
+            item.get("name").and_then(Value::as_str),
+            item.get("path").and_then(Value::as_str),
+        ) {
+            (Some(name), Some(path)) => Some(vec![skill_input(name, path)]),
+            _ => None,
+        },
+        "mention" => match (
+            item.get("name").and_then(Value::as_str),
+            item.get("path").and_then(Value::as_str),
+        ) {
+            (Some(name), Some(path)) => Some(vec![mention_input(name, path)]),
+            _ => None,
+        },
         _ => item
             .get("text")
             .and_then(Value::as_str)
-            .map(|text| text_input(text.to_owned())),
+            .map(|text| text_input_with_structured_mentions(text.to_owned())),
     }
+    .unwrap_or_default()
 }
 
 fn image_input(item: &Value) -> Option<Value> {
@@ -3657,6 +4001,142 @@ fn image_input(item: &Value) -> Option<Value> {
 
 fn text_input(text: String) -> Value {
     json!({"type": "text", "text": text, "text_elements": []})
+}
+
+fn skill_input(name: &str, path: &str) -> Value {
+    json!({"type": "skill", "name": name, "path": normalize_skill_path(path)})
+}
+
+fn mention_input(name: &str, path: &str) -> Value {
+    json!({"type": "mention", "name": name, "path": path})
+}
+
+fn text_input_with_structured_mentions(text: String) -> Vec<Value> {
+    let (normalized_text, mentions) = extract_structured_mentions(&text);
+    let mut input = vec![text_input(normalized_text)];
+    input.extend(mentions);
+    input
+}
+
+fn extract_structured_mentions(text: &str) -> (String, Vec<Value>) {
+    let mut output = String::with_capacity(text.len());
+    let mut mentions = Vec::new();
+    let mut seen_paths = std::collections::BTreeSet::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = text[cursor..].find("[$") {
+        let start = cursor + relative_start;
+        let Some(label_end) = text[start + 2..].find("](").map(|index| start + 2 + index) else {
+            break;
+        };
+        let uri_start = label_end + 2;
+        let Some(uri_end) = text[uri_start..].find(')').map(|index| uri_start + index) else {
+            break;
+        };
+
+        let name = &text[start + 2..label_end];
+        let uri = &text[uri_start..uri_end];
+        if let Some(path) = composer_file_reference_path(uri) {
+            output.push_str(&text[cursor..start]);
+            if path.chars().any(char::is_whitespace) && !path.contains('"') {
+                output.push('"');
+                output.push_str(&path);
+                output.push('"');
+            } else {
+                output.push_str(&path);
+            }
+            cursor = uri_end + 1;
+            continue;
+        }
+        let Some(mention) = structured_mention_input(name, uri) else {
+            output.push_str(&text[cursor..uri_end + 1]);
+            cursor = uri_end + 1;
+            continue;
+        };
+
+        output.push_str(&text[cursor..start]);
+        output.push_str(&visible_mention_text(name, uri));
+        if seen_paths.insert(structured_mention_dedup_key(uri)) {
+            mentions.push(mention);
+        }
+        cursor = uri_end + 1;
+    }
+
+    output.push_str(&text[cursor..]);
+    (output, mentions)
+}
+
+fn composer_file_reference_path(uri: &str) -> Option<String> {
+    let encoded = uri
+        .strip_prefix("file://")
+        .or_else(|| uri.strip_prefix("folder://"))?;
+    percent_decode_utf8(encoded)
+}
+
+fn percent_decode_utf8(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = *bytes.get(index + 1)?;
+            let low = *bytes.get(index + 2)?;
+            output.push(hex_value(high)? * 16 + hex_value(low)?);
+            index += 3;
+        } else {
+            output.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(output).ok()
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn structured_mention_input(name: &str, uri: &str) -> Option<Value> {
+    if is_skill_reference(uri) {
+        return Some(skill_input(name, uri));
+    }
+    if uri.starts_with("app://") || uri.starts_with("plugin://") {
+        return Some(mention_input(name, uri));
+    }
+    None
+}
+
+fn structured_mention_dedup_key(uri: &str) -> String {
+    if is_skill_reference(uri) {
+        normalize_skill_path(uri)
+    } else {
+        uri.to_owned()
+    }
+}
+
+fn is_skill_reference(uri: &str) -> bool {
+    uri.starts_with("skill://") || is_absolute_skill_path(uri)
+}
+
+fn is_absolute_skill_path(path: &str) -> bool {
+    let path = std::path::Path::new(path);
+    path.is_absolute() && path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
+}
+
+fn visible_mention_text(name: &str, uri: &str) -> String {
+    if uri.starts_with("plugin://") {
+        format!("@{name}")
+    } else {
+        format!("${name}")
+    }
+}
+
+fn normalize_skill_path(path: &str) -> String {
+    path.strip_prefix("skill://").unwrap_or(path).to_owned()
 }
 
 fn response_id(message: &Value) -> Option<u64> {
@@ -3754,6 +4234,158 @@ mod tests {
     use super::*;
 
     #[test]
+    fn normalize_reasoning_effort_preserves_supported_codex_levels() {
+        for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
+            assert_eq!(normalize_reasoning_effort(Some(effort)), effort);
+        }
+    }
+
+    #[test]
+    fn normalize_reasoning_effort_maps_aliases_to_supported_codex_levels() {
+        for (value, expected) in [
+            ("minimal", "low"),
+            ("轻度", "low"),
+            ("中等", "medium"),
+            ("extra high", "xhigh"),
+            ("x-high", "xhigh"),
+            ("最高", "max"),
+            ("maximum", "max"),
+            ("极高", "ultra"),
+        ] {
+            assert_eq!(normalize_reasoning_effort(Some(value)), expected);
+        }
+    }
+
+    #[test]
+    fn normalize_reasoning_effort_uses_default_for_disabled_or_unknown_values() {
+        for value in [None, Some("off"), Some("unknown")] {
+            assert_eq!(normalize_reasoning_effort(value), DEFAULT_REASONING_EFFORT);
+        }
+    }
+
+    #[test]
+    fn wework_codex_home_defaults_to_executor_home_codex() {
+        let _lock = crate::test_env::lock();
+        let home = unique_test_path("wework-codex-home-default");
+        let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+        let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+
+        env::set_var("WEGENT_EXECUTOR_HOME", &home);
+        env::remove_var(WEGENT_CODEX_HOME_ENV);
+        env::set_var(
+            CODEX_HOME_ENV,
+            home.join("user-codex-should-not-be-wework-home"),
+        );
+
+        assert_eq!(wework_codex_home(), home.join("codex"));
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn wework_codex_home_prefers_explicit_wework_home() {
+        let _lock = crate::test_env::lock();
+        let executor_home = unique_test_path("wework-codex-home-executor");
+        let codex_home = unique_test_path("wework-codex-home-explicit");
+        let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+        let _wework_codex_home = EnvRestore::capture(WEGENT_CODEX_HOME_ENV);
+        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+
+        env::set_var("WEGENT_EXECUTOR_HOME", &executor_home);
+        env::set_var(WEGENT_CODEX_HOME_ENV, &codex_home);
+        env::set_var(CODEX_HOME_ENV, executor_home.join("ignored-codex"));
+
+        assert_eq!(wework_codex_home(), codex_home);
+
+        let _ = fs::remove_dir_all(executor_home);
+        let _ = fs::remove_dir_all(codex_home);
+    }
+
+    #[test]
+    fn prepare_wework_codex_home_links_user_auth() {
+        let _lock = crate::test_env::lock();
+        let root = unique_test_path("wework-codex-home-auth");
+        let user_codex_home = root.join("user-codex");
+        let codex_home = root.join("wework-codex");
+        let source_auth = user_codex_home.join("auth.json");
+        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+
+        fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
+            .expect("user Codex home should be created");
+        fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
+        env::set_var(CODEX_HOME_ENV, &user_codex_home);
+
+        prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+        let linked_auth = codex_home.join("auth.json");
+        assert!(linked_auth.is_file());
+        #[cfg(unix)]
+        assert_eq!(
+            fs::read_link(&linked_auth).expect("auth should be a symlink"),
+            source_auth
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_wework_codex_home_replaces_stale_auth_link() {
+        let _lock = crate::test_env::lock();
+        let root = unique_test_path("wework-codex-home-stale-auth");
+        let user_codex_home = root.join("user-codex");
+        let codex_home = root.join("wework-codex");
+        let source_auth = user_codex_home.join("auth.json");
+        let stale_source = root.join("missing-auth.json");
+        let linked_auth = codex_home.join("auth.json");
+        let _codex_home = EnvRestore::capture(CODEX_HOME_ENV);
+
+        fs::create_dir_all(source_auth.parent().expect("auth parent should exist"))
+            .expect("user Codex home should be created");
+        fs::create_dir_all(&codex_home).expect("WeWork Codex home should be created");
+        fs::write(&source_auth, br#"{"token":"shared"}"#).expect("auth should be written");
+        std::os::unix::fs::symlink(&stale_source, &linked_auth)
+            .expect("stale auth link should be created");
+        env::set_var(CODEX_HOME_ENV, &user_codex_home);
+
+        prepare_wework_codex_home(&codex_home).expect("Codex home should be prepared");
+
+        assert_eq!(
+            fs::read_link(&linked_auth).expect("auth should be a symlink"),
+            source_auth
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepare_wework_codex_home_migrates_base_instruction_override() {
+        let _lock = crate::test_env::lock();
+        let root = unique_test_path("wework-codex-config-migration");
+        let codex_home = root.join("codex");
+        fs::create_dir_all(&codex_home).expect("Codex home should be created");
+        fs::write(
+            codex_home.join("config.toml"),
+            "instructions = \"用中文回复\"\n",
+        )
+        .expect("legacy config should be written");
+
+        prepare_wework_codex_home(&codex_home).expect("Codex config should be normalized");
+
+        let config = fs::read_to_string(codex_home.join("config.toml"))
+            .expect("normalized config should be readable");
+        assert!(!config
+            .lines()
+            .any(|line| line.starts_with("instructions =")));
+        assert!(config.contains("developer_instructions"));
+        assert!(config.contains("用中文回复"));
+        assert!(config.contains("browser_navigate"));
+        assert!(config.contains("personality = \"pragmatic\""));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn codex_raw_log_preview_summarizes_large_command_output() {
         let output = "x".repeat(4096);
         let message = json!({
@@ -3842,12 +4474,12 @@ mod tests {
 
         assert!(launch_config.config_overrides.iter().any(|override_value| {
             override_value.starts_with("model_providers.wecode-openai.base_url=\"http://127.0.0.1:")
-                && override_value.contains("/v1/codex-responses-proxy/codex-")
+                && override_value.ends_with("/v1/codex-responses-proxy\"")
         }));
-        assert!(launch_config.config_overrides.contains(
-            &"model_providers.wecode-openai.experimental_bearer_token=\"wegent-codex-responses-proxy\""
-                .to_owned()
-        ));
+        assert!(launch_config.config_overrides.iter().any(|override_value| {
+            override_value
+                .starts_with("model_providers.wecode-openai.experimental_bearer_token=\"codex-")
+        }));
     }
 
     #[test]
@@ -4184,11 +4816,121 @@ mod tests {
     }
 
     #[test]
+    fn turn_input_expands_absolute_skill_markdown_mentions_for_app_server() {
+        let input = turn_input(&Value::String(
+            "[$linear](/Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage".to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![
+                json!({"type": "text", "text": "$linear triage", "text_elements": []}),
+                json!({
+                    "type": "skill",
+                    "name": "linear",
+                    "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn turn_input_expands_legacy_skill_markdown_mentions_for_app_server() {
+        let input = turn_input(&Value::String(
+            "[$linear](skill:///Users/me/.codex/plugins/linear/skills/linear/SKILL.md) triage"
+                .to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![
+                json!({"type": "text", "text": "$linear triage", "text_elements": []}),
+                json!({
+                    "type": "skill",
+                    "name": "linear",
+                    "path": "/Users/me/.codex/plugins/linear/skills/linear/SKILL.md",
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn turn_input_deduplicates_legacy_and_absolute_references_to_the_same_skill() {
+        let input = turn_input(&Value::String(
+            "[$linear](skill:///Users/me/skills/linear/SKILL.md) then [$linear](/Users/me/skills/linear/SKILL.md)"
+                .to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![
+                json!({
+                    "type": "text",
+                    "text": "$linear then $linear",
+                    "text_elements": [],
+                }),
+                json!({
+                    "type": "skill",
+                    "name": "linear",
+                    "path": "/Users/me/skills/linear/SKILL.md",
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn turn_input_expands_app_and_plugin_markdown_mentions_for_app_server() {
+        let input = turn_input(&Value::String(
+            "Use [$calendar](app://google-calendar) and [$sample](plugin://sample@test)".to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![
+                json!({
+                    "type": "text",
+                    "text": "Use $calendar and @sample",
+                    "text_elements": [],
+                }),
+                json!({
+                    "type": "mention",
+                    "name": "calendar",
+                    "path": "app://google-calendar",
+                }),
+                json!({
+                    "type": "mention",
+                    "name": "sample",
+                    "path": "plugin://sample@test",
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn turn_input_converts_composer_file_references_to_plain_paths() {
+        let input = turn_input(&Value::String(
+            "Inspect [$frontend](folder://%2FUsers%2Fme%2FMy%20Project%2Ffrontend) and [$auth.ts](file://%2FUsers%2Fme%2FMy%20Project%2Ffrontend%2Fauth.ts)"
+                .to_owned(),
+        ));
+
+        assert_eq!(
+            input,
+            vec![json!({
+                "type": "text",
+                "text": "Inspect \"/Users/me/My Project/frontend\" and \"/Users/me/My Project/frontend/auth.ts\"",
+                "text_elements": [],
+            })]
+        );
+    }
+
+    #[test]
     fn codex_launch_config_includes_cdp_browser_mcp_server() {
         let _lock = crate::test_env::lock();
         let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
         let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
+        let old_bridge_addr = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
         env::set_var("WEGENT_EXECUTOR_HOME", &home);
+        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, "127.0.0.1:43127");
         let request = ExecutionRequest {
             task_id: "task:123".to_owned(),
             ..ExecutionRequest::default()
@@ -4200,16 +4942,7 @@ mod tests {
             .get("config")
             .and_then(Value::as_object)
             .expect("thread config should be present");
-        let developer_instructions = config["developer_instructions"]
-            .as_str()
-            .expect("browser routing developer instructions should be present");
-
-        assert!(developer_instructions.contains("browser_navigate"));
-        assert!(developer_instructions.contains("browser_take_screenshot"));
-        assert!(developer_instructions.contains("Wework 内置浏览器"));
-        assert!(!developer_instructions.contains("playwright"));
-        assert!(developer_instructions.contains("agent.browsers.get(\"iab\")"));
-        assert!(developer_instructions.contains("external Chrome"));
+        assert!(!config.contains_key("developer_instructions"));
         assert_eq!(
             config["skills.config"],
             json!([
@@ -4226,17 +4959,17 @@ mod tests {
         assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
         assert_eq!(
             config["mcp_servers.wework_browser.command"],
-            home.join("bin/browser-mcp-server").display().to_string()
+            env::current_exe().unwrap().display().to_string()
+        );
+        assert_eq!(
+            config["mcp_servers.wework_browser.args"],
+            json!(["browser-mcp-server"])
         );
         assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
         assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
         assert_eq!(
-            config["mcp_servers.wework_browser.env.WEWORK_BROWSER_MCP_TARGET"],
-            "embedded"
-        );
-        assert_eq!(
             config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
-            "http://127.0.0.1:9231"
+            "http://127.0.0.1:43127"
         );
         assert_eq!(
             config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
@@ -4247,6 +4980,11 @@ mod tests {
             env::set_var("WEGENT_EXECUTOR_HOME", old_home);
         } else {
             env::remove_var("WEGENT_EXECUTOR_HOME");
+        }
+        if let Some(old_bridge_addr) = old_bridge_addr {
+            env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, old_bridge_addr);
+        } else {
+            env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
         }
     }
 
@@ -4313,6 +5051,48 @@ mod tests {
             .expect_err("empty objective should be rejected");
 
         assert_eq!(error, "initial goal objective is required");
+    }
+
+    #[test]
+    fn active_root_turn_notification_uses_item_turn_id_and_ignores_completed_or_child_turns() {
+        let mut state = CodexRunState::default();
+        state.set_root_thread_id("thread-root");
+
+        let active_item = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-root",
+                "turnId": "turn-current",
+                "item": { "type": "reasoning" }
+            }
+        });
+        assert_eq!(
+            active_root_turn_notification_id(&active_item, &state).as_deref(),
+            Some("turn-current")
+        );
+
+        let completed_turn = json!({
+            "method": "turn/completed",
+            "params": {
+                "threadId": "thread-root",
+                "turn": { "id": "turn-current", "status": "completed" }
+            }
+        });
+        assert_eq!(
+            active_root_turn_notification_id(&completed_turn, &state),
+            None
+        );
+
+        let child_item = json!({
+            "method": "item/started",
+            "params": {
+                "threadId": "thread-root",
+                "turnId": "child-turn",
+                "agentPath": "/root/worker",
+                "item": { "type": "reasoning" }
+            }
+        });
+        assert_eq!(active_root_turn_notification_id(&child_item, &state), None);
     }
 
     #[test]

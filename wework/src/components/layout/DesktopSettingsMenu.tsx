@@ -1,4 +1,4 @@
-import { ChevronDown, Clock, Download, Loader2, LogOut, Settings } from 'lucide-react'
+import { ChevronDown, Clock, Download, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -18,15 +18,45 @@ function formatVersionTemplate(template: string, version: string): string {
   return template.replace('{{version}}', version)
 }
 
+function calculateDownloadPercent(
+  downloadedBytes: number,
+  totalBytes: number | null
+): number | null {
+  if (!totalBytes || totalBytes <= 0) return null
+  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
+}
+
+function UpdateDownloadProgressIcon({ progress }: { progress: number }) {
+  return (
+    <span
+      data-testid="app-update-download-icon-progress"
+      aria-label={`${progress}%`}
+      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
+      style={{
+        background: `conic-gradient(rgb(var(--color-primary)) ${progress}%, rgb(var(--color-border)) 0)`,
+      }}
+    >
+      <span className="h-2 w-2 rounded-full bg-popover" />
+    </span>
+  )
+}
+
 interface DesktopSettingsMenuProps {
   user: UserProfile | null
   onOpenSettings: () => void
   onLogout: () => void
+  onLogin?: () => void
+  showLogout?: boolean
 }
 
-export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSettingsMenuProps) {
+export function DesktopSettingsMenu({
+  onOpenSettings,
+  onLogout,
+  onLogin,
+  showLogout,
+}: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
-  const showLogout = !isLocalFirstAppRuntime()
+  const shouldShowLogout = showLogout ?? !isLocalFirstAppRuntime()
   const [isUsageExpanded, setIsUsageExpanded] = useState(false)
   const [codexUsage, setCodexUsage] = useState<CodexUsageDisplay>(() => emptyCodexUsageDisplay())
   const [isQuotaLoading, setIsQuotaLoading] = useState(false)
@@ -34,6 +64,7 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const updateStatus = appUpdate?.status ?? 'idle'
+  const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
   const checkNow = appUpdate?.checkNow
   const installUpdate = appUpdate?.installUpdate
@@ -85,18 +116,33 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
       )
     : t('workbench.app_update_check', { defaultValue: '检查更新' })
   const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
-  const updateMessage = availableUpdate
-    ? formatVersionTemplate(
-        t('workbench.app_update_available', {
-          defaultValue: '发现新版本 {{version}}',
-          version: availableUpdate.version,
-        }),
-        availableUpdate.version
-      )
-    : updateStatus === 'upToDate'
-      ? t('workbench.app_update_up_to_date', {
-          defaultValue: '已是最新版本',
-        })
+  const downloadPercent = downloadProgress
+    ? calculateDownloadPercent(downloadProgress.downloadedBytes, downloadProgress.totalBytes)
+    : null
+  const updateMessage =
+    updateStatus === 'installing'
+      ? null
+      : availableUpdate
+        ? formatVersionTemplate(
+            t('workbench.app_update_available', {
+              defaultValue: '发现新版本 {{version}}',
+              version: availableUpdate.version,
+            }),
+            availableUpdate.version
+          )
+        : updateStatus === 'upToDate'
+          ? t('workbench.app_update_up_to_date', {
+              defaultValue: '已是最新版本',
+            })
+          : null
+  const downloadMessage =
+    updateStatus === 'installing'
+      ? downloadPercent === null
+        ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
+        : t('workbench.app_update_downloading_progress', {
+            defaultValue: '正在下载更新 {{progress}}%',
+            progress: downloadPercent,
+          }).replace('{{progress}}', String(downloadPercent))
       : null
 
   return (
@@ -104,6 +150,18 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
       data-testid="settings-menu"
       className="absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-[20px] border border-border/70 bg-popover/95 py-2.5 text-text-primary shadow-[0_24px_60px_rgba(0,0,0,0.36)] ring-1 ring-border/40 backdrop-blur-xl"
     >
+      {onLogin ? (
+        <>
+          <SettingsMenuItem
+            testId="login-menu-button"
+            icon={<LogIn className="h-4 w-4 shrink-0 text-primary" />}
+            label={t('workbench.account_cloud_login', '登录 Wegent')}
+            description={t('workbench.account_cloud_login_description', '连接云端模型、设备和同步')}
+            onClick={onLogin}
+          />
+          <div className="mx-4 my-1.5 border-t border-border/70" />
+        </>
+      ) : null}
       <SettingsMenuItem
         testId="settings-menu-button"
         icon={<Settings className="h-4 w-4 shrink-0 text-text-secondary" />}
@@ -114,7 +172,9 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
       <SettingsMenuItem
         testId="check-app-update-button"
         icon={
-          isUpdateBusy ? (
+          updateStatus === 'installing' && downloadPercent !== null ? (
+            <UpdateDownloadProgressIcon progress={downloadPercent} />
+          ) : isUpdateBusy ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-secondary" />
           ) : (
             <Download className="h-4 w-4 shrink-0 text-text-secondary" />
@@ -125,6 +185,24 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
         disabled={isUpdateBusy}
         active={Boolean(updateError)}
       />
+      {downloadMessage ? (
+        <div
+          data-testid="app-update-download-progress"
+          className="space-y-1.5 px-4 pb-2 pl-[44px] pr-5 text-xs font-medium leading-[18px] text-text-secondary"
+        >
+          <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div
+              className={
+                downloadPercent === null
+                  ? 'h-full w-1/3 animate-pulse rounded-full bg-primary'
+                  : 'h-full rounded-full bg-primary transition-[width] duration-200'
+              }
+              style={downloadPercent === null ? undefined : { width: `${downloadPercent}%` }}
+            />
+          </div>
+          <span>{downloadMessage}</span>
+        </div>
+      ) : null}
       {updateMessage || updateError ? (
         <div
           data-testid="app-update-status"
@@ -173,7 +251,7 @@ export function DesktopSettingsMenu({ onOpenSettings, onLogout }: DesktopSetting
           ) : null}
         </div>
       ) : null}
-      {showLogout ? (
+      {shouldShowLogout ? (
         <SettingsMenuItem
           testId="logout-menu-button"
           icon={<LogOut className="h-4 w-4 shrink-0 text-text-secondary" />}
@@ -208,6 +286,7 @@ interface SettingsMenuItemProps {
   testId: string
   icon: ReactNode
   label: string
+  description?: string
   shortcut?: string
   trailing?: ReactNode
   active?: boolean
@@ -221,6 +300,7 @@ function SettingsMenuItem({
   testId,
   icon,
   label,
+  description,
   shortcut,
   trailing,
   active = false,
@@ -237,12 +317,19 @@ function SettingsMenuItem({
       disabled={disabled}
       aria-expanded={ariaExpanded}
       aria-controls={ariaControls}
-      className={`flex h-9 w-full items-center gap-3 px-4 text-left text-[13px] font-semibold leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
-        active ? 'bg-hover' : ''
-      }`}
+      className={`flex w-full items-center gap-3 px-4 text-left text-[13px] font-semibold leading-[18px] text-text-primary transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-60 ${
+        description ? 'min-h-12 py-2' : 'h-9'
+      } ${active ? 'bg-hover' : ''}`}
     >
       {icon}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate">{label}</span>
+        {description ? (
+          <span className="block truncate text-[11px] font-medium leading-4 text-text-secondary">
+            {description}
+          </span>
+        ) : null}
+      </span>
       {shortcut ? (
         <KeyboardShortcut
           value={shortcut}

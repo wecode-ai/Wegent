@@ -835,7 +835,7 @@ fn codex_command_starts_app_server_for_json_rpc_control() {
     let spec = build_codex_app_server_command("codex");
 
     assert_eq!(spec.program(), "codex");
-    assert_eq!(spec.args(), &["app-server", "--stdio"]);
+    assert_eq!(spec.args(), &["app-server"]);
 }
 
 #[test]
@@ -890,7 +890,7 @@ fn command_planner_routes_codex_requests_to_codex_app_server() {
     let spec = planner.command_for(&request).unwrap();
 
     assert_eq!(spec.program(), "codex");
-    assert_eq!(spec.args(), &["app-server", "--stdio"]);
+    assert_eq!(spec.args(), &["app-server"]);
 }
 
 #[test]

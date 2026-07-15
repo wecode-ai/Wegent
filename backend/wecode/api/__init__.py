@@ -34,6 +34,7 @@ import wecode.api.executors_endpoint_patch  # noqa: F401  patch /tasks/dispatch 
 import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is monkey-patched at import time
 import wecode.api.models_endpoint_patch  # noqa: F401  patch app.api.endpoints.models to enforce admin-only endpoints
 import wecode.api.oidc_endpoint_patch  # noqa: F401  patch app.api.endpoints.oidc OIDC callback for wecode-specific git_info handling
+import wecode.api.outbound_token_service_patch  # noqa: F401  inject employee_id claim into issued outbound tokens
 import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.quota to proxy quota requests to external service
 import wecode.api.share_service_patch  # noqa: F401  ERP name priority for share members
 import wecode.api.user_service_patch  # noqa: F401  patch app.services.user without modifying source
@@ -45,6 +46,7 @@ import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_s
 import wecode.service.executor_job_patch  # noqa: F401  patch JobService with K8s orphan pod cleanup capabilities
 import wecode.service.executor_kinds_patch  # noqa: F401  patch executor_kinds_service with K8s orphan pod cleanup methods
 import wecode.service.jobs  # noqa: F401  register notification and evaluation grading monitor background workers
+import wecode.service.llm_proxy_service_patch  # noqa: F401  resolve user API keys for the LLM proxy gateway
 import wecode.service.local_device_patch  # noqa: F401  register LocalDeviceProvider with factory
 import wecode.service.openclaw_token_monitor_patch  # noqa: F401  register OpenClaw token monitor background worker
 import wecode.service.request_builder_patch  # noqa: F401  patch TaskRequestBuilder.build to replace ${WECODE_USER_API_KEY} (new dispatcher flow)

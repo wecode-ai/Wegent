@@ -59,6 +59,14 @@ Tauri first connects to `~/.wegent-executor/app-ipc.sock`. If the local executor
 
 Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend WebSocket channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App over the local socket and Backend over WebSocket. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
 
+### Runtime Task and Goal State
+
+The runtime task `running` field represents only whether a model turn is currently executing. After a turn completes, fails, or is cancelled, the executor must settle that field to `false`. Wework uses it to decide whether to render the stop control and running indicator, and whether a new message can be sent directly.
+
+Goals have an independent lifecycle. An `active` goal means that its objective can continue in later turns; it does not mean that a model turn is currently executing. Keeping an active goal while a task is idle must not mark the task as running again. A user's next message creates a new turn directly instead of being sent as guidance to an in-progress turn.
+
+Codex guidance is sent to the active turn through the shared app-server. If that turn finishes or changes while guidance is being sent, the executor reports the race as `no_active_turn`; Wework then sends the same content as a normal follow-up message so user input is preserved without a misleading send failure.
+
 ### Backend Device Chat Task REST Entrypoint
 
 The web device chat page still sends messages through WebSocket. For external systems or curl-based callers that need to create the same kind of task, Backend exposes a REST entrypoint:
@@ -164,6 +172,13 @@ the local device currently registers and handles:
 - `runtime:rpc`
 - `device:upgrade`
 - `device:run_extension`
+
+The `extension_scope` field of `device:run_extension` accepts `task` or
+`global` and defaults to `task` when omitted. Task-scoped extensions run from
+the current task's `.claude/skills/<extension>` directory; global extensions
+run from `~/.claude/skills/<extension>` for the user running the executor. The
+script path must remain inside the selected extension directory, and other
+scope values are rejected.
 
 The migration coverage matrix is tracked in
 `executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`. When adding a local

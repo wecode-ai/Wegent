@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { installDeveloperCommandMenu } from './developerCommandMenu'
+import { APP_UPDATE_SIMULATE_EVENT } from '@/features/app-update/app-update-context'
 
 const invokeMock = vi.hoisted(() => vi.fn())
 const requestLocalExecutorMock = vi.hoisted(() => vi.fn())
@@ -48,6 +49,7 @@ describe('developerCommandMenu', () => {
 
     expect(screenCommand('reload')).toBeInTheDocument()
     expect(screenCommand('open-debug-panel')).toBeInTheDocument()
+    expect(screenCommand('simulate-app-update')).toBeInTheDocument()
     expect(screenCommand('toggle-performance-diagnostics')).toBeInTheDocument()
     expect(screenCommand('toggle-stream-logs')).toBeInTheDocument()
     expect(screenCommand('print-performance-snapshot')).toBeInTheDocument()
@@ -70,6 +72,17 @@ describe('developerCommandMenu', () => {
       enabled: true,
     })
     expect(localStorage.getItem('wework:debug-local-chat-stream')).toBe('1')
+  })
+
+  test('dispatches an event to simulate an app update', () => {
+    const listener = vi.fn()
+    window.addEventListener(APP_UPDATE_SIMULATE_EVENT, listener)
+    dispatchDeveloperShortcut()
+
+    screenCommand('simulate-app-update').click()
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    window.removeEventListener(APP_UPDATE_SIMULATE_EVENT, listener)
   })
 
   test('opens the app log directory through Tauri', () => {

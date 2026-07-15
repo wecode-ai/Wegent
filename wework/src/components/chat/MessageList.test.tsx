@@ -11,10 +11,50 @@ const tauriCoreMock = vi.hoisted(() => ({
   invoke: vi.fn(),
   isTauri: vi.fn(() => false),
 }))
+const openExternalUrlMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
 
 vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
+vi.mock('@/lib/external-links', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/external-links')>()),
+  openExternalUrl: openExternalUrlMock,
+}))
 
 describe('MessageList', () => {
+  test('renders generated image artifacts from image generation blocks', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-image',
+            role: 'assistant',
+            content: 'Choose a direction.',
+            status: 'done',
+            createdAt: '2026-06-11T10:00:01Z',
+            blocks: [
+              {
+                id: 'ig-1',
+                subtaskId: '1',
+                type: 'tool',
+                toolName: 'image_generation',
+                renderPayload: {
+                  kind: 'image_generation',
+                  imageBase64: 'aW1hZ2U=',
+                  revisedPrompt: 'Minimal dashboard concept',
+                },
+                status: 'done',
+                createdAt: Date.now(),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    const image = screen.getByTestId('generated-image')
+    expect(image).toHaveAttribute('src', 'data:image/png;base64,aW1hZ2U=')
+    expect(image).toHaveAttribute('alt', 'Minimal dashboard concept')
+  })
+
   test('marks message rows for offscreen rendering containment with intrinsic sizes', () => {
     render(
       <MessageList
@@ -549,6 +589,38 @@ describe('MessageList', () => {
     expect(screen.getByTestId('assistant-stopped-notice')).toHaveTextContent('你在 9m 18s 后停止了')
   })
 
+  test('keeps late cancelled output without rendering it as active thinking', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-cancelled-late-output',
+            subtaskId: 21,
+            role: 'assistant',
+            content: '取消后仍收到的模型输出。',
+            status: 'streaming',
+            runtimeStatus: 'cancelled',
+            createdAt: '2026-06-11T10:00:00Z',
+            blocks: [
+              {
+                id: 'late-process',
+                subtaskId: 21,
+                type: 'text',
+                content: '补充分析。',
+                status: 'streaming',
+                createdAt: Date.parse('2026-06-11T10:00:10Z'),
+              },
+            ],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('取消后仍收到的模型输出。')).toBeInTheDocument()
+    expect(screen.getByText('补充分析。')).toBeInTheDocument()
+    expect(screen.queryByTestId('thinking-indicator')).not.toBeInTheDocument()
+  })
+
   test('renders tagged proposed plan content as regular assistant markdown', () => {
     render(
       <MessageList
@@ -566,8 +638,11 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
-    expect(screen.getByText('Inspect the desktop chat width.')).toBeInTheDocument()
-    expect(screen.getByText('Match the reference task.')).toBeInTheDocument()
+    const planItems = screen.getAllByRole('listitem')
+    expect(planItems.map(item => item.textContent)).toEqual([
+      'Inspect the desktop chat width.',
+      'Match the reference task.',
+    ])
     expect(screen.queryByText(/proposed_plan/)).not.toBeInTheDocument()
   })
 
@@ -815,7 +890,9 @@ describe('MessageList', () => {
     )
 
     expect(screen.queryByTestId('assistant-plan-card')).not.toBeInTheDocument()
-    expect(screen.getByText('Wegent 代码质量与前端一致性巡检计划')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Wegent 代码质量与前端一致性巡检计划' })
+    ).toBeInTheDocument()
   })
 
   test('shows thinking after partial streaming assistant content', () => {
@@ -833,9 +910,10 @@ describe('MessageList', () => {
       />
     )
 
-    const content = screen.getByText('我已经完成前面的检查，继续等最后结果。')
+    const content = screen.getByTestId('message-assistant').querySelector('p')
     const thinking = screen.getByTestId('thinking-indicator')
 
+    expect(content).toHaveTextContent('我已经完成前面的检查，继续等最后结果。')
     expect(thinking).toHaveTextContent('正在思考')
     expect(content.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
@@ -1203,6 +1281,7 @@ describe('MessageList', () => {
     )
     tauriCoreMock.invoke = vi.fn()
     tauriCoreMock.isTauri = vi.fn(() => false)
+    openExternalUrlMock.mockClear()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
     URL.revokeObjectURL = originalRevokeObjectUrl
@@ -1402,7 +1481,8 @@ describe('MessageList', () => {
       />
     )
 
-    const finalAnswer = screen.getByText('这是正在流式输出的最终答案。')
+    const finalAnswer = screen.getByTestId('message-assistant').querySelector('p')
+    expect(finalAnswer).toHaveTextContent('这是正在流式输出的最终答案。')
     const processStatus = screen.getByRole('button', { name: /已处理/ })
     const collapseContent = screen.getByTestId('processing-collapse-content')
 
@@ -1464,10 +1544,42 @@ describe('MessageList', () => {
     expect(screen.queryByRole('button', { name: /已处理/ })).not.toBeInTheDocument()
   })
 
+  test('keeps processing expanded for the assistant continuation after runtime guidance', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-after-guidance',
+            role: 'assistant',
+            content: '继续处理。',
+            status: 'done',
+            runtimeGuidanceContinuation: true,
+            blocks: [
+              {
+                id: 'guidance-1',
+                subtaskId: 12,
+                type: 'tool',
+                toolName: 'conversation_guidance',
+                toolInput: { message: '也看看内存' },
+                status: 'done',
+                createdAt: 1770000002000,
+              },
+            ],
+            createdAt: '2026-06-24T08:00:02.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByTestId('processing-collapse-content')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByText('已引导对话')).toBeInTheDocument()
+  })
+
   test('renders final answer web search sources as a Codex-style source chip', async () => {
     const user = userEvent.setup()
-    const openWindowMock = vi.fn()
-    vi.stubGlobal('open', openWindowMock)
     const blocks: ProcessingBlock[] = [
       {
         id: 'web-search-1',
@@ -1532,10 +1644,8 @@ describe('MessageList', () => {
     await user.click(screen.getByTestId('web-search-source-popup-row'))
 
     await waitFor(() =>
-      expect(openWindowMock).toHaveBeenCalledWith(
-        'https://www.weather.com/weather/today/l/Beijing+China',
-        '_blank',
-        'noopener,noreferrer'
+      expect(openExternalUrlMock).toHaveBeenCalledWith(
+        'https://www.weather.com/weather/today/l/Beijing+China'
       )
     )
   })
@@ -1631,7 +1741,7 @@ describe('MessageList', () => {
     expect(screen.getByRole('heading', { level: 3 })).toHaveClass('text-text-primary')
   })
 
-  test('renders assistant markdown links as reference-style inline links', () => {
+  test('routes assistant markdown links through the configured browser target', () => {
     render(
       <MessageList
         messages={[
@@ -1659,7 +1769,35 @@ describe('MessageList', () => {
     expect(link).not.toHaveClass('hover:bg-blue-100')
     expect(link).not.toHaveClass('ring-1')
     expect(link).not.toHaveClass('text-primary')
+    expect(link).not.toHaveAttribute('target')
     expect(screen.getByTestId('assistant-markdown-link-icon')).toBeInTheDocument()
+
+    fireEvent.click(link)
+    expect(openExternalUrlMock).toHaveBeenCalledWith('https://example.com/MessageList.tsx')
+  })
+
+  test('keeps angle-bracket external link destinations as external links', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-angle-bracket-external-link',
+            role: 'assistant',
+            content: '[Wegent](<https://github.com/wecode-ai/Wegent>)',
+            status: 'done',
+            createdAt: '2026-07-13T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByRole('link', { name: 'Wegent' })).toHaveAttribute(
+      'href',
+      'https://github.com/wecode-ai/Wegent'
+    )
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
   })
 
   test('routes assistant file-path links to the workspace file panel', async () => {
@@ -1683,6 +1821,34 @@ describe('MessageList', () => {
     expect(screen.queryByRole('link', { name: /managing-tasks\.md/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('assistant-markdown-link'))
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
+  })
+
+  test('removes angle brackets from assistant file link destinations', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-angle-bracket-file-link',
+            role: 'assistant',
+            content:
+              '[MessageList.tsx](</Users/dev/repo/wework/src/components/chat/MessageList.tsx:18>)',
+            status: 'done',
+            createdAt: '2026-07-13T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/Users/dev/repo/wework/src/components/chat/MessageList.tsx',
+      {
+        lineStart: 18,
+        lineEnd: undefined,
+      }
+    )
   })
 
   test('passes assistant file link line numbers to open-file actions', async () => {
@@ -1958,7 +2124,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByText(/See/)).toBeInTheDocument()
+    expect(screen.getByTestId('message-assistant').querySelector('p')).toHaveTextContent(/See/)
     expect(screen.queryByTestId('codex-reference-list')).not.toBeInTheDocument()
     expect(screen.queryByTestId('codex-memory-citations')).not.toBeInTheDocument()
     expect(screen.queryByTestId('file-changes-card')).not.toBeInTheDocument()
@@ -3740,6 +3906,7 @@ describe('MessageList', () => {
     await user.click(screen.getByTestId('assistant-error-retry'))
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
   })
 
   test('classifies hidden raw failed content before generic task status errors', () => {
@@ -3819,11 +3986,12 @@ describe('MessageList', () => {
       />
     )
 
-    await user.click(screen.getByTestId('assistant-error-retry'))
     await user.click(screen.getByTestId('assistant-error-switch-model-retry'))
+    await user.click(screen.getByTestId('assistant-error-retry'))
 
     expect(onRetryFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
     expect(onSwitchModelForFailedMessage).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }))
+    expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
   })
 
   test('uses backend error type before raw error text when rendering failed messages', () => {
@@ -3929,6 +4097,7 @@ describe('MessageList', () => {
   })
 
   test('renders local skill markdown links in user messages', () => {
+    const onOpenLocalSkillFile = vi.fn()
     render(
       <MessageList
         messages={[
@@ -3936,7 +4105,34 @@ describe('MessageList', () => {
             id: '1',
             role: 'user',
             content:
-              'hello [$env-context](skill:///Users/crystal/.codex/skills/env-context/SKILL.md) context',
+              'hello [$env-context](/Users/crystal/.codex/skills/env-context/SKILL.md) context',
+            status: 'done',
+            createdAt: '2026-05-25T00:00:00.000Z',
+          },
+        ]}
+        onOpenLocalSkillFile={onOpenLocalSkillFile}
+      />
+    )
+
+    const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
+
+    expect(skillLink).toHaveAttribute('href', '/Users/crystal/.codex/skills/env-context/SKILL.md')
+    fireEvent.click(skillLink)
+    expect(onOpenLocalSkillFile).toHaveBeenCalledWith(
+      '/Users/crystal/.codex/skills/env-context/SKILL.md'
+    )
+    expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
+  })
+
+  test('renders plugin markdown links in user messages', () => {
+    render(
+      <MessageList
+        messages={[
+          {
+            id: '1',
+            role: 'user',
+            content:
+              '[$Documents](plugin://documents@openai-primary-runtime) Draft a project memo as a document',
             status: 'done',
             createdAt: '2026-05-25T00:00:00.000Z',
           },
@@ -3944,12 +4140,15 @@ describe('MessageList', () => {
       />
     )
 
-    const skillLink = screen.getByTestId('sent-local-skill-token-env-context')
+    const pluginLink = screen.getByTestId('sent-plugin-token-Documents')
 
-    expect(skillLink).toHaveAttribute(
-      'href',
-      'skill:///Users/crystal/.codex/skills/env-context/SKILL.md'
+    expect(pluginLink).toHaveAttribute('href', 'plugin://documents@openai-primary-runtime')
+    expect(screen.getByTestId('sent-plugin-icon-Documents')).toBeInTheDocument()
+    expect(screen.getByTestId('message-user')).toHaveTextContent(
+      'Documents Draft a project memo as a document'
     )
-    expect(screen.getByTestId('message-user')).toHaveTextContent('hello Env Context context')
+    expect(
+      screen.queryByText(/plugin:\/\/documents@openai-primary-runtime/)
+    ).not.toBeInTheDocument()
   })
 })

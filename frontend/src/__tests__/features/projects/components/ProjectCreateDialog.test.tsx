@@ -25,8 +25,8 @@ const baseDevice: DeviceInfo = {
   slot_used: 0,
   slot_max: 1,
   running_tasks: [],
-  executor_version: 'v1.7.11',
-  latest_version: 'v1.7.11',
+  executor_version: 'v1.7.13',
+  latest_version: 'v1.7.13',
   update_available: false,
   bind_shell: 'claudecode',
 }
@@ -103,17 +103,18 @@ describe('ProjectCreateDialog', () => {
     devicesMock = []
   })
 
-  test('blocks workspace project creation when the selected device version is below v1.7.11', async () => {
+  test('blocks workspace project creation before the directory command RPC was released', async () => {
     devicesMock = [
       {
         ...baseDevice,
-        executor_version: 'v1.7.10',
+        executor_version: 'v1.7.12',
       },
     ]
 
     render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
 
-    expect(await screen.findByText('upgrade required from v1.7.10 to v1.7.11')).toBeInTheDocument()
+    expect(await screen.findByText('upgrade required from v1.7.12 to v1.7.13')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-directory-picker-trigger')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).toBeDisabled()
   })
 
@@ -127,16 +128,16 @@ describe('ProjectCreateDialog', () => {
 
     render(<ProjectCreateDialog open={true} onOpenChange={jest.fn()} mode="workspace" />)
 
-    expect(await screen.findByText('upgrade required from 1.0.0 to v1.7.11')).toBeInTheDocument()
+    expect(await screen.findByText('upgrade required from 1.0.0 to v1.7.13')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-directory-picker-trigger')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'workspaceCreate.submit' })).toBeDisabled()
   })
 
-  test('allows directory selection when the selected device version is v1.7.11 or newer', async () => {
+  test('allows directory selection when the selected device version is v1.7.13 or newer', async () => {
     devicesMock = [
       {
         ...baseDevice,
-        executor_version: 'v1.7.11',
+        executor_version: 'v1.7.13',
       },
     ]
 
@@ -198,7 +199,7 @@ describe('ProjectCreateDialog', () => {
     devicesMock = [
       {
         ...baseDevice,
-        executor_version: 'v1.7.11',
+        executor_version: 'v1.7.13',
       },
     ]
     ;(deviceApis.executeCommand as jest.Mock).mockImplementation((_deviceId, request) => {
@@ -261,7 +262,7 @@ describe('ProjectCreateDialog', () => {
         device_id: 'cloud-device',
         name: 'Cloud Device',
         device_type: 'cloud',
-        executor_version: 'v1.7.11',
+        executor_version: 'v1.7.13',
       },
     ]
     ;(deviceApis.executeCommand as jest.Mock).mockResolvedValue({
@@ -319,7 +320,7 @@ describe('ProjectCreateDialog', () => {
         device_id: 'remote-device',
         name: 'Remote Device',
         device_type: 'remote',
-        executor_version: 'v1.7.11',
+        executor_version: 'v1.7.13',
       },
     ]
     ;(deviceApis.executeCommand as jest.Mock).mockImplementation((_deviceId, request) => {
@@ -377,7 +378,7 @@ describe('ProjectCreateDialog', () => {
     devicesMock = [
       {
         ...baseDevice,
-        executor_version: 'v1.7.11',
+        executor_version: 'v1.7.13',
       },
     ]
     ;(deviceApis.executeCommand as jest.Mock).mockImplementation((_deviceId, request) => {

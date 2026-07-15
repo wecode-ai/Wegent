@@ -18,6 +18,7 @@ import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
 const BOTTOM_THRESHOLD = 48
+const SCROLLED_TO_BOTTOM_THRESHOLD = 8
 const STABLE_SCROLL_DELAYS = [0, 50]
 const MAX_SCROLL_SNAPSHOTS = 50
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
@@ -53,6 +54,7 @@ interface ScrollableMessageAreaProps {
   stickyFooterClassName?: string
   scrollButtonClassName?: string
   scrollTestId?: string
+  externalScrollRef?: RefObject<HTMLDivElement | null>
   conversationKey?: string | number | null
   devices?: DeviceInfo[]
   onRetryFailedMessage?: (message: WorkbenchMessage) => void
@@ -74,6 +76,7 @@ interface ScrollableMessageAreaProps {
   }) => void
   fileChangesDiffPreviewDisabledSubtaskId?: string | null
   onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenLocalSkillFile?: (path: string) => void
   onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
   onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
@@ -86,6 +89,8 @@ interface ScrollableMessageAreaProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   autoScrollSuspended?: boolean
   onLoadMoreBefore?: () => Promise<void> | void
+  onLoadFullTranscript?: () => Promise<void> | void
+  loadingFullTranscript?: boolean
   onLoadTurnNavigationItem?: (item: RuntimeTurnNavigationItem) => Promise<void> | void
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
 }
@@ -114,6 +119,7 @@ function areScrollableMessageAreaPropsEqual(
     previous.stickyFooterClassName !== next.stickyFooterClassName ? 'stickyFooterClassName' : null,
     previous.scrollButtonClassName !== next.scrollButtonClassName ? 'scrollButtonClassName' : null,
     previous.scrollTestId !== next.scrollTestId ? 'scrollTestId' : null,
+    previous.externalScrollRef !== next.externalScrollRef ? 'externalScrollRef' : null,
     previous.conversationKey !== next.conversationKey ? 'conversationKey' : null,
     previous.devices !== next.devices ? 'devices' : null,
     previous.onRetryFailedMessage !== next.onRetryFailedMessage ? 'onRetryFailedMessage' : null,
@@ -130,6 +136,7 @@ function areScrollableMessageAreaPropsEqual(
       ? 'fileChangesDiffPreviewDisabledSubtaskId'
       : null,
     previous.onOpenWorkspaceFile !== next.onOpenWorkspaceFile ? 'onOpenWorkspaceFile' : null,
+    previous.onOpenLocalSkillFile !== next.onOpenLocalSkillFile ? 'onOpenLocalSkillFile' : null,
     previous.onRequestUserInputSubmit !== next.onRequestUserInputSubmit
       ? 'onRequestUserInputSubmit'
       : null,
@@ -149,6 +156,8 @@ function areScrollableMessageAreaPropsEqual(
       : null,
     previous.autoScrollSuspended !== next.autoScrollSuspended ? 'autoScrollSuspended' : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
+    previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
+    previous.loadingFullTranscript !== next.loadingFullTranscript ? 'loadingFullTranscript' : null,
     previous.onLoadTurnNavigationItem !== next.onLoadTurnNavigationItem
       ? 'onLoadTurnNavigationItem'
       : null,
@@ -172,6 +181,7 @@ function ScrollableMessagePaneContent({
   stickyFooterClassName,
   scrollButtonClassName,
   scrollTestId = 'chat-message-scroll-area',
+  externalScrollRef,
   conversationKey,
   devices,
   onRetryFailedMessage,
@@ -181,6 +191,7 @@ function ScrollableMessagePaneContent({
   onOpenFileChangesReview,
   fileChangesDiffPreviewDisabledSubtaskId,
   onOpenWorkspaceFile,
+  onOpenLocalSkillFile,
   onRequestUserInputSubmit,
   onRequestUserInputIgnore,
   onOpenAssistantPlan,
@@ -190,11 +201,15 @@ function ScrollableMessagePaneContent({
   hiddenRequestUserInputIds,
   autoScrollSuspended = false,
   onLoadMoreBefore,
+  onLoadFullTranscript,
+  loadingFullTranscript = false,
   onLoadTurnNavigationItem,
   onLoadTranscriptGap,
 }: ScrollableMessageAreaProps) {
   const { t } = useTranslation('common')
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const internalScrollRef = useRef<HTMLDivElement>(null)
+  const scrollRef = externalScrollRef ?? internalScrollRef
+  const activeScrollRefRef = useRef(scrollRef)
   const contentRef = useRef<HTMLDivElement>(null)
   const stickyFooterRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -244,6 +259,10 @@ function ScrollableMessagePaneContent({
     () => [currentScrollKey ?? 'none', messageScrollSignature].join(':'),
     [currentScrollKey, messageScrollSignature]
   )
+
+  useLayoutEffect(() => {
+    activeScrollRefRef.current = scrollRef
+  }, [scrollRef])
 
   const clearScheduledScrolls = useCallback(() => {
     scrollTimersRef.current.forEach(timer => clearTimeout(timer))
@@ -314,12 +333,12 @@ function ScrollableMessagePaneContent({
         />
       )
     },
-    [loadTranscriptGap, loadingTranscriptGapKey]
+    [loadTranscriptGap, loadingTranscriptGapKey, scrollRef]
   )
 
   const saveCurrentScrollPosition = useCallback(
     (scrollTop?: number) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       const content = contentRef.current
       if (!element || currentScrollKey === null || messages.length === 0) return
       setConversationScrollSnapshot(
@@ -332,7 +351,7 @@ function ScrollableMessagePaneContent({
 
   const updateScrollState = useCallback(
     (options: { forceSave?: boolean; skipSave?: boolean } = {}) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       if (!element) return
 
       if (messages.length === 0) {
@@ -344,7 +363,7 @@ function ScrollableMessagePaneContent({
       const overflow = element.scrollHeight > element.clientHeight + 8
       const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
-      const isScrolledToBottom = distanceToBottom <= 1
+      const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
       isAtBottomRef.current = isAtBottom
       if (isScrolledToBottom) {
         userScrollPausedAutoFollowRef.current = false
@@ -367,7 +386,7 @@ function ScrollableMessagePaneContent({
 
   const setScrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       if (!element) return
 
       if (typeof element.scrollTo === 'function') {
@@ -390,7 +409,7 @@ function ScrollableMessagePaneContent({
 
   const restoreSavedScrollPosition = useCallback(
     (key: string, options: { clearScheduled?: boolean } = {}) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       const content = contentRef.current
       const savedSnapshot = conversationScrollSnapshots.get(key)
       if (!element || !savedSnapshot) return
@@ -416,7 +435,7 @@ function ScrollableMessagePaneContent({
       const overflow = element.scrollHeight > element.clientHeight + 8
       const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
-      const isScrolledToBottom = distanceToBottom <= 1
+      const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
       isAtBottomRef.current = isAtBottom
       userScrollPausedAutoFollowRef.current = !isScrolledToBottom
       setShowScrollButton(overflow && !isAtBottom)
@@ -457,7 +476,7 @@ function ScrollableMessagePaneContent({
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
-      const element = scrollRef.current
+      const element = activeScrollRefRef.current.current
       if (!element) return
 
       if (scrollFrameRef.current !== null) {
@@ -649,7 +668,7 @@ function ScrollableMessagePaneContent({
         </div>
       )}
       <div
-        ref={scrollRef}
+        ref={internalScrollRef}
         data-testid={scrollTestId}
         className={cn(
           'h-full overflow-y-auto',
@@ -704,7 +723,7 @@ function ScrollableMessagePaneContent({
                 <p className="mt-2 max-w-sm text-xs leading-5 text-text-muted">
                   {t(
                     'workbench.empty_conversation_description',
-                    '在下方输入问题、粘贴上下文或添加附件，Codex 会在这里展示回复。'
+                    '在下方输入问题、粘贴上下文或添加附件，WeWork 会在这里展示回复。'
                   )}
                 </p>
               </div>
@@ -740,11 +759,14 @@ function ScrollableMessagePaneContent({
                 onOpenFileChangesReview={onOpenFileChangesReview}
                 fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
                 onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onOpenLocalSkillFile={onOpenLocalSkillFile}
                 onRequestUserInputSubmit={onRequestUserInputSubmit}
                 onRequestUserInputIgnore={onRequestUserInputIgnore}
                 onOpenAssistantPlan={onOpenAssistantPlan}
                 onEditLastUserMessage={onEditLastUserMessage}
                 canEditLastUserMessage={canEditLastUserMessage}
+                onLoadFullTranscript={onLoadFullTranscript}
+                loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}

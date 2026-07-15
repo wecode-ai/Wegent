@@ -12,6 +12,7 @@ import {
   mergeRuntimeWorkLists as mergeRuntimeWorkPair,
 } from '@/features/workbench/workbenchCloudStatus'
 import {
+  supportsResponsesApi,
   withModelExecutionOverride,
   type HybridModelSource,
 } from '@/features/cloud-connection/modelExecution'
@@ -47,7 +48,6 @@ import type {
 const LOCAL_DEVICE_ID = 'local-device'
 
 export interface HybridWorkbenchServicesOptions {
-  backendUrl: string
   apiBaseUrl: string
   socketBaseUrl: string
   socketPath: string
@@ -121,6 +121,8 @@ function annotateHybridModel(
       source,
       modelName: model.name,
       modelType: model.type,
+      modelNamespace: model.namespace,
+      resourceUserId: model.resourceUserId,
     }
   )
 }
@@ -130,7 +132,13 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
     if (!isRuntimeCodexModel(model)) {
       return withModelExecutionOverride(
         { ...model, name: `local:${model.type}:${model.name}` },
-        { source: 'local', modelName: model.name, modelType: model.type }
+        {
+          source: 'local',
+          modelName: model.name,
+          modelType: model.type,
+          modelNamespace: model.namespace,
+          resourceUserId: model.resourceUserId,
+        }
       )
     }
 
@@ -145,12 +153,14 @@ function annotateLocalModels(models: UnifiedModel[]): UnifiedModel[] {
 }
 
 function annotateCloudModels(models: UnifiedModel[]): UnifiedModel[] {
-  return models.map(model => {
+  return models.filter(supportsResponsesApi).map(model => {
     if (!isRuntimeCodexModel(model)) {
       return withModelExecutionOverride(model, {
         source: 'cloud',
         modelName: model.name,
         modelType: model.type,
+        modelNamespace: model.namespace,
+        resourceUserId: model.resourceUserId,
       })
     }
 
@@ -295,7 +305,6 @@ function mergeBulkResponses(
 export function createHybridWorkbenchServices(
   options: HybridWorkbenchServicesOptions
 ): WorkbenchServices {
-  const localServices = createLocalAppServices()
   const cloudServices = createBackendWorkbenchServices({
     apiBaseUrl: options.apiBaseUrl,
     socketBaseUrl: options.socketBaseUrl,
@@ -303,6 +312,12 @@ export function createHybridWorkbenchServices(
     getToken: () => options.token,
     redirectOnUnauthorized: false,
     transportKind: 'backend-relay',
+  })
+  const localServices = createLocalAppServices({
+    cloudModelGateway: {
+      baseUrl: `${options.apiBaseUrl.replace(/\/+$/, '')}/runtime-work/llm-responses-proxy`,
+      apiKey: options.token,
+    },
   })
   const cloudRuntimeIpc = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
@@ -437,6 +452,20 @@ export function createHybridWorkbenchServices(
     readWorkspaceTextFile(deviceId, filePath) {
       return deviceApi(deviceId).readWorkspaceTextFile(deviceId, filePath)
     },
+    readWorkspaceFileChunk(deviceId, filePath, offset) {
+      return deviceApi(deviceId).readWorkspaceFileChunk(deviceId, filePath, offset)
+    },
+    writeWorkspaceTextFile(deviceId, filePath, content, expectedRevision) {
+      if (!isLocalDeviceId(deviceId) || !localServices.deviceApi.writeWorkspaceTextFile) {
+        throw new Error('Workspace file editing is only available for local devices')
+      }
+      return localServices.deviceApi.writeWorkspaceTextFile(
+        deviceId,
+        filePath,
+        content,
+        expectedRevision
+      )
+    },
     createDockerRemoteDeviceCommand(data) {
       if (!cloudServices.deviceApi.createDockerRemoteDeviceCommand) {
         throw new Error('Remote device startup command is unavailable')
@@ -499,6 +528,9 @@ export function createHybridWorkbenchServices(
         data.limit
       )
     },
+    searchRuntimeWorkspace(data) {
+      return runtimeApi(data.deviceId).searchRuntimeWorkspace(data)
+    },
     revertRuntimeFileChanges(data: RuntimeFileChangesRevertRequest) {
       return routeByAddress(data.address).revertRuntimeFileChanges(data)
     },
@@ -531,6 +563,39 @@ export function createHybridWorkbenchServices(
     },
     removeRuntimeWorkspace(data: RuntimeWorkspaceRemoveRequest) {
       return runtimeApi(data.deviceId).removeRuntimeWorkspace(data)
+    },
+    reorderRuntimeProjects(data) {
+      return runtimeApi(data.deviceId).reorderRuntimeProjects(data)
+    },
+    setRuntimeProjectPinned(data) {
+      return runtimeApi(data.deviceId).setRuntimeProjectPinned(data)
+    },
+    setRuntimeProjectAppearance(data) {
+      return runtimeApi(data.deviceId).setRuntimeProjectAppearance(data)
+    },
+    reorderRuntimeProjectTasks(data) {
+      return runtimeApi(data.deviceId).reorderRuntimeProjectTasks(data)
+    },
+    setRuntimeTaskPinned(data) {
+      return runtimeApi(data.deviceId).setRuntimeTaskPinned(data)
+    },
+    getWorktreeSettings(data) {
+      return runtimeApi(data.deviceId).getWorktreeSettings(data)
+    },
+    updateWorktreeSettings(data) {
+      return runtimeApi(data.deviceId).updateWorktreeSettings(data)
+    },
+    listWorktrees(data) {
+      return runtimeApi(data.deviceId).listWorktrees(data)
+    },
+    prepareWorktree(data) {
+      return runtimeApi(data.deviceId).prepareWorktree(data)
+    },
+    deleteWorktree(data) {
+      return runtimeApi(data.deviceId).deleteWorktree(data)
+    },
+    restoreWorktree(data) {
+      return runtimeApi(data.deviceId).restoreWorktree(data)
     },
     bindRuntimeTaskImSessions(data) {
       return routeByAddress(data.address).bindRuntimeTaskImSessions(data)

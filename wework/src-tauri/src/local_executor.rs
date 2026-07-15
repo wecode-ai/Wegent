@@ -1,16 +1,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-#[cfg(unix)]
-use std::os::unix::fs::FileTypeExt;
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
+use std::net::{SocketAddr, TcpStream};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,10 +21,12 @@ use crate::process_environment;
 const LOCAL_EXECUTOR_EVENT: &str = "local-executor:event";
 const LOCAL_EXECUTOR_SIDECAR: &str = "wegent-executor";
 const LOCAL_EXECUTOR_SIDECAR_ENV: &str = "WEWORK_EXECUTOR_SIDECAR";
-const LOCAL_EXECUTOR_SOCKET_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_SOCKET";
+const LOCAL_EXECUTOR_ADDR_ENV: &str = "WEGENT_EXECUTOR_APP_IPC_ADDR";
 const LOCAL_EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const LOCAL_EXECUTOR_LOG_DIR_ENV: &str = "WEGENT_EXECUTOR_LOG_DIR";
 const LOCAL_EXECUTOR_LOG_FILE_ENV: &str = "WEGENT_EXECUTOR_LOG_FILE";
+const CODEX_HOME_ENV: &str = "CODEX_HOME";
+const WEGENT_CODEX_HOME_ENV: &str = "WEGENT_CODEX_HOME";
 const FILE_EDIT_HOOK_COMMAND_ENV: &str = "WEGENT_FILE_EDIT_HOOK_COMMAND";
 const FILE_EDIT_LOG_ENDPOINT_ENV: &str = "WEWORK_FILE_EDIT_LOG_ENDPOINT";
 const CODEX_BINARY_PATH_ENV: &str = "CODEX_BINARY_PATH";
@@ -34,25 +34,43 @@ const CODEX_BIN_ENV: &str = "CODEX_BIN";
 const CODEX_MANAGED_PACKAGE_ROOT_ENV: &str = "CODEX_MANAGED_PACKAGE_ROOT";
 const DEFAULT_FILE_EDIT_LOG_ENDPOINT: &str = "http://127.0.0.1:3456/api/file-edit-log";
 const LOCAL_EXECUTOR_DEVICE_ID: &str = "local-device";
-const LOCAL_EXECUTOR_SOCKET_NAME: &str = "app-ipc.sock";
+const LOCAL_EXECUTOR_ADDR_FILE_NAME: &str = "app-ipc.addr";
+const LOCAL_EXECUTOR_DEFAULT_ADDR: &str = "127.0.0.1:0";
 const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
 const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
 const LOCAL_EXECUTOR_CONNECT_RETRY_MS: u64 = 250;
-const LOCAL_EXECUTOR_CONNECT_TIMEOUT_SECS: u64 = 60;
 const LOCAL_EXECUTOR_READY_TIMEOUT_SECS: u64 = 10;
 const LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS: u64 = 500;
 const LOCAL_EXECUTOR_PROCESS_GROUP_POLL_MS: u64 = 20;
 const LOCAL_EXECUTOR_REQUEST_TIMEOUT_SECONDS: u64 = 60;
+const LOCAL_EXECUTOR_KEEPALIVE_INTERVAL_SECS: u64 = 10;
 
 type PendingSender = mpsc::Sender<Result<Value, String>>;
 type SharedExecutorInner = Arc<Mutex<LocalExecutorInner>>;
 
 pub struct LocalExecutorState {
     inner: SharedExecutorInner,
-    next_id: AtomicU64,
-    start_lock: AsyncMutex<()>,
+    next_id: Arc<AtomicU64>,
+    start_lock: Arc<AsyncMutex<()>>,
+    keepalive: Arc<LocalExecutorKeepaliveState>,
+}
+
+struct LocalExecutorKeepaliveState {
+    enabled: AtomicBool,
+    worker_running: AtomicBool,
+}
+
+impl Clone for LocalExecutorState {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            next_id: self.next_id.clone(),
+            start_lock: self.start_lock.clone(),
+            keepalive: self.keepalive.clone(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -68,8 +86,7 @@ struct LocalExecutorInner {
     version: Option<String>,
     error: Option<String>,
     generation: u64,
-    #[cfg(unix)]
-    stream: Option<UnixStream>,
+    stream: Option<TcpStream>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -265,13 +282,18 @@ impl Default for LocalExecutorState {
     fn default() -> Self {
         Self {
             inner: Arc::new(Mutex::new(LocalExecutorInner::default())),
-            next_id: AtomicU64::new(1),
-            start_lock: AsyncMutex::new(()),
+            next_id: Arc::new(AtomicU64::new(1)),
+            start_lock: Arc::new(AsyncMutex::new(())),
+            keepalive: Arc::new(LocalExecutorKeepaliveState {
+                enabled: AtomicBool::new(false),
+                worker_running: AtomicBool::new(false),
+            }),
         }
     }
 }
 
 pub fn shutdown_local_executor(state: &LocalExecutorState) {
+    state.keepalive.enabled.store(false, Ordering::SeqCst);
     let child = state.inner.lock().ok().and_then(|mut inner| {
         inner.running = false;
         inner.ready = false;
@@ -358,6 +380,52 @@ pub struct LocalExecutorLog {
     status: LocalExecutorStatus,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexHomeMigrationStatus {
+    wework_codex_home: String,
+    native_codex_home: String,
+    wework_codex_home_exists: bool,
+    native_codex_home_exists: bool,
+    should_prompt_migration: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexHomeInitializeOptions {
+    migrate_native_home: bool,
+    remote_apps_enabled: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalContentImportOptions {
+    source: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalContentImportResult {
+    source: String,
+    source_path: String,
+    destination_path: String,
+    imported_entries: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalConfigPatch {
+    remote_apps_enabled: Option<bool>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CodexLocalConfig {
+    codex_home: String,
+    config_path: String,
+    remote_apps_enabled: bool,
+}
+
 struct LocalExecutorLogTail {
     path: String,
     content: String,
@@ -371,10 +439,9 @@ struct LocalExecutorSocketDebug {
     file_type: String,
 }
 
-#[cfg(unix)]
 struct PreparedExecutorStream {
-    reader: BufReader<UnixStream>,
-    writer: UnixStream,
+    reader: BufReader<TcpStream>,
+    writer: TcpStream,
     ready_line: String,
 }
 
@@ -415,15 +482,12 @@ fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
     Ok(home)
 }
 
-fn app_ipc_socket_path() -> Result<PathBuf, String> {
-    if let Ok(path) = std::env::var(LOCAL_EXECUTOR_SOCKET_ENV) {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            return Ok(PathBuf::from(trimmed));
-        }
+fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) {
+        return local_executor_runtime_dir_path();
     }
 
-    Ok(local_executor_runtime_dir_path()?.join(LOCAL_EXECUTOR_SOCKET_NAME))
+    local_executor_home_path()
 }
 
 fn local_executor_home_path() -> Result<PathBuf, String> {
@@ -434,8 +498,63 @@ fn local_executor_home_path() -> Result<PathBuf, String> {
         }
     }
 
-    let home = std::env::var("HOME").map_err(|_| "HOME is not set".to_string())?;
-    Ok(PathBuf::from(home).join(".wegent-executor"))
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    Ok(home.join(".wegent-executor"))
+}
+
+fn app_ipc_addr_file_path() -> Result<PathBuf, String> {
+    Ok(local_executor_runtime_home_path()?.join(LOCAL_EXECUTOR_ADDR_FILE_NAME))
+}
+
+fn resolve_app_ipc_addr() -> Result<SocketAddr, String> {
+    if let Ok(value) = std::env::var(LOCAL_EXECUTOR_ADDR_ENV) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            if let Ok(addr) = trimmed.parse::<SocketAddr>() {
+                return Ok(addr);
+            }
+            if let Ok(port) = trimmed.parse::<u16>() {
+                if let Ok(addr) = format!("127.0.0.1:{port}").parse::<SocketAddr>() {
+                    return Ok(addr);
+                }
+            }
+            return Err(format!(
+                "{LOCAL_EXECUTOR_ADDR_ENV} is not a valid socket address: {trimmed}"
+            ));
+        }
+    }
+
+    if let Ok(path) = app_ipc_addr_file_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(addr) = content.trim().parse::<SocketAddr>() {
+                return Ok(addr);
+            }
+        }
+    }
+
+    LOCAL_EXECUTOR_DEFAULT_ADDR
+        .parse()
+        .map_err(|error| format!("default app IPC address is invalid: {error}"))
+}
+
+fn wait_for_app_ipc_addr(timeout: Duration) -> Result<SocketAddr, String> {
+    let deadline = Instant::now() + timeout;
+    let path = app_ipc_addr_file_path()?;
+    while Instant::now() < deadline {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let trimmed = content.trim();
+            if !trimmed.is_empty() {
+                if let Ok(addr) = trimmed.parse::<SocketAddr>() {
+                    return Ok(addr);
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(LOCAL_EXECUTOR_CONNECT_RETRY_MS));
+    }
+    Err(format!(
+        "Timed out waiting for app IPC address file: {}",
+        path.display()
+    ))
 }
 
 fn local_executor_log_path() -> Result<PathBuf, String> {
@@ -523,7 +642,7 @@ fn limit_log_lines(content: &str, max_lines: usize) -> (String, bool, usize) {
 }
 
 fn local_executor_socket_debug() -> LocalExecutorSocketDebug {
-    let path = match app_ipc_socket_path() {
+    let path = match app_ipc_addr_file_path() {
         Ok(path) => path,
         Err(error) => {
             return LocalExecutorSocketDebug {
@@ -554,12 +673,6 @@ fn local_executor_socket_debug() -> LocalExecutorSocketDebug {
 }
 
 fn file_type_label(file_type: std::fs::FileType) -> &'static str {
-    #[cfg(unix)]
-    {
-        if file_type.is_socket() {
-            return "socket";
-        }
-    }
     if file_type.is_file() {
         "file"
     } else if file_type.is_dir() {
@@ -624,39 +737,47 @@ fn local_executor_processes() -> Vec<LocalExecutorProcessInfo> {
 }
 
 #[cfg(unix)]
-fn remove_stale_app_ipc_socket_at(path: &Path) -> Result<(), String> {
+fn remove_stale_app_ipc_addr_file_at(path: &Path) -> Result<(), String> {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return Ok(());
+    };
+    if file_name != LOCAL_EXECUTOR_ADDR_FILE_NAME {
+        return Ok(());
+    }
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_socket() => {
-            std::fs::remove_file(path).map_err(|error| {
-                format!("Failed to remove stale local executor socket {path:?}: {error}")
-            })
-        }
+        Ok(metadata) if metadata.is_file() => std::fs::remove_file(path).map_err(|error| {
+            format!("Failed to remove stale local executor IPC address file {path:?}: {error}")
+        }),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
-            "Failed to inspect local executor socket {path:?}: {error}"
+            "Failed to inspect local executor IPC address file {path:?}: {error}"
         )),
     }
 }
 
 #[cfg(not(unix))]
-fn remove_stale_app_ipc_socket_at(_path: &Path) -> Result<(), String> {
+fn remove_stale_app_ipc_addr_file_at(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn socket_env_assignment(socket_path: &Path) -> String {
-    format!("{LOCAL_EXECUTOR_SOCKET_ENV}={}", socket_path.display())
+fn addr_env_assignment(addr: &str) -> String {
+    format!("{LOCAL_EXECUTOR_ADDR_ENV}={addr}")
 }
 
-fn process_text_uses_socket(process_text: &str, socket_path: &Path) -> bool {
-    process_text.contains(&socket_env_assignment(socket_path))
+fn process_text_uses_addr_file(process_text: &str, addr_file_path: &Path) -> bool {
+    process_text.contains(&addr_env_assignment(&addr_file_path.display().to_string()))
+        || process_text.contains(&format!(
+            "{LOCAL_EXECUTOR_HOME_ENV}={}",
+            addr_file_path.parent().unwrap_or(Path::new("")).display()
+        ))
 }
 
 #[cfg(unix)]
-fn local_executor_process_uses_socket(process_id: u32, socket_path: &Path) -> bool {
+fn local_executor_process_uses_addr_file(process_id: u32, addr_file_path: &Path) -> bool {
     if let Ok(environ) = std::fs::read(format!("/proc/{process_id}/environ")) {
         let process_text = String::from_utf8_lossy(&environ).replace('\0', " ");
-        if process_text_uses_socket(&process_text, socket_path) {
+        if process_text_uses_addr_file(&process_text, addr_file_path) {
             return true;
         }
     }
@@ -670,23 +791,23 @@ fn local_executor_process_uses_socket(process_id: u32, socket_path: &Path) -> bo
     if !output.status.success() {
         return false;
     }
-    process_text_uses_socket(&String::from_utf8_lossy(&output.stdout), socket_path)
+    process_text_uses_addr_file(&String::from_utf8_lossy(&output.stdout), addr_file_path)
 }
 
 #[cfg(not(unix))]
-fn local_executor_process_uses_socket(_process_id: u32, _socket_path: &Path) -> bool {
+fn local_executor_process_uses_addr_file(_process_id: u32, _addr_file_path: &Path) -> bool {
     false
 }
 
 #[cfg(unix)]
 fn terminate_stale_local_executor_processes(
     processes: &[LocalExecutorProcessInfo],
-    socket_path: &Path,
+    addr_file_path: &Path,
 ) -> Result<(), String> {
     for process_id in executor_process_pids(processes) {
-        if !local_executor_process_uses_socket(process_id, socket_path) {
+        if !local_executor_process_uses_addr_file(process_id, addr_file_path) {
             log::info!(
-                "Skipping local executor process with a different app socket: pid={process_id}"
+                "Skipping local executor process with a different app IPC address: pid={process_id}"
             );
             continue;
         }
@@ -699,7 +820,7 @@ fn terminate_stale_local_executor_processes(
 #[cfg(not(unix))]
 fn terminate_stale_local_executor_processes(
     _processes: &[LocalExecutorProcessInfo],
-    _socket_path: &Path,
+    _addr_file_path: &Path,
 ) -> Result<(), String> {
     Ok(())
 }
@@ -709,14 +830,14 @@ fn cleanup_stale_local_executor_processes() -> Result<(), String> {
         return Ok(());
     }
 
-    let socket_path = app_ipc_socket_path()?;
+    let addr_file_path = app_ipc_addr_file_path()?;
     let processes = local_executor_processes();
     if processes.is_empty() {
-        return remove_stale_app_ipc_socket_at(&socket_path);
+        return remove_stale_app_ipc_addr_file_at(&addr_file_path);
     }
 
-    terminate_stale_local_executor_processes(&processes, &socket_path)?;
-    remove_stale_app_ipc_socket_at(&socket_path)
+    terminate_stale_local_executor_processes(&processes, &addr_file_path)?;
+    remove_stale_app_ipc_addr_file_at(&addr_file_path)
 }
 
 fn cleanup_stale_local_executor_once(state: &LocalExecutorState) -> Result<(), String> {
@@ -783,22 +904,11 @@ fn configured_sidecar_path() -> Option<PathBuf> {
 }
 
 fn has_connected_stream(inner: &LocalExecutorInner) -> bool {
-    #[cfg(unix)]
-    {
-        inner.stream.is_some()
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = inner;
-        false
-    }
+    inner.stream.is_some()
 }
 
 fn clear_connected_stream(inner: &mut LocalExecutorInner) {
-    #[cfg(unix)]
-    {
-        inner.stream = None;
-    }
+    inner.stream = None;
 }
 
 fn status_from_inner(inner: &LocalExecutorInner) -> LocalExecutorStatus {
@@ -847,12 +957,16 @@ fn configured_file_edit_hook_command() -> String {
 }
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
-    let executor_home = path_or_error(local_executor_home_path());
-    let socket_path = path_or_error(app_ipc_socket_path());
+    let executor_home = path_or_error(local_executor_runtime_home_path());
+    let codex_home = path_or_error(wework_codex_home_path(&executor_home));
     let log_dir = path_or_error(local_executor_log_dir_path());
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
-        (LOCAL_EXECUTOR_SOCKET_ENV.to_string(), socket_path),
+        (CODEX_HOME_ENV.to_string(), codex_home),
+        (
+            LOCAL_EXECUTOR_ADDR_ENV.to_string(),
+            LOCAL_EXECUTOR_DEFAULT_ADDR.to_string(),
+        ),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (
             "PATH".to_string(),
@@ -896,6 +1010,289 @@ fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String
         ("WEGENT_APP_IPC_DEVICE_ID".to_string(), app_ipc_device_id),
     ]);
     envs
+}
+
+fn wework_codex_home_path(executor_home: &str) -> Result<PathBuf, String> {
+    if let Ok(path) = std::env::var(WEGENT_CODEX_HOME_ENV) {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed));
+        }
+    }
+    Ok(PathBuf::from(executor_home).join("codex"))
+}
+
+fn native_codex_home_path() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    Ok(home.join(".codex"))
+}
+
+fn codex_home_migration_status() -> Result<CodexHomeMigrationStatus, String> {
+    let executor_home = local_executor_home_path()?;
+    let wework_codex_home = wework_codex_home_path(&executor_home.display().to_string())?;
+    let wework_codex_config = wework_codex_home.join("config.toml");
+    let native_codex_home = native_codex_home_path()?;
+    let wework_codex_home_exists = wework_codex_home.exists();
+    let wework_codex_config_exists = wework_codex_config.exists();
+    let native_codex_home_exists = native_codex_home.exists();
+    Ok(CodexHomeMigrationStatus {
+        wework_codex_home: wework_codex_home.display().to_string(),
+        native_codex_home: native_codex_home.display().to_string(),
+        wework_codex_home_exists,
+        native_codex_home_exists,
+        should_prompt_migration: !wework_codex_config_exists && native_codex_home_exists,
+    })
+}
+
+fn wework_codex_config_path() -> Result<(PathBuf, PathBuf), String> {
+    let executor_home = local_executor_home_path()?;
+    let codex_home = wework_codex_home_path(&executor_home.display().to_string())?;
+    let config_path = codex_home.join("config.toml");
+    Ok((codex_home, config_path))
+}
+
+fn read_remote_apps_enabled_from_config(content: &str) -> bool {
+    let mut in_features = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_features = trimmed == "[features]";
+            continue;
+        }
+        if !in_features || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some(rest) = trimmed.strip_prefix("apps") else {
+            continue;
+        };
+        if !rest.trim_start().starts_with('=') {
+            continue;
+        }
+        return rest
+            .trim_start()
+            .trim_start_matches('=')
+            .trim()
+            .split('#')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            == "true";
+    }
+    false
+}
+
+fn read_codex_local_config() -> Result<CodexLocalConfig, String> {
+    let (codex_home, config_path) = wework_codex_config_path()?;
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    Ok(CodexLocalConfig {
+        codex_home: codex_home.display().to_string(),
+        config_path: config_path.display().to_string(),
+        remote_apps_enabled: read_remote_apps_enabled_from_config(&content),
+    })
+}
+
+fn set_remote_apps_enabled_in_config(content: &str, enabled: bool) -> String {
+    let apps_line = format!("apps = {enabled}");
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let mut features_start = None;
+    let mut features_end = lines.len();
+
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if features_start.is_some() {
+                features_end = index;
+                break;
+            }
+            if trimmed == "[features]" {
+                features_start = Some(index);
+            }
+        }
+    }
+
+    if let Some(start) = features_start {
+        for line in lines.iter_mut().take(features_end).skip(start + 1) {
+            let trimmed = line.trim_start();
+            let Some(rest) = trimmed.strip_prefix("apps") else {
+                continue;
+            };
+            if rest.trim_start().starts_with('=') {
+                let indent_len = line.len() - trimmed.len();
+                *line = format!("{}{}", " ".repeat(indent_len), apps_line);
+                return format!("{}\n", lines.join("\n"));
+            }
+        }
+        lines.insert(start + 1, apps_line);
+        return format!("{}\n", lines.join("\n"));
+    }
+
+    let mut next = content.trim_end().to_string();
+    if !next.is_empty() {
+        next.push_str("\n\n");
+    }
+    next.push_str("[features]\n");
+    next.push_str(&apps_line);
+    next.push('\n');
+    next
+}
+
+fn write_codex_remote_apps_enabled(enabled: bool) -> Result<CodexLocalConfig, String> {
+    let (codex_home, config_path) = wework_codex_config_path()?;
+    fs::create_dir_all(&codex_home)
+        .map_err(|error| format!("failed to create {}: {error}", codex_home.display()))?;
+    let content = fs::read_to_string(&config_path).unwrap_or_default();
+    let next_content = set_remote_apps_enabled_in_config(&content, enabled);
+    fs::write(&config_path, next_content)
+        .map_err(|error| format!("failed to write {}: {error}", config_path.display()))?;
+    read_codex_local_config()
+}
+
+fn copy_codex_initialization_entry(source: &Path, destination: &Path) -> Result<(), String> {
+    if !source.exists() {
+        return Ok(());
+    }
+    let metadata = fs::symlink_metadata(source)
+        .map_err(|error| format!("failed to inspect {}: {error}", source.display()))?;
+    if metadata.is_dir() {
+        copy_directory_recursive(source, destination)
+    } else if metadata.is_file() {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+        }
+        fs::copy(source, destination).map_err(|error| {
+            format!(
+                "failed to copy {} to {}: {error}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+        Ok(())
+    } else {
+        Ok(())
+    }
+}
+
+fn copy_codex_initialization_files(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
+
+    let entries = [
+        "config.toml",
+        "auth.json",
+        "AGENTS.md",
+        "models_cache.json",
+        "plugins",
+        "skills",
+        "cache",
+        "vendor_imports",
+    ];
+    for entry in entries {
+        let source_path = source.join(entry);
+        let destination_path = destination.join(entry);
+        log::info!(
+            "Codex home initialization copying entry: source={}, destination={}",
+            source_path.display(),
+            destination_path.display()
+        );
+        copy_codex_initialization_entry(&source_path, &destination_path)?;
+    }
+    Ok(())
+}
+
+fn import_external_content(source: &str) -> Result<ExternalContentImportResult, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    let executor_home = local_executor_home_path()?;
+    let destination = wework_codex_home_path(&executor_home.display().to_string())?;
+    import_external_content_from_paths(source, &home, &destination)
+}
+
+fn import_external_content_from_paths(
+    source: &str,
+    home: &Path,
+    destination: &Path,
+) -> Result<ExternalContentImportResult, String> {
+    let (source_path, entries): (PathBuf, Vec<(&str, &str)>) = match source {
+        "codex" => (
+            home.join(".codex"),
+            vec![
+                ("config.toml", "config.toml"),
+                ("auth.json", "auth.json"),
+                ("AGENTS.md", "AGENTS.md"),
+                ("models_cache.json", "models_cache.json"),
+                ("plugins", "plugins"),
+                ("skills", "skills"),
+                ("cache", "cache"),
+                ("vendor_imports", "vendor_imports"),
+            ],
+        ),
+        "claude-code" => (
+            home.join(".claude"),
+            vec![("CLAUDE.md", "AGENTS.md"), ("skills", "skills")],
+        ),
+        _ => return Err(format!("Unsupported import source: {source}")),
+    };
+    if !source_path.is_dir() {
+        return Err(format!(
+            "Import source does not exist: {}",
+            source_path.display()
+        ));
+    }
+
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
+    let mut imported_entries = Vec::new();
+    for (source_entry, destination_entry) in entries {
+        let entry_path = source_path.join(source_entry);
+        if !entry_path.exists() {
+            continue;
+        }
+        copy_codex_initialization_entry(&entry_path, &destination.join(destination_entry))?;
+        imported_entries.push(source_entry.to_string());
+    }
+    if imported_entries.is_empty() {
+        return Err(format!(
+            "No supported content was found in {}",
+            source_path.display()
+        ));
+    }
+    Ok(ExternalContentImportResult {
+        source: source.to_string(),
+        source_path: source_path.display().to_string(),
+        destination_path: destination.display().to_string(),
+        imported_entries,
+    })
+}
+
+fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::create_dir_all(destination)
+        .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
+    for entry in fs::read_dir(source)
+        .map_err(|error| format!("failed to read {}: {error}", source.display()))?
+    {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("failed to inspect {}: {error}", source_path.display()))?;
+        if file_type.is_dir() {
+            copy_directory_recursive(&source_path, &destination_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+            }
+            fs::copy(&source_path, &destination_path).map_err(|error| {
+                format!(
+                    "failed to copy {} to {}: {error}",
+                    source_path.display(),
+                    destination_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn local_executor_sidecar_env(
@@ -1195,6 +1592,13 @@ fn handle_executor_line_inner(
         }
         ExecutorLine::Event(event) => {
             update_ready_event_inner(inner, &event);
+            if event.event == "runtime.plan.updated" {
+                log::info!(
+                    "Forwarding runtime task plan event to frontend: task_id={:?}, device_id={:?}",
+                    event.payload.get("taskId"),
+                    event.payload.get("deviceId")
+                );
+            }
             app.emit(LOCAL_EXECUTOR_EVENT, event)
                 .map_err(|error| error.to_string())?;
         }
@@ -1203,18 +1607,25 @@ fn handle_executor_line_inner(
     Ok(())
 }
 
-#[cfg(unix)]
-fn connect_sidecar_socket() -> Result<UnixStream, String> {
-    let path = app_ipc_socket_path()?;
-    UnixStream::connect(&path)
-        .map_err(|error| format!("Failed to connect local executor socket {path:?}: {error}"))
+fn connect_sidecar_socket() -> Result<TcpStream, String> {
+    let addr = resolve_app_ipc_addr()?;
+    if addr.port() != 0 {
+        return TcpStream::connect(addr).map_err(|error| {
+            format!("Failed to connect local executor TCP socket {addr}: {error}")
+        });
+    }
+
+    let addr = wait_for_app_ipc_addr(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS))?;
+    TcpStream::connect(addr)
+        .map_err(|error| format!("Failed to connect local executor TCP socket {addr}: {error}"))
 }
 
-#[cfg(unix)]
-fn prepare_connected_stream(stream: UnixStream) -> Result<PreparedExecutorStream, String> {
+fn prepare_connected_stream(stream: TcpStream) -> Result<PreparedExecutorStream, String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS)))
-        .map_err(|error| format!("Failed to configure local executor socket timeout: {error}"))?;
+        .map_err(|error| {
+            format!("Failed to configure local executor TCP socket timeout: {error}")
+        })?;
     let mut reader = BufReader::new(stream);
     let mut ready_line = String::new();
     reader
@@ -1226,11 +1637,11 @@ fn prepare_connected_stream(stream: UnixStream) -> Result<PreparedExecutorStream
     reader
         .get_ref()
         .set_read_timeout(None)
-        .map_err(|error| format!("Failed to clear local executor socket timeout: {error}"))?;
+        .map_err(|error| format!("Failed to clear local executor TCP socket timeout: {error}"))?;
     let writer = reader
         .get_ref()
         .try_clone()
-        .map_err(|error| format!("Failed to clone local executor socket: {error}"))?;
+        .map_err(|error| format!("Failed to clone local executor TCP socket: {error}"))?;
 
     Ok(PreparedExecutorStream {
         reader,
@@ -1239,12 +1650,10 @@ fn prepare_connected_stream(stream: UnixStream) -> Result<PreparedExecutorStream
     })
 }
 
-#[cfg(unix)]
 fn connect_and_prepare_sidecar_socket() -> Result<PreparedExecutorStream, String> {
     prepare_connected_stream(connect_sidecar_socket()?)
 }
 
-#[cfg(unix)]
 async fn connect_and_prepare_sidecar_socket_with_timeout() -> Result<PreparedExecutorStream, String>
 {
     let (sender, receiver) = mpsc::channel();
@@ -1261,7 +1670,6 @@ async fn connect_and_prepare_sidecar_socket_with_timeout() -> Result<PreparedExe
     .map_err(|error| error.to_string())?
 }
 
-#[cfg(unix)]
 fn attach_prepared_stream(
     app: tauri::AppHandle,
     state: &LocalExecutorState,
@@ -1305,17 +1713,17 @@ fn attach_prepared_stream(
                 Ok(0) => break,
                 Ok(_) => {
                     if let Err(error) = handle_executor_line_inner(&app, &state_handle, &line) {
-                        log::warn!("Failed to handle local executor socket line: {error}");
+                        log::warn!("Failed to handle local executor TCP socket line: {error}");
                     }
                 }
                 Err(error) => {
-                    log::warn!("Local executor socket read failed: {error}");
+                    log::warn!("Local executor TCP socket read failed: {error}");
                     break;
                 }
             }
         }
 
-        let message = "Local executor socket disconnected".to_string();
+        let message = "Local executor TCP socket disconnected".to_string();
         set_executor_error_for_generation(&state_handle, generation, message.clone());
         fail_pending_requests_for_generation(&state_handle, generation, message);
     });
@@ -1323,7 +1731,6 @@ fn attach_prepared_stream(
     Ok(())
 }
 
-#[cfg(unix)]
 async fn connect_and_attach_sidecar_socket(
     app: tauri::AppHandle,
     state: &LocalExecutorState,
@@ -1332,21 +1739,15 @@ async fn connect_and_attach_sidecar_socket(
     attach_prepared_stream(app, state, prepared)
 }
 
-#[cfg(unix)]
 fn write_request_line(inner: &mut LocalExecutorInner, line: &str) -> Result<(), String> {
     let Some(stream) = inner.stream.as_mut() else {
-        return Err("Local executor socket is not connected".to_string());
+        return Err("Local executor TCP socket is not connected".to_string());
     };
 
     stream
         .write_all(line.as_bytes())
         .and_then(|_| stream.flush())
         .map_err(|error| format!("Failed to write local executor request: {error}"))
-}
-
-#[cfg(not(unix))]
-fn write_request_line(_inner: &mut LocalExecutorInner, _line: &str) -> Result<(), String> {
-    Err("Local executor socket IPC is not available on this platform".to_string())
 }
 
 fn drain_process_output(
@@ -1507,7 +1908,6 @@ fn ensure_sidecar_child_still_running(state: &LocalExecutorState) -> Result<(), 
     Err(message)
 }
 
-#[cfg(unix)]
 async fn start_executor_if_needed_unlocked(
     app: tauri::AppHandle,
     state: &LocalExecutorState,
@@ -1536,8 +1936,7 @@ async fn start_executor_if_needed_unlocked(
 
     spawn_sidecar_if_needed(app.clone(), state).await?;
 
-    let started_at = Instant::now();
-    let last_error = loop {
+    loop {
         let error = match connect_and_attach_sidecar_socket(app.clone(), state).await {
             Ok(()) => return Ok(()),
             Err(error) => error,
@@ -1549,28 +1948,8 @@ async fn start_executor_if_needed_unlocked(
             fail_pending_requests(state, message.clone());
             return Err(message);
         }
-        if started_at.elapsed() >= Duration::from_secs(LOCAL_EXECUTOR_CONNECT_TIMEOUT_SECS) {
-            break error;
-        }
         retry_connect_delay().await;
-    };
-
-    let message = format!(
-        "Timed out waiting for local executor socket after {LOCAL_EXECUTOR_CONNECT_TIMEOUT_SECS}s: {last_error}"
-    );
-    set_executor_error(state, message.clone());
-    fail_pending_requests(state, message.clone());
-    Err(message)
-}
-
-#[cfg(not(unix))]
-async fn start_executor_if_needed_unlocked(
-    _app: tauri::AppHandle,
-    state: &LocalExecutorState,
-) -> Result<(), String> {
-    let message = "Local executor socket IPC is not available on this platform".to_string();
-    set_executor_error(state, message.clone());
-    Err(message)
+    }
 }
 
 async fn start_executor_if_needed(
@@ -1578,7 +1957,74 @@ async fn start_executor_if_needed(
     state: &LocalExecutorState,
 ) -> Result<(), String> {
     let _guard = state.start_lock.lock().await;
-    start_executor_if_needed_unlocked(app, state).await
+    start_executor_if_needed_unlocked(app.clone(), state).await?;
+    ensure_local_executor_keepalive(app, state);
+    Ok(())
+}
+
+fn local_executor_is_healthy(state: &LocalExecutorState) -> bool {
+    state
+        .inner
+        .lock()
+        .map(|inner| inner.running && inner.ready && has_connected_stream(&inner))
+        .unwrap_or(false)
+}
+
+fn development_sidecar_is_restarting(state: &LocalExecutorState) -> bool {
+    if !cfg!(debug_assertions)
+        || configured_sidecar_path().is_none()
+        || matches!(std::env::var("WEGENT_EXECUTOR_DEV_RELOAD"), Ok(value) if value == "0")
+    {
+        return false;
+    }
+
+    state
+        .inner
+        .lock()
+        .ok()
+        .and_then(|mut inner| inner.child.as_mut().map(LocalExecutorChild::is_running))
+        .unwrap_or(false)
+}
+
+fn ensure_local_executor_keepalive(app: tauri::AppHandle, state: &LocalExecutorState) {
+    state.keepalive.enabled.store(true, Ordering::SeqCst);
+    if state.keepalive.worker_running.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let state = state.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let _ = tauri::async_runtime::spawn_blocking(|| {
+                thread::sleep(Duration::from_secs(LOCAL_EXECUTOR_KEEPALIVE_INTERVAL_SECS));
+            })
+            .await;
+
+            if !state.keepalive.enabled.load(Ordering::SeqCst) {
+                state
+                    .keepalive
+                    .worker_running
+                    .store(false, Ordering::SeqCst);
+                return;
+            }
+
+            if local_executor_is_healthy(&state) {
+                continue;
+            }
+
+            if development_sidecar_is_restarting(&state) {
+                log::info!(
+                    "Local executor IPC is unavailable while the development sidecar is restarting"
+                );
+                continue;
+            }
+
+            log::warn!("Local executor keepalive detected an unhealthy executor; restarting");
+            if let Err(error) = restart_executor(app.clone(), &state).await {
+                log::warn!("Local executor keepalive restart failed: {error}");
+            }
+        }
+    });
 }
 
 async fn restart_executor_unlocked(
@@ -1603,7 +2049,9 @@ async fn restart_executor_unlocked(
 
 async fn restart_executor(app: tauri::AppHandle, state: &LocalExecutorState) -> Result<(), String> {
     let _guard = state.start_lock.lock().await;
-    restart_executor_unlocked(app, state).await
+    restart_executor_unlocked(app.clone(), state).await?;
+    ensure_local_executor_keepalive(app, state);
+    Ok(())
 }
 
 async fn send_executor_request(
@@ -1767,6 +2215,76 @@ pub async fn local_executor_read_log(
 }
 
 #[tauri::command]
+pub async fn local_executor_codex_home_migration_status() -> Result<CodexHomeMigrationStatus, String>
+{
+    codex_home_migration_status()
+}
+
+#[tauri::command]
+pub async fn local_executor_read_codex_local_config() -> Result<CodexLocalConfig, String> {
+    read_codex_local_config()
+}
+
+#[tauri::command]
+pub async fn local_executor_update_codex_local_config(
+    patch: CodexLocalConfigPatch,
+) -> Result<CodexLocalConfig, String> {
+    if let Some(enabled) = patch.remote_apps_enabled {
+        return write_codex_remote_apps_enabled(enabled);
+    }
+    read_codex_local_config()
+}
+
+#[tauri::command]
+pub async fn local_executor_initialize_codex_home(
+    options: CodexHomeInitializeOptions,
+) -> Result<CodexHomeMigrationStatus, String> {
+    let status = codex_home_migration_status()?;
+    log::info!(
+        "Codex home initialization started: migrate_native_home={}, remote_apps_enabled={}, should_prompt_migration={}, native={}, wework={}",
+        options.migrate_native_home,
+        options.remote_apps_enabled,
+        status.should_prompt_migration,
+        status.native_codex_home,
+        status.wework_codex_home
+    );
+    if options.migrate_native_home && status.should_prompt_migration {
+        let source = PathBuf::from(&status.native_codex_home);
+        let destination = PathBuf::from(&status.wework_codex_home);
+        copy_codex_initialization_files(&source, &destination)?;
+    } else {
+        let destination = PathBuf::from(&status.wework_codex_home);
+        fs::create_dir_all(&destination)
+            .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
+    }
+    write_codex_remote_apps_enabled(options.remote_apps_enabled)?;
+    let next_status = codex_home_migration_status()?;
+    log::info!(
+        "Codex home initialization finished: should_prompt_migration={}, wework={}",
+        next_status.should_prompt_migration,
+        next_status.wework_codex_home
+    );
+    Ok(next_status)
+}
+
+#[tauri::command]
+pub async fn local_executor_migrate_native_codex_home() -> Result<CodexHomeMigrationStatus, String>
+{
+    local_executor_initialize_codex_home(CodexHomeInitializeOptions {
+        migrate_native_home: true,
+        remote_apps_enabled: false,
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn local_executor_import_external_content(
+    options: ExternalContentImportOptions,
+) -> Result<ExternalContentImportResult, String> {
+    import_external_content(&options.source)
+}
+
+#[tauri::command]
 pub async fn local_executor_copy_debug_info(text: String) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("Debug info must not be empty".to_string());
@@ -1814,7 +2332,8 @@ pub async fn local_executor_connect_backend(
             auth_token,
         });
     }
-    restart_executor_unlocked(app, &state).await?;
+    restart_executor_unlocked(app.clone(), &state).await?;
+    ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
 }
 
@@ -1831,7 +2350,8 @@ pub async fn local_executor_disconnect_backend(
             .map_err(|_| "Failed to lock local executor state".to_string())?;
         inner.backend_connection = None;
     }
-    restart_executor_unlocked(app, &state).await?;
+    restart_executor_unlocked(app.clone(), &state).await?;
+    ensure_local_executor_keepalive(app, &state);
     status_from_state(&state)
 }
 
@@ -1853,8 +2373,6 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     #[cfg(unix)]
-    use std::os::unix::net::UnixListener;
-    #[cfg(unix)]
     use std::process::Stdio;
     use std::sync::{Mutex as TestMutex, MutexGuard, OnceLock};
     #[cfg(unix)]
@@ -1873,6 +2391,17 @@ mod tests {
         } else {
             std::env::remove_var(key);
         }
+    }
+
+    fn import_test_root(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "wework-import-{label}-{}-{nanos}",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -1904,6 +2433,115 @@ mod tests {
     }
 
     #[test]
+    fn codex_local_config_remote_apps_defaults_to_disabled() {
+        assert!(!read_remote_apps_enabled_from_config(""));
+        assert!(!read_remote_apps_enabled_from_config("[features]\n"));
+        assert!(!read_remote_apps_enabled_from_config(
+            "[features]\napps = false\n"
+        ));
+        assert!(!read_remote_apps_enabled_from_config(
+            "[other]\napps = true\n"
+        ));
+    }
+
+    #[test]
+    fn imports_codex_initialization_content_again() {
+        let root = import_test_root("codex");
+        let home = root.join("home");
+        let destination = root.join("destination");
+        fs::create_dir_all(home.join(".codex/skills/example")).unwrap();
+        fs::write(home.join(".codex/config.toml"), "model = \"gpt-5\"").unwrap();
+        fs::write(home.join(".codex/skills/example/SKILL.md"), "example").unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("config.toml"), "old").unwrap();
+
+        let result = import_external_content_from_paths("codex", &home, &destination).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(destination.join("config.toml")).unwrap(),
+            "model = \"gpt-5\""
+        );
+        assert!(destination.join("skills/example/SKILL.md").is_file());
+        assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn maps_claude_instructions_and_skills_to_codex_content() {
+        let root = import_test_root("claude");
+        let home = root.join("home");
+        let destination = root.join("destination");
+        fs::create_dir_all(home.join(".claude/skills/example")).unwrap();
+        fs::write(home.join(".claude/CLAUDE.md"), "Claude instructions").unwrap();
+        fs::write(home.join(".claude/skills/example/SKILL.md"), "example").unwrap();
+
+        let result =
+            import_external_content_from_paths("claude-code", &home, &destination).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(destination.join("AGENTS.md")).unwrap(),
+            "Claude instructions"
+        );
+        assert!(destination.join("skills/example/SKILL.md").is_file());
+        assert_eq!(result.imported_entries, vec!["CLAUDE.md", "skills"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn codex_local_config_remote_apps_reads_features_section() {
+        let content = r#"
+model = "gpt-5.5"
+
+[features]
+apps = true # enables remote apps
+
+[projects."/tmp/example"]
+trust_level = "trusted"
+"#;
+
+        assert!(read_remote_apps_enabled_from_config(content));
+    }
+
+    #[test]
+    fn codex_local_config_remote_apps_updates_existing_value() {
+        let content = r#"
+model = "gpt-5.5"
+
+[features]
+  apps = true
+shell_environment_policy = "inherit"
+"#;
+
+        let next = set_remote_apps_enabled_in_config(content, false);
+
+        assert!(next.contains("[features]\n  apps = false\nshell_environment_policy"));
+        assert!(next.contains("model = \"gpt-5.5\""));
+    }
+
+    #[test]
+    fn codex_local_config_remote_apps_inserts_features_section() {
+        let next = set_remote_apps_enabled_in_config("model = \"gpt-5.5\"\n", false);
+
+        assert_eq!(next, "model = \"gpt-5.5\"\n\n[features]\napps = false\n");
+    }
+
+    #[test]
+    fn codex_local_config_remote_apps_adds_to_existing_features_section() {
+        let content = r#"
+[features]
+shell_environment_policy = "inherit"
+
+[mcp_servers.example]
+command = "example"
+"#;
+
+        let next = set_remote_apps_enabled_in_config(content, true);
+
+        assert!(next.contains("[features]\napps = true\nshell_environment_policy"));
+        assert!(next.contains("[mcp_servers.example]\ncommand = \"example\""));
+    }
+
+    #[test]
     fn bundled_sidecar_path_uses_bundled_executable_name() {
         let _guard = env_lock();
         let previous_sidecar = std::env::var_os(LOCAL_EXECUTOR_SIDECAR_ENV);
@@ -1917,52 +2555,67 @@ mod tests {
     }
 
     #[test]
-    fn app_ipc_socket_path_uses_override() {
+    fn app_ipc_addr_file_path_uses_executor_home() {
         let _guard = env_lock();
-        let previous_socket = std::env::var_os("WEGENT_EXECUTOR_APP_IPC_SOCKET");
-        std::env::set_var("WEGENT_EXECUTOR_APP_IPC_SOCKET", "/tmp/wegent-test.sock");
-        let path = app_ipc_socket_path().expect("socket path should resolve");
-        restore_env("WEGENT_EXECUTOR_APP_IPC_SOCKET", previous_socket);
-
-        assert_eq!(path, PathBuf::from("/tmp/wegent-test.sock"));
-    }
-
-    #[test]
-    fn app_ipc_socket_path_follows_build_mode_with_executor_home() {
-        let _guard = env_lock();
-        let previous_socket = std::env::var_os("WEGENT_EXECUTOR_APP_IPC_SOCKET");
-        let previous_home = std::env::var_os("WEGENT_EXECUTOR_HOME");
-        std::env::remove_var("WEGENT_EXECUTOR_APP_IPC_SOCKET");
-        std::env::set_var("WEGENT_EXECUTOR_HOME", "/tmp/wegent-home");
-        let path = app_ipc_socket_path().expect("socket path should resolve");
-        restore_env("WEGENT_EXECUTOR_APP_IPC_SOCKET", previous_socket);
-        restore_env("WEGENT_EXECUTOR_HOME", previous_home);
+        let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wegent-home");
+        let path = app_ipc_addr_file_path().expect("addr file path should resolve");
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
 
         if cfg!(debug_assertions) {
-            assert!(path.starts_with("/tmp/wegent-home/app-runtime"));
+            assert!(path
+                .display()
+                .to_string()
+                .starts_with("/tmp/wegent-home/app-runtime/wework-"));
         } else {
-            assert_eq!(path, PathBuf::from("/tmp/wegent-home/app-ipc.sock"));
+            assert_eq!(path, PathBuf::from("/tmp/wegent-home/app-ipc.addr"));
         }
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
-            Some("app-ipc.sock")
+            Some(LOCAL_EXECUTOR_ADDR_FILE_NAME)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn app_ipc_addr_file_path_falls_back_to_home_dir() {
+        let _guard = env_lock();
+        let previous_home = std::env::var_os("HOME");
+        let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        std::env::set_var("HOME", "/tmp/wework-test-home");
+        std::env::remove_var(LOCAL_EXECUTOR_HOME_ENV);
+        let path = app_ipc_addr_file_path().expect("addr file path should resolve");
+        restore_env("HOME", previous_home);
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
+
+        if cfg!(debug_assertions) {
+            assert!(path
+                .display()
+                .to_string()
+                .starts_with("/tmp/wework-test-home/.wegent-executor/app-runtime/wework-"));
+        } else {
+            assert_eq!(
+                path,
+                PathBuf::from("/tmp/wework-test-home/.wegent-executor/app-ipc.addr")
+            );
+        }
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some(LOCAL_EXECUTOR_ADDR_FILE_NAME)
         );
     }
 
     #[test]
     fn local_executor_log_path_follows_build_mode() {
         let _guard = env_lock();
-        let previous_home = std::env::var_os("WEGENT_EXECUTOR_HOME");
-        let previous_log_dir = std::env::var_os("WEGENT_EXECUTOR_LOG_DIR");
-        let previous_socket = std::env::var_os("WEGENT_EXECUTOR_APP_IPC_SOCKET");
-        std::env::set_var("WEGENT_EXECUTOR_HOME", "/tmp/wegent-executor-debug");
-        std::env::remove_var("WEGENT_EXECUTOR_LOG_DIR");
-        std::env::remove_var("WEGENT_EXECUTOR_APP_IPC_SOCKET");
+        let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
+        let previous_log_dir = std::env::var_os(LOCAL_EXECUTOR_LOG_DIR_ENV);
+        std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wegent-executor-debug");
+        std::env::remove_var(LOCAL_EXECUTOR_LOG_DIR_ENV);
 
         let path = local_executor_log_path().expect("log path should resolve");
-        restore_env("WEGENT_EXECUTOR_HOME", previous_home);
-        restore_env("WEGENT_EXECUTOR_LOG_DIR", previous_log_dir);
-        restore_env("WEGENT_EXECUTOR_APP_IPC_SOCKET", previous_socket);
+        restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
+        restore_env(LOCAL_EXECUTOR_LOG_DIR_ENV, previous_log_dir);
 
         if cfg!(debug_assertions) {
             assert!(path.starts_with("/tmp/wegent-executor-debug/app-runtime"));
@@ -1978,25 +2631,23 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn default_runtime_paths_follow_build_mode() {
         let _guard = env_lock();
         let previous_home = std::env::var_os("HOME");
         let previous_executor_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
-        let previous_socket = std::env::var_os(LOCAL_EXECUTOR_SOCKET_ENV);
         let previous_log_dir = std::env::var_os(LOCAL_EXECUTOR_LOG_DIR_ENV);
         std::env::set_var("HOME", "/tmp/wework-test-home");
         std::env::remove_var(LOCAL_EXECUTOR_HOME_ENV);
-        std::env::remove_var(LOCAL_EXECUTOR_SOCKET_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_LOG_DIR_ENV);
 
         let home = local_executor_home_path().expect("executor home should resolve");
-        let socket = app_ipc_socket_path().expect("socket path should resolve");
+        let addr_file = app_ipc_addr_file_path().expect("addr file path should resolve");
         let log = local_executor_log_path().expect("log path should resolve");
 
         restore_env("HOME", previous_home);
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
-        restore_env(LOCAL_EXECUTOR_SOCKET_ENV, previous_socket);
         restore_env(LOCAL_EXECUTOR_LOG_DIR_ENV, previous_log_dir);
 
         assert_eq!(
@@ -2004,27 +2655,26 @@ mod tests {
             PathBuf::from("/tmp/wework-test-home/.wegent-executor")
         );
         if cfg!(debug_assertions) {
-            assert!(socket.starts_with(home.join("app-runtime")));
-            assert!(socket
-                .parent()
-                .and_then(|path| path.file_name())
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("wework-")));
+            assert_eq!(
+                addr_file,
+                home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+                    .join(local_executor_instance_name())
+                    .join(LOCAL_EXECUTOR_ADDR_FILE_NAME)
+            );
             assert_eq!(
                 log,
-                socket
-                    .parent()
-                    .expect("socket should have parent")
+                home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+                    .join(local_executor_instance_name())
                     .join("logs")
                     .join(LOCAL_EXECUTOR_LOG_FILE_NAME)
             );
         } else {
-            assert_eq!(socket, home.join(LOCAL_EXECUTOR_SOCKET_NAME));
+            assert_eq!(addr_file, home.join(LOCAL_EXECUTOR_ADDR_FILE_NAME));
             assert_eq!(log, home.join("logs").join(LOCAL_EXECUTOR_LOG_FILE_NAME));
         }
         assert_eq!(
-            socket.file_name().and_then(|name| name.to_str()),
-            Some(LOCAL_EXECUTOR_SOCKET_NAME)
+            addr_file.file_name().and_then(|name| name.to_str()),
+            Some(LOCAL_EXECUTOR_ADDR_FILE_NAME)
         );
     }
 
@@ -2106,34 +2756,36 @@ mod tests {
     }
 
     #[test]
-    fn process_text_uses_socket_matches_only_exact_socket_env() {
-        let release_socket = PathBuf::from("/Users/me/.wegent-executor/app-ipc.sock");
-        let debug_text = "WEGENT_EXECUTOR_APP_IPC_SOCKET=/Users/me/.wegent-executor/app-runtime/wework-123/app-ipc.sock";
-        let release_text = "WEGENT_EXECUTOR_APP_IPC_SOCKET=/Users/me/.wegent-executor/app-ipc.sock";
+    fn process_text_uses_addr_file_matches_only_exact_addr_file_env() {
+        let release_addr_file = PathBuf::from("/Users/me/.wegent-executor/app-ipc.addr");
+        let debug_text = "WEGENT_EXECUTOR_APP_IPC_ADDR=/Users/me/.wegent-executor/app-runtime/wework-123/app-ipc.addr";
+        let release_text = "WEGENT_EXECUTOR_APP_IPC_ADDR=/Users/me/.wegent-executor/app-ipc.addr";
 
-        assert!(!process_text_uses_socket(debug_text, &release_socket));
-        assert!(process_text_uses_socket(release_text, &release_socket));
+        assert!(!process_text_uses_addr_file(debug_text, &release_addr_file));
+        assert!(process_text_uses_addr_file(
+            release_text,
+            &release_addr_file
+        ));
     }
 
-    #[cfg(unix)]
     #[test]
-    fn remove_stale_app_ipc_socket_removes_socket_files_only() {
+    fn remove_stale_app_ipc_addr_file_removes_addr_files_only() {
         let dir = std::env::temp_dir().join(format!(
-            "wework-stale-executor-socket-{}",
+            "wework-stale-executor-addr-file-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).expect("test socket dir should be created");
-        let socket_path = dir.join("app-ipc.sock");
+        fs::create_dir_all(&dir).expect("test addr file dir should be created");
+        let addr_file_path = dir.join("app-ipc.addr");
         let regular_path = dir.join("regular-file");
-        let listener = UnixListener::bind(&socket_path).expect("test socket should bind");
-        fs::write(&regular_path, "not a socket").expect("regular file should be written");
+        fs::write(&addr_file_path, "127.0.0.1:12345").expect("addr file should be written");
+        fs::write(&regular_path, "not an addr file").expect("regular file should be written");
 
-        remove_stale_app_ipc_socket_at(&socket_path).expect("socket cleanup should succeed");
-        remove_stale_app_ipc_socket_at(&regular_path).expect("regular cleanup should succeed");
-        drop(listener);
+        remove_stale_app_ipc_addr_file_at(&addr_file_path)
+            .expect("addr file cleanup should succeed");
+        remove_stale_app_ipc_addr_file_at(&regular_path).expect("regular cleanup should succeed");
 
-        assert!(!socket_path.exists());
+        assert!(!addr_file_path.exists());
         assert!(regular_path.exists());
 
         let _ = fs::remove_dir_all(&dir);
@@ -2165,10 +2817,12 @@ mod tests {
     fn backend_env_marks_current_app_device_without_changing_device_id() {
         let _guard = env_lock();
         let previous_home = std::env::var_os(LOCAL_EXECUTOR_HOME_ENV);
-        let previous_socket = std::env::var_os(LOCAL_EXECUTOR_SOCKET_ENV);
+        let previous_codex_home = std::env::var_os(WEGENT_CODEX_HOME_ENV);
+        let previous_addr = std::env::var_os(LOCAL_EXECUTOR_ADDR_ENV);
         let previous_log_dir = std::env::var_os(LOCAL_EXECUTOR_LOG_DIR_ENV);
         std::env::set_var(LOCAL_EXECUTOR_HOME_ENV, "/tmp/wework-instance-executor");
-        std::env::remove_var(LOCAL_EXECUTOR_SOCKET_ENV);
+        std::env::remove_var(WEGENT_CODEX_HOME_ENV);
+        std::env::remove_var(LOCAL_EXECUTOR_ADDR_ENV);
         std::env::remove_var(LOCAL_EXECUTOR_LOG_DIR_ENV);
         let inner = LocalExecutorInner {
             backend_connection: Some(LocalExecutorBackendConnection {
@@ -2184,7 +2838,8 @@ mod tests {
             .collect::<HashMap<_, _>>();
 
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
-        restore_env(LOCAL_EXECUTOR_SOCKET_ENV, previous_socket);
+        restore_env(WEGENT_CODEX_HOME_ENV, previous_codex_home);
+        restore_env(LOCAL_EXECUTOR_ADDR_ENV, previous_addr);
         restore_env(LOCAL_EXECUTOR_LOG_DIR_ENV, previous_log_dir);
 
         assert_eq!(
@@ -2204,24 +2859,28 @@ mod tests {
             Some("local-device-abc")
         );
         assert_eq!(envs.get("DEVICE_TYPE").map(String::as_str), Some("app"));
-        assert_eq!(
-            envs.get(LOCAL_EXECUTOR_HOME_ENV).map(String::as_str),
-            Some("/tmp/wework-instance-executor")
-        );
-        let socket_env = envs
-            .get(LOCAL_EXECUTOR_SOCKET_ENV)
-            .expect("socket env should be passed to sidecar");
+        let executor_home_env = envs
+            .get(LOCAL_EXECUTOR_HOME_ENV)
+            .expect("executor home env should be passed to sidecar");
+        let codex_home_env = envs
+            .get(CODEX_HOME_ENV)
+            .expect("codex home env should be passed to sidecar");
+        let addr_env = envs
+            .get(LOCAL_EXECUTOR_ADDR_ENV)
+            .expect("addr env should be passed to sidecar");
         let log_dir_env = envs
             .get(LOCAL_EXECUTOR_LOG_DIR_ENV)
             .expect("log dir env should be passed to sidecar");
+        assert_eq!(addr_env, LOCAL_EXECUTOR_DEFAULT_ADDR);
         if cfg!(debug_assertions) {
             assert!(
-                socket_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-")
-                    && socket_env.ends_with("/app-ipc.sock")
+                executor_home_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-")
             );
+            assert_eq!(codex_home_env, &format!("{executor_home_env}/codex"));
             assert!(log_dir_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
         } else {
-            assert_eq!(socket_env, "/tmp/wework-instance-executor/app-ipc.sock");
+            assert_eq!(executor_home_env, "/tmp/wework-instance-executor");
+            assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
         }
     }

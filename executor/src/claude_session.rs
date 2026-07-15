@@ -222,11 +222,7 @@ fn dedup_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .ok()
-        .map(|value| PathBuf::from(value.trim()))
-        .filter(|value| !value.as_os_str().is_empty())
+    dirs::home_dir()
 }
 
 fn bot_id(bot: &Value) -> Option<String> {

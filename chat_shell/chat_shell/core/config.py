@@ -4,6 +4,7 @@
 
 """Configuration settings for Chat Shell Service."""
 
+from pathlib import Path
 from typing import Tuple, Type
 
 from pydantic import Field
@@ -61,6 +62,11 @@ class Settings(BaseSettings):
 
     # Internal service authentication
     INTERNAL_SERVICE_TOKEN: str = ""
+
+    @property
+    def backend_internal_token(self) -> str:
+        """Return the token used for authenticated Backend internal API calls."""
+        return self.REMOTE_STORAGE_TOKEN or self.INTERNAL_SERVICE_TOKEN
 
     # ========== LLM API Keys ==========
     ANTHROPIC_API_KEY: str = ""
@@ -166,7 +172,7 @@ class Settings(BaseSettings):
         )
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).resolve().parents[2] / ".env",
         env_file_encoding="utf-8",
         env_prefix="CHAT_SHELL_",
         extra="ignore",

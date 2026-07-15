@@ -9,6 +9,7 @@ Uses the unified context service for managing attachments as subtask contexts.
 """
 
 import logging
+from pathlib import Path
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -41,7 +42,14 @@ from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.auth.task_token import extract_token_from_header, verify_task_token
 from app.services.context import context_service
 from app.services.context.context_service import NotFoundException
-from app.services.media.weibo_media_service import weibo_media_service
+from app.services.media.weibo_image_upload import (
+    WeiboImageUploadError,
+    weibo_image_upload_service,
+)
+from app.services.media.weibo_media_service import (
+    resolve_weibo_media_uid,
+    weibo_media_service,
+)
 from app.services.shared_task import shared_task_service
 from app.stores.tasks import subtask_store, task_store
 
@@ -67,6 +75,46 @@ def _extract_subtask_id_from_task_token(authorization: str) -> int:
 router = APIRouter()
 
 ATTACHMENT_PREVIEW_TEXT_LIMIT = 4000
+WEIBO_IMAGE_MIME_TYPES = {
+    ".gif": "image/gif",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+}
+
+
+async def _upload_weibo_image_pid(
+    *, filename: str, content: bytes, user: User, db: Session
+) -> dict:
+    """Best-effort upload of an attachment image without blocking persistence."""
+    mime_type = WEIBO_IMAGE_MIME_TYPES.get(Path(filename).suffix.lower())
+    if not mime_type:
+        return {}
+    uid = resolve_weibo_media_uid(user)
+    db.commit()
+    try:
+        pid = await weibo_image_upload_service.upload_bytes(
+            filename=filename,
+            content=content,
+            mime_type=mime_type,
+            uid=uid,
+        )
+        return {
+            "image_pid": pid,
+            "image_pid_source": "weibo_upload",
+            "image_pid_status": "ready",
+        }
+    except WeiboImageUploadError as exc:
+        error_code = exc.code
+        logger.warning(
+            "Image PID generation skipped: filename=%s error=%s", filename, exc
+        )
+    except Exception as exc:
+        error_code = "upload_failed"
+        logger.warning(
+            "Image PID generation failed: filename=%s error=%s", filename, exc
+        )
+    return {"image_pid_status": "failed", "image_pid_error": error_code}
 
 
 def _build_content_disposition(filename: str) -> str:
@@ -385,6 +433,12 @@ async def upload_attachment(
         )
 
     try:
+        image_pid_metadata = await _upload_weibo_image_pid(
+            filename=file.filename,
+            content=binary_data,
+            user=current_user,
+            db=db,
+        )
         if overwrite_attachment_id is not None:
             if overwrite_attachment_id <= 0:
                 raise HTTPException(
@@ -397,6 +451,13 @@ async def upload_attachment(
                 filename=file.filename,
                 binary_data=binary_data,
             )
+            if image_pid_metadata:
+                context.type_data = {
+                    **(context.type_data or {}),
+                    **image_pid_metadata,
+                }
+                db.commit()
+                db.refresh(context)
         else:
             context, truncation_info = context_service.upload_attachment(
                 db=db,
@@ -404,6 +465,7 @@ async def upload_attachment(
                 filename=file.filename,
                 binary_data=binary_data,
                 subtask_id=subtask_id,
+                extra_type_data=image_pid_metadata or None,
             )
 
         return _build_attachment_response(context, truncation_info)

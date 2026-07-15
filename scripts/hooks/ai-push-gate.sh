@@ -529,8 +529,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_CHECKS+=("Backend Syntax")
             FAILED_LOGS+=("$TEMP_DIR/syntax.log")
         fi
-        cd ..
     fi
+    cd ..
     echo ""
 fi
 

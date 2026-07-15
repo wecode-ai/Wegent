@@ -1,5 +1,19 @@
-import { CornerDownRight, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import {
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  type DragEndEvent,
+  type DragStartEvent,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { CornerDownRight, GripVertical, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { useTranslation } from '@/hooks/useTranslation'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
 
 interface ConversationQueuePanelProps {
@@ -8,6 +22,9 @@ interface ConversationQueuePanelProps {
   onCancelQueuedMessage?: (id: string) => void
   onSendQueuedAsGuidance?: (id: string) => void
   onEditQueuedMessage?: (id: string) => void
+  onReorderQueuedMessages?: (sourceId: string, targetId: string) => void
+  queuePaused?: boolean
+  onResumeQueue?: () => void
   onCancelGuidanceMessage?: (id: string) => void
 }
 
@@ -17,10 +34,41 @@ export function ConversationQueuePanel({
   onCancelQueuedMessage,
   onSendQueuedAsGuidance,
   onEditQueuedMessage,
+  onReorderQueuedMessages,
+  queuePaused = false,
+  onResumeQueue,
   onCancelGuidanceMessage,
 }: ConversationQueuePanelProps) {
+  const { t } = useTranslation('chat')
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null)
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
+  const queuedMessageIds = useMemo(
+    () => queuedMessages.filter(message => message.status === 'queued').map(message => message.id),
+    [queuedMessages]
+  )
+  const displayedQueuedMessages = useMemo(
+    () =>
+      [...queuedMessages].sort(
+        (left, right) =>
+          queuedMessageDisplayPriority(left.status) - queuedMessageDisplayPriority(right.status)
+      ),
+    [queuedMessages]
+  )
+  const activeMessage = queuedMessages.find(message => message.id === activeMessageId) ?? null
+
   if (queuedMessages.length === 0 && guidanceMessages.length === 0) {
     return null
+  }
+
+  const handleDragStart = ({ active }: DragStartEvent) => {
+    setActiveMessageId(String(active.id))
+  }
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (over && active.id !== over.id) {
+      onReorderQueuedMessages?.(String(active.id), String(over.id))
+    }
+    setActiveMessageId(null)
   }
 
   return (
@@ -28,35 +76,68 @@ export function ConversationQueuePanel({
       data-testid="conversation-queue-panel"
       className="mb-1 rounded-[18px] border border-border bg-base px-2 py-1 shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
     >
-      <div className="flex flex-col">
-        {queuedMessages.map(message => (
-          <QueueRow
-            key={message.id}
-            id={message.id}
-            content={message.content}
-            status={message.status}
-            error={message.error}
-            notice={message.notice}
-            mode="queue"
-            onGuide={onSendQueuedAsGuidance}
-            onEdit={onEditQueuedMessage}
-            onCancel={onCancelQueuedMessage}
-          />
-        ))}
-        {guidanceMessages.map(message => (
-          <QueueRow
-            key={message.id}
-            id={message.id}
-            content={message.content}
-            status={message.status}
-            error={message.error}
-            mode="guidance"
-            onCancel={onCancelGuidanceMessage}
-          />
-        ))}
-      </div>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragCancel={() => setActiveMessageId(null)}
+        onDragEnd={handleDragEnd}
+      >
+        <SortableContext items={queuedMessageIds} strategy={verticalListSortingStrategy}>
+          <div className="flex flex-col">
+            {queuePaused && queuedMessages.length > 0 && (
+              <div className="flex h-8 items-center justify-between gap-2 px-2 text-xs text-text-muted">
+                <span>{t('queue.paused')}</span>
+                <button
+                  type="button"
+                  data-testid="resume-queue-button"
+                  onClick={onResumeQueue}
+                  className="h-8 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+                >
+                  {t('queue.resume')}
+                </button>
+              </div>
+            )}
+            {guidanceMessages.map(message => (
+              <QueueRow
+                key={message.id}
+                id={message.id}
+                content={message.content}
+                status={message.status}
+                error={message.error}
+                mode="guidance"
+                onCancel={onCancelGuidanceMessage}
+              />
+            ))}
+            {displayedQueuedMessages.map(message => (
+              <QueueRow
+                key={message.id}
+                id={message.id}
+                content={message.content}
+                status={message.status}
+                error={message.error}
+                notice={message.notice}
+                mode="queue"
+                onGuide={onSendQueuedAsGuidance}
+                onEdit={onEditQueuedMessage}
+                canReorder={message.status === 'queued' && queuedMessageIds.length > 1}
+                onCancel={onCancelQueuedMessage}
+              />
+            ))}
+          </div>
+        </SortableContext>
+        <DragOverlay dropAnimation={null}>
+          {activeMessage && <QueueDragPreview content={activeMessage.content} />}
+        </DragOverlay>
+      </DndContext>
     </div>
   )
+}
+
+function queuedMessageDisplayPriority(status: QueuedWorkbenchMessage['status']): number {
+  if (status === 'sending') return 0
+  if (status === 'queued') return 1
+  return 2
 }
 
 interface QueueRowProps {
@@ -68,6 +149,7 @@ interface QueueRowProps {
   mode: 'queue' | 'guidance'
   onGuide?: (id: string) => void
   onEdit?: (id: string) => void
+  canReorder?: boolean
   onCancel?: (id: string) => void
 }
 
@@ -80,8 +162,18 @@ function QueueRow({
   mode,
   onGuide,
   onEdit,
+  canReorder = false,
   onCancel,
 }: QueueRowProps) {
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled: !canReorder })
   const isBusy = status === 'sending'
   const statusText =
     status === 'failed'
@@ -94,9 +186,28 @@ function QueueRow({
 
   return (
     <div
+      ref={setNodeRef}
       data-testid={`conversation-queue-row-${id}`}
-      className="flex min-h-8 items-center gap-2 rounded-xl px-2 text-[13px] text-text-secondary hover:bg-surface"
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={[
+        'flex min-h-8 items-center gap-2 rounded-xl px-2 text-[13px] text-text-secondary hover:bg-surface',
+        isDragging ? 'opacity-30' : '',
+      ].join(' ')}
     >
+      {canReorder && (
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          data-testid={`queue-drag-handle-${id}`}
+          {...attributes}
+          {...listeners}
+          className="flex h-8 w-4 shrink-0 touch-none cursor-grab items-center justify-center rounded text-text-muted hover:bg-muted active:cursor-grabbing"
+          aria-label="拖拽调整消息顺序"
+          title="拖拽调整消息顺序"
+        >
+          <GripVertical className="h-4 w-4" aria-hidden="true" />
+        </button>
+      )}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
         <span className="truncate text-text-secondary">{content}</span>
@@ -152,6 +263,18 @@ function QueueRow({
           />
         )}
       </div>
+    </div>
+  )
+}
+
+function QueueDragPreview({ content }: { content: string }) {
+  return (
+    <div
+      data-testid="queue-drag-overlay"
+      className="flex min-h-8 max-w-[28rem] items-center gap-2 rounded-xl border border-border bg-base px-3 text-[13px] text-text-secondary shadow-lg"
+    >
+      <GripVertical className="h-4 w-4 shrink-0 text-text-muted" />
+      <span className="truncate">{content}</span>
     </div>
   )
 }

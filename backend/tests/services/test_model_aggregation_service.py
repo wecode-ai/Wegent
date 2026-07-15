@@ -181,6 +181,7 @@ class TestModelAggregationService:
             model_type=ModelType.PUBLIC,
             provider="openai",
             model_id="gpt-5.4",
+            resource_user_id=0,
             config={
                 "env": {
                     "model": "openai",
@@ -200,6 +201,8 @@ class TestModelAggregationService:
         }
         assert "env" not in model_dict["config"]
         assert "env" not in full_model_dict["config"]
+        assert model_dict["resourceUserId"] == 0
+        assert full_model_dict["resourceUserId"] == 0
         assert full_model_dict["runtime"] == {
             "family": "openai.openai-responses",
             "provider": "openai",

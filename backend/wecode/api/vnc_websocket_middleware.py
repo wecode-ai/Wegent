@@ -18,8 +18,8 @@ from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
-# VNC WebSocket path pattern: /api/cloud-devices/{device_id}/vnc-ws
-VNC_WS_PATTERN = re.compile(r"^/api/cloud-devices/([^/]+)/vnc-ws$")
+# VNC WebSocket path pattern: /vnc-proxy/{device_id}
+VNC_WS_PATTERN = re.compile(r"^/vnc-proxy/([^/]+)$")
 
 
 async def _handle_vnc_ws(scope, receive, send) -> None:

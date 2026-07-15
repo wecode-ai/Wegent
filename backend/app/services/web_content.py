@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass
 from html import escape
@@ -16,7 +15,6 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import HTTPException, status
-from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -24,14 +22,38 @@ from app.models.subtask_context import ContextStatus, ContextType, SubtaskContex
 from app.models.user import User
 from app.services.attachment.parser import DocumentParser
 from app.services.context import context_service
-from app.services.media.weibo_media_service import weibo_media_service
+from app.services.media.weibo_image_upload import (
+    WeiboImageUploadError,
+    weibo_image_upload_service,
+)
+from app.services.media.weibo_media_service import (
+    resolve_weibo_media_uid,
+    weibo_media_service,
+)
+from app.services.spider_job_client import SpiderJobError, spider_job_client
 
 logger = logging.getLogger(__name__)
+
+_XIAOHONGSHU_HOSTS = {"xiaohongshu.com", "xhslink.com"}
+_DOUYIN_HOSTS = {"douyin.com"}
+_BILIBILI_HOSTS = {"bilibili.com", "b23.tv"}
+_COMMENT_JOB_SITES = {"douyin", "bilibili"}
+_COMMENT_TIMEOUT_SECONDS = 60.0
+
+
+@dataclass(frozen=True)
+class _SpiderCrawlResult:
+    article: dict[str, Any]
+    comments: list[Any]
+    page_rows: list[dict[str, Any]]
+    comment_rows: list[dict[str, Any]]
+    comment_fetch_status: str
+    comment_fetch_error: str | None = None
 
 
 @dataclass(frozen=True)
 class ExternalWebContentPreview:
-    """Normalized context data built from spider MCP result."""
+    """Normalized context data built from a spider job result."""
 
     name: str
     source_url: str
@@ -69,18 +91,94 @@ class WebContentCrawlError(Exception):
 
 
 class WebContentService:
-    """Fetch and normalize external web content through spider MCP."""
+    """Fetch and normalize external web content through the spider job API."""
 
     async def crawl(self, url: str) -> ExternalWebContentPreview:
         source_url = self._validate_source_url(url)
-        logger.info(
-            "[WEB_CONTENT_MCP] crawl_start url=%s mcp_url=%s tool=%s",
-            source_url,
-            settings.WEB_CONTENT_MCP_URL,
-            settings.WEB_CONTENT_CRAWL_TOOL,
+        logger.info("[WEB_CONTENT_SPIDER] crawl_start url=%s", source_url)
+        try:
+            crawl_result = await self._crawl_with_spider(source_url)
+        except SpiderJobError as exc:
+            logger.warning("[WEB_CONTENT_SPIDER] page crawl failed error=%s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No supported media found in external web content result",
+            ) from exc
+        return self._build_preview(source_url, crawl_result)
+
+    async def _crawl_with_spider(self, source_url: str) -> _SpiderCrawlResult:
+        requested_site = self._detect_site(source_url)
+        page_params = {"type": "page", "url": source_url, "options": ""}
+        if requested_site == "xiaohongshu":
+            page_params["options"] = '{"comment":1}'
+
+        page_rows = await spider_job_client.run_job(page_params)
+        article, inline_comments, has_inline_comments = self._parse_page_rows(page_rows)
+        if has_inline_comments:
+            return _SpiderCrawlResult(
+                article=article,
+                comments=inline_comments,
+                page_rows=page_rows,
+                comment_rows=[],
+                comment_fetch_status="ready",
+            )
+
+        site = self._first_string(article, "site") or requested_site
+        if site not in _COMMENT_JOB_SITES:
+            return _SpiderCrawlResult(
+                article=article,
+                comments=[],
+                page_rows=page_rows,
+                comment_rows=[],
+                comment_fetch_status="skipped",
+            )
+
+        comment_params = self._build_comment_job_params(
+            site=site,
+            source_url=source_url,
+            article=article,
         )
-        raw_data = await self._crawl_with_fastmcp(source_url)
-        return self._build_preview(source_url, raw_data)
+        if comment_params is None:
+            return _SpiderCrawlResult(
+                article=article,
+                comments=[],
+                page_rows=page_rows,
+                comment_rows=[],
+                comment_fetch_status="skipped",
+                comment_fetch_error="Bilibili article_id is missing",
+            )
+
+        try:
+            async with asyncio.timeout(_COMMENT_TIMEOUT_SECONDS):
+                comment_rows = await spider_job_client.run_job(comment_params)
+                comments = self._extract_first_row_comments(comment_rows)
+        except (SpiderJobError, TimeoutError) as exc:
+            error = (
+                str(exc)
+                if isinstance(exc, SpiderJobError)
+                else "External web comment crawl timed out"
+            )
+            logger.warning(
+                "[WEB_CONTENT_SPIDER] comment crawl failed site=%s error=%s",
+                site,
+                error,
+            )
+            return _SpiderCrawlResult(
+                article=article,
+                comments=[],
+                page_rows=page_rows,
+                comment_rows=[],
+                comment_fetch_status="failed",
+                comment_fetch_error=error,
+            )
+
+        return _SpiderCrawlResult(
+            article=article,
+            comments=comments,
+            page_rows=page_rows,
+            comment_rows=comment_rows,
+            comment_fetch_status="ready",
+        )
 
     async def create_context(
         self,
@@ -93,7 +191,36 @@ class WebContentService:
         asset_contexts: list[SubtaskContext] = []
         try:
             videos = preview.type_data.get("videos") or []
+            images = preview.type_data.get("images") or []
             comments = preview.type_data.get("comments") or []
+
+            uid = resolve_weibo_media_uid(user)
+            # End the read transaction before long-running external media I/O.
+            db.rollback()
+            for image in images:
+                if not isinstance(image, dict) or not image.get("url"):
+                    continue
+                try:
+                    image["pid"] = await weibo_image_upload_service.upload_url(
+                        image["url"], uid=uid
+                    )
+                    image["pid_status"] = "ready"
+                except WeiboImageUploadError as exc:
+                    image["pid_status"] = "failed"
+                    image["pid_error"] = exc.code
+                    logger.warning(
+                        "[WEB_CONTENT_IMAGE] PID generation skipped url=%s error=%s",
+                        image["url"],
+                        exc,
+                    )
+                except Exception as exc:
+                    image["pid_status"] = "failed"
+                    image["pid_error"] = "upload_failed"
+                    logger.warning(
+                        "[WEB_CONTENT_IMAGE] PID generation failed url=%s error=%s",
+                        image["url"],
+                        exc,
+                    )
 
             for index, video in enumerate(videos, start=1):
                 if not isinstance(video, dict):
@@ -155,7 +282,8 @@ class WebContentService:
             "image_count": preview.image_count,
             "comment_count": summary.get("total_count"),
             "fetched_comment_count": summary.get("fetched_count"),
-            "image_urls": preview.type_data.get("image_urls") or [],
+            "comment_fetch": preview.type_data.get("comment_fetch"),
+            "image_urls": preview.type_data.get("images") or [],
             "asset_context_ids": asset_ids,
             "raw_result": preview.type_data.get("raw_result"),
         }
@@ -191,117 +319,79 @@ class WebContentService:
                 grouped["comments"].append(context.id)
         return grouped
 
-    async def _crawl_with_fastmcp(self, url: str) -> Any:
-        try:
-            from fastmcp import Client
-        except ImportError as exc:
-            raise WebContentCrawlError("fastmcp is not installed") from exc
+    def _parse_page_rows(
+        self,
+        rows: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[Any], bool]:
+        if not rows:
+            raise SpiderJobError("External web crawl result rows are empty")
+        row = rows[0]
+        nested_article = row.get("article")
+        if isinstance(nested_article, dict):
+            return nested_article, self._extract_first_row_comments(rows), True
+        if not isinstance(row.get("site"), str) and not row.get("article_id"):
+            raise SpiderJobError("External web content article is missing")
+        return row, [], False
 
-        try:
-            async with Client(settings.WEB_CONTENT_MCP_URL) as client:
-                logger.info(
-                    "[WEB_CONTENT_MCP] call_tool request tool=%s arguments=%s",
-                    settings.WEB_CONTENT_CRAWL_TOOL,
-                    self._serialize_for_log({"url": url}),
-                )
-                task = await client.call_tool(
-                    settings.WEB_CONTENT_CRAWL_TOOL,
-                    {"url": url},
-                    task=True,
-                )
-                task_id = getattr(task, "task_id", None) or getattr(task, "id", None)
-                logger.info(
-                    "[WEB_CONTENT_MCP] call_tool response task_id=%s task=%s",
-                    task_id,
-                    self._serialize_for_log(task),
-                )
-                await self._wait_task_done(client, task)
-                result = await task.result()
-                logger.info(
-                    "[WEB_CONTENT_MCP] task_result raw_result=%s",
-                    self._serialize_for_log(result),
-                )
-        except Exception as exc:
-            logger.exception("Failed to crawl external web content: url=%s", url)
-            raise WebContentCrawlError(str(exc)) from exc
+    def _extract_first_row_comments(
+        self,
+        rows: list[dict[str, Any]],
+    ) -> list[Any]:
+        if not rows:
+            raise SpiderJobError("External web comment result rows are empty")
+        raw_comments = rows[0].get("comments")
+        if not isinstance(raw_comments, list):
+            raise SpiderJobError("External web content comments are invalid")
+        return raw_comments
 
-        raw_data = self._extract_business_data(result)
-        logger.info(
-            "[WEB_CONTENT_MCP] extracted_business_data raw_data=%s",
-            self._serialize_for_log(raw_data),
+    def _build_comment_job_params(
+        self,
+        *,
+        site: str,
+        source_url: str,
+        article: dict[str, Any],
+    ) -> dict[str, str] | None:
+        if site == "douyin":
+            return {"type": "comment", "url": source_url, "options": ""}
+        article_id = article.get("article_id")
+        if not isinstance(article_id, (str, int)) or not str(article_id).strip():
+            return None
+        return {
+            "type": "comment",
+            "site": "bilibili",
+            "id": str(article_id).strip(),
+            "options": "",
+        }
+
+    def _detect_site(self, source_url: str) -> str | None:
+        hostname = (urlparse(source_url).hostname or "").lower()
+        if self._matches_host(hostname, _XIAOHONGSHU_HOSTS):
+            return "xiaohongshu"
+        if self._matches_host(hostname, _DOUYIN_HOSTS):
+            return "douyin"
+        if self._matches_host(hostname, _BILIBILI_HOSTS):
+            return "bilibili"
+        return None
+
+    def _matches_host(self, hostname: str, domains: set[str]) -> bool:
+        return any(
+            hostname == domain or hostname.endswith(f".{domain}") for domain in domains
         )
-        return raw_data
-
-    async def _wait_task_done(self, client: Any, task: Any) -> None:
-        timeout_seconds = settings.WEB_CONTENT_CRAWL_TIMEOUT_SECONDS
-        deadline = asyncio.get_running_loop().time() + timeout_seconds
-        task_id = getattr(task, "task_id", None) or getattr(task, "id", None)
-        if not task_id:
-            raise WebContentCrawlError("External web content crawl task id is missing")
-
-        while True:
-            if asyncio.get_running_loop().time() >= deadline:
-                raise WebContentCrawlError("External web content crawl timed out")
-
-            status_obj = await client.get_task_status(task_id)
-            status_value = self._read_status_value(status_obj)
-            logger.info(
-                "[WEB_CONTENT_MCP] task_status task_id=%s status=%s status_obj=%s",
-                task_id,
-                status_value,
-                self._serialize_for_log(status_obj),
-            )
-            if status_value in {"completed", "succeeded", "success", "done"}:
-                return
-            if status_value in {"failed", "error", "cancelled", "canceled"}:
-                message = self._read_status_message(status_obj)
-                raise WebContentCrawlError(
-                    message or "External web content crawl failed"
-                )
-
-            poll_interval = self._read_poll_interval(status_obj)
-            await asyncio.sleep(poll_interval)
-
-    def _extract_business_data(self, result: Any) -> Any:
-        data = self._get_attr_or_key(result, "data")
-        if data is not None:
-            return self._parse_json_if_needed(data)
-
-        structured_content = self._get_attr_or_key(result, "structured_content")
-        if structured_content is None:
-            structured_content = self._get_attr_or_key(result, "structuredContent")
-
-        if isinstance(structured_content, dict):
-            for key in ("result", "data"):
-                if key in structured_content:
-                    return self._parse_json_if_needed(structured_content[key])
-
-        if hasattr(result, "model_dump"):
-            dumped = result.model_dump(mode="json")
-            return self._extract_business_data(dumped)
-
-        return self._parse_json_if_needed(result)
 
     def _build_preview(
         self,
         source_url: str,
-        raw_data: Any,
-        *,
-        crawl_tool: str | None = None,
+        crawl_result: _SpiderCrawlResult,
     ) -> ExternalWebContentPreview:
-        items = self._as_items(raw_data)
-        videos = self._extract_videos(items)
-        images = self._extract_images(items)
-        comments = self._extract_comments(items)
-        primary_item = items[0] if items else None
-        page_content = self._extract_page_content(primary_item)
+        article = crawl_result.article
+        videos = self._extract_videos(article)
+        images = self._extract_images(article)
+        comments = self._extract_comments(article, crawl_result.comments)
+        page_content = self._extract_page_content(article)
         logger.info(
-            "[WEB_CONTENT_MCP] normalize_result url=%s raw_type=%s item_count=%s "
-            "item_keys=%s has_title=%s has_body=%s video_count=%s image_count=%s comment_count=%s",
+            "[WEB_CONTENT_SPIDER] normalize_result url=%s has_title=%s has_body=%s "
+            "video_count=%s image_count=%s comment_count=%s",
             source_url,
-            type(raw_data).__name__,
-            len(items),
-            [sorted(item.keys()) for item in items[:5]],
             bool(page_content.get("title")),
             bool(page_content.get("body")),
             len(videos),
@@ -310,20 +400,12 @@ class WebContentService:
         )
         if not page_content.get("body") and not videos and not images and not comments:
             logger.warning(
-                "[WEB_CONTENT_MCP] no_supported_media url=%s raw_data=%s",
+                "[WEB_CONTENT_SPIDER] no_supported_media url=%s",
                 source_url,
-                self._serialize_for_log(raw_data),
             )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="No supported media found in external web content result",
-            )
-
-        max_videos = settings.WEB_CONTENT_MAX_VIDEOS_PER_CONTEXT
-        if len(videos) > max_videos:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"External web content contains more than {max_videos} videos",
             )
 
         max_images = settings.WEB_CONTENT_MAX_IMAGES_PER_CONTEXT
@@ -338,7 +420,6 @@ class WebContentService:
         type_data = {
             "source": "external_web_content",
             "source_url": source_url,
-            "crawl_tool": crawl_tool or settings.WEB_CONTENT_CRAWL_TOOL,
             "site": page_content.get("site"),
             "title": page_content.get("title"),
             "body": page_content.get("body"),
@@ -347,10 +428,16 @@ class WebContentService:
             "publish_time": page_content.get("publish_time"),
             "videos": videos,
             "images": images,
-            "image_urls": images,
             "comments": comments,
-            "comment_summary": self._build_comment_summary(primary_item, comments),
-            "raw_result": raw_data,
+            "comment_summary": self._build_comment_summary(article, comments),
+            "comment_fetch": {
+                "status": crawl_result.comment_fetch_status,
+                "error": crawl_result.comment_fetch_error,
+            },
+            "raw_result": {
+                "page": crawl_result.page_rows,
+                "comments": crawl_result.comment_rows,
+            },
         }
         return ExternalWebContentPreview(
             name=name, source_url=source_url, type_data=type_data
@@ -369,11 +456,23 @@ class WebContentService:
         if not isinstance(video_url, str) or not video_url.strip():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="No video_url_s3 found in external web content result",
+                detail="No video_url found in external web content result",
             )
 
         filename = self._build_reference_filename(preview.name, index, total)
-        content = await self._download_video(video_url.strip())
+        try:
+            content = await self._download_video(video_url.strip())
+        except WebContentCrawlError:
+            fallback_url = video.get("fallback_url")
+            if not isinstance(fallback_url, str) or not fallback_url.strip():
+                raise
+            logger.warning(
+                "[WEB_CONTENT_VIDEO] primary download failed; retrying fallback "
+                "primary_host=%s fallback_host=%s",
+                urlparse(video_url).netloc,
+                urlparse(fallback_url).netloc,
+            )
+            content = await self._download_video(fallback_url.strip())
         upload_result = await weibo_media_service.upload_video_bytes(
             filename=filename,
             content=content,
@@ -400,7 +499,8 @@ class WebContentService:
                 "source": "external_web_content",
                 "external_media_type": "video",
                 "external_source_url": preview.source_url,
-                "external_video_index": index - 1,
+                "site": preview.site,
+                "cover_url": video.get("cover_url"),
             },
         )
 
@@ -515,55 +615,59 @@ class WebContentService:
         suffix = f"-{index}" if total > 1 else ""
         return f"{safe_name[:120]}{suffix}{extension}"
 
-    def _extract_videos(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        videos: list[dict[str, Any]] = []
-        seen_urls: set[str] = set()
-        for item in items:
-            video_url = item.get("video_url_s3")
-            if not isinstance(video_url, str) or not video_url.strip():
-                continue
-            video_url = video_url.strip()
-            if video_url in seen_urls:
-                continue
-            seen_urls.add(video_url)
-            video_index = len(videos) + 1
-            videos.append(
-                {
-                    "asset_id": f"web-video-{video_index}",
-                    "role": "primary" if video_index == 1 else "secondary",
-                    "url": video_url,
-                    "original_url": item.get("video_url"),
-                    "cover_url": item.get("cover_s3") or item.get("cover"),
-                    "original_cover_url": item.get("cover"),
-                    "mime_type": item.get("mime_type") or "video/mp4",
-                    "duration": item.get("duration"),
-                    "source_item_id": item.get("id") or item.get("article_id"),
-                }
-            )
-        return videos
+    def _extract_videos(self, article: dict[str, Any]) -> list[dict[str, Any]]:
+        s3_url = self._first_string(article, "video_url_s3")
+        original_url = self._first_string(article, "video_url")
+        video_url = s3_url or original_url
+        if not video_url:
+            return []
+        return [
+            {
+                "asset_id": "web-video-1",
+                "role": "primary",
+                "url": video_url,
+                "fallback_url": (
+                    original_url if s3_url and original_url != s3_url else None
+                ),
+                "cover_url": self._first_string(article, "cover_s3", "cover"),
+                "mime_type": article.get("mime_type") or "video/mp4",
+                "duration": article.get("duration"),
+                "source_item_id": article.get("id") or article.get("article_id"),
+            }
+        ]
 
-    def _extract_images(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _extract_images(self, article: dict[str, Any]) -> list[dict[str, Any]]:
         images: list[dict[str, Any]] = []
         seen_urls: set[str] = set()
-        for item in items:
-            public_urls = self._as_string_list(item.get("images"))
-            for source_index, public_value in enumerate(public_urls):
-                public_url = self._normalize_absolute_http_url(public_value)
-                if not public_url:
-                    continue
-                if public_url in seen_urls:
-                    continue
-                seen_urls.add(public_url)
-                image_index = len(images) + 1
-                images.append(
-                    {
-                        "asset_id": f"web-image-{image_index}",
-                        "role": "primary" if image_index == 1 else "secondary",
-                        "url": public_url,
-                        "source_item_id": item.get("id") or item.get("article_id"),
-                        "source_index": source_index,
-                    }
-                )
+        original_urls = article.get("images")
+        s3_urls = article.get("images_s3")
+        if not isinstance(original_urls, list):
+            original_urls = []
+        if not isinstance(s3_urls, list):
+            s3_urls = []
+        for source_index in range(max(len(original_urls), len(s3_urls))):
+            s3_url = self._normalize_absolute_http_url(
+                s3_urls[source_index] if source_index < len(s3_urls) else None
+            )
+            original_url = self._normalize_absolute_http_url(
+                original_urls[source_index]
+                if source_index < len(original_urls)
+                else None
+            )
+            selected_url = s3_url or original_url
+            if not selected_url or selected_url in seen_urls:
+                continue
+            seen_urls.add(selected_url)
+            image_index = len(images) + 1
+            images.append(
+                {
+                    "asset_id": f"web-image-{image_index}",
+                    "role": "primary" if image_index == 1 else "secondary",
+                    "url": selected_url,
+                    "source_item_id": article.get("id") or article.get("article_id"),
+                    "source_index": source_index,
+                }
+            )
         return images
 
     def _normalize_absolute_http_url(self, url: Any) -> str | None:
@@ -572,6 +676,7 @@ class WebContentService:
         normalized_url = url.strip()
         if not normalized_url:
             return None
+        normalized_url = normalized_url.replace("/format/heif", "/format/jpg")
         parsed = urlparse(normalized_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             return None
@@ -579,84 +684,60 @@ class WebContentService:
 
     def _extract_page_content(self, item: dict[str, Any] | None) -> dict[str, Any]:
         item = item or {}
-        desc = self._first_string(item, "desc")
-        text = self._first_string(item, "text")
-        body_parts = []
-        for value in (desc, text):
-            if value and value not in body_parts:
-                body_parts.append(value)
+        body = self._first_string(item, "content") or self._first_string(item, "desc")
         return {
             "primary_item_id": item.get("id") or item.get("article_id"),
             "article_id": item.get("article_id"),
             "site": self._first_string(item, "site"),
             "title": self._first_string(item, "title"),
-            "body": "\n\n".join(body_parts),
-            "author_name": self._first_string(
-                item,
-                "user_name",
-                "author_name",
-                "nickname",
-            ),
-            "author_id": self._first_string(item, "user_id", "author_id"),
-            "publish_time": self._first_string(
-                item,
-                "pub_time",
-                "publish_time",
-                "created_at",
-            ),
+            "body": body or "",
+            "author_name": self._first_string(item, "user_name"),
+            "author_id": self._identifier(item.get("user_id")),
+            "publish_time": self._first_string(item, "pub_time"),
         }
 
-    def _extract_comments(self, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _extract_comments(
+        self,
+        article: dict[str, Any],
+        raw_comments: list[Any],
+    ) -> list[dict[str, Any]]:
         comments: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
-        for item in items:
-            raw_comments = item.get("comments")
-            if not isinstance(raw_comments, list):
+        source_item_id = article.get("id") or article.get("article_id")
+        for index, raw_comment in enumerate(raw_comments):
+            if not isinstance(raw_comment, dict):
                 continue
-            source_item_id = item.get("id") or item.get("article_id")
-            for index, raw_comment in enumerate(raw_comments):
-                if not isinstance(raw_comment, dict):
-                    continue
-                content = self._first_string(
-                    raw_comment,
-                    "content",
-                    "text",
-                    "comment",
-                    "comment_content",
-                )
-                if not content:
-                    continue
-                comment_id = self._first_string(raw_comment, "id", "comment_id")
-                dedupe_key = comment_id or f"{source_item_id}:{index}:{content}"
-                if dedupe_key in seen_ids:
-                    continue
-                seen_ids.add(dedupe_key)
-                comments.append(
-                    {
-                        "asset_id": f"web-comment-{len(comments) + 1}",
-                        "comment_id": comment_id,
-                        "parent_id": self._first_string(
-                            raw_comment, "parent_id", "parent_comment_id"
-                        ),
-                        "author_name": self._first_string(
-                            raw_comment, "user_name", "author_name", "nickname"
-                        ),
-                        "author_id": self._first_string(
-                            raw_comment, "user_id", "author_id"
-                        ),
-                        "content": content,
-                        "like_count": raw_comment.get("like_count")
-                        or raw_comment.get("liked_count"),
-                        "reply_count": raw_comment.get("reply_count"),
-                        "created_at": self._first_string(
-                            raw_comment, "created_at", "pub_time", "publish_time"
-                        ),
-                        "ip_location": self._first_string(
-                            raw_comment, "ip_location", "location"
-                        ),
-                        "source_item_id": source_item_id,
-                    }
-                )
+            content = self._first_string(raw_comment, "content")
+            if not content:
+                continue
+            comment_id = self._identifier(raw_comment.get("comment_id"))
+            raw_parent_id = raw_comment.get("parent_id")
+            if raw_parent_id is None:
+                raw_parent_id = raw_comment.get("target_id")
+            raw_parent_id = self._identifier(raw_parent_id)
+            parent_id = raw_parent_id if raw_parent_id not in {None, "0"} else None
+            reply_count = raw_comment.get("reply_count")
+            if reply_count is None:
+                reply_count = raw_comment.get("sub_comment_count")
+            dedupe_key = comment_id or f"{source_item_id}:{index}:{content}"
+            if dedupe_key in seen_ids:
+                continue
+            seen_ids.add(dedupe_key)
+            comments.append(
+                {
+                    "asset_id": f"web-comment-{len(comments) + 1}",
+                    "comment_id": comment_id,
+                    "parent_id": parent_id,
+                    "author_name": self._first_string(raw_comment, "user_name"),
+                    "author_id": self._identifier(raw_comment.get("user_id")),
+                    "content": content,
+                    "like_count": raw_comment.get("like_count"),
+                    "reply_count": reply_count,
+                    "created_at": self._first_string(raw_comment, "pub_time"),
+                    "ip_location": self._first_string(raw_comment, "location"),
+                    "source_item_id": source_item_id,
+                }
+            )
         return comments
 
     def _build_comment_summary(
@@ -709,17 +790,6 @@ class WebContentService:
             )
         return "\n".join(lines).strip() + "\n"
 
-    def _as_items(self, raw_data: Any) -> list[dict[str, Any]]:
-        if isinstance(raw_data, list):
-            return [item for item in raw_data if isinstance(item, dict)]
-        if isinstance(raw_data, dict):
-            for key in ("items", "list", "videos", "data"):
-                nested = raw_data.get(key)
-                if isinstance(nested, list):
-                    return [item for item in nested if isinstance(item, dict)]
-            return [raw_data]
-        return []
-
     def _validate_source_url(self, url: str) -> str:
         normalized_url = (url or "").strip()
         parsed = urlparse(normalized_url)
@@ -745,26 +815,6 @@ class WebContentService:
                 detail="External web media host is not allowed",
             )
 
-    def _parse_json_if_needed(self, value: Any) -> Any:
-        if isinstance(value, str):
-            stripped = value.strip()
-            if not stripped:
-                return value
-            try:
-                return json.loads(stripped)
-            except json.JSONDecodeError:
-                return value
-        return value
-
-    def _as_string_list(self, value: Any) -> list[str]:
-        if not isinstance(value, list):
-            return []
-        strings: list[str] = []
-        for item in value:
-            if isinstance(item, str) and item.strip():
-                strings.append(item.strip())
-        return strings
-
     def _first_string(self, mapping: dict[str, Any], *keys: str) -> str | None:
         for key in keys:
             value = mapping.get(key)
@@ -772,15 +822,10 @@ class WebContentService:
                 return value.strip()
         return None
 
-    def _serialize_for_log(self, value: Any) -> str:
-        try:
-            return json.dumps(
-                jsonable_encoder(value),
-                ensure_ascii=False,
-                default=str,
-            )
-        except Exception:
-            return str(value)
+    def _identifier(self, value: Any) -> str | None:
+        if isinstance(value, (str, int)) and str(value).strip():
+            return str(value).strip()
+        return None
 
     def _build_fallback_name(self, url: str) -> str:
         parsed = urlparse(url)
@@ -796,33 +841,6 @@ class WebContentService:
             return body.strip()[:10]
 
         return self._build_fallback_name(source_url)
-
-    def _read_status_value(self, status_obj: Any) -> str:
-        value = self._get_attr_or_key(status_obj, "status")
-        if hasattr(value, "value"):
-            value = value.value
-        return str(value or "").strip().lower()
-
-    def _read_status_message(self, status_obj: Any) -> str | None:
-        for key in ("message", "error", "error_message", "detail"):
-            value = self._get_attr_or_key(status_obj, key)
-            if value:
-                return str(value)
-        return None
-
-    def _read_poll_interval(self, status_obj: Any) -> float:
-        for key in ("poll_interval", "pollInterval", "poll_interval_seconds"):
-            value = self._get_attr_or_key(status_obj, key)
-            if isinstance(value, (int, float)) and value > 0:
-                if value > 100:
-                    return min(value / 1000, 30)
-                return min(float(value), 30)
-        return settings.WEB_CONTENT_CRAWL_POLL_INTERVAL_SECONDS
-
-    def _get_attr_or_key(self, value: Any, key: str) -> Any:
-        if isinstance(value, dict):
-            return value.get(key)
-        return getattr(value, key, None)
 
 
 web_content_service = WebContentService()

@@ -55,6 +55,8 @@ import {
   formatJsonContent,
   isJsonFileExtension,
 } from '@/utils/languageDetection'
+import { formatDateTime } from '@/utils/dateTime'
+import { parseUTCDate } from '@/lib/utils'
 import { isDocumentEditable } from '../utils/documentUtils'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
@@ -396,9 +398,17 @@ export function DocumentDetailDialog({
                     <div className="flex items-center justify-between flex-shrink-0">
                       {/* Content title - hidden in fullscreen mode */}
                       {!isFullscreen && (
-                        <h3 className="text-sm font-medium text-text-primary">
-                          {t('document.document.detail.content')}
-                        </h3>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h3 className="text-sm font-medium text-text-primary flex-shrink-0">
+                            {t('document.document.detail.content')}
+                          </h3>
+                          {document.updated_at && (
+                            <span className="text-xs text-text-muted truncate">
+                              {t('document.document.detail.contentUpdatedAt')}:{' '}
+                              {formatDateTime(parseUTCDate(document.updated_at)?.getTime())}
+                            </span>
+                          )}
+                        </div>
                       )}
                       {/* In fullscreen mode, show document name instead */}
                       {isFullscreen && (

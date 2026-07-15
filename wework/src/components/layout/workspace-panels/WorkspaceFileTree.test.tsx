@@ -35,4 +35,36 @@ describe('WorkspaceFileTree', () => {
 
     expect(await screen.findByTestId('workspace-file-tree-pierre')).toBeInTheDocument()
   })
+
+  test('deduplicates conflicting directory paths before creating the Pierre tree', async () => {
+    const directory: WorkspaceFileEntry = {
+      name: 'tmp',
+      path: '/workspace/project/tmp',
+      isDirectory: true,
+      size: 0,
+      modifiedAt: '2026-06-15T00:00:00.000Z',
+    }
+    const staleFile: WorkspaceFileEntry = {
+      ...directory,
+      isDirectory: false,
+      size: 12,
+    }
+
+    render(
+      <WorkspaceFileTree
+        rootPath="/workspace/project"
+        activeDirectoryPath="/workspace/project"
+        entriesByPath={{ '/workspace/project': [directory, staleFile] }}
+        expandedPaths={new Set()}
+        selectedPath={null}
+        loadingPaths={new Set()}
+        error={null}
+        onOpenDirectory={vi.fn()}
+        onOpenFile={vi.fn()}
+        onRefresh={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('workspace-file-tree-pierre')).toBeInTheDocument()
+  })
 })

@@ -10,13 +10,24 @@ export function runtimeProjectKey(project: RuntimeProjectRef): string {
 }
 
 export function runtimeProjectWorkKey(projectWork: RuntimeProjectWork): string {
-  return runtimeProjectKey(projectWork.project)
+  const stateDeviceId = projectWork.project.stateDeviceId?.trim() ?? ''
+  return `${stateDeviceId}\0${runtimeProjectKey(projectWork.project)}`
+}
+
+export function normalizeRuntimeWorkspacePath(path: string): string {
+  const trimmedPath = path.trim()
+  if (trimmedPath === '/') return trimmedPath
+  return trimmedPath.replace(/\/+$/, '')
+}
+
+export function standaloneRuntimeProjectKey(workspacePath: string): string {
+  return normalizeRuntimeWorkspacePath(workspacePath)
 }
 
 export function runtimeProjectUiId(project: RuntimeProjectRef): number {
   if (project.id != null) return project.id
 
-  const key = runtimeProjectKey(project)
+  const key = `${project.stateDeviceId?.trim() ?? ''}\0${runtimeProjectKey(project)}`
   let hash = 0
   for (let index = 0; index < key.length; index += 1) {
     hash = (hash * 31 + key.charCodeAt(index)) >>> 0

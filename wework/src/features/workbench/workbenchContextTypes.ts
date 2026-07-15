@@ -1,4 +1,4 @@
-import type { EnvironmentDiffMode } from '@/api/environment'
+import type { EnvironmentDiffMode, EnvironmentInfoLoadOptions } from '@/api/environment'
 import type {
   Attachment,
   BindRuntimeTaskIMSessionsResponse,
@@ -9,9 +9,11 @@ import type {
   DeviceWorkspacePrepareResponse,
   GitBranch,
   GitRepoInfo,
+  LocalDeviceApp,
   IMPrivateSessionListResponse,
   LocalDeviceSkill,
   ModelOptions,
+  PluginPathComponent,
   ProjectExecutionMode,
   RuntimeContextUsage,
   ProjectWithTasks,
@@ -27,6 +29,11 @@ import type {
   RuntimeSendRequest,
   RuntimeTaskAddress,
   RuntimeTaskForkTarget,
+  RuntimeProjectAppearanceRequest,
+  RuntimeProjectPinRequest,
+  RuntimeProjectReorderRequest,
+  RuntimeProjectTaskReorderRequest,
+  RuntimeTaskPinRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
   RuntimeTaskIMNotificationSubscriptionResponse,
   RuntimeWorkSearchRequest,
@@ -88,11 +95,13 @@ export interface RuntimePaneActionOptions {
 
 export interface RuntimePaneGuidanceResult {
   sent: boolean
+  turnId?: string
   code?: string | null
   error?: string | null
 }
 
 export interface WorkbenchContextValue {
+  services: WorkbenchServices
   state: WorkbenchState
   isStartupReady: boolean
   workspaceFileApi: WorkspaceFileApi
@@ -106,6 +115,7 @@ export interface WorkbenchContextValue {
     selectedModelOptions: ModelOptions
     isModelSelectionReady: boolean
     input: string
+    trialTemplates: PluginPathComponent[]
     selectedSkills: SkillRef[]
     attachments: Attachment[]
     uploadingFiles: Map<string, { file: File; progress: number }>
@@ -114,6 +124,7 @@ export interface WorkbenchContextValue {
     isOptionsLocked: boolean
     isAttachmentReadyToSend: boolean
     setSelectedModel: (model: UnifiedModel | null) => void
+    setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
     setSelectedModelOption: (optionId: string, value: string) => void
     getSelectedModel?: () => UnifiedModel | null
     getSelectedModelOptions?: () => ModelOptions
@@ -126,6 +137,7 @@ export interface WorkbenchContextValue {
     removeAttachment: (attachmentId: number) => Promise<void>
     resetAttachments: () => void
     listLocalSkills: () => Promise<LocalDeviceSkill[]>
+    listLocalApps: () => Promise<LocalDeviceApp[]>
   }
   upgradingDevices: Record<string, DeviceUpgradeState>
   projectExecutionMode: ProjectExecutionMode
@@ -172,6 +184,7 @@ export interface WorkbenchContextValue {
   getRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalGetResponse>
   setRuntimeGoal: (request: RuntimeGoalSetRequest) => Promise<RuntimeGoalSetResponse>
   clearRuntimeGoal: (address: RuntimeTaskAddress) => Promise<RuntimeGoalClearResponse>
+  markRuntimeTaskStarted: (address: RuntimeTaskAddress) => void
   listImPrivateSessions: () => Promise<IMPrivateSessionListResponse>
   bindRuntimeTaskToImSessions: (
     address: RuntimeTaskAddress,
@@ -206,13 +219,19 @@ export interface WorkbenchContextValue {
   listGitBranches: (repo: GitRepoInfo) => Promise<GitBranch[]>
   updateProjectName: (projectId: number, name: string) => Promise<void>
   removeProject: (projectId: number) => Promise<void>
+  reorderRuntimeProjects: (data: RuntimeProjectReorderRequest) => Promise<void>
+  setRuntimeProjectPinned: (data: RuntimeProjectPinRequest) => Promise<void>
+  setRuntimeProjectAppearance: (data: RuntimeProjectAppearanceRequest) => Promise<void>
+  reorderRuntimeProjectTasks: (data: RuntimeProjectTaskReorderRequest) => Promise<void>
+  setRuntimeTaskPinned: (data: RuntimeTaskPinRequest) => Promise<void>
   getDeviceHomeDirectory: (deviceId: string) => Promise<string>
   getProjectWorkspaceRoot: (deviceId: string) => Promise<string>
   listDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
   createDeviceDirectory: (deviceId: string, path: string) => Promise<void>
   loadEnvironmentInfo: (
     project: ProjectWithTasks | null,
-    workspaceTarget?: WorkspaceTarget | null
+    workspaceTarget?: WorkspaceTarget | null,
+    options?: EnvironmentInfoLoadOptions
   ) => Promise<EnvironmentInfo>
   loadEnvironmentDiff: (
     project: ProjectWithTasks | null,
@@ -222,6 +241,15 @@ export interface WorkbenchContextValue {
   commitEnvironmentChanges: (
     project: ProjectWithTasks | null,
     message: string,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
+  commitAndPushEnvironmentChanges: (
+    project: ProjectWithTasks | null,
+    message: string,
+    workspaceTarget?: WorkspaceTarget | null
+  ) => Promise<void>
+  pushEnvironmentChanges: (
+    project: ProjectWithTasks | null,
     workspaceTarget?: WorkspaceTarget | null
   ) => Promise<void>
   listEnvironmentBranches: (
@@ -281,6 +309,7 @@ export type WorkbenchPaneState = Pick<
   | 'devices'
   | 'runtimeWork'
   | 'standaloneDeviceId'
+  | 'standaloneWorkspacePath'
   | 'selectedDeviceWorkspaceId'
   | 'pendingProjectWorkspaceProjectId'
   | 'user'

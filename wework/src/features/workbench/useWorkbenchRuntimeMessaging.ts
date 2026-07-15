@@ -101,7 +101,7 @@ interface UseWorkbenchRuntimeMessagingOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   runtimeTasks: WorkbenchRuntimeTasks
-  currentRuntimeTaskRunning: boolean
+  authoritativeRuntimeTaskRunning: boolean
   projectExecutionMode: string
   projectWorktreeBranch: string | null
   isOptionsLocked: boolean
@@ -141,7 +141,7 @@ export function useWorkbenchRuntimeMessaging({
   executorClient,
   services,
   runtimeTasks,
-  currentRuntimeTaskRunning,
+  authoritativeRuntimeTaskRunning,
   projectExecutionMode,
   projectWorktreeBranch,
   isOptionsLocked,
@@ -248,15 +248,18 @@ export function useWorkbenchRuntimeMessaging({
             error: response.error || '引导发送失败',
           }
         }
-        try {
-          await refreshWorkLists()
-        } catch (error) {
+        void refreshWorkLists().catch(error => {
           console.warn('[Wework] Runtime guidance accepted but work list refresh failed', {
             taskId: response.taskId ?? response.task_id ?? request.address.taskId,
             error: error instanceof Error ? error.message : String(error),
           })
+        })
+        return {
+          sent: true,
+          turnId: response.turnId ?? response.turn_id,
+          code: response.code,
+          error: response.error,
         }
-        return { sent: true, code: response.code, error: response.error }
       } catch (error) {
         console.warn('[Wework] Runtime guidance failed', {
           taskId: request.address.taskId,
@@ -644,6 +647,7 @@ export function useWorkbenchRuntimeMessaging({
         })
         const resolvedWorkspacePath = address.workspacePath ?? optimisticWorkspacePath
         const resolvedSameIdentity = isSameRuntimeTaskIdentity(optimisticAddress, address)
+        const optimisticTaskStillSelected = runtimeTasks.isCurrentRuntimeTask(optimisticAddress)
         if (!resolvedSameIdentity) {
           dispatch({ type: 'runtime_task_optimistic_removed', address: optimisticAddress })
         }
@@ -683,7 +687,7 @@ export function useWorkbenchRuntimeMessaging({
           options?.onRuntimeTaskOptimisticOpen?.(address, {
             previousAddress: optimisticAddress,
           })
-          if (options?.openInMainPane !== false) {
+          if (options?.openInMainPane !== false && optimisticTaskStillSelected) {
             runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
           }
         }
@@ -691,7 +695,6 @@ export function useWorkbenchRuntimeMessaging({
           await refreshWorkLists()
         }
         if (options?.openInMainPane !== false) {
-          runtimeTasks.openRuntimeTaskView(address, runtimeProject, { navigate: true })
           dispatch({ type: 'blank_chat_committed' })
         }
         return address
@@ -770,7 +773,7 @@ export function useWorkbenchRuntimeMessaging({
           reportSendBlocked('当前 LocalTask 暂不支持代码评论', undefined, options)
           return false
         }
-        if (currentRuntimeTaskRunning) {
+        if (authoritativeRuntimeTaskRunning) {
           reportSendBlocked(i18n.t('workbench.runtime_task_running_message'), undefined, options)
           return false
         }
@@ -878,7 +881,7 @@ export function useWorkbenchRuntimeMessaging({
     [
       attachmentSelection,
       buildSendPayload,
-      currentRuntimeTaskRunning,
+      authoritativeRuntimeTaskRunning,
       modelSelection,
       reportSendBlocked,
       sendPreparedRuntimeMessage,
@@ -912,7 +915,7 @@ export function useWorkbenchRuntimeMessaging({
       }
 
       if (state.currentRuntimeTask) {
-        if (currentRuntimeTaskRunning) {
+        if (authoritativeRuntimeTaskRunning) {
           reportSendBlocked(i18n.t('workbench.runtime_task_running_message'))
           return
         }
@@ -951,7 +954,7 @@ export function useWorkbenchRuntimeMessaging({
       reportSendBlocked('当前没有可重试的 LocalTask')
     },
     [
-      currentRuntimeTaskRunning,
+      authoritativeRuntimeTaskRunning,
       dispatch,
       executorClient,
       modelSelection,

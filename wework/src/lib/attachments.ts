@@ -18,6 +18,29 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   '.yml',
 ])
 
+function isObjectUrl(value: string | undefined): value is string {
+  return value?.startsWith('blob:') ?? false
+}
+
+export function releaseAttachmentPreview(attachment: Attachment): void {
+  if (
+    !isObjectUrl(attachment.local_preview_url) ||
+    typeof URL === 'undefined' ||
+    typeof URL.revokeObjectURL !== 'function'
+  ) {
+    return
+  }
+  URL.revokeObjectURL(attachment.local_preview_url)
+}
+
+export function persistAttachmentReferences(attachments: Attachment[]): Attachment[] {
+  return attachments.map(attachment =>
+    isObjectUrl(attachment.local_preview_url)
+      ? { ...attachment, local_preview_url: undefined }
+      : attachment
+  )
+}
+
 export function isImageAttachment(attachment: Attachment): boolean {
   return (
     attachment.mime_type.toLowerCase().startsWith('image/') ||

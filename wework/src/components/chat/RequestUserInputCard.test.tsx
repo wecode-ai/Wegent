@@ -54,6 +54,30 @@ describe('RequestUserInputCard', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })
 
+  test('wraps long option text and scrolls an oversized question list', () => {
+    const longLabel = '组合型项目（推荐）：将多个仓库、工作项目和外部任务源关联到同一看板中'
+    const longDescription =
+      '卡片可以关联其中一个上下文，并在后续步骤中持续保留完整的看板、项目和任务来源信息。'
+    const questions = Array.from({ length: 12 }, (_, index) => ({
+      id: `question-${index + 1}`,
+      question: `第 ${index + 1} 个需要确认的问题`,
+      options: [{ label: longLabel, description: longDescription }],
+    }))
+
+    render(<RequestUserInputCard payload={{ kind: 'request_user_input', questions }} />)
+
+    const card = screen.getByTestId('request-user-input-card')
+    const questionsContainer = screen.getByTestId('request-user-input-questions')
+    const option = screen.getByTestId('request-user-input-option-question-1-0')
+
+    expect(card).toHaveClass('max-h-[min(60dvh,36rem)]', 'flex', 'flex-col')
+    expect(questionsContainer).toHaveClass('min-h-0', 'flex-1', 'overflow-y-auto')
+    expect(option).toHaveClass('min-h-9', 'items-start', 'py-2')
+    expect(option.querySelector('span.min-w-0')).toHaveClass('whitespace-normal', 'break-words')
+    expect(option).toHaveTextContent(longLabel)
+    expect(option).toHaveTextContent(longDescription)
+  })
+
   test('submits the implementation plan option when option one is clicked', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()

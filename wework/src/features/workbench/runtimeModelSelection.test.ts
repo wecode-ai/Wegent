@@ -15,6 +15,26 @@ describe('runtimeModelSelection', () => {
     })
   })
 
+  test('sends the runtime model name instead of its picker label', () => {
+    const model: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      modelId: 'gpt-5.6-sol',
+      displayName: 'GPT 5.6 Sol',
+      type: 'runtime',
+      provider: 'local',
+      config: {
+        weworkModelKind: 'codex-official',
+        ui: { family: 'codex-official', modelLabel: 'GPT 5.6 Sol' },
+      },
+    }
+
+    expect(selectedModelExecutionFields(model, { reasoning: 'medium' })).toMatchObject({
+      modelId: 'gpt-5.6-sol',
+      modelType: 'runtime',
+      modelOptions: { reasoning: 'medium' },
+    })
+  })
+
   test('chooses default new chat model by Codex priority', () => {
     const officialWithoutAuth: UnifiedModel = {
       name: 'gpt-5.5',
@@ -110,6 +130,37 @@ describe('runtimeModelSelection', () => {
         collaborationMode: 'default',
         codexProviderId: 'wecode-openai',
         codexProviderName: 'wecode openai',
+      },
+    })
+  })
+
+  test('passes complete cloud model identity as hidden execution options', () => {
+    const cloudModel: UnifiedModel = {
+      name: 'cloud:user:shared-model',
+      type: 'user',
+      namespace: 'default',
+      resourceUserId: 42,
+      provider: 'cloud',
+      config: {
+        context_window: 128000,
+        weworkExecution: {
+          source: 'cloud',
+          modelName: 'shared-model',
+          modelType: 'user',
+          modelNamespace: 'default',
+          resourceUserId: 42,
+        },
+      },
+    }
+
+    expect(selectedModelExecutionFields(cloudModel, {})).toEqual({
+      modelId: 'shared-model',
+      modelType: 'user',
+      modelOptions: {
+        collaborationMode: 'default',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '42',
+        weworkCloudModelContextWindow: '128000',
       },
     })
   })

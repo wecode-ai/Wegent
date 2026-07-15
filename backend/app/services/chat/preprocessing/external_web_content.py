@@ -131,8 +131,16 @@ def build_external_web_content_texts(
             lines.extend(["", "Body:", escape(str(body))])
         if image_urls:
             lines.extend(["", "Image URLs:"])
+            image_pids = _normalize_external_image_pids(context)
             for index, (image_url, source_index) in enumerate(image_urls, start=1):
-                lines.append(f"{index}. source_index={source_index} url={image_url}")
+                pid_part = (
+                    f" pid={image_pids[source_index]}"
+                    if source_index in image_pids
+                    else ""
+                )
+                lines.append(
+                    f"{index}. source_index={source_index} url={image_url}{pid_part}"
+                )
         text_contents.append("\n".join(lines).strip() + "\n\n")
     return text_contents
 
@@ -166,3 +174,21 @@ def _normalize_external_image_urls(context: SubtaskContext) -> List[tuple[str, i
             continue
         normalized_urls.append((image_url, source_index))
     return normalized_urls
+
+
+def _normalize_external_image_pids(context: SubtaskContext) -> dict[int, str]:
+    """Return external image PIDs keyed by their source indexes."""
+    if not isinstance(context.type_data, dict):
+        return {}
+    image_urls = context.type_data.get("image_urls") or []
+    if not isinstance(image_urls, list):
+        return {}
+    pids: dict[int, str] = {}
+    for index, image in enumerate(image_urls):
+        if not isinstance(image, dict):
+            continue
+        pid = str(image.get("pid") or "").strip()
+        source_index = image.get("source_index", index)
+        if pid and isinstance(source_index, int):
+            pids[source_index] = pid
+    return pids

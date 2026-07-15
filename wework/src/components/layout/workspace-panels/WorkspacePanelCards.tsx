@@ -46,6 +46,7 @@ interface WorkspacePanelCardsProps {
   preferLocalTerminal?: boolean
   panelActive?: boolean
   testIdsEnabled?: boolean
+  terminalContextTitle?: string | null
   onTerminalTitleChange?: (title: string) => void
 }
 
@@ -119,6 +120,34 @@ function getTerminalSessionLabel(session: WorkspaceTerminalSession | null): stri
   )
 }
 
+function buildLocalTerminalEnv({
+  title,
+  projectName,
+  workspacePath,
+}: {
+  title?: string | null
+  projectName?: string | null
+  workspacePath?: string | null
+}): Record<string, string> | undefined {
+  const normalizedTitle = title?.trim()
+  if (!normalizedTitle) return undefined
+
+  const env: Record<string, string> = {
+    WEWORK_PARENT_TITLE: normalizedTitle,
+  }
+  const normalizedProjectName = projectName?.trim()
+  const normalizedWorkspacePath = workspacePath?.trim()
+
+  if (normalizedProjectName) {
+    env.WEWORK_PARENT_PROJECT = normalizedProjectName
+  }
+  if (normalizedWorkspacePath) {
+    env.WEWORK_PARENT_WORKSPACE = normalizedWorkspacePath
+  }
+
+  return env
+}
+
 function createProjectSessionApi() {
   const { apiBaseUrl } = getRuntimeConfig()
   return createProjectApi(createHttpClient({ baseUrl: apiBaseUrl }))
@@ -143,6 +172,7 @@ export function WorkspacePanelCards({
   preferLocalTerminal = false,
   panelActive = true,
   testIdsEnabled = true,
+  terminalContextTitle,
   onTerminalTitleChange,
 }: WorkspacePanelCardsProps) {
   const { t } = useTranslation('common')
@@ -395,7 +425,14 @@ export function WorkspacePanelCards({
       }
 
       if (shouldUseLocalTerminal) {
-        const sessionId = await startLocalTerminal({ cwd: activeWorkspacePath })
+        const sessionId = await startLocalTerminal({
+          cwd: activeWorkspacePath,
+          env: buildLocalTerminalEnv({
+            title: terminalContextTitle,
+            projectName: currentProject?.name,
+            workspacePath: activeWorkspacePath,
+          }),
+        })
         const sessionDeviceId =
           activeWorkspaceDeviceId ?? resolvedLocalTerminalCheck.executorDeviceId ?? 'local'
         setTerminalSessions(sessions => [
@@ -476,6 +513,7 @@ export function WorkspacePanelCards({
     readLocalTerminalCheck,
     setLocalTerminalCheck,
     setProjectError,
+    terminalContextTitle,
     workspaceSource,
   ])
 
@@ -744,6 +782,10 @@ export function WorkspacePanelCards({
             key={session.session_id}
             sessionId={session.session_id}
             active={panelActive && isActive}
+            taskId={workspaceTarget?.taskId}
+            workspacePath={activeWorkspacePath}
+            cwd={session.cwd ?? activeWorkspacePath}
+            title={getTerminalSessionLabel(session)}
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}
@@ -753,6 +795,10 @@ export function WorkspacePanelCards({
             key={session.session_id}
             sessionId={session.session_id}
             active={panelActive && isActive}
+            taskId={workspaceTarget?.taskId}
+            workspacePath={activeWorkspacePath}
+            cwd={session.path ?? session.cwd ?? activeWorkspacePath}
+            title={getTerminalSessionLabel(session)}
             onExit={() => handleTerminalSessionExit(session.session_id)}
             onTitleChange={title => handleTerminalTitleChange(session.session_id, title)}
             testIdsEnabled={testIdsEnabled}

@@ -6,23 +6,36 @@ export interface AppPreferences {
   showMainWindowOnLaunch: boolean
   closeToTrayHintSeen: boolean
   language: AppLanguagePreference
+  terminalContextInjectionEnabled: boolean
   taskCompletionNotificationsEnabled: boolean
   trayUnreadEnabled: boolean
   trayRunningEnabled: boolean
   trayUsageEnabled: boolean
+  browserExternalLinkTarget: BrowserLinkTarget
+  browserLocalLinkTarget: BrowserLinkTarget
+  browserDownloadDirectory: string | null
+  browserAskBeforeDownload: boolean
+  appshotsPlaySound: boolean
 }
 
 export type AppLanguagePreference = 'system' | 'zh-CN' | 'en'
+export type BrowserLinkTarget = 'system' | 'wework'
 
 export interface AppPreferencesPatch {
   closeToTrayEnabled?: boolean
   showMainWindowOnLaunch?: boolean
   closeToTrayHintSeen?: boolean
   language?: AppLanguagePreference
+  terminalContextInjectionEnabled?: boolean
   taskCompletionNotificationsEnabled?: boolean
   trayUnreadEnabled?: boolean
   trayRunningEnabled?: boolean
   trayUsageEnabled?: boolean
+  browserExternalLinkTarget?: BrowserLinkTarget
+  browserLocalLinkTarget?: BrowserLinkTarget
+  browserDownloadDirectory?: string | null
+  browserAskBeforeDownload?: boolean
+  appshotsPlaySound?: boolean
 }
 
 export const defaultAppPreferences: AppPreferences = {
@@ -30,15 +43,22 @@ export const defaultAppPreferences: AppPreferences = {
   showMainWindowOnLaunch: true,
   closeToTrayHintSeen: false,
   language: 'zh-CN',
+  terminalContextInjectionEnabled: true,
   taskCompletionNotificationsEnabled: false,
   trayUnreadEnabled: true,
   trayRunningEnabled: true,
   trayUsageEnabled: true,
+  browserExternalLinkTarget: 'system',
+  browserLocalLinkTarget: 'wework',
+  browserDownloadDirectory: null,
+  browserAskBeforeDownload: false,
+  appshotsPlaySound: true,
 }
 
 export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
 
 const supportedLanguagePreferences = new Set<AppLanguagePreference>(['system', 'zh-CN', 'en'])
+const supportedBrowserLinkTargets = new Set<BrowserLinkTarget>(['system', 'wework'])
 
 function canInvokeAppPreferencesCommand() {
   if (typeof window === 'undefined') {
@@ -78,6 +98,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       supportedLanguagePreferences.has(record.language as AppLanguagePreference)
         ? (record.language as AppLanguagePreference)
         : defaultAppPreferences.language,
+    terminalContextInjectionEnabled:
+      typeof record.terminalContextInjectionEnabled === 'boolean'
+        ? record.terminalContextInjectionEnabled
+        : defaultAppPreferences.terminalContextInjectionEnabled,
     taskCompletionNotificationsEnabled:
       typeof record.taskCompletionNotificationsEnabled === 'boolean'
         ? record.taskCompletionNotificationsEnabled
@@ -94,6 +118,28 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.trayUsageEnabled === 'boolean'
         ? record.trayUsageEnabled
         : defaultAppPreferences.trayUsageEnabled,
+    browserExternalLinkTarget:
+      typeof record.browserExternalLinkTarget === 'string' &&
+      supportedBrowserLinkTargets.has(record.browserExternalLinkTarget as BrowserLinkTarget)
+        ? (record.browserExternalLinkTarget as BrowserLinkTarget)
+        : defaultAppPreferences.browserExternalLinkTarget,
+    browserLocalLinkTarget:
+      typeof record.browserLocalLinkTarget === 'string' &&
+      supportedBrowserLinkTargets.has(record.browserLocalLinkTarget as BrowserLinkTarget)
+        ? (record.browserLocalLinkTarget as BrowserLinkTarget)
+        : defaultAppPreferences.browserLocalLinkTarget,
+    browserDownloadDirectory:
+      typeof record.browserDownloadDirectory === 'string' && record.browserDownloadDirectory.trim()
+        ? record.browserDownloadDirectory.trim()
+        : defaultAppPreferences.browserDownloadDirectory,
+    browserAskBeforeDownload:
+      typeof record.browserAskBeforeDownload === 'boolean'
+        ? record.browserAskBeforeDownload
+        : defaultAppPreferences.browserAskBeforeDownload,
+    appshotsPlaySound:
+      typeof record.appshotsPlaySound === 'boolean'
+        ? record.appshotsPlaySound
+        : defaultAppPreferences.appshotsPlaySound,
   }
 }
 
@@ -111,10 +157,19 @@ export async function getAppPreferences(): Promise<AppPreferences> {
 
 export async function updateAppPreferences(patch: AppPreferencesPatch): Promise<AppPreferences> {
   if (!isTauriRuntime() || !canInvokeAppPreferencesCommand()) {
-    return mergeAppPreferences({ ...defaultAppPreferences, ...patch })
+    const preferences = mergeAppPreferences({ ...defaultAppPreferences, ...patch })
+    emitAppPreferencesChanged(preferences)
+    return preferences
   }
 
-  const preferences = mergeAppPreferences(await invoke('update_app_preferences', { patch }))
+  const nativePatch =
+    Object.prototype.hasOwnProperty.call(patch, 'browserDownloadDirectory') &&
+    patch.browserDownloadDirectory === null
+      ? { ...patch, browserDownloadDirectory: '' }
+      : patch
+  const preferences = mergeAppPreferences(
+    await invoke('update_app_preferences', { patch: nativePatch })
+  )
   emitAppPreferencesChanged(preferences)
   return preferences
 }

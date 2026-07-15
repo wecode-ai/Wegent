@@ -6,6 +6,8 @@ sidebar_position: 32
 
 Wework remains a complete local app by default. Local Codex, local model configs, the local executor, local workspaces, and local conversations do not require Backend login or cloud devices. Cloud connection is an optional capability layer: after the user enters a Backend URL from the sidebar and signs in with the WeWork login flow, server models, cloud devices, and cloud Codex auth sync join the same workbench.
 
+Set `VITE_WEGENT_BACKEND_URL` at build time to provide the default Backend URL in Connect cloud. This value only prefills the field and remains editable; an existing local connection address takes precedence over the build default. When configured, the desktop account area shows "Wegent account / Not signed in" while disconnected and continues to open the full account menu. Users start cloud authorization through "Sign in to Wegent" at the top of that menu. After connection, the account area shows the cloud username and email; Log out in the account menu only disconnects the cloud connection.
+
 ## State Ownership
 
 Cloud connection state is owned by the frontend `cloud-connection` layer and is stored separately from the global `auth_token` used by the web login flow. It persists:
@@ -23,11 +25,12 @@ Backend builds the authorization page URL from `WEWORK_AUTHORIZE_BASE_URL`; when
 
 ## Interaction Entry
 
-The desktop sidebar shows the cloud entry near the bottom:
+The desktop sidebar provides two cloud entry points with distinct responsibilities:
 
-- Disconnected state shows "local mode / connect cloud".
-- Connected state shows the cloud host, cloud user, and online cloud device count.
-- Expired or error state asks the user to sign in again while local features remain available.
+- The workspace entry shows cloud connection status. It says "Connect cloud" while disconnected and "Cloud connection expired" after login expiry; clicking it can restore the connection directly.
+- The account area always opens the account menu and does not change its click behavior with login state. While signed out, "Sign in to Wegent" appears at the top of the menu, and Settings, Check for updates, and Remaining usage stay accessible.
+- After connection, the account area shows the cloud username and email, while the workspace entry shows the cloud host, cloud user, and online cloud device count.
+- Expired or failed cloud connections do not block local features.
 
 Settings are grouped by capability:
 
@@ -57,6 +60,8 @@ Cloud executors still connect to Backend through the `/local-executor` namespace
 Packaged release builds of Wework must keep one active app paired with one local executor. On release startup, only one Wework instance may stay active; repeated launches focus the existing window. Before starting the local executor for the first time, the app cleans up stale `wegent-executor` processes that use the release fixed `WEGENT_EXECUTOR_APP_IPC_SOCKET` and removes the stale socket, then starts the executor owned by the current app. This prevents a new app from attaching to an executor left by an older app instance.
 
 Debug builds do not enable this single-instance or cleanup policy. Local development may run multiple Wework debug instances at the same time, each with its own `app-runtime/wework-.../app-ipc.sock` socket. Release cleanup must also inspect each candidate executor process environment and terminate only executors using the release fixed socket, so it does not kill executors owned by debug instances.
+
+Closing to the tray destroys only the current WebView; the Wework process, executor, and Codex app-server keep running. After the window is recreated, the `running` field returned by `runtime.tasks.transcript` restores task execution state. That field is authoritative only when backed by an in-memory executor task or the Codex app-server's live thread status; it must not be inferred from stale `streaming` messages in transcript history. After a normal or abnormal full app exit, the new executor has no activity state from the previous process, so old messages cannot mark an interrupted task as running again.
 
 ## Local CLI Entry
 

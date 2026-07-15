@@ -4,7 +4,7 @@
 
 """Runtime-native local work endpoints for Wework."""
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -49,6 +49,8 @@ from app.schemas.runtime_work import (
     RuntimeWorkspaceOpenResponse,
     RuntimeWorkspaceRemoveRequest,
     RuntimeWorkspaceRenameRequest,
+    RuntimeWorkspaceSearchRequest,
+    RuntimeWorkspaceSearchResponse,
 )
 from app.services import runtime_work_service
 from shared.telemetry.decorators import (
@@ -163,6 +165,25 @@ async def search_runtime_work_endpoint(
     """Search online runtime transcripts owned by the current user."""
 
     return await runtime_work_service.search_runtime_work(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/workspace/search",
+    response_model=RuntimeWorkspaceSearchResponse,
+    response_model_by_alias=True,
+)
+async def search_runtime_workspace_endpoint(
+    request: RuntimeWorkspaceSearchRequest = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Search workspace paths through the owning online local executor."""
+
+    return await runtime_work_service.search_runtime_workspace(
         db=db,
         user_id=current_user.id,
         request=request,
@@ -585,6 +606,23 @@ async def create_runtime_task_endpoint(
         user_id=current_user.id,
         request=request,
     )
+
+
+@router.post("/llm-responses-proxy/responses")
+async def llm_responses_proxy_endpoint(
+    fastapi_request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy an LLM responses request to the real provider without exposing api_key.
+
+    The Wework local executor authenticates with the user's backend token. The
+    backend resolves the selected Model CRD, attaches its provider credentials,
+    and forwards the request without exposing those credentials to Wework.
+    """
+    from app.services.llm_proxy_service import proxy_llm_responses
+
+    return await proxy_llm_responses(fastapi_request, db, current_user)
 
 
 @router.post(

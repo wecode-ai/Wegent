@@ -6,6 +6,8 @@ sidebar_position: 32
 
 Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配置、本地 executor、本地工作区和本地会话不依赖 Backend 登录或云端设备。云端连接是一个可选能力层：用户在侧栏输入 Backend 地址并完成 WeWork 登录后，服务端模型、云设备和云端 Codex 认证同步会加入同一个工作台。
 
+打包时可通过 `VITE_WEGENT_BACKEND_URL` 设置“连接云端”中的默认 Backend 地址。该值仅用于预填，用户仍可修改；本机已有的连接地址优先于打包默认值。配置该变量后，桌面端左下角账户区在未连接时显示“Wegent 账户 / 未登录”，点击后仍打开完整账户菜单；用户从菜单顶部的“登录 Wegent”进入云端授权。连接成功后，账户区显示云端用户名和邮箱；账户菜单中的“退出登录”只会断开云端连接。
+
 ## 状态归属
 
 云端连接状态由 `cloud-connection` 前端层管理，和网页版登录使用的全局 `auth_token` 分开存储。它持久化以下信息：
@@ -23,11 +25,12 @@ Backend 使用 `WEWORK_AUTHORIZE_BASE_URL` 生成授权页地址；未配置时�
 
 ## 交互入口
 
-桌面侧栏底部展示云端入口：
+桌面侧栏提供两个职责明确的云端入口：
 
-- 未连接时显示“本地模式 / 连接云端”。
-- 已连接时显示云端主机、云端用户和在线云设备数量。
-- 登录过期或连接错误时提示重新登录，但本地功能继续可用。
+- 工作区入口展示云端连接状态。未连接时显示“连接云端”，登录过期时显示“云端连接已失效”；点击后可直接恢复连接。
+- 左下角账户区始终打开账户菜单，不因登录状态改变点击行为。未登录时菜单顶部展示“登录 Wegent”，设置、检查更新和剩余用量仍然可访问。
+- 已连接时账户区显示云端用户名和邮箱，工作区入口显示云端主机、云端用户和在线云设备数量。
+- 登录过期或连接错误不会阻塞本地功能。
 
 设置页按能力分组：
 
@@ -57,6 +60,8 @@ Wework 云端 runtime 执行使用和本地模式一致的 app IPC 协议。前�
 打包 release 版 Wework 必须和本机 executor 保持一对一活跃配套。release app 启动时只允许一个活跃 Wework 实例；重复启动会聚焦已有窗口。首次启动本机 executor 前，app 会清理使用 release 固定 `WEGENT_EXECUTOR_APP_IPC_SOCKET` 的旧 `wegent-executor` 进程和 stale socket，再启动当前 app 管理的 executor，避免新 app 连接到旧实例遗留的 executor。
 
 debug 构建不启用这个单实例和清理策略。开发时可以同时启动多个 Wework debug 实例；每个实例使用 `app-runtime/wework-.../app-ipc.sock` 形式的独立 socket。release 清理旧 executor 时也必须检查进程环境中的 socket 值，只能终止使用 release 固定 socket 的 executor，不能误杀 debug 实例对应的 executor。
+
+关闭到托盘只销毁当前 WebView，Wework 主进程、executor 和 Codex app-server 继续运行。窗口重建后，`runtime.tasks.transcript` 返回的 `running` 字段用于恢复任务运行态；该字段只以 executor 进程内的活动任务或 Codex app-server 的实时线程状态为依据，不能从历史 transcript 中残留的 `streaming` 消息推断。完整退出或异常退出后，新 executor 不保留旧进程的活动状态，因此旧消息不会把已经中断的任务重新标记为运行中。
 
 ## 本机 CLI 入口
 

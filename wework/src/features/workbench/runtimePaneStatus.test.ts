@@ -57,6 +57,17 @@ function runtimeWork(running: boolean, status?: string | null): RuntimeWorkListR
 }
 
 describe('runtime pane status', () => {
+  test('treats a task without a running flag as unknown', () => {
+    const runtimeWorkWithoutRunningState = runtimeWork(false)
+    runtimeWorkWithoutRunningState.chats[0].tasks[0].running = undefined
+
+    expect(getRuntimePaneTaskExecution(runtimeWorkWithoutRunningState, runtimeAddress)).toEqual({
+      known: false,
+      running: false,
+      status: null,
+    })
+  })
+
   test('derives one busy state from send phase, streaming message, and task execution', () => {
     const taskExecution = getRuntimePaneTaskExecution(runtimeWork(true), runtimeAddress)
     const status = deriveRuntimePaneStatus({
@@ -95,6 +106,22 @@ describe('runtime pane status', () => {
     })
 
     expect(status.taskExecution).toEqual({ known: true, running: false, status: 'done' })
+    expect(status.activeAssistantMessage).toBeNull()
+    expect(status.isAssistantStreaming).toBe(false)
+    expect(status.isBusy).toBe(false)
+    expect(status.canSendQueuedMessage).toBe(true)
+  })
+
+  test('does not let a stale streaming transcript revive an idle non-terminal task', () => {
+    const taskExecution = getRuntimePaneTaskExecution(runtimeWork(false, 'active'), runtimeAddress)
+    const status = deriveRuntimePaneStatus({
+      messages: [assistantMessage('streaming')],
+      sendPhase: 'idle',
+      currentRuntimeTask: runtimeAddress,
+      taskExecution,
+    })
+
+    expect(status.taskExecution).toEqual({ known: true, running: false, status: 'active' })
     expect(status.activeAssistantMessage).toBeNull()
     expect(status.isAssistantStreaming).toBe(false)
     expect(status.isBusy).toBe(false)

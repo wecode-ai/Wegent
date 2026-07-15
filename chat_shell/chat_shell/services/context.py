@@ -359,8 +359,8 @@ class ChatContext:
             if self._request.model_config
             else {}
         )
-        supports_image = model_capabilities.get("supportsImage")
-        supports_video = model_capabilities.get("supportsVideo", False)
+        supports_image = model_capabilities.get("supportsImage") is True
+        supports_video = model_capabilities.get("supportsVideo") is True
 
         add_span_event("loading_chat_history")
         logger.debug(

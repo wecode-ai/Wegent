@@ -1857,7 +1857,7 @@ function ChatAreaContent({
         {!hasMessages && !inputAlwaysAtBottom && (
           <div
             className="flex-1 flex items-center justify-center w-full"
-            style={{ marginBottom: taskType === 'code' ? '-5vh' : '20vh' }}
+            style={{ marginBottom: taskType === 'code' ? 0 : '20vh' }}
           >
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               {taskType !== 'knowledge' && (

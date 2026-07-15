@@ -258,6 +258,64 @@ describe('workbench project chat hooks', () => {
     })
   })
 
+  test('updates the model and power setting atomically', async () => {
+    const solModel: UnifiedModel = {
+      name: 'gpt-5.6-sol',
+      type: 'runtime',
+      config: {
+        ui: {
+          family: 'codex-official',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          controls: ['speed'],
+        },
+      },
+    }
+    const terraModel: UnifiedModel = {
+      name: 'gpt-5.6-terra',
+      type: 'runtime',
+      config: {
+        ui: {
+          family: 'codex-official',
+          reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+          controls: ['speed'],
+        },
+      },
+    }
+    const onSelectionChange = vi.fn()
+    const api = { listModels: vi.fn().mockResolvedValue({ data: [solModel, terraModel] }) }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        selectionConfig: {
+          modelName: solModel.name,
+          modelType: solModel.type,
+          options: { reasoning: 'high', speed: 'standard' },
+        },
+        onSelectionChange,
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toEqual(solModel))
+    act(() =>
+      result.current.setSelectedModelAndOptions(terraModel, {
+        reasoning: 'low',
+        speed: 'standard',
+      })
+    )
+
+    expect(result.current.selectedModel).toEqual(terraModel)
+    expect(result.current.selectedModelOptions).toEqual({
+      reasoning: 'low',
+      speed: 'standard',
+    })
+    expect(onSelectionChange).toHaveBeenCalledWith({
+      modelName: terraModel.name,
+      modelType: terraModel.type,
+      options: { reasoning: 'low', speed: 'standard' },
+    })
+  })
+
   test('copies the selected model into a new runtime task scope', async () => {
     const gptModel: UnifiedModel = {
       name: 'gpt-5.5',
@@ -496,6 +554,72 @@ describe('workbench project chat hooks', () => {
     act(() => result.current.addExistingAttachment(attachment))
     act(() => result.current.resetAttachments())
     expect(result.current.attachments).toEqual([])
+  })
+
+  test('releases temporary image previews when attachments leave the composer', async () => {
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const firstAttachment: Attachment = {
+      id: 44,
+      filename: 'first.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-05-27T00:00:00.000Z',
+      local_preview_url: 'blob:first-preview',
+    }
+    const secondAttachment: Attachment = {
+      ...firstAttachment,
+      id: 45,
+      filename: 'second.png',
+      local_preview_url: 'blob:second-preview',
+    }
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const { result } = renderHook(() => useWorkbenchAttachments({ deleteAttachment: remove }))
+
+    act(() => {
+      result.current.addExistingAttachment(firstAttachment)
+      result.current.addExistingAttachment(secondAttachment)
+    })
+    await act(async () => result.current.removeAttachment(firstAttachment.id))
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:first-preview')
+
+    act(() => result.current.resetAttachments())
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:second-preview')
+  })
+
+  test('removes an Appshot image and its hidden text context together', async () => {
+    const appshot: Attachment = {
+      id: -10,
+      filename: 'appshot.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-07-15T00:00:00.000Z',
+      ui_group_id: 'appshot-capture-1',
+      ui_group_role: 'primary',
+      ui_kind: 'appshot',
+    }
+    const textContext: Attachment = {
+      ...appshot,
+      id: -11,
+      filename: 'appshot-context.txt',
+      mime_type: 'text/plain',
+      file_extension: '.txt',
+      ui_group_role: 'companion',
+    }
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const { result } = renderHook(() => useWorkbenchAttachments({ deleteAttachment: remove }))
+
+    act(() => {
+      result.current.addExistingAttachment(appshot)
+      result.current.addExistingAttachment(textContext)
+    })
+    await act(async () => result.current.removeAttachment(appshot.id))
+
+    expect(result.current.attachments).toEqual([])
+    expect(remove).not.toHaveBeenCalled()
   })
 
   test('uploads attachments without restricting file extensions', async () => {
