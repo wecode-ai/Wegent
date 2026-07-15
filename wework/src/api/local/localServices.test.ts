@@ -1539,11 +1539,11 @@ describe('createLocalAppServices', () => {
           return {
             success: true,
             stdout: {
-              path: '/Users/me/project',
+              path: '/Users/me/.canonical/project',
               entries: [
                 {
                   name: 'src',
-                  path: '/Users/me/project/src',
+                  path: '/Users/me/.canonical/project/src',
                   is_directory: true,
                   size: 0,
                   modified_at: '2026-06-20T01:00:00Z',
@@ -1558,7 +1558,7 @@ describe('createLocalAppServices', () => {
           return {
             success: true,
             stdout: {
-              path: '/Users/me/project/README.md',
+              path: '/Users/me/.canonical/project/README.md',
               name: 'README.md',
               content: 'hello',
               editable: true,
@@ -1575,7 +1575,7 @@ describe('createLocalAppServices', () => {
           return {
             success: true,
             stdout: {
-              path: '/Users/me/project/README.md',
+              path: '/Users/me/.canonical/project/README.md',
               name: 'README.md',
               content: data.stdin,
               editable: true,
@@ -1583,6 +1583,22 @@ describe('createLocalAppServices', () => {
               truncated: false,
               size: 7,
               modified_at: '2026-06-20T01:01:00Z',
+            },
+            stderr: '',
+            exit_code: 0,
+          }
+        }
+        if (data.command_key === 'workspace_read_file_chunk') {
+          return {
+            success: true,
+            stdout: {
+              path: '/Users/me/.canonical/project/image.png',
+              name: 'image.png',
+              content_base64: 'aW1hZ2U=',
+              offset: 0,
+              eof: true,
+              size: 5,
+              modified_at: '2026-06-20T01:02:00Z',
             },
             stderr: '',
             exit_code: 0,
@@ -1639,6 +1655,21 @@ describe('createLocalAppServices', () => {
       size: 7,
       modifiedAt: '2026-06-20T01:01:00Z',
     })
+    await expect(
+      services.deviceApi.readWorkspaceFileChunk?.(
+        'local-device',
+        '/Users/me/.alias/project/image.png',
+        0
+      )
+    ).resolves.toEqual({
+      path: '/Users/me/.alias/project/image.png',
+      name: 'image.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      eof: true,
+      size: 5,
+      modifiedAt: '2026-06-20T01:02:00Z',
+    })
 
     expect(request).toHaveBeenCalledWith('device.execute_command', {
       deviceId: 'device-uuid',
@@ -1662,6 +1693,14 @@ describe('createLocalAppServices', () => {
       args: ['README.md', 'sha256:old'],
       stdin: 'updated',
       timeout_seconds: 15,
+      max_output_bytes: 1024 * 1024 * 2,
+    })
+    expect(request).toHaveBeenCalledWith('device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'workspace_read_file_chunk',
+      path: '/Users/me/.alias/project',
+      args: ['image.png', '0'],
+      timeout_seconds: 30,
       max_output_bytes: 1024 * 1024 * 2,
     })
   })

@@ -5,7 +5,7 @@ use std::{
     env,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex,
@@ -265,7 +265,7 @@ fn browser_data_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 #[cfg(desktop)]
 fn browser_download_destination(
     app: &tauri::AppHandle,
-    suggested_destination: &PathBuf,
+    suggested_destination: &Path,
 ) -> Result<(PathBuf, String, bool), String> {
     let preferences = crate::read_app_preferences_impl(app);
     let suggested_name = suggested_destination
@@ -424,7 +424,7 @@ fn eval_json(
     let result = receiver
         .recv_timeout(Duration::from_millis(timeout_ms))
         .map_err(|_| "Timed out waiting for embedded browser evaluation".to_string())?;
-    serde_json::from_str(&result).or_else(|_| Ok(Value::String(result)))
+    serde_json::from_str(&result).or(Ok(Value::String(result)))
 }
 
 async fn eval_json_nonblocking(
@@ -449,7 +449,7 @@ async fn eval_json_nonblocking(
     })
     .await
     .map_err(|error| format!("Failed to join embedded browser evaluation task: {error}"))??;
-    serde_json::from_str(&result).or_else(|_| Ok(Value::String(result)))
+    serde_json::from_str(&result).or(Ok(Value::String(result)))
 }
 
 fn json_string(value: &str) -> String {

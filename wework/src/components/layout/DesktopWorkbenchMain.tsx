@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils'
 import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
 import {
   RightWorkspacePanel,
+  type RightWorkspaceChatTab,
   type RightWorkspacePanelTab,
   type RightWorkspacePanelView,
 } from './workspace-panels/RightWorkspacePanel'
@@ -430,6 +431,11 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const [embeddedBrowserOpenRequest, setEmbeddedBrowserOpenRequest] = useState<
     (EmbeddedBrowserOpenRequest & { id: number }) | null
   >(null)
+  const [conversationSelectionInsertion, setConversationSelectionInsertion] = useState<{
+    id: number
+    text: string
+  } | null>(null)
+  const temporaryChatInitialInputsRef = useRef(new Map<RightWorkspaceChatTab, string>())
   const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
     null
   )
@@ -837,10 +843,39 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [setRightPanelOpen, setRightPanelView]
   )
-  const openTemporaryChatTab = useCallback(() => {
-    temporaryChatTabSequence.current += 1
-    openRightPanelTab(`chat:${Date.now()}-${temporaryChatTabSequence.current}`)
-  }, [openRightPanelTab])
+  const openTemporaryChatTab = useCallback(
+    (initialInput?: string) => {
+      temporaryChatTabSequence.current += 1
+      const tab: RightWorkspaceChatTab = `chat:${Date.now()}-${temporaryChatTabSequence.current}`
+      if (initialInput) temporaryChatInitialInputsRef.current.set(tab, initialInput)
+      openRightPanelTab(tab)
+    },
+    [openRightPanelTab]
+  )
+
+  const addSelectionToConversation = useCallback(
+    (selectedText: string) => {
+      setConversationSelectionInsertion(current => ({
+        id: (current?.id ?? 0) + 1,
+        text: selectedText,
+      }))
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          document
+            .querySelector<HTMLElement>(
+              '[data-testid="desktop-floating-composer-card"] [data-testid="chat-message-input"]'
+            )
+            ?.focus()
+        })
+      })
+    },
+    [setConversationSelectionInsertion]
+  )
+
+  const askSelectionInSidebar = useCallback(
+    (selectedText: string) => openTemporaryChatTab(selectedText),
+    [openTemporaryChatTab]
+  )
   const embeddedBrowserListenerStateRef = useRef({
     embeddedBrowserLabel,
     openRightPanelTab,
@@ -885,6 +920,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const closeRightPanelTab = useCallback(
     (tab: RightWorkspacePanelTab) => {
+      if (tab.startsWith('chat:')) {
+        temporaryChatInitialInputsRef.current.delete(tab as RightWorkspaceChatTab)
+      }
       if (tab === 'files') {
         setOpenFileRequest(null)
       }
@@ -1571,6 +1609,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           />
                         ) : (
                           <BufferedChatInput
+                            insertion={conversationSelectionInsertion}
                             value={paneSession.input}
                             onChange={paneSession.setInput}
                             onSubmit={paneSession.send}
@@ -1662,6 +1701,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                 canEditLastUserMessage={canEditLastUserMessage}
                 hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
                 hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+                onAddSelectionToConversation={addSelectionToConversation}
+                onAskSelectionInSidebar={askSelectionInSidebar}
               />
             </div>
           ) : (
@@ -1802,6 +1843,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
+              getChatInitialInput={tab => temporaryChatInitialInputsRef.current.get(tab)}
             />
           )}
         </div>

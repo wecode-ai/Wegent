@@ -2254,11 +2254,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
       screen.getByTestId('chrome-tab-wework')
     )
-    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
-      screen.getByTestId('chrome-tab-apps')
-    )
     expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('h-8', 'w-8', 'bg-black/[0.045]')
-    expect(screen.getByTestId('chrome-tab-apps')).toHaveClass('h-8', 'w-8', 'text-text-secondary')
+    expect(screen.queryByTestId('chrome-tab-apps')).not.toBeInTheDocument()
     expect(screen.queryByTestId('workbench-topbar')).not.toBeInTheDocument()
     expect(screen.queryByTestId('environment-info-button')).not.toBeInTheDocument()
     expect(screen.getByTestId('titlebar-actions')).toContainElement(

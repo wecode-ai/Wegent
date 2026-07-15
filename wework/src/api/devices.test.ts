@@ -172,6 +172,41 @@ describe('createDeviceApi', () => {
     )
   })
 
+  test('listWorkspaceEntries maps canonical response paths to a symlinked request root', async () => {
+    const post = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: {
+        path: '/workspace/.canonical/project',
+        entries: [
+          {
+            name: 'image.png',
+            path: '/workspace/.canonical/project/image.png',
+            is_directory: false,
+            size: 5,
+            modified_at: null,
+          },
+        ],
+      },
+      stderr: '',
+    })
+    const api = createDeviceApi({ post } as never)
+
+    await expect(
+      api.listWorkspaceEntries('device-a', '/workspace/.alias/project')
+    ).resolves.toEqual({
+      path: '/workspace/.alias/project',
+      entries: [
+        {
+          name: 'image.png',
+          path: '/workspace/.alias/project/image.png',
+          isDirectory: false,
+          size: 5,
+          modifiedAt: null,
+        },
+      ],
+    })
+  })
+
   test('listWorkspaceEntries rejects escaped child paths', async () => {
     const post = vi.fn().mockResolvedValue({
       success: true,
@@ -279,6 +314,29 @@ describe('createDeviceApi', () => {
     })
   })
 
+  test('readWorkspaceTextFile preserves a symlinked request path', async () => {
+    const post = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: {
+        path: '/workspace/.canonical/project/main.ts',
+        name: 'main.ts',
+        content: 'export {}',
+        truncated: false,
+        size: 9,
+        modified_at: null,
+      },
+      stderr: '',
+    })
+    const api = createDeviceApi({ post } as never)
+
+    await expect(
+      api.readWorkspaceTextFile('device-a', '/workspace/.alias/project/main.ts')
+    ).resolves.toMatchObject({
+      path: '/workspace/.alias/project/main.ts',
+      name: 'main.ts',
+    })
+  })
+
   test('readWorkspaceTextFile rejects responses for a different file', async () => {
     const post = vi.fn().mockResolvedValue({
       success: true,
@@ -317,5 +375,40 @@ describe('createDeviceApi', () => {
     await expect(
       api.readWorkspaceTextFile('device-a', '/workspace/project/src/main.ts')
     ).rejects.toThrow('Invalid workspace text file response')
+  })
+
+  test('readWorkspaceFileChunk preserves a symlinked request path', async () => {
+    const post = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: {
+        path: '/workspace/.canonical/project/image.png',
+        name: 'image.png',
+        content_base64: 'aW1hZ2U=',
+        offset: 0,
+        eof: true,
+        size: 5,
+        modified_at: null,
+      },
+      stderr: '',
+    })
+    const api = createDeviceApi({ post } as never)
+
+    await expect(
+      api.readWorkspaceFileChunk('device-a', '/workspace/.alias/project/image.png', 0)
+    ).resolves.toMatchObject({
+      path: '/workspace/.alias/project/image.png',
+      name: 'image.png',
+      contentBase64: 'aW1hZ2U=',
+      offset: 0,
+      eof: true,
+      size: 5,
+    })
+    expect(post).toHaveBeenCalledWith('/devices/device-a/commands', {
+      command_key: 'workspace_read_file_chunk',
+      path: '/workspace/.alias/project',
+      args: ['image.png', '0'],
+      timeout_seconds: 30,
+      max_output_bytes: 1024 * 1024 * 2,
+    })
   })
 })
