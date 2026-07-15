@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from minio import Minio
+from minio.commonconfig import CopySource
 
 
 def require_env(name: str) -> str:
@@ -54,6 +55,37 @@ def upload_file(
     print(f"Uploaded: s3://{bucket}/{object_name}")
 
 
+def publish_latest_dmg(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    version: str,
+    artifacts: list[Path],
+) -> None:
+    dmg_files = [artifact for artifact in artifacts if artifact.suffix == ".dmg"]
+    if len(dmg_files) != 1:
+        raise SystemExit(
+            f"Expected exactly one DMG for version {version}, found {len(dmg_files)}"
+        )
+
+    versioned_name = dmg_files[0].name
+    platform_suffix = versioned_name.removeprefix(f"WeWork_{version}_")
+    latest_name = f"WeWork_latest_{platform_suffix}"
+    versioned_key = storage_key(prefix, versioned_name)
+    latest_key = storage_key(prefix, latest_name)
+    client.copy_object(
+        bucket,
+        latest_key,
+        CopySource(bucket, versioned_key),
+        metadata={
+            "Content-Type": "application/x-apple-diskimage",
+            "Cache-Control": "no-cache, no-store",
+        },
+        metadata_directive="REPLACE",
+    )
+    print(f"Published latest DMG: s3://{bucket}/{latest_key}")
+
+
 def main() -> None:
     client = create_client(require_env("ATTACHMENT_S3_ENDPOINT"))
     bucket = require_env("ATTACHMENT_S3_BUCKET")
@@ -75,6 +107,7 @@ def main() -> None:
             artifact,
             "public, max-age=31536000, immutable",
         )
+    publish_latest_dmg(client, bucket, prefix, version, artifacts)
 
     manifest = output_dir / "latest.json"
     if not manifest.is_file():
