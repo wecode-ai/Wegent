@@ -1554,8 +1554,8 @@ def test_list_owned_and_personal_task_ids_merge_legacy_and_owner_shard(
 
     assert owned_total == 3
     assert owned_ids == [shard_personal.id, legacy_personal.id]
-    assert personal_total == 2
-    assert personal_ids == [shard_personal.id, legacy_personal.id]
+    assert personal_total == 1
+    assert personal_ids == [shard_personal.id]
     assert shard_group.id not in personal_ids
 
 
@@ -1603,18 +1603,18 @@ def test_list_personal_task_ids_uses_lightweight_candidate_scan(
     finally:
         event.remove(connection, "before_cursor_execute", collect_selects)
 
-    assert total == 10
+    assert total == 5
     assert len(task_ids) == 3
     row_selects = [
         statement
         for statement in statements
-        if "FROM TASKS" in statement
+        if "FROM TASKS_" in statement
         and "COUNT" not in statement
-        and "TASKS.USER_ID" in statement
+        and ".USER_ID" in statement
     ]
     assert row_selects
     assert all("JSON" not in statement for statement in row_selects)
-    assert all("ORDER BY" not in statement for statement in row_selects)
+    assert all("ORDER BY" in statement for statement in row_selects)
     assert all("COUNT" not in statement for statement in row_selects)
 
 
@@ -1624,7 +1624,7 @@ def test_list_accessible_task_ids_reads_members_by_id_across_shards(
 ):
     store = ShardedTaskStore()
     now = datetime(2026, 6, 12, 13, 0, 0)
-    owned_legacy = add_legacy_resource(
+    _, owned_legacy = add_migrated_legacy_resource(
         test_db,
         task_id_value=1201,
         user_id=121,
@@ -1636,7 +1636,7 @@ def test_list_accessible_task_ids_reads_members_by_id_across_shards(
         user_id=121,
         created_at=now + timedelta(minutes=4),
     )
-    joined_legacy = add_legacy_resource(
+    _, joined_legacy = add_migrated_legacy_resource(
         test_db,
         task_id_value=1202,
         user_id=122,
@@ -1692,13 +1692,25 @@ def test_list_accessible_task_ids_reads_members_by_id_across_shards(
     add_resource_member(test_db, task_id_value=deleted_joined.id, user_id=121)
     add_resource_member(test_db, task_id_value=system_joined.id, user_id=121)
 
-    task_ids, total = store.list_accessible_task_ids(
-        test_db,
-        user_id=121,
-        skip=0,
-        limit=3,
-        extra_limit=1,
-    )
+    statements: list[str] = []
+
+    def collect_selects(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            statements.append(statement.upper())
+
+    connection = test_db.connection()
+    event.listen(connection, "before_cursor_execute", collect_selects)
+    try:
+        task_ids, total = store.list_accessible_task_ids(
+            test_db,
+            user_id=121,
+            skip=0,
+            limit=3,
+            extra_limit=1,
+        )
+        tasks = store.list_api_tasks_by_ids(test_db, task_ids=task_ids)
+    finally:
+        event.remove(connection, "before_cursor_execute", collect_selects)
 
     assert total == 4
     assert task_ids == [
@@ -1707,6 +1719,14 @@ def test_list_accessible_task_ids_reads_members_by_id_across_shards(
         joined_legacy.id,
         owned_legacy.id,
     ]
+    assert {task.id for task in tasks} == set(task_ids)
+    assert not any(" FROM TASKS " in statement for statement in statements)
+    assert any(
+        "COUNT" in statement and "FROM TASKS_" in statement for statement in statements
+    )
+    assert any(
+        "FROM TASKS_" in statement and "LIMIT" in statement for statement in statements
+    )
 
 
 def test_group_task_ids_merge_owned_and_member_shards_with_filters(

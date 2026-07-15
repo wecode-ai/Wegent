@@ -4,7 +4,12 @@
 
 """Task query methods."""
 
+import base64
+import binascii
+import json
 import logging
+from datetime import datetime
+from time import perf_counter
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -27,6 +32,7 @@ from .query_utils import (
     get_group_task_ids_for_accessible_user,
     get_owned_task_ids_and_total,
     get_personal_task_ids_and_total,
+    load_task_list_rows_by_ids,
     load_tasks_by_ids,
     load_tasks_by_ids_ordered,
     restore_task_order,
@@ -61,7 +67,7 @@ class TaskQueryMixin:
         if not task_ids:
             return [], total
 
-        tasks = load_tasks_by_ids(db, task_ids)
+        tasks = load_task_list_rows_by_ids(db, task_ids)
         id_to_task = filter_tasks_for_display(tasks)
         filtered_tasks = restore_task_order(task_ids, id_to_task, limit)
         if not filtered_tasks:
@@ -163,14 +169,128 @@ class TaskQueryMixin:
         if not task_ids:
             return [], total_personal
 
-        tasks = load_tasks_by_ids(db, task_ids)
+        tasks = load_task_list_rows_by_ids(db, task_ids)
         valid_tasks = self._filter_personal_tasks(tasks, set(), types)
         id_to_task = {task.id: task for task in valid_tasks}
         ordered_tasks = restore_task_order(task_ids, id_to_task, limit)
 
-        result = build_lite_task_list(db, ordered_tasks, user_id)
+        result = build_lite_task_list(
+            db,
+            ordered_tasks,
+            user_id,
+            include_group_chat_info=False,
+            use_sharded_workspaces_only=True,
+        )
         total = max(total_personal, len(ordered_tasks))
         return result, total
+
+    def get_user_personal_tasks_lite_cursor(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int = 50,
+        cursor: str | None = None,
+        types: List[str] = None,
+        client_origin: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get personal tasks with keyset pagination and no total count."""
+        if types is None:
+            types = ["online", "offline"]
+        cursor_created_at, cursor_id = self._decode_personal_task_cursor(cursor)
+        matched: List[TaskResource] = []
+        batch_size = max(limit + 1, 100)
+        started_at = perf_counter()
+        query_ms = 0.0
+        filter_ms = 0.0
+        query_count = 0
+        scanned_count = 0
+
+        while len(matched) <= limit:
+            phase_started_at = perf_counter()
+            candidates = task_store.list_personal_task_candidates_after(
+                db,
+                user_id=user_id,
+                limit=batch_size,
+                cursor_created_at=cursor_created_at,
+                cursor_id=cursor_id,
+                client_origin=client_origin,
+            )
+            query_ms += (perf_counter() - phase_started_at) * 1000
+            query_count += 1
+            scanned_count += len(candidates)
+            if not candidates:
+                break
+            phase_started_at = perf_counter()
+            matched.extend(self._filter_personal_tasks(candidates, set(), types))
+            filter_ms += (perf_counter() - phase_started_at) * 1000
+            last_candidate = candidates[-1]
+            cursor_created_at = last_candidate.created_at
+            cursor_id = last_candidate.id
+            if len(candidates) < batch_size:
+                break
+
+        has_more = len(matched) > limit
+        page_tasks = matched[:limit]
+        next_cursor = None
+        if has_more and page_tasks:
+            last_task = page_tasks[-1]
+            next_cursor = self._encode_personal_task_cursor(
+                last_task.created_at, last_task.id
+            )
+        phase_started_at = perf_counter()
+        items = build_lite_task_list(
+            db,
+            page_tasks,
+            user_id,
+            include_group_chat_info=False,
+            use_sharded_workspaces_only=True,
+        )
+        response_ms = (perf_counter() - phase_started_at) * 1000
+        logger.info(
+            "[task_list_timing] personal_cursor user_id=%s items=%s candidates=%s "
+            "queries=%s query_ms=%.2f filter_ms=%.2f response_ms=%.2f total_ms=%.2f",
+            user_id,
+            len(items),
+            scanned_count,
+            query_count,
+            query_ms,
+            filter_ms,
+            response_ms,
+            (perf_counter() - started_at) * 1000,
+        )
+        return {
+            "items": items,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
+
+    @staticmethod
+    def _encode_personal_task_cursor(created_at: datetime, task_id: int) -> str:
+        payload = json.dumps(
+            {"created_at": created_at.isoformat(), "id": task_id},
+            separators=(",", ":"),
+        ).encode()
+        return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+
+    @staticmethod
+    def _decode_personal_task_cursor(
+        cursor: str | None,
+    ) -> tuple[datetime | None, int | None]:
+        if not cursor:
+            return None, None
+        try:
+            padding = "=" * (-len(cursor) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(cursor + padding))
+            return datetime.fromisoformat(payload["created_at"]), int(payload["id"])
+        except (
+            binascii.Error,
+            KeyError,
+            TypeError,
+            UnicodeDecodeError,
+            ValueError,
+        ) as exc:
+            raise HTTPException(status_code=422, detail="Invalid task cursor") from exc
 
     def get_user_personal_task_groups_lite(
         self,
