@@ -28,7 +28,7 @@ fi
 if [ -n "$EXPLICIT_VITE_WEGENT_BACKEND_URL" ]; then
   export VITE_WEGENT_BACKEND_URL="$EXPLICIT_VITE_WEGENT_BACKEND_URL_VALUE"
 else
-  export VITE_WEGENT_BACKEND_URL="https://preview-wegent.intra.weibo.com/api"
+  export VITE_WEGENT_BACKEND_URL="https://wegent.intra.weibo.com/api"
 fi
 
 VERSION=""
