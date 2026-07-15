@@ -284,9 +284,16 @@ export function findProjectMetadataDeviceWorkspace(
 }
 
 const MARKDOWN_MENTION_PATTERN = /\[([^\]]+)]\(([^)]+)\)/g
+const LEADING_TOOL_MENTION_PATTERN =
+  /^(?:\[(?:\$|@)[^\]]+]\((?:(?:skill|app|plugin):\/\/[^)\n]+|\/[^)\n]*SKILL\.md)\)\s*)+/
 
 function runtimeTitleText(value: string): string {
-  return value
+  const normalizedValue = value.trim()
+  const withoutLeadingToolMentions = normalizedValue
+    .replace(LEADING_TOOL_MENTION_PATTERN, '')
+    .trim()
+
+  return (withoutLeadingToolMentions || normalizedValue)
     .replace(MARKDOWN_MENTION_PATTERN, (_match, label: string) => label)
     .replace(/\s+/g, ' ')
     .trim()
