@@ -9,7 +9,7 @@ from datetime import datetime
 from time import perf_counter
 from typing import Any, Callable, Literal, Optional, Sequence
 
-from sqlalchemy import exists, func, text, tuple_
+from sqlalchemy import and_, exists, func, or_, text, tuple_
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -1018,6 +1018,42 @@ class SqlAlchemyTaskStore:
         total = _timed_scalar(db, count_sql, params, "personal_total")
         rows = _timed_rows(db, ids_sql, params, "personal_ids")
         return [row[0] for row in rows], total
+
+    def list_personal_task_candidates_after(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+        cursor_created_at: datetime | None = None,
+        cursor_id: int | None = None,
+        client_origin: str | None = None,
+    ) -> list[TaskResource]:
+        query = db.query(TaskResource).filter(
+            TaskResource.user_id == user_id,
+            TaskResource.kind == "Task",
+            TaskResource.namespace != "system",
+            TaskResource.is_active == TaskResource.STATE_ACTIVE,
+            TaskResource.is_group_chat.is_(False),
+            TaskResource.project_id == 0,
+        )
+        if client_origin:
+            query = query.filter(TaskResource.client_origin == client_origin)
+        if cursor_created_at is not None and cursor_id is not None:
+            query = query.filter(
+                or_(
+                    TaskResource.created_at < cursor_created_at,
+                    and_(
+                        TaskResource.created_at == cursor_created_at,
+                        TaskResource.id < cursor_id,
+                    ),
+                )
+            )
+        return (
+            query.order_by(TaskResource.created_at.desc(), TaskResource.id.desc())
+            .limit(limit)
+            .all()
+        )
 
     def list_group_task_ids_for_accessible_user(
         self, db: Session, *, user_id: int

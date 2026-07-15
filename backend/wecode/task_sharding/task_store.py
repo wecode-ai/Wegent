@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
 from datetime import datetime
+from time import perf_counter
 from typing import Any, Callable
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import and_, func, or_, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -29,6 +31,7 @@ from wecode.task_sharding.task_id import (
 )
 
 MAX_TASK_ID_INSERT_ATTEMPTS = 3
+logger = logging.getLogger(__name__)
 
 
 class ShardedTaskStore(SqlAlchemyTaskStore):
@@ -662,6 +665,27 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
             )
         return self._order_workspaces_by_refs(workspaces, refs)
 
+    def list_api_workspaces_by_refs(
+        self, db: Session, *, refs: Sequence
+    ) -> list[TaskResource]:
+        """Load task-list workspace metadata exclusively from hash shards."""
+        if not refs:
+            return []
+
+        workspaces: list[TaskResource] = []
+        for model, model_refs in self._workspace_refs_by_model(refs).items():
+            ref_tuples = [(ref.user_id, ref.namespace, ref.name) for ref in model_refs]
+            workspaces.extend(
+                db.query(model)
+                .filter(
+                    model.kind == "Workspace",
+                    model.is_active == TaskResource.STATE_ACTIVE,
+                    tuple_(model.user_id, model.namespace, model.name).in_(ref_tuples),
+                )
+                .all()
+            )
+        return self._order_workspaces_by_refs(workspaces, refs)
+
     def list_archived_tasks(
         self,
         db: Session,
@@ -894,39 +918,116 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
         client_origin: str | None = None,
     ) -> tuple[list[int], int]:
         query_limit = limit + extra_limit
-        tasks, total = self._owned_active_task_page_and_total(
+        model = task_model_for_user(user_id)
+        query = self._owned_active_task_query(
             db,
+            model,
             user_id=user_id,
-            skip=skip,
-            limit=query_limit,
             exclude_system_namespace=True,
             is_group_chat=False,
             client_origin=client_origin,
             project_id=0,
         )
-        return ([task.id for task in tasks], total)
+        total = self._count_query_rows(query)
+        rows = (
+            query.with_entities(model.id)
+            .order_by(model.created_at.desc(), model.id.desc())
+            .offset(skip)
+            .limit(query_limit)
+            .all()
+        )
+        return ([row[0] for row in rows], total)
+
+    def list_personal_task_candidates_after(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+        cursor_created_at: datetime | None = None,
+        cursor_id: int | None = None,
+        client_origin: str | None = None,
+    ) -> list[TaskResource]:
+        model = task_model_for_user(user_id)
+        query = self._owned_active_task_query(
+            db,
+            model,
+            user_id=user_id,
+            exclude_system_namespace=True,
+            is_group_chat=False,
+            client_origin=client_origin,
+            project_id=0,
+        )
+        if cursor_created_at is not None and cursor_id is not None:
+            query = query.filter(
+                or_(
+                    model.created_at < cursor_created_at,
+                    and_(
+                        model.created_at == cursor_created_at,
+                        model.id < cursor_id,
+                    ),
+                )
+            )
+        statement = (
+            query.order_by(model.created_at.desc(), model.id.desc())
+            .limit(limit)
+            .statement
+        )
+        started_at = perf_counter()
+        result = db.execute(statement)
+        execute_ms = (perf_counter() - started_at) * 1000
+        started_at = perf_counter()
+        tasks = result.scalars().all()
+        fetch_ms = (perf_counter() - started_at) * 1000
+        logger.info(
+            "[task_list_timing] personal_cursor_store user_id=%s limit=%s "
+            "execute_ms=%.2f fetch_ms=%.2f rows=%s",
+            user_id,
+            limit,
+            execute_ms,
+            fetch_ms,
+            len(tasks),
+        )
+        return tasks
 
     def list_accessible_task_ids(
         self, db: Session, *, user_id: int, skip: int, limit: int, extra_limit: int
     ) -> tuple[list[int], int]:
-        owned_tasks = self._owned_active_task_rows(
+        page_limit = skip + limit + extra_limit
+        owned_tasks, owned_total = self._owned_active_shard_task_page_and_total(
             db,
             user_id=user_id,
+            limit=page_limit,
             exclude_system_namespace=True,
         )
         member_tasks = [
             task
-            for task in self._member_task_rows(db, user_id=user_id)
+            for task in self._member_shard_task_rows(db, user_id=user_id)
             if self._is_active_regular_task(task, exclude_system_namespace=True)
+            and task.user_id != user_id
         ]
+        member_tasks = self._deduplicate_tasks_by_id(member_tasks)
         ordered_tasks = self._order_tasks_by_created_at_desc(
             self._deduplicate_tasks_by_id([*owned_tasks, *member_tasks])
         )
-        total = len(ordered_tasks)
+        total = owned_total + len(member_tasks)
         return (
             self._page_task_ids(ordered_tasks, skip=skip, limit=limit + extra_limit),
             total,
         )
+
+    def list_api_tasks_by_ids(
+        self,
+        db: Session,
+        *,
+        task_ids: Sequence[int],
+        owner_user_id: int | None = None,
+    ) -> list[TaskResource]:
+        """Load task-list rows exclusively from shard tables."""
+        tasks = self._list_shard_tasks_by_ids(db, task_ids=task_ids)
+        if owner_user_id is not None:
+            tasks = [task for task in tasks if task.user_id == owner_user_id]
+        return self._deduplicate_tasks_by_id(tasks)
 
     def list_group_task_ids_for_accessible_user(
         self, db: Session, *, user_id: int
@@ -1717,6 +1818,59 @@ class ShardedTaskStore(SqlAlchemyTaskStore):
     def _member_task_rows(self, db: Session, *, user_id: int) -> list[TaskResource]:
         member_task_ids = self._member_task_ids(db, user_id=user_id)
         return self.list_by_ids(db, task_ids=member_task_ids)
+
+    def _member_shard_task_rows(
+        self, db: Session, *, user_id: int
+    ) -> list[TaskResource]:
+        return self._list_shard_tasks_by_ids(
+            db, task_ids=self._member_task_ids(db, user_id=user_id)
+        )
+
+    def _list_shard_tasks_by_ids(
+        self, db: Session, *, task_ids: Sequence[int]
+    ) -> list[TaskResource]:
+        if not task_ids:
+            return []
+
+        new_ids_by_model: dict[type, list[int]] = defaultdict(list)
+        legacy_ids: list[int] = []
+        for task_id in task_ids:
+            if is_new_task_id(task_id):
+                new_ids_by_model[task_model_for_task_id(task_id)].append(task_id)
+            else:
+                legacy_ids.append(task_id)
+
+        tasks: list[TaskResource] = []
+        for model, model_task_ids in new_ids_by_model.items():
+            tasks.extend(db.query(model).filter(model.id.in_(model_task_ids)).all())
+        if legacy_ids:
+            for slot in range(SHARD_COUNT):
+                model = task_model_for_user(slot)
+                tasks.extend(db.query(model).filter(model.id.in_(legacy_ids)).all())
+        return tasks
+
+    def _owned_active_shard_task_page_and_total(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        limit: int,
+        exclude_system_namespace: bool = False,
+    ) -> tuple[list[TaskResource], int]:
+        model = task_model_for_user(user_id)
+        query = self._owned_active_task_query(
+            db,
+            model,
+            user_id=user_id,
+            exclude_system_namespace=exclude_system_namespace,
+            is_group_chat=None,
+            client_origin=None,
+        )
+        total = self._count_query_rows(query)
+        tasks = (
+            query.order_by(model.created_at.desc(), model.id.desc()).limit(limit).all()
+        )
+        return tasks, total
 
     def _member_task_ids(self, db: Session, *, user_id: int) -> list[int]:
         rows = (

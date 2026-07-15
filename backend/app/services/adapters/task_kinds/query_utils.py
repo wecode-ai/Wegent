@@ -62,6 +62,13 @@ def load_tasks_by_ids(db: Session, task_ids: List[int]) -> List[TaskResource]:
     return task_store.list_by_ids(db, task_ids=task_ids)
 
 
+def load_task_list_rows_by_ids(db: Session, task_ids: List[int]) -> List[TaskResource]:
+    list_for_api = getattr(task_store, "list_api_tasks_by_ids", None)
+    if list_for_api is not None:
+        return list_for_api(db, task_ids=task_ids)
+    return task_store.list_by_ids(db, task_ids=task_ids)
+
+
 def count_non_deleted_tasks_by_ids(db: Session, task_ids: List[int]) -> int:
     return task_store.count_non_deleted_by_ids(db, task_ids=task_ids)
 

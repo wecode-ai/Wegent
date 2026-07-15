@@ -124,6 +124,7 @@ export function useTaskPuller(): TaskPuller {
   const [hasMorePersonalTasks, setHasMorePersonalTasks] = useState(true)
   const [loadingMorePersonalTasks, setLoadingMorePersonalTasks] = useState(false)
   const [loadedPersonalPages, setLoadedPersonalPages] = useState([1])
+  const [personalNextCursor, setPersonalNextCursor] = useState<string | null>(null)
 
   // Batch load specified pages (only responsible for data requests and responses, does not handle loading state)
   // Returns { items, hasMore, pages, error } - error is true if network request failed
@@ -171,13 +172,21 @@ export function useTaskPuller(): TaskPuller {
   const loadPersonalPages = async (pagesArr: number[]) => {
     if (pagesArr.length === 0) return { items: [], hasMore: false, error: false }
     try {
-      const requests = pagesArr.map(p => taskApis.getPersonalTasksLite({ page: p, limit }))
-      const results = await Promise.all(requests)
-      const allItems = results.flatMap(res => res.items || [])
-      const lastPageItems = results[results.length - 1]?.items || []
+      const allItems: Task[] = []
+      let cursor: string | undefined
+      let hasMore = true
+      for (let index = 0; index < pagesArr.length && hasMore; index += 1) {
+        const result = await taskApis.getPersonalTasksLite(
+          cursor ? { cursor, limit } : { page: 1, limit }
+        )
+        allItems.push(...(result.items || []))
+        cursor = result.next_cursor || undefined
+        hasMore = result.has_more ?? result.items.length === limit
+      }
       return {
         items: allItems,
-        hasMore: lastPageItems.length === limit,
+        hasMore,
+        nextCursor: cursor || null,
         pages: pagesArr,
         error: false,
       }
@@ -277,43 +286,21 @@ export function useTaskPuller(): TaskPuller {
   const loadMorePersonalTasks = async () => {
     if (loadingMorePersonalTasks || !hasMorePersonalTasks) return
     setLoadingMorePersonalTasks(true)
-    let nextPage = (loadedPersonalPages[loadedPersonalPages.length - 1] || 1) + 1
-    let reachedEnd = false
-    let hasError = false
-    const loadedPagesToAdd: number[] = []
-    const loadedItems: Task[] = []
-    const existingIds = new Set(personalTasks.map(task => task.id))
-
-    while (!reachedEnd && !hasError && loadedItems.length === 0) {
-      const result = await loadPersonalPages([nextPage])
-
-      if (result.error) {
-        hasError = true
-        break
-      }
-
-      loadedPagesToAdd.push(...(result.pages || [nextPage]))
-      const newItems = result.items.filter(task => !existingIds.has(task.id))
-      newItems.forEach(task => existingIds.add(task.id))
-
-      if (newItems.length > 0) {
-        loadedItems.push(...newItems)
-      }
-
-      reachedEnd = !result.hasMore
-      nextPage += 1
-    }
-
-    if (!hasError) {
+    try {
+      const result = await taskApis.getPersonalTasksLite({
+        cursor: personalNextCursor || undefined,
+        limit,
+      })
       setPersonalTasks(prev => {
         const existingIds = new Set(prev.map(t => t.id))
-        const newItems = loadedItems.filter(t => !existingIds.has(t.id))
+        const newItems = result.items.filter(t => !existingIds.has(t.id))
         return [...prev, ...newItems]
       })
-      setLoadedPersonalPages(prev =>
-        Array.from(new Set([...prev, ...loadedPagesToAdd])).sort((a, b) => a - b)
-      )
-      setHasMorePersonalTasks(!reachedEnd)
+      setLoadedPersonalPages(prev => [...prev, (prev[prev.length - 1] || 1) + 1])
+      setPersonalNextCursor(result.next_cursor || null)
+      setHasMorePersonalTasks(result.has_more ?? result.items.length === limit)
+    } catch (err) {
+      console.error('[taskPuller] Failed to load more personal tasks:', err)
     }
     setLoadingMorePersonalTasks(false)
   }
@@ -347,6 +334,7 @@ export function useTaskPuller(): TaskPuller {
       setPersonalTasks(personalResult.items)
       setLoadedPersonalPages(personalResult.pages || [1])
       setHasMorePersonalTasks(personalResult.hasMore)
+      setPersonalNextCursor(personalResult.nextCursor || null)
     }
 
     // Combine both lists for the combined task list
@@ -389,6 +377,7 @@ export function useTaskPuller(): TaskPuller {
       setPersonalTasks(result.items)
       setLoadedPersonalPages([1])
       setHasMorePersonalTasks(result.hasMore)
+      setPersonalNextCursor(result.nextCursor || null)
       // Update combined tasks
       setTasks(prev => {
         const groupOnly = prev.filter(t => t.is_group_chat)

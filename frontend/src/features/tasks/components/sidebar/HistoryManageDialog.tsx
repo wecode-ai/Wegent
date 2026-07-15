@@ -89,6 +89,7 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
   // Pagination state - load data independently
   const [allTasks, setAllTasks] = useState<Task[]>([])
   const [currentPage, setCurrentPage] = useState(1)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [hasMore, setHasMore] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
@@ -114,7 +115,7 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
 
       try {
         const result = await taskApis.getPersonalTasksLite({
-          page,
+          cursor: page === 1 ? undefined : nextCursor || undefined,
           limit: PAGE_SIZE,
           types: getApiTypes(types),
         })
@@ -123,7 +124,8 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
         } else {
           setAllTasks(result.items)
         }
-        setHasMore(result.items.length === PAGE_SIZE)
+        setNextCursor(result.next_cursor || null)
+        setHasMore(result.has_more ?? false)
         setCurrentPage(page)
       } catch (error) {
         console.error('Failed to load tasks:', error)
@@ -132,7 +134,7 @@ export default function HistoryManageDialog({ open, onOpenChange }: HistoryManag
         setIsLoadingMore(false)
       }
     },
-    [filterTypes, getApiTypes]
+    [filterTypes, getApiTypes, nextCursor]
   )
 
   // Load initial data when dialog opens

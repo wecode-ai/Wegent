@@ -50,6 +50,7 @@ from app.schemas.task import (
     TaskDetail,
     TaskInDB,
     TaskListResponse,
+    TaskLiteCursorResponse,
     TaskLiteGroupedListResponse,
     TaskLiteListResponse,
     TaskRuntimeActiveStream,
@@ -225,7 +226,9 @@ def get_group_tasks_lite(
     return {"total": total, "items": items}
 
 
-@router.get("/lite/personal", response_model=TaskLiteListResponse)
+@router.get(
+    "/lite/personal", response_model=TaskLiteListResponse | TaskLiteCursorResponse
+)
 def get_personal_tasks_lite(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(50, ge=1, le=100, description="Items per page"),
@@ -234,6 +237,9 @@ def get_personal_tasks_lite(
         description="Comma-separated task types to include: online (chat), offline (code), flow",
     ),
     client_origin: ClientOriginQuery = CLIENT_ORIGIN_FRONTEND,
+    cursor: Optional[str] = Query(
+        None, description="Opaque cursor for keyset pagination"
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -245,8 +251,17 @@ def get_personal_tasks_lite(
     - offline: code tasks (task_type == 'code')
     - flow: flow-triggered tasks (labels.type == 'flow')
     """
-    skip = (page - 1) * limit
     type_list = [t.strip() for t in types.split(",") if t.strip()]
+    if cursor is not None or page == 1:
+        return task_kinds_service.get_user_personal_tasks_lite_cursor(
+            db=db,
+            user_id=current_user.id,
+            limit=limit,
+            cursor=cursor,
+            types=type_list,
+            client_origin=client_origin,
+        )
+    skip = (page - 1) * limit
     items, total = task_kinds_service.get_user_personal_tasks_lite(
         db=db,
         user_id=current_user.id,

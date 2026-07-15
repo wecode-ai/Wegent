@@ -96,6 +96,12 @@ const taskListResponse = (items: Task[]) => ({
   items,
 })
 
+const taskCursorResponse = (items: Task[], nextCursor: string | null = null) => ({
+  items,
+  next_cursor: nextCursor,
+  has_more: nextCursor !== null,
+})
+
 const contextProbe: {
   current: ReturnType<typeof useTaskSession> | null
 } = {
@@ -126,7 +132,7 @@ describe('TaskSessionContext group task loading', () => {
           return taskListResponse([])
       }
     })
-    mockedTaskApis.getPersonalTasksLite.mockResolvedValue(taskListResponse([]))
+    mockedTaskApis.getPersonalTasksLite.mockResolvedValue(taskCursorResponse([]))
     mockedTaskApis.getTasksLite.mockResolvedValue(taskListResponse([]))
     mockedTaskApis.searchTasks.mockResolvedValue(taskListResponse([]))
   })
@@ -161,7 +167,7 @@ describe('TaskSessionContext group task loading', () => {
 
   it('stops personal history pagination when the last page is partial', async () => {
     const personalTask = createPersonalTask(1, 1)
-    mockedTaskApis.getPersonalTasksLite.mockResolvedValueOnce(taskListResponse([personalTask]))
+    mockedTaskApis.getPersonalTasksLite.mockResolvedValueOnce(taskCursorResponse([personalTask]))
 
     render(
       <TaskSessionProvider>
@@ -187,8 +193,8 @@ describe('TaskSessionContext group task loading', () => {
     const beforeDeleteTask = createPersonalTask(1, 1)
     const afterDeleteTask = createPersonalTask(2, 1)
     mockedTaskApis.getPersonalTasksLite
-      .mockResolvedValueOnce(taskListResponse([beforeDeleteTask]))
-      .mockResolvedValueOnce(taskListResponse([afterDeleteTask]))
+      .mockResolvedValueOnce(taskCursorResponse([beforeDeleteTask]))
+      .mockResolvedValueOnce(taskCursorResponse([afterDeleteTask]))
 
     render(
       <TaskSessionProvider>
@@ -224,8 +230,8 @@ describe('TaskSessionContext group task loading', () => {
     const secondPageTask = createPersonalTask(51, 2)
 
     mockedTaskApis.getPersonalTasksLite
-      .mockResolvedValueOnce(taskListResponse(firstPageTasks))
-      .mockResolvedValueOnce(taskListResponse([secondPageTask]))
+      .mockResolvedValueOnce(taskCursorResponse(firstPageTasks, 'cursor-1'))
+      .mockResolvedValueOnce(taskCursorResponse([secondPageTask]))
 
     render(
       <TaskSessionProvider>
@@ -244,20 +250,22 @@ describe('TaskSessionContext group task loading', () => {
     await waitFor(() => {
       expect(contextProbe.current?.personalTasks).toHaveLength(51)
     })
-    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 2, limit: 50 })
+    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({
+      cursor: 'cursor-1',
+      limit: 50,
+    })
     expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
   })
 
-  it('keeps fetching personal history until load more finds non-duplicate tasks', async () => {
+  it('uses the returned cursor for each personal history request', async () => {
     const firstPageTasks = Array.from({ length: 50 }, (_, index) =>
       createPersonalTask(index + 1, 1)
     )
     const thirdPageTask = createPersonalTask(101, 2)
 
     mockedTaskApis.getPersonalTasksLite
-      .mockResolvedValueOnce(taskListResponse(firstPageTasks))
-      .mockResolvedValueOnce(taskListResponse(firstPageTasks))
-      .mockResolvedValueOnce(taskListResponse([thirdPageTask]))
+      .mockResolvedValueOnce(taskCursorResponse(firstPageTasks, 'cursor-1'))
+      .mockResolvedValueOnce(taskCursorResponse([thirdPageTask]))
 
     render(
       <TaskSessionProvider>
@@ -276,8 +284,10 @@ describe('TaskSessionContext group task loading', () => {
     await waitFor(() => {
       expect(contextProbe.current?.personalTasks).toHaveLength(51)
     })
-    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 2, limit: 50 })
-    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({ page: 3, limit: 50 })
+    expect(mockedTaskApis.getPersonalTasksLite).toHaveBeenCalledWith({
+      cursor: 'cursor-1',
+      limit: 50,
+    })
     expect(contextProbe.current?.hasMorePersonalTasks).toBe(false)
   })
 })
