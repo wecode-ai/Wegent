@@ -6,6 +6,12 @@ sidebar_position: 33
 
 Wework includes an opt-in frontend performance diagnostics switch for investigating release builds that become slow after running for a while. The diagnostics code only runs after it is explicitly enabled; when disabled, the app does not install React Profiler and does not collect interval samples.
 
+## Debugging Multiple Instances
+
+When `pnpm --filter wework dev:mac` starts a debug app, each Wework process uses its own local executor runtime directory and IPC address file. Multiple debug windows can run concurrently without connecting to the same executor instance.
+
+Development instances share one Cargo target directory by default so executor source changes can reuse incremental build artifacts. Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use the project's default target directory when investigating shared build-cache issues.
+
 ## Enabling Diagnostics
 
 Press the hidden shortcut in the Wework window:
