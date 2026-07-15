@@ -387,6 +387,8 @@
         "title": "文档详情",
         "backToList": "返回列表",
         "summary": "文档摘要",
+        "derivedSummary": "AI 摘要（基于解析内容）",
+        "refreshSummary": "刷新 AI 摘要",
         "status": "状态",
         "statusValues": {
           "pending": "待处理",

@@ -4,11 +4,10 @@
 
 'use client'
 
-import { AlertCircle, Download, Maximize2, Minimize2, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { AlertCircle, Download, RefreshCw } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { toast } from 'sonner'
-import { downloadAttachment, fetchAttachmentFile, formatFileSize } from '@/apis/attachments'
+import { fetchAttachmentFile, formatFileSize } from '@/apis/attachments'
 import { FilePreview } from '@/components/common/FilePreview'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -23,16 +22,14 @@ import {
 interface KnowledgeSourcePreviewProps {
   document: KnowledgeDocument
   active: boolean
-  isFullscreen: boolean
-  onFullscreenChange: (fullscreen: boolean) => void
+  onDownload: () => void
   className?: string
 }
 
 export function KnowledgeSourcePreview({
   document,
   active,
-  isFullscreen,
-  onFullscreenChange,
+  onDownload,
   className,
 }: KnowledgeSourcePreviewProps) {
   const { t } = useTranslation('knowledge')
@@ -72,56 +69,6 @@ export function KnowledgeSourcePreview({
     return () => controller.abort()
   }, [active, document.attachment_id, document.id, document.name, retryKey, tooLarge])
 
-  const handleDownload = useCallback(async () => {
-    if (!document.attachment_id) return
-    try {
-      await downloadAttachment(document.attachment_id, document.name)
-    } catch {
-      toast.error(t('document.document.detail.sourcePreview.downloadFailed'))
-    }
-  }, [document.attachment_id, document.name, t])
-
-  const toolbar = (
-    <div className="flex flex-shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-3 py-2">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-text-primary">{document.name}</p>
-        <p className="text-xs text-text-muted">{formatFileSize(document.file_size)}</p>
-      </div>
-      <div className="flex flex-shrink-0 items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={handleDownload}
-          className="max-md:min-h-[44px] max-md:min-w-[44px]"
-          data-testid="knowledge-source-preview-download"
-        >
-          <Download className="h-3.5 w-3.5" />
-          {t('document.document.detail.sourcePreview.download')}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => onFullscreenChange(!isFullscreen)}
-          className="max-md:min-h-[44px] max-md:min-w-[44px]"
-          aria-label={
-            isFullscreen
-              ? t('document.document.detail.exitFullscreen')
-              : t('document.document.detail.fullscreen')
-          }
-          data-testid="knowledge-source-preview-fullscreen"
-        >
-          {isFullscreen ? (
-            <Minimize2 className="h-3.5 w-3.5" />
-          ) : (
-            <Maximize2 className="h-3.5 w-3.5" />
-          )}
-        </Button>
-      </div>
-    </div>
-  )
-
   let content: ReactNode
   if (tooLarge) {
     content = (
@@ -135,7 +82,7 @@ export function KnowledgeSourcePreview({
           <Button
             type="button"
             variant="primary"
-            onClick={handleDownload}
+            onClick={onDownload}
             className="max-md:min-h-[44px] max-md:min-w-[44px]"
             data-testid="knowledge-source-preview-too-large-download"
           >
@@ -172,7 +119,7 @@ export function KnowledgeSourcePreview({
             <Button
               type="button"
               variant="primary"
-              onClick={handleDownload}
+              onClick={onDownload}
               className="max-md:min-h-[44px] max-md:min-w-[44px]"
               data-testid="knowledge-source-preview-error-download"
             >
@@ -201,12 +148,11 @@ export function KnowledgeSourcePreview({
   return (
     <section
       className={cn(
-        'flex min-h-[480px] flex-1 flex-col overflow-hidden rounded-lg border border-border bg-base',
+        'flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-base md:min-h-[480px]',
         className
       )}
       data-testid="knowledge-source-preview"
     >
-      {toolbar}
       <div className="min-h-0 flex-1 overflow-hidden">{content}</div>
     </section>
   )

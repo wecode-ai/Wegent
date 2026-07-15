@@ -387,6 +387,8 @@
         "title": "Document Detail",
         "backToList": "Back to List",
         "summary": "Document Summary",
+        "derivedSummary": "AI Summary (based on parsed content)",
+        "refreshSummary": "Refresh AI summary",
         "status": "Status",
         "statusValues": {
           "pending": "Pending",

@@ -6,9 +6,12 @@ import '@testing-library/jest-dom'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DocumentDetailDialog } from '@/features/knowledge/document/components/DocumentDetailDialog'
-import type { KnowledgeDocument } from '@/types/knowledge'
+import type { DocumentSummary, KnowledgeDocument } from '@/types/knowledge'
+import { toast } from 'sonner'
 
 const mockRouterPush = jest.fn()
+const mockDownloadAttachment = jest.fn()
+let mockDocumentSummary: DocumentSummary | null = null
 const mockDialogContent = jest.fn(
   ({ children }: { children: React.ReactNode; className?: string }) => <div>{children}</div>
 )
@@ -60,12 +63,18 @@ jest.mock('@/apis/knowledge-base', () => ({
   },
 }))
 
+jest.mock('@/apis/attachments', () => ({
+  downloadAttachment: (...args: unknown[]) => mockDownloadAttachment(...args),
+  formatFileSize: (bytes: number) => `${bytes} B`,
+  isImageExtension: () => false,
+}))
+
 jest.mock('@/features/knowledge/document/hooks/useDocumentDetail', () => ({
   useDocumentDetail: () => ({
     detail: {
       content_length: 18,
       truncated: false,
-      summary: null,
+      summary: mockDocumentSummary,
       chunks: [],
     },
     fullContent: 'plain text content',
@@ -84,21 +93,7 @@ jest.mock('@/features/knowledge/document/components/ChunksSection', () => ({
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeSourcePreview', () => ({
-  KnowledgeSourcePreview: ({
-    onFullscreenChange,
-  }: {
-    onFullscreenChange: (fullscreen: boolean) => void
-  }) => (
-    <div data-testid="mock-knowledge-source-preview">
-      <button
-        type="button"
-        data-testid="mock-source-fullscreen"
-        onClick={() => onFullscreenChange(true)}
-      >
-        fullscreen
-      </button>
-    </div>
-  ),
+  KnowledgeSourcePreview: () => <div data-testid="mock-knowledge-source-preview" />,
 }))
 
 jest.mock('@/components/ui/dialog', () => ({
@@ -140,6 +135,8 @@ jest.mock('sonner', () => ({
 beforeEach(() => {
   mockRouterPush.mockClear()
   mockDialogContent.mockClear()
+  mockDownloadAttachment.mockReset()
+  mockDocumentSummary = null
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
 })
 
@@ -219,11 +216,25 @@ describe('DocumentDetailDialog original file preview', () => {
     expect(screen.getByTestId('knowledge-document-source-tab')).toBeInTheDocument()
     expect(screen.getByTestId('knowledge-document-parsed-tab')).toHaveClass('max-md:min-h-[44px]')
     expect(screen.getByTestId('knowledge-document-source-tab')).toHaveClass('max-md:min-h-[44px]')
+    expect(screen.getByTestId('knowledge-document-source-tab').nextElementSibling).toBe(
+      screen.getByTestId('knowledge-document-parsed-tab')
+    )
+    expect(screen.getByTestId('knowledge-source-preview-download')).toHaveClass(
+      'max-md:min-h-[44px]',
+      'max-md:min-w-[44px]'
+    )
+    expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toHaveClass(
+      'max-md:min-h-[44px]',
+      'max-md:min-w-[44px]'
+    )
     expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
 
     await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
 
     expect(screen.queryByTestId('mock-knowledge-source-preview')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-source-preview-fullscreen')).not.toBeInTheDocument()
+    expect(String(mockDialogContent.mock.calls.at(-1)?.[0].className)).toContain('max-w-6xl')
   })
 
   it('hides the source preview tab for non-file documents', () => {
@@ -250,10 +261,68 @@ describe('DocumentDetailDialog original file preview', () => {
       />
     )
 
-    await user.click(screen.getByTestId('mock-source-fullscreen'))
+    await user.click(screen.getByTestId('knowledge-source-preview-fullscreen'))
 
     expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
     expect(screen.queryByTestId('knowledge-document-source-tab')).not.toBeInTheDocument()
+    expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toHaveAttribute(
+      'aria-label',
+      'document.document.detail.exitFullscreen'
+    )
+  })
+
+  it('shares the derived summary across modes without taking source preview space by default', async () => {
+    const user = userEvent.setup()
+    mockDocumentSummary = {
+      status: 'completed',
+      short_summary: 'Derived summary content',
+      topics: ['finance'],
+    }
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    const summaryToggle = screen.getByTestId('knowledge-document-summary-toggle')
+    expect(summaryToggle).toHaveClass('max-md:min-h-[44px]')
+    expect(screen.queryByText('Derived summary content')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
+    expect(screen.getByText('Derived summary content')).toBeInTheDocument()
+
+    await user.click(screen.getByTestId('knowledge-document-source-tab'))
+    expect(screen.queryByText('Derived summary content')).not.toBeInTheDocument()
+
+    await user.click(summaryToggle)
+    expect(screen.getByText('Derived summary content')).toBeInTheDocument()
+    await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
+    await user.click(screen.getByTestId('knowledge-document-source-tab'))
+    expect(screen.getByText('Derived summary content')).toBeInTheDocument()
+  })
+
+  it('hides the shared summary while the original file is fullscreen', async () => {
+    const user = userEvent.setup()
+    mockDocumentSummary = {
+      status: 'completed',
+      short_summary: 'Derived summary content',
+    }
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    expect(screen.getByTestId('knowledge-document-summary-toggle')).toBeInTheDocument()
+    await user.click(screen.getByTestId('knowledge-source-preview-fullscreen'))
+
+    expect(screen.queryByTestId('knowledge-document-summary-toggle')).not.toBeInTheDocument()
   })
 
   it('resets fullscreen before rendering a reopened dialog', async () => {
@@ -267,7 +336,7 @@ describe('DocumentDetailDialog original file preview', () => {
       />
     )
 
-    await user.click(screen.getByTestId('mock-source-fullscreen'))
+    await user.click(screen.getByTestId('knowledge-source-preview-fullscreen'))
     rerender(
       <DocumentDetailDialog
         open={false}
@@ -290,6 +359,27 @@ describe('DocumentDetailDialog original file preview', () => {
     const renderedClassNames = mockDialogContent.mock.calls.map(call => String(call[0].className))
     expect(renderedClassNames).not.toEqual(
       expect.arrayContaining([expect.stringContaining('max-w-[100vw]')])
+    )
+    expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
+  })
+
+  it('downloads the original file from the dialog header and preserves the preview on failure', async () => {
+    const user = userEvent.setup()
+    mockDownloadAttachment.mockRejectedValue(new Error('download failed'))
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={officeDocument}
+        knowledgeBaseId={21}
+      />
+    )
+
+    await user.click(screen.getByTestId('knowledge-source-preview-download'))
+
+    expect(mockDownloadAttachment).toHaveBeenCalledWith(32, 'report.docx')
+    expect(toast.error).toHaveBeenCalledWith(
+      'document.document.detail.sourcePreview.downloadFailed'
     )
     expect(screen.getByTestId('mock-knowledge-source-preview')).toBeInTheDocument()
   })

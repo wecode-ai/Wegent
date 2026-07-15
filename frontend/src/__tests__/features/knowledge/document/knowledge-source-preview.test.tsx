@@ -8,8 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { KnowledgeSourcePreview } from '@/features/knowledge/document/components/KnowledgeSourcePreview'
 import { KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES } from '@/features/knowledge/document/utils/sourcePreview'
 import type { KnowledgeDocument } from '@/types/knowledge'
-import { downloadAttachment, fetchAttachmentFile } from '@/apis/attachments'
-import { toast } from 'sonner'
+import { fetchAttachmentFile } from '@/apis/attachments'
 
 jest.mock('@/components/common/FilePreview', () => ({
   FilePreview: ({ fileBlob }: { fileBlob: File }) => (
@@ -18,7 +17,6 @@ jest.mock('@/components/common/FilePreview', () => ({
 }))
 
 jest.mock('@/apis/attachments', () => ({
-  downloadAttachment: jest.fn(),
   fetchAttachmentFile: jest.fn(),
   formatFileSize: (bytes: number) => `${bytes} B`,
 }))
@@ -27,12 +25,6 @@ jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string) => key,
   }),
-}))
-
-jest.mock('sonner', () => ({
-  toast: {
-    error: jest.fn(),
-  },
 }))
 
 const document: KnowledgeDocument = {
@@ -55,6 +47,8 @@ const document: KnowledgeDocument = {
 }
 
 describe('KnowledgeSourcePreview', () => {
+  const onDownload = jest.fn()
+
   beforeEach(() => {
     jest.clearAllMocks()
     ;(fetchAttachmentFile as jest.Mock).mockResolvedValue(
@@ -65,37 +59,16 @@ describe('KnowledgeSourcePreview', () => {
   })
 
   it('does not fetch the source file before the view becomes active', () => {
-    render(
-      <KnowledgeSourcePreview
-        document={document}
-        active={false}
-        isFullscreen={false}
-        onFullscreenChange={jest.fn()}
-      />
-    )
+    render(<KnowledgeSourcePreview document={document} active={false} onDownload={onDownload} />)
 
     expect(fetchAttachmentFile).not.toHaveBeenCalled()
   })
 
   it('fetches and renders the original file after activation', async () => {
-    render(
-      <KnowledgeSourcePreview
-        document={document}
-        active={true}
-        isFullscreen={false}
-        onFullscreenChange={jest.fn()}
-      />
-    )
+    render(<KnowledgeSourcePreview document={document} active={true} onDownload={onDownload} />)
 
     await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
-    expect(screen.getByTestId('knowledge-source-preview-download')).toHaveClass(
-      'max-md:min-h-[44px]',
-      'max-md:min-w-[44px]'
-    )
-    expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toHaveClass(
-      'max-md:min-h-[44px]',
-      'max-md:min-w-[44px]'
-    )
+    expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
     expect(fetchAttachmentFile).toHaveBeenCalledWith(3, {
       filename: 'report.docx',
       signal: expect.any(AbortSignal),
@@ -105,23 +78,13 @@ describe('KnowledgeSourcePreview', () => {
   it('aborts an in-flight request when the preview is deactivated', () => {
     ;(fetchAttachmentFile as jest.Mock).mockReturnValue(new Promise(() => undefined))
     const { rerender } = render(
-      <KnowledgeSourcePreview
-        document={document}
-        active={true}
-        isFullscreen={false}
-        onFullscreenChange={jest.fn()}
-      />
+      <KnowledgeSourcePreview document={document} active={true} onDownload={onDownload} />
     )
     const signal = (fetchAttachmentFile as jest.Mock).mock.calls[0][1].signal as AbortSignal
 
     act(() => {
       rerender(
-        <KnowledgeSourcePreview
-          document={document}
-          active={false}
-          isFullscreen={false}
-          onFullscreenChange={jest.fn()}
-        />
+        <KnowledgeSourcePreview document={document} active={false} onDownload={onDownload} />
       )
     })
 
@@ -136,8 +99,7 @@ describe('KnowledgeSourcePreview', () => {
           file_size: KNOWLEDGE_SOURCE_PREVIEW_MAX_BYTES + 1,
         }}
         active={true}
-        isFullscreen={false}
-        onFullscreenChange={jest.fn()}
+        onDownload={onDownload}
       />
     )
 
@@ -145,7 +107,7 @@ describe('KnowledgeSourcePreview', () => {
     const download = screen.getByTestId('knowledge-source-preview-too-large-download')
     expect(download).toHaveClass('max-md:min-h-[44px]', 'max-md:min-w-[44px]')
     download.click()
-    await waitFor(() => expect(downloadAttachment).toHaveBeenCalledWith(3, 'report.docx'))
+    await waitFor(() => expect(onDownload).toHaveBeenCalledTimes(1))
   })
 
   it('can retry after loading the original file fails', async () => {
@@ -154,14 +116,7 @@ describe('KnowledgeSourcePreview', () => {
       .mockRejectedValueOnce(new Error('network error'))
       .mockResolvedValueOnce(new File(['office'], 'report.docx'))
 
-    render(
-      <KnowledgeSourcePreview
-        document={document}
-        active={true}
-        isFullscreen={false}
-        onFullscreenChange={jest.fn()}
-      />
-    )
+    render(<KnowledgeSourcePreview document={document} active={true} onDownload={onDownload} />)
 
     const retry = await screen.findByTestId('knowledge-source-preview-retry')
     expect(retry).toHaveClass('max-md:min-h-[44px]', 'max-md:min-w-[44px]')
@@ -169,31 +124,11 @@ describe('KnowledgeSourcePreview', () => {
       'max-md:min-h-[44px]',
       'max-md:min-w-[44px]'
     )
+    await user.click(screen.getByTestId('knowledge-source-preview-error-download'))
+    expect(onDownload).toHaveBeenCalledTimes(1)
     await user.click(retry)
 
     await waitFor(() => expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument())
     expect(fetchAttachmentFile).toHaveBeenCalledTimes(2)
-  })
-
-  it('keeps a rendered preview visible when downloading fails', async () => {
-    const user = userEvent.setup()
-    ;(downloadAttachment as jest.Mock).mockRejectedValue(new Error('download failed'))
-
-    render(
-      <KnowledgeSourcePreview
-        document={document}
-        active={true}
-        isFullscreen={false}
-        onFullscreenChange={jest.fn()}
-      />
-    )
-
-    await screen.findByTestId('mock-file-preview')
-    await user.click(screen.getByTestId('knowledge-source-preview-download'))
-
-    expect(toast.error).toHaveBeenCalledWith(
-      'document.document.detail.sourcePreview.downloadFailed'
-    )
-    expect(screen.getByTestId('mock-file-preview')).toBeInTheDocument()
   })
 })
