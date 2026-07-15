@@ -158,6 +158,8 @@
     "workspace_tab_review": "Review",
     "workspace_tab_files": "Files",
     "workspace_tab_chat": "Temporary chat",
+    "add_selection_to_conversation": "Add to conversation",
+    "ask_selection_in_sidebar": "Ask in sidebar",
     "workspace_tab_new": "Open new tab",
     "create_project": "Create project",
     "close_dialog": "Close",

@@ -1,18 +1,41 @@
-import { memo, useCallback, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { ChatInput, type ChatInputProps, type ChatSubmitOptions } from '@/components/chat/ChatInput'
 import { parseComposerMentions } from '@/components/chat/composer/composerMentions'
+
+export interface BufferedChatInputInsertion {
+  id: number
+  text: string
+}
+
+interface BufferedChatInputProps extends ChatInputProps {
+  insertion?: BufferedChatInputInsertion | null
+}
 
 export const BufferedChatInput = memo(function BufferedChatInput({
   value,
   onChange,
   onSubmit,
+  insertion,
   ...props
-}: ChatInputProps) {
+}: BufferedChatInputProps) {
   const [draftState, setDraftState] = useState(() => ({
     sourceValue: value,
     draft: value,
   }))
   const draft = draftState.sourceValue === value ? draftState.draft : value
+  const appliedInsertionIdRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (!insertion || appliedInsertionIdRef.current === insertion.id) return
+    appliedInsertionIdRef.current = insertion.id
+    setDraftState(current => {
+      const currentDraft = current.sourceValue === value ? current.draft : value
+      return {
+        sourceValue: value,
+        draft: currentDraft ? `${currentDraft}\n${insertion.text}` : insertion.text,
+      }
+    })
+  }, [insertion, value])
   const setDraft = useCallback(
     (nextDraft: string) => {
       setDraftState({ sourceValue: value, draft: nextDraft })
