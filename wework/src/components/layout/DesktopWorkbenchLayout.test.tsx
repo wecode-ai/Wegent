@@ -3253,7 +3253,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('keeps the native folder picker active while the workbench rerenders', async () => {
+  test('keeps the native folder picker active while callback identities change', async () => {
     const onOpenStandaloneWorkspace = vi.fn()
     let resolvePicker: (path: string) => void = () => undefined
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(
@@ -3264,7 +3264,6 @@ describe('DesktopWorkbenchLayout', () => {
     )
     const props = {
       ...baseProps,
-      onOpenStandaloneWorkspace,
       state: {
         ...baseProps.state,
         devices: [
@@ -3281,7 +3280,14 @@ describe('DesktopWorkbenchLayout', () => {
         ],
       },
     }
-    const view = render(<DesktopWorkbenchLayout {...props} />)
+    const view = render(
+      <DesktopWorkbenchLayout
+        {...props}
+        onOpenStandaloneWorkspace={(deviceId, workspacePath) =>
+          onOpenStandaloneWorkspace(deviceId, workspacePath)
+        }
+      />
+    )
 
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-create-existing-option'))
@@ -3289,7 +3295,14 @@ describe('DesktopWorkbenchLayout', () => {
       expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
     )
 
-    view.rerender(<DesktopWorkbenchLayout {...props} />)
+    view.rerender(
+      <DesktopWorkbenchLayout
+        {...props}
+        onOpenStandaloneWorkspace={(deviceId, workspacePath) =>
+          onOpenStandaloneWorkspace(deviceId, workspacePath)
+        }
+      />
+    )
     resolvePicker('/Users/alice/repo')
 
     await waitFor(() =>

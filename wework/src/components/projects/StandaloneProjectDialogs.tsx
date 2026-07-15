@@ -433,37 +433,30 @@ export function StandaloneFolderProjectDialog({
     if (!shouldUseNativeLocalPicker || !nativePickerDeviceId) return undefined
     if (nativePickerStartedRef.current) return undefined
 
-    let cancelled = false
-
     const openPickerTimer = window.setTimeout(() => {
-      if (cancelled) return
       nativePickerStartedRef.current = true
       void (async () => {
         try {
           setNativePickerError(null)
           const selectedPath = await openNativeProjectDirectoryPicker()
-          if (cancelled) return
           if (!selectedPath) {
             closeDialog()
             return
           }
           await onOpenStandaloneWorkspace?.(nativePickerDeviceId, selectedPath)
-          if (!cancelled) closeDialog()
+          closeDialog()
         } catch (error) {
-          if (!cancelled) {
-            console.error('[Wework project] native picker failed', error)
-            setNativePickerError(
-              error instanceof Error
-                ? error.message
-                : t('workbench.project_directory_select_failed', '项目打开失败')
-            )
-          }
+          console.error('[Wework project] native picker failed', error)
+          setNativePickerError(
+            error instanceof Error
+              ? error.message
+              : t('workbench.project_directory_select_failed', '项目打开失败')
+          )
         }
       })()
     }, 0)
 
     return () => {
-      cancelled = true
       window.clearTimeout(openPickerTimer)
     }
   }, [
