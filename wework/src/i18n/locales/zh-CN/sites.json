@@ -16,6 +16,7 @@
   "loading": "正在加载站点",
   "empty_title": "还没有站点",
   "empty_description": "通过 Sites 创建你的第一个站点",
+  "unavailable": "站点功能尚未推出",
   "load_failed": "站点加载失败",
   "publish_failed": "发布失败",
   "retry": "重试",

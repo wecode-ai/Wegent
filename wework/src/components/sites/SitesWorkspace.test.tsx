@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
+import { ApiError } from '@/api/http'
 import type { Site, SitesApi } from '@/api/sites'
 import { openExternalUrl } from '@/lib/external-links'
 import { SitesWorkspace } from './SitesWorkspace'
@@ -12,12 +13,15 @@ vi.mock('@/lib/external-links', () => ({
 
 const unpublishedSite: Site = {
   siteid: 'site-1',
+  taskid: 'task-1',
+  username: 'alice',
   name: '产品发布页',
   slug: 'product',
   internal_url: 'http://sites.internal/product',
   external_url: null,
   publish_status: 'unpublished',
   thumbnail_url: null,
+  created_at: '2026-07-15T04:00:00Z',
   updated_at: '2026-07-15T05:00:00Z',
 }
 
@@ -43,13 +47,29 @@ describe('SitesWorkspace', () => {
     vi.clearAllMocks()
   })
 
+  test('shows an unavailable product state when Backend reports Sites is not configured', async () => {
+    const api = createApi()
+    vi.mocked(api.listSites).mockRejectedValueOnce(
+      new ApiError('Sites is not available yet', 503, 'sites_not_available')
+    )
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+
+    expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
+      '站点功能尚未推出'
+    )
+    expect(screen.queryByTestId('sites-refresh-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sites-create-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sites-search-input')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sites-retry-button')).not.toBeInTheDocument()
+    expect(screen.queryByText('外网发布')).not.toBeInTheDocument()
+  })
+
   test('loads the current user sites and opens the default internal URL', async () => {
     const api = createApi()
-    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} />)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
 
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(api.listSites).toHaveBeenCalledWith({
-      username: 'alice',
       q: '',
       offset: 0,
       limit: 20,
@@ -61,7 +81,7 @@ describe('SitesWorkspace', () => {
 
   test('debounces search and replaces the current results', async () => {
     const api = createApi()
-    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} />)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
     await screen.findByText('产品发布页')
 
     fireEvent.change(screen.getByTestId('sites-search-input'), {
@@ -70,7 +90,6 @@ describe('SitesWorkspace', () => {
 
     await waitFor(() => {
       expect(api.listSites).toHaveBeenLastCalledWith({
-        username: 'alice',
         q: '机器人',
         offset: 0,
         limit: 20,
@@ -80,7 +99,7 @@ describe('SitesWorkspace', () => {
 
   test('publishes to the external internet and displays the generated URL', async () => {
     const api = createApi()
-    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} />)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
     await screen.findByText('产品发布页')
 
     await userEvent.click(screen.getByTestId('site-publish-site-1'))
@@ -102,14 +121,13 @@ describe('SitesWorkspace', () => {
       .mockResolvedValueOnce({ items: [unpublishedSite], total: 2, offset: 0, limit: 20 })
       .mockResolvedValueOnce({ items: [secondSite], total: 2, offset: 1, limit: 20 })
 
-    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} pageSize={1} />)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} pageSize={1} />)
     await screen.findByText('产品发布页')
     await userEvent.click(screen.getByTestId('sites-load-more-button'))
 
     expect(await screen.findByText('机器人学习站')).toBeInTheDocument()
     expect(screen.getByText('产品发布页')).toBeInTheDocument()
     expect(api.listSites).toHaveBeenLastCalledWith({
-      username: 'alice',
       q: '',
       offset: 1,
       limit: 1,
@@ -118,7 +136,7 @@ describe('SitesWorkspace', () => {
 
   test('invokes the create entry from the page header', async () => {
     const onCreate = vi.fn()
-    render(<SitesWorkspace api={createApi([])} username="alice" onCreate={onCreate} />)
+    render(<SitesWorkspace api={createApi([])} onCreate={onCreate} />)
     await screen.findByText('还没有站点')
 
     await userEvent.click(screen.getByTestId('sites-create-button'))
@@ -127,7 +145,7 @@ describe('SitesWorkspace', () => {
 
   test('requires confirmation and explains that local files are preserved', async () => {
     const api = createApi()
-    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} />)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
     await screen.findByText('产品发布页')
 
     await userEvent.click(screen.getByTestId('site-more-site-1'))
@@ -144,7 +162,7 @@ describe('SitesWorkspace', () => {
 
   test('removes only the confirmed site after the API succeeds', async () => {
     const api = createApi()
-    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} />)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
     await screen.findByText('产品发布页')
 
     await userEvent.click(screen.getByTestId('site-more-site-1'))
@@ -158,7 +176,7 @@ describe('SitesWorkspace', () => {
   test('keeps the row and dialog open when deletion fails so it can be retried', async () => {
     const api = createApi()
     vi.mocked(api.deleteSite).mockRejectedValueOnce(new Error('公网撤销失败'))
-    render(<SitesWorkspace api={api} username="alice" onCreate={vi.fn()} />)
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
     await screen.findByText('产品发布页')
 
     await userEvent.click(screen.getByTestId('site-more-site-1'))

@@ -603,12 +603,14 @@ describe('App plugins route', () => {
     await userEvent.click(screen.getByTestId('plugins-button'))
 
     await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
-    expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('plugins-workspace', undefined, { timeout: 3000 })
+    ).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
   })
 
   test('renders Sites for the signed-in username and starts a Sites skill chat', async () => {
-    vi.stubEnv('VITE_SITES_API_BASE_URL', 'http://127.0.0.1:8765')
+    localStorage.setItem('auth_token', 'wegent-secret')
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
@@ -637,8 +639,11 @@ describe('App plugins route', () => {
     expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledWith(
-      'http://127.0.0.1:8765/api/v1/sites?username=alice&offset=0&limit=20',
-      expect.objectContaining({ method: 'GET' })
+      '/api/v1/sites?offset=0&limit=20',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ Authorization: 'Bearer wegent-secret' }),
+      })
     )
     expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
 

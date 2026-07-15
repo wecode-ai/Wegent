@@ -11,6 +11,7 @@ import {
   Search,
   Upload,
 } from 'lucide-react'
+import { isSitesUnavailableError } from '@/api/sites'
 import type { Site, SitesApi } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
@@ -19,7 +20,6 @@ import { SiteActionsMenu } from './SiteActionsMenu'
 
 interface SitesWorkspaceProps {
   api: SitesApi
-  username: string
   onCreate: () => void | Promise<void>
   creating?: boolean
   pageSize?: number
@@ -150,7 +150,6 @@ function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowPro
 
 export function SitesWorkspace({
   api,
-  username,
   onCreate,
   creating = false,
   pageSize = 20,
@@ -167,6 +166,7 @@ export function SitesWorkspace({
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [sitesUnavailable, setSitesUnavailable] = useState(false)
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set())
   const [pendingDeleteSite, setPendingDeleteSite] = useState<Site | null>(null)
   const [deletingSiteId, setDeletingSiteId] = useState<string | null>(null)
@@ -184,7 +184,6 @@ export function SitesWorkspace({
     setLoadError(null)
     try {
       const response = await api.listSites({
-        username,
         q: debouncedQuery,
         offset: 0,
         limit: pageSize,
@@ -192,15 +191,21 @@ export function SitesWorkspace({
       if (currentRequest !== requestId.current) return
       setSites(response.items)
       setTotal(response.total)
+      setSitesUnavailable(false)
     } catch (error) {
       if (currentRequest !== requestId.current) return
       setSites([])
       setTotal(0)
-      setLoadError(errorMessage(error, t('load_failed', '站点加载失败')))
+      if (isSitesUnavailableError(error)) {
+        setSitesUnavailable(true)
+        setLoadError(null)
+      } else {
+        setLoadError(errorMessage(error, t('load_failed', '站点加载失败')))
+      }
     } finally {
       if (currentRequest === requestId.current) setLoading(false)
     }
-  }, [api, debouncedQuery, pageSize, t, username])
+  }, [api, debouncedQuery, pageSize, t])
 
   useEffect(() => {
     void loadFirstPage()
@@ -211,7 +216,6 @@ export function SitesWorkspace({
     setLoadError(null)
     try {
       const response = await api.listSites({
-        username,
         q: debouncedQuery,
         offset: sites.length,
         limit: pageSize,
@@ -219,7 +223,14 @@ export function SitesWorkspace({
       setSites(current => [...current, ...response.items])
       setTotal(response.total)
     } catch (error) {
-      setLoadError(errorMessage(error, t('load_failed', '站点加载失败')))
+      if (isSitesUnavailableError(error)) {
+        setSitesUnavailable(true)
+        setSites([])
+        setTotal(0)
+        setLoadError(null)
+      } else {
+        setLoadError(errorMessage(error, t('load_failed', '站点加载失败')))
+      }
     } finally {
       setLoadingMore(false)
     }
@@ -284,6 +295,43 @@ export function SitesWorkspace({
     } finally {
       setDeletingSiteId(null)
     }
+  }
+
+  if (sitesUnavailable) {
+    return (
+      <main
+        data-testid="sites-workspace"
+        className="min-w-0 flex-1 overflow-y-auto bg-background text-text-primary"
+      >
+        <div className="sticky top-0 z-40 border-b border-transparent bg-background/95 backdrop-blur-xl">
+          <div
+            className={[
+              'mx-auto flex h-12 max-w-[1420px] items-center justify-between pl-20 pr-5 md:h-[52px] md:pr-7',
+              sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
+            ].join(' ')}
+          >
+            <div>{topBarLeftActions}</div>
+          </div>
+        </div>
+
+        <div className="mx-auto flex w-full max-w-[920px] flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4">
+          <section className="space-y-1.5">
+            <h1 className="text-[30px] font-normal leading-9 text-text-primary">
+              {t('title', '站点')}
+            </h1>
+            <p className="text-[16px] leading-6 text-text-secondary">
+              {t('subtitle', '将你的想法变成真实网站')}
+            </p>
+          </section>
+          <div
+            data-testid="sites-unavailable-state"
+            className="flex min-h-64 items-center justify-center text-center"
+          >
+            <p className="text-sm text-text-secondary">{t('unavailable', '站点功能尚未推出')}</p>
+          </div>
+        </div>
+      </main>
+    )
   }
 
   return (

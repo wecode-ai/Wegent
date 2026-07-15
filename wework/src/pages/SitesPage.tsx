@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Menu } from 'lucide-react'
-import { createSitesApi, type SitesApi } from '@/api/sites'
+import { createSitesApi } from '@/api/sites'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
@@ -18,18 +18,10 @@ import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import type { RuntimeTaskAddress } from '@/types/api'
 
-function createUnavailableSitesApi(message: string): SitesApi {
-  return {
-    listSites: () => Promise.reject(new Error(message)),
-    publishSite: () => Promise.reject(new Error(message)),
-    deleteSite: () => Promise.reject(new Error(message)),
-  }
-}
-
 export function SitesPage() {
   const { t } = useTranslation('sites')
   const { t: commonT } = useTranslation('common')
-  const { user: authUser, logout } = useAuth()
+  const { logout } = useAuth()
   const isMobile = useIsMobile()
   const isTauri = isTauriRuntime()
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -71,15 +63,8 @@ export function SitesPage() {
     createDeviceDirectory,
   } = useWorkbench()
 
-  const sitesApiBaseUrl = getRuntimeConfig().sitesApiBaseUrl
-  const sitesApi = useMemo(
-    () =>
-      sitesApiBaseUrl
-        ? createSitesApi(sitesApiBaseUrl)
-        : createUnavailableSitesApi('VITE_SITES_API_BASE_URL is not configured'),
-    [sitesApiBaseUrl]
-  )
-  const username = state.user?.user_name?.trim() || authUser?.user_name?.trim() || ''
+  const apiBaseUrl = getRuntimeConfig().apiBaseUrl
+  const sitesApi = useMemo(() => createSitesApi(apiBaseUrl), [apiBaseUrl])
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')
@@ -233,7 +218,6 @@ export function SitesPage() {
       )}
       <SitesWorkspace
         api={sitesApi}
-        username={username}
         onCreate={handleCreate}
         creating={creating}
         createError={createError}

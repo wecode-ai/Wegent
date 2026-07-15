@@ -16,6 +16,7 @@
   "loading": "Loading sites",
   "empty_title": "No sites yet",
   "empty_description": "Create your first site with Sites",
+  "unavailable": "Sites is not available yet",
   "load_failed": "Failed to load sites",
   "publish_failed": "Publish failed",
   "retry": "Retry",

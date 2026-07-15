@@ -222,6 +222,8 @@ class Settings(BaseSettings):
     # Optional Web URL used to build Wework desktop cloud authorization pages.
     # Defaults to FRONTEND_URL when empty.
     WEWORK_AUTHORIZE_BASE_URL: str = ""
+    # Optional upstream for the Sites service. Wework accesses it through Backend.
+    SITES_API_BASE_URL: str = ""
 
     # OIDC configuration
     OIDC_CLIENT_ID: str = "wegent"

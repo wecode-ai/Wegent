@@ -1,18 +1,21 @@
-import { createHttpClient } from './http'
+import { ApiError, createHttpClient } from './http'
 
 export type SitePublishStatus = 'unpublished' | 'publishing' | 'published' | 'failed'
 
 export interface Site {
   siteid: string
+  taskid: string
+  username: string
   name: string
-  slug?: string
+  slug: string
   internal_url: string
   external_url: string | null
   publish_status: SitePublishStatus
   last_publish_error?: string | null
   thumbnail_url?: string | null
-  created_at?: string
-  updated_at?: string
+  created_at: string
+  updated_at: string
+  published_at?: string | null
 }
 
 export interface SiteListResponse {
@@ -23,7 +26,6 @@ export interface SiteListResponse {
 }
 
 export interface ListSitesInput {
-  username: string
   q?: string
   offset: number
   limit: number
@@ -38,18 +40,11 @@ export interface SitesApi {
 export function createSitesApi(baseUrl: string): SitesApi {
   const client = createHttpClient({
     baseUrl: baseUrl.replace(/\/+$/, ''),
-    getToken: () => null,
-    redirectOnUnauthorized: false,
   })
 
   return {
     listSites(input) {
-      const username = input.username.trim()
-      if (!username) {
-        return Promise.reject(new Error('username is required'))
-      }
-
-      const params = new URLSearchParams({ username })
+      const params = new URLSearchParams()
       const query = input.q?.trim()
       if (query) {
         params.set('q', query)
@@ -57,13 +52,17 @@ export function createSitesApi(baseUrl: string): SitesApi {
       params.set('offset', String(input.offset))
       params.set('limit', String(input.limit))
 
-      return client.get(`/api/v1/sites?${params.toString()}`)
+      return client.get(`/v1/sites?${params.toString()}`)
     },
     publishSite(siteid) {
-      return client.post(`/api/v1/sites/${encodeURIComponent(siteid)}/publish`)
+      return client.post(`/v1/sites/${encodeURIComponent(siteid)}/publish`)
     },
     deleteSite(siteid) {
-      return client.delete<void>(`/api/v1/sites/${encodeURIComponent(siteid)}`)
+      return client.delete<void>(`/v1/sites/${encodeURIComponent(siteid)}`)
     },
   }
+}
+
+export function isSitesUnavailableError(error: unknown): boolean {
+  return error instanceof ApiError && error.errorCode === 'sites_not_available'
 }
