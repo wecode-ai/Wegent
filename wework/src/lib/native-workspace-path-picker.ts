@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from './runtime-environment'
 
 export interface NativeWorkspacePath {
@@ -21,7 +22,6 @@ export async function openNativeWorkspacePathPicker(
 ): Promise<NativeWorkspacePath[]> {
   if (!isTauriRuntime()) return []
 
-  const { invoke } = await import('@tauri-apps/api/core')
   const selected = await invoke<NativeWorkspacePath[]>('pick_workspace_paths', {
     initialDirectory: initialDirectory?.trim() || null,
     directoriesOnly: options.directoriesOnly ?? false,

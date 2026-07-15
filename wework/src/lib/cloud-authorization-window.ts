@@ -1,4 +1,5 @@
 import type { UnlistenFn } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import type { CloudAuthorizationHandle } from '@/features/cloud-connection/CloudConnectionContext'
 import { isHttpUrl, openExternalUrl } from './external-links'
 import { isTauriRuntime } from './runtime-environment'
@@ -69,7 +70,6 @@ function formatTauriError(payload: unknown): string {
 
 async function getAuthorizationWindowPosition(): Promise<AuthorizationWindowPosition> {
   try {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
     const currentWindow = getCurrentWindow()
     const [position, size, scaleFactor] = await Promise.all([
       currentWindow.outerPosition(),
