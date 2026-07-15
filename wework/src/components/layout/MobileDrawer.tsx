@@ -61,7 +61,7 @@ interface MobileDrawerProps {
   currentProjectId?: number
   currentRuntimeTask?: RuntimeTaskAddress | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
-  activeItem?: 'chat' | 'plugins' | 'automation'
+  activeItem?: 'chat' | 'plugins' | 'sites' | 'automation'
   onClose: () => void
   onNewChat?: () => void
   onStartStandaloneChat?: () => void

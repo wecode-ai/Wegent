@@ -108,6 +108,7 @@ const workbenchValue: WorkbenchContextValue = {
   selectStandaloneDevice: vi.fn(),
   openStandaloneWorkspace: vi.fn(),
   startNewChat: vi.fn(),
+  startNewSkillChat: vi.fn(),
   startStandaloneChat: vi.fn(),
   startNewProjectChat: vi.fn(),
   openRuntimeTask: vi.fn(),
@@ -604,6 +605,45 @@ describe('App plugins route', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/plugins'))
     expect(await screen.findByTestId('plugins-workspace')).toBeInTheDocument()
     expect(screen.queryByTestId('plugins-sidebar-placeholder')).not.toBeInTheDocument()
+  })
+
+  test('renders Sites for the signed-in username and starts a Sites skill chat', async () => {
+    vi.stubEnv('VITE_SITES_API_BASE_URL', 'http://127.0.0.1:8765')
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          items: [
+            {
+              siteid: 'site-1',
+              name: '产品发布页',
+              internal_url: 'http://sites.internal/product',
+              external_url: null,
+              publish_status: 'unpublished',
+              thumbnail_url: null,
+            },
+          ],
+          total: 1,
+          offset: 0,
+          limit: 20,
+        }),
+    } as Response)
+    vi.mocked(workbenchValue.startNewSkillChat).mockReturnValue(true)
+    window.history.pushState({}, '', '/sites')
+
+    render(<App />)
+
+    expect(await screen.findByTestId('sites-workspace')).toBeInTheDocument()
+    expect(await screen.findByText('产品发布页')).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8765/api/v1/sites?username=alice&offset=0&limit=20',
+      expect.objectContaining({ method: 'GET' })
+    )
+    expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
+
+    await userEvent.click(screen.getByTestId('sites-create-button'))
+    expect(workbenchValue.startNewSkillChat).toHaveBeenCalledWith(['sites-building'])
   })
 
   test('opens a runtime task from the plugins sidebar and leaves the plugins route', async () => {

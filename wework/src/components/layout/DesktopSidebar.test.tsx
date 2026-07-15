@@ -843,6 +843,16 @@ describe('DesktopSidebar', () => {
     expect(onOpenPlugins).toHaveBeenCalledTimes(1)
   })
 
+  test('opens Sites navigation from the desktop sidebar', async () => {
+    const onOpenSites = vi.fn()
+    renderSidebar({ onOpenSites, activeItem: 'sites' })
+
+    expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
+    await userEvent.click(screen.getByTestId('sites-button'))
+
+    expect(onOpenSites).toHaveBeenCalledTimes(1)
+  })
+
   test('renders chat runtime tasks as conversations instead of workspace groups', async () => {
     const onOpenRuntimeTask = vi.fn()
     const chatPath = '/Users/alice/.wecode/wegent-executor/workspace/chats/2026-06-20/hi-1'

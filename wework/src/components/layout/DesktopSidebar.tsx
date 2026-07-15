@@ -55,6 +55,7 @@ import {
   isRemoteDevice,
 } from '@/lib/device-capabilities'
 import { openLocalWorkspace } from '@/lib/local-terminal'
+import { navigateTo } from '@/lib/navigation'
 import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
   runtimeProjectToProject,
@@ -124,7 +125,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'plugins' | 'automation'
+  activeItem?: 'chat' | 'plugins' | 'sites' | 'automation'
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -165,6 +166,7 @@ interface DesktopSidebarProps {
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
   onOpenPlugins: () => void
+  onOpenSites?: () => void
   onRefreshDevices?: () => Promise<void>
   onOpenBlankStandaloneProject?: () => void
   onOpenStandaloneFolderProject?: (
@@ -459,6 +461,7 @@ function SidebarButton({
     <button
       type="button"
       data-testid={testId}
+      aria-current={selected ? 'page' : undefined}
       onClick={onClick}
       className={[
         'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] font-normal leading-[18px]',
@@ -2422,6 +2425,7 @@ export function DesktopSidebar({
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
   onOpenPlugins,
+  onOpenSites,
   onRefreshDevices,
   onOpenBlankStandaloneProject,
   onOpenStandaloneFolderProject,
@@ -3022,6 +3026,13 @@ export function DesktopSidebar({
                   onClick={onOpenPlugins}
                 />
               )}
+              <SidebarButton
+                icon={Grid3X3}
+                label={t('workbench.sites', '站点')}
+                testId="sites-button"
+                selected={activeItem === 'sites'}
+                onClick={onOpenSites ?? (() => navigateTo('/sites'))}
+              />
               {showCloudConnectionEntry && (
                 <CloudConnectionSidebarButton
                   devices={devices}
