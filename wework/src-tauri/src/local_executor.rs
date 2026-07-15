@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{SocketAddr, TcpStream};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use tauri::{async_runtime::Mutex as AsyncMutex, Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
@@ -482,6 +482,14 @@ fn local_executor_runtime_dir_path() -> Result<PathBuf, String> {
     Ok(home)
 }
 
+fn local_executor_runtime_home_path() -> Result<PathBuf, String> {
+    if cfg!(debug_assertions) {
+        return local_executor_runtime_dir_path();
+    }
+
+    local_executor_home_path()
+}
+
 fn local_executor_home_path() -> Result<PathBuf, String> {
     if let Ok(path) = std::env::var(LOCAL_EXECUTOR_HOME_ENV) {
         let trimmed = path.trim();
@@ -495,7 +503,7 @@ fn local_executor_home_path() -> Result<PathBuf, String> {
 }
 
 fn app_ipc_addr_file_path() -> Result<PathBuf, String> {
-    Ok(local_executor_home_path()?.join(LOCAL_EXECUTOR_ADDR_FILE_NAME))
+    Ok(local_executor_runtime_home_path()?.join(LOCAL_EXECUTOR_ADDR_FILE_NAME))
 }
 
 fn resolve_app_ipc_addr() -> Result<SocketAddr, String> {
@@ -737,13 +745,9 @@ fn remove_stale_app_ipc_addr_file_at(path: &Path) -> Result<(), String> {
         return Ok(());
     }
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.is_file() => {
-            std::fs::remove_file(path).map_err(|error| {
-                format!(
-                    "Failed to remove stale local executor IPC address file {path:?}: {error}"
-                )
-            })
-        }
+        Ok(metadata) if metadata.is_file() => std::fs::remove_file(path).map_err(|error| {
+            format!("Failed to remove stale local executor IPC address file {path:?}: {error}")
+        }),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
@@ -953,13 +957,16 @@ fn configured_file_edit_hook_command() -> String {
 }
 
 fn local_executor_backend_env(inner: &LocalExecutorInner) -> Vec<(String, String)> {
-    let executor_home = path_or_error(local_executor_home_path());
+    let executor_home = path_or_error(local_executor_runtime_home_path());
     let codex_home = path_or_error(wework_codex_home_path(&executor_home));
     let log_dir = path_or_error(local_executor_log_dir_path());
     let mut envs = vec![
         (LOCAL_EXECUTOR_HOME_ENV.to_string(), executor_home),
         (CODEX_HOME_ENV.to_string(), codex_home),
-        (LOCAL_EXECUTOR_ADDR_ENV.to_string(), LOCAL_EXECUTOR_DEFAULT_ADDR.to_string()),
+        (
+            LOCAL_EXECUTOR_ADDR_ENV.to_string(),
+            LOCAL_EXECUTOR_DEFAULT_ADDR.to_string(),
+        ),
         (LOCAL_EXECUTOR_LOG_DIR_ENV.to_string(), log_dir),
         (
             "PATH".to_string(),
@@ -1603,8 +1610,9 @@ fn handle_executor_line_inner(
 fn connect_sidecar_socket() -> Result<TcpStream, String> {
     let addr = resolve_app_ipc_addr()?;
     if addr.port() != 0 {
-        return TcpStream::connect(addr)
-            .map_err(|error| format!("Failed to connect local executor TCP socket {addr}: {error}"));
+        return TcpStream::connect(addr).map_err(|error| {
+            format!("Failed to connect local executor TCP socket {addr}: {error}")
+        });
     }
 
     let addr = wait_for_app_ipc_addr(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS))?;
@@ -1615,7 +1623,9 @@ fn connect_sidecar_socket() -> Result<TcpStream, String> {
 fn prepare_connected_stream(stream: TcpStream) -> Result<PreparedExecutorStream, String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(LOCAL_EXECUTOR_READY_TIMEOUT_SECS)))
-        .map_err(|error| format!("Failed to configure local executor TCP socket timeout: {error}"))?;
+        .map_err(|error| {
+            format!("Failed to configure local executor TCP socket timeout: {error}")
+        })?;
     let mut reader = BufReader::new(stream);
     let mut ready_line = String::new();
     reader
@@ -2546,9 +2556,17 @@ command = "example"
         let path = app_ipc_addr_file_path().expect("addr file path should resolve");
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_home);
 
+        if cfg!(debug_assertions) {
+            assert!(path
+                .display()
+                .to_string()
+                .starts_with("/tmp/wegent-home/app-runtime/wework-"));
+        } else {
+            assert_eq!(path, PathBuf::from("/tmp/wegent-home/app-ipc.addr"));
+        }
         assert_eq!(
-            path,
-            PathBuf::from("/tmp/wegent-home/app-ipc.addr")
+            path.file_name().and_then(|name| name.to_str()),
+            Some(LOCAL_EXECUTOR_ADDR_FILE_NAME)
         );
     }
 
@@ -2564,9 +2582,20 @@ command = "example"
         restore_env("HOME", previous_home);
         restore_env(LOCAL_EXECUTOR_HOME_ENV, previous_executor_home);
 
+        if cfg!(debug_assertions) {
+            assert!(path
+                .display()
+                .to_string()
+                .starts_with("/tmp/wework-test-home/.wegent-executor/app-runtime/wework-"));
+        } else {
+            assert_eq!(
+                path,
+                PathBuf::from("/tmp/wework-test-home/.wegent-executor/app-ipc.addr")
+            );
+        }
         assert_eq!(
-            path,
-            PathBuf::from("/tmp/wework-test-home/.wegent-executor/app-ipc.addr")
+            path.file_name().and_then(|name| name.to_str()),
+            Some(LOCAL_EXECUTOR_ADDR_FILE_NAME)
         );
     }
 
@@ -2619,8 +2648,13 @@ command = "example"
             home,
             PathBuf::from("/tmp/wework-test-home/.wegent-executor")
         );
-        assert_eq!(addr_file, home.join(LOCAL_EXECUTOR_ADDR_FILE_NAME));
         if cfg!(debug_assertions) {
+            assert_eq!(
+                addr_file,
+                home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
+                    .join(local_executor_instance_name())
+                    .join(LOCAL_EXECUTOR_ADDR_FILE_NAME)
+            );
             assert_eq!(
                 log,
                 home.join(LOCAL_EXECUTOR_RUNTIME_DIR_NAME)
@@ -2629,6 +2663,7 @@ command = "example"
                     .join(LOCAL_EXECUTOR_LOG_FILE_NAME)
             );
         } else {
+            assert_eq!(addr_file, home.join(LOCAL_EXECUTOR_ADDR_FILE_NAME));
             assert_eq!(log, home.join("logs").join(LOCAL_EXECUTOR_LOG_FILE_NAME));
         }
         assert_eq!(
@@ -2721,7 +2756,10 @@ command = "example"
         let release_text = "WEGENT_EXECUTOR_APP_IPC_ADDR=/Users/me/.wegent-executor/app-ipc.addr";
 
         assert!(!process_text_uses_addr_file(debug_text, &release_addr_file));
-        assert!(process_text_uses_addr_file(release_text, &release_addr_file));
+        assert!(process_text_uses_addr_file(
+            release_text,
+            &release_addr_file
+        ));
     }
 
     #[test]
@@ -2739,8 +2777,7 @@ command = "example"
 
         remove_stale_app_ipc_addr_file_at(&addr_file_path)
             .expect("addr file cleanup should succeed");
-        remove_stale_app_ipc_addr_file_at(&regular_path)
-            .expect("regular cleanup should succeed");
+        remove_stale_app_ipc_addr_file_at(&regular_path).expect("regular cleanup should succeed");
 
         assert!(!addr_file_path.exists());
         assert!(regular_path.exists());
@@ -2816,14 +2853,12 @@ command = "example"
             Some("local-device-abc")
         );
         assert_eq!(envs.get("DEVICE_TYPE").map(String::as_str), Some("app"));
-        assert_eq!(
-            envs.get(LOCAL_EXECUTOR_HOME_ENV).map(String::as_str),
-            Some("/tmp/wework-instance-executor")
-        );
-        assert_eq!(
-            envs.get(CODEX_HOME_ENV).map(String::as_str),
-            Some("/tmp/wework-instance-executor/codex")
-        );
+        let executor_home_env = envs
+            .get(LOCAL_EXECUTOR_HOME_ENV)
+            .expect("executor home env should be passed to sidecar");
+        let codex_home_env = envs
+            .get(CODEX_HOME_ENV)
+            .expect("codex home env should be passed to sidecar");
         let addr_env = envs
             .get(LOCAL_EXECUTOR_ADDR_ENV)
             .expect("addr env should be passed to sidecar");
@@ -2832,8 +2867,14 @@ command = "example"
             .expect("log dir env should be passed to sidecar");
         assert_eq!(addr_env, LOCAL_EXECUTOR_DEFAULT_ADDR);
         if cfg!(debug_assertions) {
+            assert!(
+                executor_home_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-")
+            );
+            assert_eq!(codex_home_env, &format!("{executor_home_env}/codex"));
             assert!(log_dir_env.starts_with("/tmp/wework-instance-executor/app-runtime/wework-"));
         } else {
+            assert_eq!(executor_home_env, "/tmp/wework-instance-executor");
+            assert_eq!(codex_home_env, "/tmp/wework-instance-executor/codex");
             assert_eq!(log_dir_env, "/tmp/wework-instance-executor/logs");
         }
     }
