@@ -706,9 +706,7 @@ function getDeviceRouteTitle(deviceState: SidebarDeviceState): string {
 
 function getDisplayableNetworkHost(value?: string | null): string | null {
   if (!value) return null
-  const host = extractNetworkHost(value.trim())
-  if (!host || isLoopbackNetworkHost(host)) return null
-  return host
+  return extractNetworkHost(value.trim()) || null
 }
 
 function extractNetworkHost(value: string): string {
@@ -719,11 +717,6 @@ function extractNetworkHost(value: string): string {
     return colonParts[0]
   }
   return value
-}
-
-function isLoopbackNetworkHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase()
-  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.')
 }
 
 function getRuntimeProjectDeviceState(
@@ -1596,6 +1589,7 @@ function RuntimeTaskRow({
     <>
       <SidebarHoverCard
         testId={`runtime-local-task-hover-card-${task.taskId}`}
+        interactive
         content={
           <TaskSidebarHoverCardContent
             taskId={task.taskId}

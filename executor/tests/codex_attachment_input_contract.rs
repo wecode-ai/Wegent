@@ -222,6 +222,14 @@ async fn codex_app_server_cleans_generated_model_input_images() {
         .as_str()
         .unwrap()
         .to_owned();
+    assert!(messages[3]["params"]["input"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains(&large_image.display().to_string()));
+    assert!(!messages[3]["params"]["input"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains(".model-input.png"));
     assert_ne!(generated_path, large_image.display().to_string());
     assert!(generated_path.ends_with(".model-input.png"));
     assert_eq!(

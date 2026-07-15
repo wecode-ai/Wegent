@@ -414,6 +414,20 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.getByTestId('about-link-discord')).toBeInTheDocument()
   })
 
+  test('opens browser settings from the integrations navigation', async () => {
+    api.getAllDevices.mockResolvedValue([])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const browserNav = screen.getByTestId('settings-nav-browser')
+    expect(browserNav).toHaveTextContent('浏览器')
+    await userEvent.click(browserNav)
+
+    expect(await screen.findByTestId('browser-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('browser-external-link-target')).toHaveValue('system')
+    expect(window.location.pathname).toBe('/settings/browser')
+  })
+
   test('opens model settings under personal group without manual device sync', async () => {
     api.getAllDevices.mockResolvedValue([localDevice()])
 

@@ -112,10 +112,6 @@ impl RuntimeTaskLink {
         let local_archived = local_link
             .as_ref()
             .is_some_and(|link| link.status == "archived");
-        let local_terminal_status = local_link
-            .as_ref()
-            .and_then(|link| local_terminal_status_if_current(link, thread));
-        let local_running = local_link.as_ref().is_some_and(|link| link.running);
         let goal_status = local_link
             .as_ref()
             .and_then(|link| link.goal_status.clone());
@@ -133,16 +129,10 @@ impl RuntimeTaskLink {
         }
         let status = if local_archived {
             "archived".to_owned()
-        } else if local_running {
-            "running".to_owned()
-        } else if let Some(status) = &local_terminal_status {
-            status.clone()
         } else {
             thread_status(thread)
         };
-        let running = !local_archived
-            && local_terminal_status.is_none()
-            && (local_running || normalized_running_status(&status));
+        let running = !local_archived && codex_thread_is_active(thread);
         Self {
             local_task_id: local_link
                 .as_ref()
@@ -200,23 +190,6 @@ impl RuntimeTaskLink {
             pinned_order: self.pinned_order,
         }
     }
-}
-
-fn local_terminal_status_if_current(link: &RuntimeTaskLink, thread: &Value) -> Option<String> {
-    if link.running || !is_terminal_status(&link.status) {
-        return None;
-    }
-    let local_is_current = timestamp_ms_field(thread, "updatedAt")
-        .map(|thread_updated_at| link.updated_at >= thread_updated_at)
-        .unwrap_or(true);
-    local_is_current.then(|| link.status.clone())
-}
-
-fn is_terminal_status(status: &str) -> bool {
-    matches!(
-        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-        "done" | "complete" | "completed" | "failed" | "error" | "cancelled" | "canceled"
-    )
 }
 
 fn git_branch_at_workspace(workspace_path: &str) -> Option<String> {
@@ -693,24 +666,37 @@ fn runtime_handle_list_payload_key(key: &str) -> bool {
 }
 
 fn thread_status(thread: &Value) -> String {
-    match string_field(thread, "status")
-        .unwrap_or_else(|| "active".to_owned())
+    match codex_thread_status_type(thread)
+        .unwrap_or_else(|| "idle".to_owned())
         .replace(['_', '-'], "")
         .to_ascii_lowercase()
         .as_str()
     {
         "archived" => "archived",
-        "failed" | "error" => "failed",
+        "systemerror" | "failed" | "error" => "failed",
+        "active" | "running" | "inprogress" => "running",
         _ => "active",
     }
     .to_owned()
 }
 
-fn normalized_running_status(status: &str) -> bool {
-    matches!(
-        status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
-        "running" | "inprogress" | "busy" | "pending"
-    )
+pub(super) fn codex_thread_is_active(thread: &Value) -> bool {
+    codex_thread_status_type(thread).is_some_and(|status| {
+        matches!(
+            status.replace(['_', '-'], "").to_ascii_lowercase().as_str(),
+            "active" | "running" | "inprogress"
+        )
+    })
+}
+
+fn codex_thread_status_type(thread: &Value) -> Option<String> {
+    let status = thread.get("status")?;
+    status.as_str().map(str::to_owned).or_else(|| {
+        status
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    })
 }
 
 #[cfg(test)]
@@ -812,19 +798,19 @@ mod tests {
     }
 
     #[test]
-    fn thread_list_running_status_does_not_drive_task_running() {
+    fn codex_active_thread_drives_task_running() {
         let link = RuntimeTaskLink::from_thread_metadata(
             &json!({
                 "id": "thread-1",
-                "status": "running",
+                "status": {"type": "active", "activeFlags": []},
                 "cwd": "/workspace/project",
             }),
             None,
             "/workspace/project".to_owned(),
         );
 
-        assert_eq!(link.status, "active");
-        assert!(!link.running);
+        assert_eq!(link.status, "running");
+        assert!(link.running);
     }
 
     #[test]

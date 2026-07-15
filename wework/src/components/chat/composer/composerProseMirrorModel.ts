@@ -74,7 +74,7 @@ export const composerSchema = new Schema({
 })
 
 export function createComposerDocument(value: string): ProseMirrorNode {
-  const sanitizedValue = value.replaceAll(OBJECT_REPLACEMENT_CHARACTER, '')
+  const sanitizedValue = value.replace(/\r\n?/g, '\n').replaceAll(OBJECT_REPLACEMENT_CHARACTER, '')
   const content: ProseMirrorNode[] = []
   const mentions = parseComposerMentions(sanitizedValue)
   let offset = 0

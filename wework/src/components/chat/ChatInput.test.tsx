@@ -2691,6 +2691,52 @@ describe('ChatInput', () => {
     })
   })
 
+  test('renders an Appshot image and its text context as one attachment', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        blob: () => Promise.resolve(new Blob(['image'], { type: 'image/png' })),
+      })
+    )
+    URL.createObjectURL = vi.fn(() => 'blob:appshot-preview')
+    const appshot: Attachment = {
+      id: -10,
+      filename: 'appshot.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-07-15T00:00:00.000Z',
+      ui_group_id: 'appshot-capture-1',
+      ui_group_role: 'primary',
+      ui_kind: 'appshot',
+    }
+    const textContext: Attachment = {
+      ...appshot,
+      id: -11,
+      filename: 'appshot-context.txt',
+      mime_type: 'text/plain',
+      file_extension: '.txt',
+      ui_group_role: 'companion',
+    }
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({ attachments: [appshot, textContext] })}
+      />
+    )
+
+    expect(screen.getAllByTestId('attachment-badge')).toHaveLength(1)
+    expect(screen.getByTestId('attachment-appshot-label')).toHaveTextContent('应用快照')
+    expect(screen.queryByTestId('attachment-text-icon')).not.toBeInTheDocument()
+  })
+
   test('opens an enlarged image from the composer attachment preview', async () => {
     vi.stubGlobal(
       'fetch',

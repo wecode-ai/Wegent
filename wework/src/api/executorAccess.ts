@@ -161,7 +161,8 @@ interface ExecutorAccessApis {
     | 'listWorkspaceEntries'
     | 'readWorkspaceTextFile'
     | 'readWorkspaceFileChunk'
-  >
+  > &
+    Pick<WorkspaceFileApi, 'writeWorkspaceTextFile'>
   runtimeWorkApi: ExecutorRuntimeClient
   reviewApi?: ExecutorReviewClient
 }
@@ -252,6 +253,7 @@ export function createExecutorClientFromApis({
     },
   }
 
+  const writeWorkspaceTextFile = deviceApi.writeWorkspaceTextFile
   const files: WorkspaceFileApi = {
     async listWorkspaceEntries(deviceId: string, path: string): Promise<WorkspaceTreeResponse> {
       await resolve(deviceId)
@@ -276,6 +278,19 @@ export function createExecutorClientFromApis({
     async readWorkspaceFileChunk(deviceId, filePath, offset) {
       return deviceApi.readWorkspaceFileChunk(deviceId, filePath, offset)
     },
+    ...(writeWorkspaceTextFile
+      ? {
+          async writeWorkspaceTextFile(
+            deviceId: string,
+            filePath: string,
+            content: string,
+            expectedRevision: string
+          ) {
+            await resolve(deviceId)
+            return writeWorkspaceTextFile(deviceId, filePath, content, expectedRevision)
+          },
+        }
+      : {}),
   }
 
   return {

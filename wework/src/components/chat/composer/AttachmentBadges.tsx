@@ -162,7 +162,11 @@ export function AttachmentBadges({
   onShowTextAttachment,
   onClearCodeComments,
 }: AttachmentBadgesProps) {
+  const { t } = useTranslation('common')
   const codeCommentCount = codeComments?.length ?? 0
+  const visibleAttachments = attachments.filter(
+    attachment => attachment.ui_group_role !== 'companion'
+  )
   if (
     attachments.length === 0 &&
     uploadingFiles.size === 0 &&
@@ -177,7 +181,7 @@ export function AttachmentBadges({
       {codeCommentCount > 0 && (
         <CodeCommentBadge count={codeCommentCount} onRemove={onClearCodeComments} />
       )}
-      {attachments.map(attachment =>
+      {visibleAttachments.map(attachment =>
         isImageAttachment(attachment) ? (
           <div
             key={attachment.id}
@@ -194,6 +198,14 @@ export function AttachmentBadges({
               placeholderClassName="flex h-full w-full items-center justify-center rounded-xl border border-border bg-surface text-text-muted"
               buttonClassName="block h-full w-full cursor-zoom-in p-0 text-left"
             />
+            {attachment.ui_kind === 'appshot' && (
+              <span
+                data-testid="attachment-appshot-label"
+                className="pointer-events-none absolute bottom-1 left-1 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white"
+              >
+                {t('workbench.appshot_attachment_label', '应用快照')}
+              </span>
+            )}
             <RemoveAttachmentButton
               attachmentId={attachment.id}
               onRemoveAttachment={onRemoveAttachment}
