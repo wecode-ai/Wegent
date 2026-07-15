@@ -14,11 +14,13 @@ Patches JobService with:
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
 
 import app.services.adapters.executor_job as _executor_job_mod
+from app.services.execution import get_executor_runtime_client
 
 logger = logging.getLogger(__name__)
 
@@ -126,19 +128,51 @@ async def _cleanup_orphan_pod(
     }
 
 
-async def _cleanup_orphan_sandbox(
+async def _cleanup_stale_orphan_sandbox(
     self,
     *,
     task_id: int,
     pod_name: str,
+    inactive_hours: int,
+    sandbox_payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, object]:
     """Clean up a single orphan sandbox pod, archiving before deletion.
 
+    When sandbox_payload is provided, validates last_activity_at against
+    inactive_hours before proceeding, mirroring _cleanup_stale_sandbox_for_task.
     Routes to executor_manager's sandbox cleanup-by-task endpoint which
-    archives the sandbox workspace (best-effort) before terminating it,
-    mirroring the normal stale sandbox cleanup path. Archiving succeeds when
-    the sandbox metadata still exists; the pod is deleted regardless.
+    archives the sandbox workspace (best-effort) before terminating it.
+    Archiving succeeds when the sandbox metadata still exists; the pod is
+    deleted regardless.
     """
+    if sandbox_payload is not None:
+        try:
+            last_activity_at = float(sandbox_payload["last_activity_at"])
+        except (KeyError, TypeError, ValueError):
+            logger.warning(
+                "+++ [executor_job] Invalid sandbox_payload for task_id=%s, "
+                "proceeding without staleness gate",
+                task_id,
+            )
+        else:
+            eligible_after = last_activity_at + inactive_hours * 3600
+            if datetime.now(timezone.utc).timestamp() < eligible_after:
+                logger.info(
+                    "+++ [executor_job] Orphan sandbox not yet stale "
+                    "task_id=%s pod_name=%s last_activity_at=%s eligible_after=%s",
+                    task_id,
+                    pod_name,
+                    last_activity_at,
+                    eligible_after,
+                )
+                return {
+                    "task_id": task_id,
+                    "pod_name": pod_name,
+                    "deleted": False,
+                    "skipped": True,
+                    "reason": "not_stale",
+                }
+
     ek_service = _executor_job_mod.executor_kinds_service
     try:
         result = await ek_service.cleanup_sandbox_by_task_id_async(
@@ -248,7 +282,6 @@ async def cleanup_orphan_pods(
     for pod_info in old_pods:
         pod_name: str = pod_info.get("pod_name", "")
         task_id_str: Optional[str] = pod_info.get("task_id")
-        runtime_type: Optional[str] = pod_info.get("runtime_type")
 
         if not pod_name or not task_id_str:
             logger.warning(
@@ -296,11 +329,55 @@ async def cleanup_orphan_pods(
             )
             continue
 
+        # Sandbox-first routing, mirroring cleanup_stale_runtimes in
+        # admin/runtime_cleanup.py: query the sandbox service to decide
+        # the cleanup path instead of relying on Pod annotations.
+        runtime_client = get_executor_runtime_client()
         try:
-            if runtime_type == "sandbox":
-                cleanup_result = await self._cleanup_orphan_sandbox(
+            sandbox_payload, sandbox_error = await runtime_client.get_sandbox(
+                str(task_id)
+            )
+        except Exception as exc:
+            logger.error(
+                "+++ [executor_job] Sandbox lookup raised task_id=%s pod_name=%s error=%s",
+                task_id,
+                pod_name,
+                exc,
+            )
+            result["failed"].append(
+                {
+                    "task_id": task_id,
+                    "pod_name": pod_name,
+                    "reason": "sandbox_lookup_exception",
+                    "error": str(exc),
+                }
+            )
+            continue
+
+        if sandbox_error:
+            logger.warning(
+                "+++ [executor_job] Sandbox lookup error task_id=%s pod_name=%s error=%s",
+                task_id,
+                pod_name,
+                sandbox_error,
+            )
+            result["failed"].append(
+                {
+                    "task_id": task_id,
+                    "pod_name": pod_name,
+                    "reason": "sandbox_lookup_failed",
+                    "error": sandbox_error,
+                }
+            )
+            continue
+
+        try:
+            if sandbox_payload is not None:
+                cleanup_result = await self._cleanup_stale_orphan_sandbox(
                     task_id=task_id,
                     pod_name=pod_name,
+                    inactive_hours=stale_hours,
+                    sandbox_payload=sandbox_payload,
                 )
             else:
                 cleanup_result = await self._cleanup_orphan_pod(
@@ -469,7 +546,7 @@ def apply_patch():
     _original_cleanup_stale_task_executor = JobService.cleanup_stale_task_executor
 
     JobService._cleanup_orphan_pod = _cleanup_orphan_pod
-    JobService._cleanup_orphan_sandbox = _cleanup_orphan_sandbox
+    JobService._cleanup_stale_orphan_sandbox = _cleanup_stale_orphan_sandbox
     JobService.cleanup_orphan_pods = cleanup_orphan_pods
     JobService.cleanup_stale_task_executor = _cleanup_stale_task_executor_wecode
 
