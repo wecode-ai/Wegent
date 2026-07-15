@@ -124,6 +124,32 @@ describe('createHttpClient', () => {
     })
   })
 
+  test('parses nested external service errors', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      text: async () =>
+        JSON.stringify({
+          error: {
+            code: 'site_publish_failed',
+            message: 'CDN failed',
+          },
+        }),
+    })
+
+    const client = createHttpClient({ baseUrl: 'https://sites.example.com' })
+
+    await expect(client.post('/api/v1/sites/site-1/publish')).rejects.toMatchObject<ApiError>({
+      message: 'CDN failed',
+      status: 502,
+      errorCode: 'site_publish_failed',
+      detail: {
+        code: 'site_publish_failed',
+        message: 'CDN failed',
+      },
+    })
+  })
+
   test('posts FormData without forcing a json content type', async () => {
     localStorage.setItem('auth_token', 'token-1')
     fetchMock.mockResolvedValueOnce({

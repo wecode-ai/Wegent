@@ -33,6 +33,21 @@ describe('getRuntimeConfig', () => {
     expect(getRuntimeConfig().wegentBackendUrl).toBe('https://runtime.example.com')
   })
 
+  test('reads and trims the Sites API URL from build-time config', () => {
+    vi.stubEnv('VITE_SITES_API_BASE_URL', 'https://sites.example.com///')
+
+    expect(getRuntimeConfig().sitesApiBaseUrl).toBe('https://sites.example.com')
+  })
+
+  test('prefers the runtime Sites API URL over build-time config', () => {
+    vi.stubEnv('VITE_SITES_API_BASE_URL', 'https://build-sites.example.com')
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      sitesApiBaseUrl: 'https://runtime-sites.example.com/',
+    }
+
+    expect(getRuntimeConfig().sitesApiBaseUrl).toBe('https://runtime-sites.example.com')
+  })
+
   test('prefers runtime config over build-time environment values', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'http://build.example.com/api')
     vi.stubEnv('VITE_SOCKET_BASE_URL', 'http://build.example.com')
