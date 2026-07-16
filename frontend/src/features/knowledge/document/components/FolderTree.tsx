@@ -206,6 +206,8 @@ function FolderRow({
 }: FolderRowProps) {
   const { t } = useTranslation('knowledge')
   const indent = depth * (compact ? 12 : 16)
+  const hasChildren = node.children.length > 0
+  const effectiveExpanded = expanded && hasChildren
 
   const folderActions = canManageFolders ? (
     <span
@@ -287,24 +289,26 @@ function FolderRow({
         title={node.name}
       >
         {folderCheckbox}
-        {expanded ? (
-          <ChevronDown
-            className="w-3 h-3 text-text-muted flex-shrink-0"
-            onClick={e => {
-              e.stopPropagation()
-              onToggle(node.path)
-            }}
-          />
-        ) : (
-          <ChevronRight
-            className="w-3 h-3 text-text-muted flex-shrink-0"
-            onClick={e => {
-              e.stopPropagation()
-              onToggle(node.path)
-            }}
-          />
-        )}
-        {expanded ? (
+        {hasChildren ? (
+          effectiveExpanded ? (
+            <ChevronDown
+              className="w-3 h-3 text-text-muted flex-shrink-0"
+              onClick={e => {
+                e.stopPropagation()
+                onToggle(node.path)
+              }}
+            />
+          ) : (
+            <ChevronRight
+              className="w-3 h-3 text-text-muted flex-shrink-0"
+              onClick={e => {
+                e.stopPropagation()
+                onToggle(node.path)
+              }}
+            />
+          )
+        ) : null}
+        {effectiveExpanded ? (
           <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
         ) : (
           <Folder className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
@@ -343,24 +347,28 @@ function FolderRow({
       }
     >
       {folderCheckbox}
-      {expanded ? (
-        <ChevronDown
-          className="w-4 h-4 text-text-muted flex-shrink-0"
-          onClick={e => {
-            e.stopPropagation()
-            onToggle(node.path)
-          }}
-        />
+      {hasChildren ? (
+        effectiveExpanded ? (
+          <ChevronDown
+            className="w-4 h-4 text-text-muted flex-shrink-0"
+            onClick={e => {
+              e.stopPropagation()
+              onToggle(node.path)
+            }}
+          />
+        ) : (
+          <ChevronRight
+            className="w-4 h-4 text-text-muted flex-shrink-0"
+            onClick={e => {
+              e.stopPropagation()
+              onToggle(node.path)
+            }}
+          />
+        )
       ) : (
-        <ChevronRight
-          className="w-4 h-4 text-text-muted flex-shrink-0"
-          onClick={e => {
-            e.stopPropagation()
-            onToggle(node.path)
-          }}
-        />
+        <div className="w-4 h-4 flex-shrink-0" />
       )}
-      {expanded ? (
+      {effectiveExpanded ? (
         <FolderOpen className="w-4 h-4 text-amber-500 flex-shrink-0" />
       ) : (
         <Folder className="w-4 h-4 text-amber-500 flex-shrink-0" />
