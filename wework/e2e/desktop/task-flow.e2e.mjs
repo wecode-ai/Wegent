@@ -349,6 +349,7 @@ class DesktopE2EServer {
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
+    this.blockCloudModels = true
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.toolLessPrewarmHandled = false
@@ -417,6 +418,12 @@ class DesktopE2EServer {
       }
     }
     this.blockedCloudWaiters = remainingWaiters
+  }
+
+  releaseBlockedCloudModels() {
+    this.blockCloudModels = false
+    for (const response of this.blockedCloudResponses) json(response, 200, [])
+    this.blockedCloudResponses.clear()
   }
 
   setScenario(scenario) {
@@ -525,7 +532,11 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === BLOCKED_CLOUD_MODEL_PATH) {
-      this.blockCloudRequest(request, response, url)
+      if (this.blockCloudModels) {
+        this.blockCloudRequest(request, response, url)
+      } else {
+        json(response, 200, [])
+      }
       return
     }
 
@@ -980,6 +991,7 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
 
+    control.releaseBlockedCloudModels()
     await selectE2EModel(control)
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
