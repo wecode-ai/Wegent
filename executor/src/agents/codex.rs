@@ -3250,6 +3250,15 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             toml_key_path(&[
                 "mcp_servers",
                 WEWORK_BROWSER_MCP_SERVER_NAME,
+                "default_tools_approval_mode"
+            ]),
+            toml_value("approve")
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_BROWSER_MCP_SERVER_NAME,
                 "env",
                 "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
             ]),
@@ -5122,6 +5131,10 @@ mod tests {
         );
         assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
         assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
+        assert_eq!(
+            config["mcp_servers.wework_browser.default_tools_approval_mode"],
+            "approve"
+        );
         assert_eq!(
             config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
             "http://127.0.0.1:43127"
