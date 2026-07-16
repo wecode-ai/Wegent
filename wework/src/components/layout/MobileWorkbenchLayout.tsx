@@ -12,6 +12,7 @@ import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import {
@@ -187,7 +188,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     noStandaloneCompatibleDevice
   const composerDisabledReason = activeDeviceUnavailable
     ? t('workbench.device_status_active_unavailable', {
-        device: activeDevice?.name || activeDeviceId || t('workbench.project_device'),
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
+          t('workbench.current_device', '当前设备'),
       })
     : activeDeviceVersionUnsupported
       ? t('workbench.device_status_active_upgrade_required', {
@@ -328,10 +331,10 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               }}
               onSwitchModelForFailedMessage={() => setModelSelectorOpenSignal(signal => signal + 1)}
               onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges)
+                loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
               }
               onRevertFileChanges={(subtaskId, fileChanges) =>
-                revertTurnFileChanges(subtaskId, paneMessages, fileChanges)
+                revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
               }
               onEditLastUserMessage={paneSession.editLastUserMessage}
               canEditLastUserMessage={canEditLastUserMessage}

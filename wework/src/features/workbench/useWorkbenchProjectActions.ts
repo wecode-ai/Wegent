@@ -151,6 +151,19 @@ export function useWorkbenchProjectActions({
           dispatch({ type: 'error_set', error: message })
           throw new Error(message)
         }
+        if (
+          runtimeProject?.sidebarStateKey &&
+          runtimeProject.stateDeviceId &&
+          runtimeProject.stateDeviceId !== runtimeWorkspace.deviceId
+        ) {
+          await executorClient.runtime.renameRuntimeWorkspace({
+            deviceId: runtimeProject.stateDeviceId,
+            projectKey: runtimeProject.sidebarStateKey,
+            workspacePath: runtimeWorkspace.workspacePath,
+            runtime: 'codex',
+            name,
+          })
+        }
         await refreshWorkLists()
         return
       }
@@ -182,6 +195,18 @@ export function useWorkbenchProjectActions({
         const message = response.error || 'Failed to remove runtime workspace'
         dispatch({ type: 'error_set', error: message })
         throw new Error(message)
+      }
+      if (
+        runtimeProject?.sidebarStateKey &&
+        runtimeProject.stateDeviceId &&
+        runtimeProject.stateDeviceId !== runtimeWorkspace.deviceId
+      ) {
+        await executorClient.runtime.removeRuntimeWorkspace({
+          deviceId: runtimeProject.stateDeviceId,
+          projectKey: runtimeProject.sidebarStateKey,
+          workspacePath: runtimeWorkspace.workspacePath,
+          runtime: 'codex',
+        })
       }
 
       const standaloneDeviceId = state.standaloneDeviceId?.trim()

@@ -11,7 +11,6 @@ import {
   Laptop,
   LoaderCircle,
   MapPin,
-  Settings,
   Square,
   Upload,
   CornerDownLeft,
@@ -29,6 +28,11 @@ import { BranchSelector } from '@/components/common/BranchSelector'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
+import {
+  findWorkbenchDevice,
+  getExecutorOfflineDeviceId,
+  getWorkbenchDeviceUnavailableDisplayName,
+} from '@/lib/workbench-device'
 import type { DeviceInfo } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from './DesktopTopBar'
@@ -37,7 +41,8 @@ interface EnvironmentInfoPopoverProps {
   info: EnvironmentInfo
   popoverContainer: HTMLElement | null
   docked?: boolean
-  defaultOpen?: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
   floatingFooter?: ReactNode
   devices?: DeviceInfo[]
   onRefresh?: () => Promise<void>
@@ -60,7 +65,8 @@ export function EnvironmentInfoPopover({
   info,
   popoverContainer,
   docked = true,
-  defaultOpen = false,
+  open,
+  onOpenChange,
   floatingFooter,
   devices = [],
   onRefresh,
@@ -73,7 +79,6 @@ export function EnvironmentInfoPopover({
   onOpenChangesReview,
 }: EnvironmentInfoPopoverProps) {
   const { t } = useTranslation('common')
-  const [open, setOpen] = useState(docked && defaultOpen)
   const [workspacePathCopied, setWorkspacePathCopied] = useState(false)
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
@@ -81,14 +86,11 @@ export function EnvironmentInfoPopover({
   const [commitProgressLabel, setCommitProgressLabel] = useState('')
   const [commitError, setCommitError] = useState<string | null>(null)
   const [floatingPopoverStyle, setFloatingPopoverStyle] = useState<CSSProperties>()
-  const userToggledOpenRef = useRef(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const additions = info.additions || '+0'
   const deletions = info.deletions || '-0'
-  const device = info.deviceId
-    ? devices.find(deviceInfo => deviceInfo.device_id === info.deviceId)
-    : undefined
+  const device = info.deviceId ? findWorkbenchDevice(devices, info.deviceId) : undefined
   const deviceName = device?.name?.trim() || ''
   const executionLabel =
     info.executionTarget === 'cloud'
@@ -98,11 +100,20 @@ export function EnvironmentInfoPopover({
   const deviceLabel = t('workbench.environment_device')
   const deviceDisplayName = deviceName || t('workbench.environment_device_unknown')
   const deviceTitle = [deviceLabel, deviceDisplayName].filter(Boolean).join(' · ')
+  const offlineDeviceId = getExecutorOfflineDeviceId(info.error)
+  const offlineDevice = offlineDeviceId ? findWorkbenchDevice(devices, offlineDeviceId) : null
+  const displayError = offlineDeviceId
+    ? t('workbench.conversation_device_offline_notice', {
+        device:
+          getWorkbenchDeviceUnavailableDisplayName(offlineDevice) ||
+          t('workbench.current_device', '当前设备'),
+      })
+    : info.error
   const hasGitInfo = Boolean(info.branchName?.trim())
   const canShowBranchSelector = Boolean(onListBranches && onCheckoutBranch)
   const hasDiffStats = Boolean(info.additions || info.deletions)
   const showChangesSection = hasDiffStats || hasGitInfo || canShowBranchSelector
-  const environmentInfoLabel = t('workbench.environment_info')
+  const taskSummaryToggleLabel = t('workbench.task_summary_toggle', '切换摘要')
   function handleCreatePullRequest() {
     if (!info.createPullRequestUrl) {
       return
@@ -112,8 +123,9 @@ export function EnvironmentInfoPopover({
 
   function handleOpenChangesReview() {
     onOpenChangesReview?.()
-    userToggledOpenRef.current = true
-    setOpen(false)
+    if (!docked) {
+      onOpenChange(false)
+    }
   }
 
   async function handleCopyWorkspacePath() {
@@ -193,12 +205,11 @@ export function EnvironmentInfoPopover({
   }
 
   function handleToggleOpen() {
-    userToggledOpenRef.current = true
     const nextOpen = !open
     if (nextOpen && !docked) {
       setFloatingPopoverStyle(getFloatingPopoverPosition())
     }
-    setOpen(nextOpen)
+    onOpenChange(nextOpen)
     if (nextOpen) {
       void onRefresh?.()
     }
@@ -210,13 +221,13 @@ export function EnvironmentInfoPopover({
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
-        setOpen(false)
+        onOpenChange(false)
       }
     }
 
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
-  }, [docked, open])
+  }, [docked, onOpenChange, open])
 
   function getFloatingPopoverPosition(): CSSProperties | undefined {
     const anchor = rootRef.current?.getBoundingClientRect()
@@ -244,8 +255,8 @@ export function EnvironmentInfoPopover({
         onClick={handleToggleOpen}
         className={cn(DESKTOP_TOP_BAR_BUTTON_CLASS, open && 'bg-muted text-text-primary')}
         aria-expanded={open}
-        aria-label={environmentInfoLabel}
-        title={environmentInfoLabel}
+        aria-label={taskSummaryToggleLabel}
+        title={taskSummaryToggleLabel}
       >
         <Info />
       </button>
@@ -263,19 +274,9 @@ export function EnvironmentInfoPopover({
               docked ? 'ml-2 mt-3' : 'fixed z-system'
             )}
           >
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-medium text-text-primary">
-                {t('workbench.environment_info', '环境信息')}
-              </h2>
-              <button
-                type="button"
-                data-testid="environment-settings-button"
-                className="flex h-8 w-8 items-center justify-center rounded-full text-text-secondary hover:bg-hover hover:text-text-primary"
-                aria-label={t('workbench.environment_settings', '环境设置')}
-              >
-                <Settings className="h-[18px] w-[18px]" />
-              </button>
-            </div>
+            <h2 className="mb-3 text-sm font-medium text-text-primary">
+              {t('workbench.environment_summary_title', '环境')}
+            </h2>
 
             <div className="space-y-3">
               <section data-testid="environment-device-section" className="space-y-0.5">
@@ -438,26 +439,15 @@ export function EnvironmentInfoPopover({
                           {t('workbench.environment_create_pr', '创建拉取请求')}
                         </span>
                       </button>
-
-                      <div className="my-4 h-px bg-border" />
-
-                      <section>
-                        <h3 className="mb-3 text-sm text-text-secondary">
-                          {t('workbench.environment_sources', '来源')}
-                        </h3>
-                        <p className="text-sm text-text-muted">
-                          {t('workbench.environment_no_sources', '暂无来源')}
-                        </p>
-                      </section>
                     </>
                   )}
                 </section>
               )}
             </div>
 
-            {info.error && (
+            {displayError && (
               <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">
-                {info.error}
+                {displayError}
               </p>
             )}
             {commitError && (

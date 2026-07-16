@@ -72,6 +72,7 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
     projects: [project()],
     devices: [localDevice()],
     onNewChat: vi.fn(),
+    onStartStandaloneChat: vi.fn(),
     onOpenSearch: vi.fn(),
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
@@ -209,6 +210,82 @@ describe('DesktopSidebar', () => {
       projectKey: 'project-7',
       pinned: true,
     })
+  })
+
+  test('exposes a remote project as sortable through its local Codex state identity', () => {
+    const onReorderRuntimeProjects = vi.fn().mockResolvedValue(undefined)
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device',
+          name: 'Remote Host',
+          is_default: false,
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              id: 7,
+              key: '/repo/local',
+              name: 'Local',
+              stateDeviceId: 'local-device',
+            },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                deviceId: 'local-device',
+                workspacePath: '/repo/local',
+                available: true,
+                tasks: [],
+              },
+            ],
+          },
+          {
+            project: {
+              id: 8,
+              key: '/srv/remote',
+              sidebarStateKey: 'remote-project-id',
+              name: 'Remote',
+              kind: 'remote',
+              source: 'remote_project',
+              stateDeviceId: 'local-device',
+            },
+            totalTasks: 0,
+            deviceWorkspaces: [
+              {
+                deviceId: 'remote-device',
+                remoteHostId: 'remote-device',
+                workspacePath: '/srv/remote',
+                workspaceSource: 'remote',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'remote-task',
+                    workspacePath: '/srv/remote',
+                    title: 'Remote task',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 0,
+      },
+      onReorderRuntimeProjects,
+    })
+
+    const remoteSortable = document.querySelector(
+      '[data-sidebar-sortable-id="local-device:remote-project-id"]'
+    ) as HTMLElement
+    expect(remoteSortable).toHaveAttribute('tabindex', '0')
+    expect(remoteSortable).toHaveAttribute('role', 'button')
+    expect(remoteSortable).toHaveClass('touch-none')
   })
 
   test('shows an interactive Codex-style project hover card', async () => {
@@ -2563,9 +2640,11 @@ describe('DesktopSidebar', () => {
     const onArchiveProjectsConversations = vi.fn().mockResolvedValue(undefined)
     const onArchiveChatConversations = vi.fn().mockResolvedValue(undefined)
     const onNewChat = vi.fn()
+    const onStartStandaloneChat = vi.fn()
 
     renderSidebar({
       onNewChat,
+      onStartStandaloneChat,
       onArchiveProjectsConversations,
       onArchiveChatConversations,
       runtimeWork: {
@@ -2637,7 +2716,8 @@ describe('DesktopSidebar', () => {
     })
 
     await user.click(screen.getByTestId('runtime-chat-section-new-chat-button'))
-    expect(onNewChat).toHaveBeenCalledTimes(1)
+    expect(onStartStandaloneChat).toHaveBeenCalledTimes(1)
+    expect(onNewChat).not.toHaveBeenCalled()
 
     await user.click(screen.getByTestId('runtime-chat-section-menu'))
     expect(screen.getByTestId('runtime-chat-section-archive-all-chats')).toHaveTextContent(

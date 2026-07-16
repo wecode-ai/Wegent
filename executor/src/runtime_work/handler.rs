@@ -36,11 +36,12 @@ use crate::{
 
 use super::{
     codex_global_state::{
-        open_codex_global_project, register_codex_global_thread_workspace_root,
-        remove_codex_global_project, rename_codex_global_project,
-        reorder_codex_global_project_thread, reorder_codex_global_projects,
-        set_codex_global_project_appearance, set_codex_global_project_pinned,
-        set_codex_global_thread_pinned, CodexGlobalProjectIndex,
+        activate_codex_global_project, open_codex_global_project,
+        register_codex_global_thread_workspace_root, remove_codex_global_project,
+        rename_codex_global_project, reorder_codex_global_project_thread,
+        reorder_codex_global_projects, set_codex_global_project_appearance,
+        set_codex_global_project_pinned, set_codex_global_thread_pinned,
+        sync_codex_global_remote_projects, CodexGlobalProjectIndex, CodexGlobalRemoteProject,
     },
     codex_notifications::codex_notification,
     codex_rollout::rollout_context_usage,
@@ -383,6 +384,10 @@ impl RuntimeWorkRpcHandler {
             "runtime.sidebar.projects.appearance" => {
                 self.set_sidebar_project_appearance(payload).await
             }
+            "runtime.sidebar.projects.sync_remote" => {
+                self.sync_sidebar_remote_projects(payload).await
+            }
+            "runtime.sidebar.projects.activate" => self.activate_sidebar_project(payload).await,
             "runtime.sidebar.tasks.reorder" => self.reorder_sidebar_project_task(payload).await,
             "runtime.sidebar.tasks.pin" => self.pin_sidebar_task(payload).await,
             unsupported => Err(AppIpcError::new(
@@ -2401,6 +2406,50 @@ impl RuntimeWorkRpcHandler {
         Ok(sidebar_mutation_response(&self.device_id))
     }
 
+    async fn sync_sidebar_remote_projects(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let items = payload
+            .get("projects")
+            .and_then(Value::as_array)
+            .ok_or_else(|| AppIpcError::new("bad_request", "projects is required"))?;
+        let projects = items
+            .iter()
+            .map(|item| {
+                Ok(CodexGlobalRemoteProject {
+                    id: string_field(item, "id").ok_or_else(|| {
+                        AppIpcError::new("bad_request", "remote project id is required")
+                    })?,
+                    host_id: string_field(item, "hostId")
+                        .or_else(|| string_field(item, "host_id"))
+                        .ok_or_else(|| {
+                            AppIpcError::new("bad_request", "remote project hostId is required")
+                        })?,
+                    remote_path: string_field(item, "remotePath")
+                        .or_else(|| string_field(item, "remote_path"))
+                        .ok_or_else(|| {
+                            AppIpcError::new("bad_request", "remote project remotePath is required")
+                        })?,
+                    label: string_field(item, "label"),
+                })
+            })
+            .collect::<Result<Vec<_>, AppIpcError>>()?;
+        sync_codex_global_remote_projects(&projects)
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
+    async fn activate_sidebar_project(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let project_key = string_field(&payload, "projectKey")
+            .or_else(|| string_field(&payload, "project_key"))
+            .ok_or_else(|| AppIpcError::new("bad_request", "projectKey is required"))?;
+        let workspace_path = workspace_path(&payload)
+            .ok_or_else(|| AppIpcError::new("bad_request", "workspacePath is required"))?;
+        let remote_host_id = string_field(&payload, "remoteHostId")
+            .or_else(|| string_field(&payload, "remote_host_id"));
+        activate_codex_global_project(&project_key, &workspace_path, remote_host_id.as_deref())
+            .map_err(|error| AppIpcError::new("codex_global_state_error", error))?;
+        Ok(sidebar_mutation_response(&self.device_id))
+    }
+
     async fn reorder_sidebar_project_task(&self, payload: Value) -> Result<Value, AppIpcError> {
         let project_key = string_field(&payload, "projectKey")
             .or_else(|| string_field(&payload, "project_key"))
@@ -4046,6 +4095,8 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
                 project_source: project.source.clone(),
                 project_roots: project.roots.clone(),
                 project_pinned: project.pinned,
+                project_pinned_order: project.pinned_order,
+                project_active: project.active,
                 project_appearance: project.appearance.clone(),
             })
         })
@@ -4644,6 +4695,17 @@ fn runtime_handle_json(link: &RuntimeTaskLink) -> Value {
 }
 
 fn set_runtime_handle_model_selection(runtime_handle: &mut Value, payload: &Value) {
+    if let Some(selection) = payload
+        .get("modelSelection")
+        .or_else(|| payload.get("model_selection"))
+        .filter(|value| value.is_object())
+    {
+        let mut object = runtime_handle.as_object().cloned().unwrap_or_default();
+        object.insert("modelSelection".to_owned(), selection.clone());
+        *runtime_handle = Value::Object(object);
+        return;
+    }
+
     let Some(model_name) =
         string_field(payload, "modelId").or_else(|| string_field(payload, "model_id"))
     else {
@@ -5827,6 +5889,14 @@ mod tests {
                     "modelOptions": {
                         "collaborationMode": "plan"
                     },
+                    "modelSelection": {
+                        "modelName": "cloud:user:local-model:mimo",
+                        "modelType": "user",
+                        "options": {
+                            "collaborationMode": "plan",
+                            "reasoningEffort": "high"
+                        }
+                    },
                     "executionRequest": serde_json::to_value(ExecutionRequest::default()).unwrap()
                 }
             }))
@@ -5835,10 +5905,11 @@ mod tests {
         assert_eq!(
             response["runtimeHandle"]["modelSelection"],
             json!({
-                "modelName": "local-model:mimo",
-                "modelType": "runtime",
+                "modelName": "cloud:user:local-model:mimo",
+                "modelType": "user",
                 "options": {
-                    "collaborationMode": "plan"
+                    "collaborationMode": "plan",
+                    "reasoningEffort": "high"
                 }
             })
         );
@@ -5849,15 +5920,39 @@ mod tests {
         assert_eq!(
             link.runtime_handle["modelSelection"],
             json!({
-                "modelName": "local-model:mimo",
-                "modelType": "runtime",
+                "modelName": "cloud:user:local-model:mimo",
+                "modelType": "user",
                 "options": {
-                    "collaborationMode": "plan"
+                    "collaborationMode": "plan",
+                    "reasoningEffort": "high"
                 }
             })
         );
 
         let _ = fs::remove_file(index_path);
+    }
+
+    #[test]
+    fn model_selection_falls_back_to_execution_model_for_legacy_requests() {
+        let mut runtime_handle = json!({});
+
+        set_runtime_handle_model_selection(
+            &mut runtime_handle,
+            &json!({
+                "modelId": "legacy-model",
+                "modelType": "runtime",
+                "modelOptions": {"reasoningEffort": "medium"}
+            }),
+        );
+
+        assert_eq!(
+            runtime_handle["modelSelection"],
+            json!({
+                "modelName": "legacy-model",
+                "modelType": "runtime",
+                "options": {"reasoningEffort": "medium"}
+            })
+        );
     }
 
     #[test]

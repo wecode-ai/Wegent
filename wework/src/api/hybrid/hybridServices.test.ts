@@ -403,6 +403,47 @@ describe('createHybridWorkbenchServices', () => {
     )
   })
 
+  it('routes cloud device commands through runtime IPC instead of the restricted REST API', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        socket_device_id: 'cloud-runtime-device',
+        name: 'Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    mocks.cloudRuntimeIpcRequest.mockResolvedValueOnce({
+      success: true,
+      exit_code: 0,
+      stdout: 'main',
+      stderr: '',
+    })
+    const services = createServices()
+    await services.cloudBackgroundApi?.listDevices?.()
+
+    const response = await services.deviceApi.executeCommand('cloud-device', {
+      command_key: 'git_branch',
+      cwd: '/workspace/cloud',
+    })
+
+    expect(response).toEqual({
+      success: true,
+      exit_code: 0,
+      stdout: 'main',
+      stderr: '',
+    })
+    expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledWith(
+      'device.execute_command',
+      { command_key: 'git_branch', cwd: '/workspace/cloud' },
+      'cloud-runtime-device'
+    )
+    expect(mocks.cloudServices.deviceApi.executeCommand).not.toHaveBeenCalled()
+  })
+
   it('merges remembered cloud devices into the local device when app_device_id matches', async () => {
     mocks.cloudListDevices.mockResolvedValue([
       {

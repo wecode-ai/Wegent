@@ -312,12 +312,14 @@ export interface WorkbenchContextValue {
   loadTurnFileChangesDiff: (
     subtaskId: string,
     messagesOverride?: WorkbenchMessage[],
-    fileChangesOverride?: TurnFileChangesSummary
+    fileChangesOverride?: TurnFileChangesSummary,
+    runtimeTaskOverride?: RuntimeTaskAddress | null
   ) => Promise<string>
   revertTurnFileChanges: (
     subtaskId: string,
     messagesOverride?: WorkbenchMessage[],
-    fileChangesOverride?: TurnFileChangesSummary
+    fileChangesOverride?: TurnFileChangesSummary,
+    runtimeTaskOverride?: RuntimeTaskAddress | null
   ) => Promise<TurnFileChangesSummary>
 }
 

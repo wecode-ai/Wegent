@@ -178,6 +178,7 @@ export function PluginsPage() {
           activeItem="plugins"
           collapsed={sidebarCollapsed}
           onNewChat={handleNewChat}
+          onStartStandaloneChat={handleStartStandaloneChat}
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}

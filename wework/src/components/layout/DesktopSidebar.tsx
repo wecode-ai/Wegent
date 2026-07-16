@@ -64,6 +64,11 @@ import {
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
+import {
+  getLocalRuntimeStateDeviceId,
+  getRuntimeProjectReorderRequest,
+  getRuntimeProjectSidebarStateKey,
+} from '@/lib/runtime-project-state'
 import { cn } from '@/lib/utils'
 import type {
   DeviceInfo,
@@ -141,6 +146,7 @@ interface DesktopSidebarProps {
   onOpenTodo?: () => void
   onOpenApps?: () => void
   onNewChat: () => void
+  onStartStandaloneChat: () => void
   onOpenSearch?: () => void
   onSelectProject?: (projectId: number) => void
   onStartNewProjectChat: (projectId: number) => void
@@ -1863,6 +1869,7 @@ function ProjectItem({
   unreadTaskKeys,
   imNotificationSettings,
   showDeviceMarker,
+  sidebarStateDeviceId,
   onStartNewProjectChat,
   onRemoveProject,
   onSetRuntimeProjectPinned,
@@ -1886,6 +1893,7 @@ function ProjectItem({
   unreadTaskKeys: ReadonlySet<string>
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   showDeviceMarker: boolean
+  sidebarStateDeviceId?: string | null
   onStartNewProjectChat: (projectId: number) => void
   onRemoveProject: (projectId: number) => Promise<void>
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
@@ -1971,7 +1979,13 @@ function ProjectItem({
       ? optimisticProjectPinned.value
       : persistedProjectPinned
   const projectStateDeviceId =
-    runtimeProjectWork?.project.stateDeviceId ?? runtimeWorkspaces?.[0]?.deviceId ?? null
+    sidebarStateDeviceId ??
+    runtimeProjectWork?.project.stateDeviceId ??
+    runtimeWorkspaces?.[0]?.deviceId ??
+    null
+  const projectSidebarStateKey = runtimeProjectWork
+    ? getRuntimeProjectSidebarStateKey(runtimeProjectWork.project)
+    : null
   const projectAppearance = runtimeProjectWork?.project.appearance
   const projectMarker = projectAppearance?.marker
   const projectAppearanceColor = projectAppearance?.color
@@ -1996,7 +2010,7 @@ function ProjectItem({
     unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
   ).length
   const toggleProjectPinned = async () => {
-    const projectKey = runtimeProjectWork?.project.key
+    const projectKey = projectSidebarStateKey
     if (!projectKey || !projectStateDeviceId || !onSetRuntimeProjectPinned) return
     const nextPinned = !projectPinned
     setOptimisticProjectPinned({ base: persistedProjectPinned, value: nextPinned })
@@ -2011,7 +2025,7 @@ function ProjectItem({
     }
   }
   const cycleProjectAppearance = async () => {
-    const projectKey = runtimeProjectWork?.project.key
+    const projectKey = projectSidebarStateKey
     if (!projectKey || !projectStateDeviceId || !onSetRuntimeProjectAppearance) return
     const currentIndex = PROJECT_APPEARANCE_COLORS.indexOf(
       projectAppearance?.color as (typeof PROJECT_APPEARANCE_COLORS)[number]
@@ -2426,6 +2440,7 @@ export function DesktopSidebar({
   preferredDeviceId,
   activeItem = 'chat',
   onNewChat,
+  onStartStandaloneChat,
   onOpenSearch,
   onStartNewProjectChat,
   onOpenRuntimeTask,
@@ -2538,6 +2553,7 @@ export function DesktopSidebar({
   const chatTaskPinRequestIdRef = useRef(0)
   const [sidebarScrolled, setSidebarScrolled] = useState(false)
   const visibleUnreadRuntimeTaskKeys = unreadRuntimeTaskKeys ?? new Set<string>()
+  const sidebarStateDeviceId = getLocalRuntimeStateDeviceId(devices)
   const standaloneProjectWork = useMemo(
     () =>
       standaloneRuntimeProjectWork(
@@ -2574,7 +2590,14 @@ export function DesktopSidebar({
     [runtimeWorkByProjectId, sidebarProjects]
   )
   const pinnedProjects = useMemo(
-    () => sortableProjects.filter(({ runtimeProjectWork }) => runtimeProjectWork?.project.pinned),
+    () =>
+      sortableProjects
+        .filter(({ runtimeProjectWork }) => runtimeProjectWork?.project.pinned)
+        .sort(
+          (left, right) =>
+            (left.runtimeProjectWork?.project.pinnedOrder ?? Number.MAX_SAFE_INTEGER) -
+            (right.runtimeProjectWork?.project.pinnedOrder ?? Number.MAX_SAFE_INTEGER)
+        ),
     [sortableProjects]
   )
   const regularSortableProjects = useMemo(
@@ -3125,7 +3148,7 @@ export function DesktopSidebar({
                     className="mt-1 space-y-1"
                     items={pinnedProjects}
                     getId={({ runtimeProjectWork }) =>
-                      `${runtimeProjectWork?.project.stateDeviceId || 'device'}:${runtimeProjectWork?.project.key}`
+                      `${sidebarStateDeviceId || runtimeProjectWork?.project.stateDeviceId || 'device'}:${runtimeProjectWork ? getRuntimeProjectSidebarStateKey(runtimeProjectWork.project) : 'project'}`
                     }
                     getLabel={({ project }) => project.name}
                     canDrag={({ runtimeProjectWork }) =>
@@ -3135,24 +3158,19 @@ export function DesktopSidebar({
                       const movedProject = moved.runtimeProjectWork?.project
                       const beforeProject = before?.runtimeProjectWork?.project
                       const deviceId =
+                        sidebarStateDeviceId ||
                         movedProject?.stateDeviceId ||
                         moved.runtimeProjectWork?.deviceWorkspaces[0]?.deviceId
                       if (!movedProject || !deviceId || !onSetRuntimeProjectPinned) {
                         throw new Error('Pinned project ordering is unavailable')
                       }
-                      if (
-                        beforeProject?.stateDeviceId &&
-                        beforeProject.stateDeviceId !== movedProject.stateDeviceId
-                      ) {
-                        throw new Error(
-                          'Pinned projects from different devices cannot be reordered'
-                        )
-                      }
                       await onSetRuntimeProjectPinned({
                         deviceId,
-                        projectKey: movedProject.key,
+                        projectKey: getRuntimeProjectSidebarStateKey(movedProject),
                         pinned: true,
-                        beforeProjectKey: beforeProject?.key ?? null,
+                        beforeProjectKey: beforeProject
+                          ? getRuntimeProjectSidebarStateKey(beforeProject)
+                          : null,
                       })
                     }}
                     renderItem={({ project, runtimeProjectWork }) => (
@@ -3165,6 +3183,7 @@ export function DesktopSidebar({
                         unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
                         imNotificationSettings={imNotificationSettings}
                         showDeviceMarker={false}
+                        sidebarStateDeviceId={sidebarStateDeviceId}
                         onToggleProject={handleToggleProject}
                         onStartNewProjectChat={onStartNewProjectChat}
                         onRemoveProject={onRemoveProject}
@@ -3308,7 +3327,7 @@ export function DesktopSidebar({
                   items={regularSortableProjects}
                   getId={({ project, runtimeProjectWork }) =>
                     runtimeProjectWork
-                      ? `${runtimeProjectWork.project.stateDeviceId || 'device'}:${runtimeProjectWork.project.key}`
+                      ? `${sidebarStateDeviceId || runtimeProjectWork.project.stateDeviceId || 'device'}:${getRuntimeProjectSidebarStateKey(runtimeProjectWork.project)}`
                       : `project:${project.id}`
                   }
                   getLabel={({ project }) => project.name}
@@ -3316,29 +3335,17 @@ export function DesktopSidebar({
                     Boolean(runtimeProjectWork?.project.key && onReorderRuntimeProjects)
                   }
                   onMove={async (moved, before) => {
-                    const movedRuntimeProject = moved.runtimeProjectWork?.project
-                    const beforeRuntimeProject = before?.runtimeProjectWork?.project
-                    const deviceId =
-                      movedRuntimeProject?.stateDeviceId ||
-                      moved.runtimeProjectWork?.deviceWorkspaces[0]?.deviceId
-                    if (!movedRuntimeProject || !deviceId || !onReorderRuntimeProjects) {
+                    const movedRuntimeProject = moved.runtimeProjectWork
+                    if (!movedRuntimeProject || !onReorderRuntimeProjects) {
                       throw new Error('Runtime project ordering is unavailable')
                     }
-                    if (
-                      beforeRuntimeProject &&
-                      beforeRuntimeProject.stateDeviceId &&
-                      beforeRuntimeProject.stateDeviceId !== movedRuntimeProject.stateDeviceId
-                    ) {
-                      throw new Error(
-                        'Projects from different devices cannot be reordered together'
-                      )
-                    }
-                    await onReorderRuntimeProjects({
-                      deviceId,
-                      projectKey: movedRuntimeProject.key,
-                      beforeProjectKey: beforeRuntimeProject?.key ?? null,
-                      insertAtEnd: !beforeRuntimeProject,
-                    })
+                    const request = getRuntimeProjectReorderRequest(
+                      movedRuntimeProject,
+                      before?.runtimeProjectWork,
+                      sidebarStateDeviceId
+                    )
+                    if (!request) throw new Error('Runtime project ordering is unavailable')
+                    await onReorderRuntimeProjects(request)
                   }}
                   renderItem={({ project, runtimeProjectWork }) => (
                     <ProjectItem
@@ -3350,6 +3357,7 @@ export function DesktopSidebar({
                       unreadTaskKeys={visibleUnreadRuntimeTaskKeys}
                       imNotificationSettings={imNotificationSettings}
                       showDeviceMarker={false}
+                      sidebarStateDeviceId={sidebarStateDeviceId}
                       onToggleProject={handleToggleProject}
                       onStartNewProjectChat={onStartNewProjectChat}
                       onRemoveProject={onRemoveProject}
@@ -3404,7 +3412,7 @@ export function DesktopSidebar({
                     data-testid="runtime-chat-section-new-chat-button"
                     onClick={event => {
                       event.stopPropagation()
-                      onNewChat()
+                      onStartStandaloneChat()
                     }}
                     className="flex h-8 w-8 items-center justify-center rounded-md text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]"
                   >

@@ -15,6 +15,7 @@ source "$SCRIPT_DIR/lib/wework-mac-env.sh"
 
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
 WEWORK_RELEASE_UI="false"
+EXECUTOR_ISOLATION_OVERRIDE=""
 
 usage() {
   cat <<'EOF'
@@ -24,6 +25,9 @@ Options:
   -p, --port PORT       Vite/Tauri dev server port. Overrides WEWORK_PORT.
   --target TARGET       macOS Rust/Tauri target, e.g. aarch64-apple-darwin.
   --release-ui          Run a production frontend bundle through tauri dev.
+  --executor-isolation  Force an instance-specific Executor Home.
+  --no-executor-isolation
+                        Force direct use of WEGENT_EXECUTOR_HOME.
   -h, --help            Show this help message.
 
 Environment:
@@ -47,6 +51,7 @@ Environment:
 
 Examples:
   bash wework/scripts/dev-mac-app.sh --port 9130
+  bash wework/scripts/dev-mac-app.sh --no-executor-isolation
   bash wework/scripts/dev-mac-app.sh --release-ui --target aarch64-apple-darwin
   WEWORK_PORT=9130 bash wework/scripts/dev-mac-app.sh
 EOF
@@ -97,6 +102,22 @@ while [ "$#" -gt 0 ]; do
       WEWORK_RELEASE_UI="true"
       shift
       ;;
+    --executor-isolation)
+      if [ "$EXECUTOR_ISOLATION_OVERRIDE" = "false" ]; then
+        echo "Error: --executor-isolation and --no-executor-isolation are mutually exclusive." >&2
+        exit 1
+      fi
+      EXECUTOR_ISOLATION_OVERRIDE="true"
+      shift
+      ;;
+    --no-executor-isolation)
+      if [ "$EXECUTOR_ISOLATION_OVERRIDE" = "true" ]; then
+        echo "Error: --executor-isolation and --no-executor-isolation are mutually exclusive." >&2
+        exit 1
+      fi
+      EXECUTOR_ISOLATION_OVERRIDE="false"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -108,6 +129,12 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -n "$EXECUTOR_ISOLATION_OVERRIDE" ]; then
+  export WEWORK_EXECUTOR_ISOLATION_OVERRIDE="$EXECUTOR_ISOLATION_OVERRIDE"
+else
+  unset WEWORK_EXECUTOR_ISOLATION_OVERRIDE
+fi
 
 BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
 BACKEND_PORT="${BACKEND_PORT:-9100}"
@@ -272,6 +299,7 @@ echo "  VITE_SOCKET_PATH=$VITE_SOCKET_PATH"
 echo "  VITE_API_PROXY_TARGET=$VITE_API_PROXY_TARGET"
 echo "  VITE_SOCKET_PROXY_TARGET=$VITE_SOCKET_PROXY_TARGET"
 echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
+echo "  EXECUTOR_ISOLATION=${EXECUTOR_ISOLATION_OVERRIDE:-auto}"
 echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
 
 if [ "${WEWORK_MALLOC_STACK_LOGGING:-}" = "1" ]; then

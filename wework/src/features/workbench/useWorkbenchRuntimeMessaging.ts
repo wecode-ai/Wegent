@@ -19,6 +19,7 @@ import {
   findWorkbenchDevice,
   getActiveWorkbenchDeviceId,
   getWorkbenchDeviceDisplayName,
+  getWorkbenchDeviceUnavailableDisplayName,
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import type {
@@ -544,6 +545,13 @@ export function useWorkbenchRuntimeMessaging({
         modelId: payload.force_override_bot_model,
         modelType: payload.force_override_bot_model_type ?? null,
         modelOptions: payload.model_options ?? {},
+        modelSelection: selectedModel
+          ? {
+              modelName: selectedModel.name,
+              modelType: selectedModel.type,
+              options: selectedModelOptions,
+            }
+          : null,
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
@@ -822,7 +830,9 @@ export function useWorkbenchRuntimeMessaging({
       if (prepared.activeDeviceId) {
         const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
         if (!isWorkbenchDeviceOnline(activeDevice)) {
-          const deviceName = getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)
+          const deviceName =
+            getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
+            i18n.t('workbench.current_device')
           const status = activeDevice
             ? (DEVICE_STATUS_LABELS[activeDevice.status] ?? activeDevice.status)
             : '不可用'
@@ -1040,7 +1050,9 @@ export function useWorkbenchRuntimeMessaging({
       if (prepared.activeDeviceId) {
         const activeDevice = findWorkbenchDevice(state.devices, prepared.activeDeviceId)
         if (!isWorkbenchDeviceOnline(activeDevice)) {
-          const deviceName = getWorkbenchDeviceDisplayName(activeDevice, prepared.activeDeviceId)
+          const deviceName =
+            getWorkbenchDeviceUnavailableDisplayName(activeDevice) ||
+            i18n.t('workbench.current_device')
           reportSendBlocked(`${deviceName} 当前不可用`, undefined, options)
           return false
         }
@@ -1073,10 +1085,12 @@ export function useWorkbenchRuntimeMessaging({
     async (
       subtaskId: string,
       messagesOverride?: WorkbenchMessage[],
-      fileChangesOverride?: TurnFileChangesSummary
+      fileChangesOverride?: TurnFileChangesSummary,
+      runtimeTaskOverride?: RuntimeTaskAddress | null
     ) => {
       const messageSource = messagesOverride ?? []
-      const runtimeFileChanges = state.currentRuntimeTask
+      const runtimeTask = runtimeTaskOverride ?? state.currentRuntimeTask
+      const runtimeFileChanges = runtimeTask
         ? (fileChangesOverride ?? findFileChangesBySubtaskId(messageSource, subtaskId))
         : undefined
       if (runtimeFileChanges?.diff) return runtimeFileChanges.diff
@@ -1106,7 +1120,7 @@ export function useWorkbenchRuntimeMessaging({
         }
         return stdout.diff
       }
-      if (state.currentRuntimeTask) {
+      if (runtimeTask) {
         throw new Error('Runtime file changes artifact is unavailable')
       }
 
@@ -1122,16 +1136,18 @@ export function useWorkbenchRuntimeMessaging({
     async (
       subtaskId: string,
       messagesOverride?: WorkbenchMessage[],
-      fileChangesOverride?: TurnFileChangesSummary
+      fileChangesOverride?: TurnFileChangesSummary,
+      runtimeTaskOverride?: RuntimeTaskAddress | null
     ): Promise<TurnFileChangesSummary> => {
       const messageSource = messagesOverride ?? []
-      const runtimeFileChanges = state.currentRuntimeTask
+      const runtimeTask = runtimeTaskOverride ?? state.currentRuntimeTask
+      const runtimeFileChanges = runtimeTask
         ? (fileChangesOverride ?? findFileChangesBySubtaskId(messageSource, subtaskId))
         : undefined
-      if (runtimeFileChanges && state.currentRuntimeTask) {
+      if (runtimeFileChanges && runtimeTask) {
         try {
           const response = await executorClient.runtime.revertRuntimeFileChanges({
-            address: state.currentRuntimeTask,
+            address: runtimeTask,
             fileChanges: runtimeFileChanges,
           })
           const fileChanges = normalizeTurnFileChanges(
@@ -1159,7 +1175,7 @@ export function useWorkbenchRuntimeMessaging({
           throw error
         }
       }
-      if (state.currentRuntimeTask) {
+      if (runtimeTask) {
         throw new Error('Runtime file changes artifact is unavailable')
       }
       const revert = services.taskApi.revertTurnFileChanges
@@ -1279,6 +1295,10 @@ function buildOptimisticRuntimeTask({
 function modelSelectionFromCreateRequest(
   request: RuntimeTaskCreateRequest
 ): ModelSelectionConfig | null {
+  if (request.modelSelection?.modelName) {
+    return request.modelSelection
+  }
+
   if (!request.modelId) {
     return null
   }

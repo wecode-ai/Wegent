@@ -281,6 +281,7 @@ export function SitesPage() {
           activeItem="sites"
           collapsed={sidebarCollapsed}
           onNewChat={handleNewChat}
+          onStartStandaloneChat={handleStartStandaloneChat}
           onOpenSearch={() => setSearchOpen(true)}
           onSelectProject={handleSelectProject}
           onStartNewProjectChat={handleStartNewProjectChat}
