@@ -39,9 +39,9 @@ use crate::{
     protocol::ExecutionRequest,
     runner::{AgentEngine, EventSink, ExecutionOutcome},
     stream::{
-        collect_claude_stream_summary, extract_claude_tool_results, extract_claude_tool_uses,
-        extract_reasoning, extract_text, ClaudeAsyncTaskTracker, ClaudeStdoutJsonBuffer,
-        ClaudeStdoutJsonError, ClaudeToolUse,
+        collect_claude_stream_summary, extract_claude_child_blocks, extract_claude_subagent_update,
+        extract_claude_tool_results, extract_claude_tool_uses, extract_reasoning, extract_text,
+        ClaudeAsyncTaskTracker, ClaudeStdoutJsonBuffer, ClaudeStdoutJsonError, ClaudeToolUse,
     },
 };
 
@@ -1058,6 +1058,39 @@ where
             continue;
         };
         async_tasks.observe(&value);
+        if let Some(update) = extract_claude_subagent_update(&value) {
+            let parent_tool_use_id = tool_uses
+                .get(&update.tool_use_id)
+                .and_then(|tool_use| tool_use.parent_tool_use_id.as_deref());
+            emit_claude_subagent_update(
+                &dispatcher,
+                &builder,
+                &update.tool_use_id,
+                &update.status,
+                None,
+                update.summary.as_deref(),
+                parent_tool_use_id,
+                &task_id,
+                &subtask_id,
+            );
+        }
+        for block in extract_claude_child_blocks(&value) {
+            let event = builder.response_child_block_created(
+                &block.id,
+                &block.block_type,
+                &block.parent_tool_use_id,
+                &block.content,
+            );
+            dispatcher.send(
+                event,
+                "streaming child agent block callback failed",
+                vec![
+                    ("task_id", task_id.clone()),
+                    ("subtask_id", subtask_id.clone()),
+                    ("parent_tool_use_id", block.parent_tool_use_id),
+                ],
+            );
+        }
         if let Some(reasoning) = extract_reasoning(&value) {
             if !reasoning.is_empty() {
                 emit_reasoning_chunks(&dispatcher, &builder, &reasoning, &task_id, &subtask_id);
@@ -1074,6 +1107,7 @@ where
                     id: tool_result.tool_use_id.clone(),
                     name: "Tool".to_owned(),
                     input: Value::Object(Default::default()),
+                    parent_tool_use_id: tool_result.parent_tool_use_id.clone(),
                 });
             emit_claude_tool_result(
                 &dispatcher,
@@ -1123,7 +1157,21 @@ fn emit_claude_tool_use(
     task_id: &str,
     subtask_id: &str,
 ) {
-    let event = builder.response_tool_block_created(&tool_use.id, &tool_use.name, &tool_use.input);
+    let event = if is_claude_subagent_tool(&tool_use.name) {
+        builder.response_subagent_block_created(
+            &tool_use.id,
+            &tool_use.name,
+            &tool_use.input,
+            tool_use.parent_tool_use_id.as_deref(),
+        )
+    } else {
+        builder.response_tool_block_created(
+            &tool_use.id,
+            &tool_use.name,
+            &tool_use.input,
+            tool_use.parent_tool_use_id.as_deref(),
+        )
+    };
     dispatcher.send(
         event,
         "streaming tool use callback failed",
@@ -1144,8 +1192,23 @@ fn emit_claude_tool_result(
     task_id: &str,
     subtask_id: &str,
 ) {
-    let event =
-        builder.response_tool_block_updated(&tool_use.id, &tool_use.input, output, is_error);
+    let event = if is_claude_subagent_tool(&tool_use.name) {
+        builder.response_subagent_block_updated(
+            &tool_use.id,
+            None,
+            output,
+            None,
+            tool_use.parent_tool_use_id.as_deref(),
+        )
+    } else {
+        builder.response_tool_block_updated(
+            &tool_use.id,
+            &tool_use.input,
+            output,
+            is_error,
+            tool_use.parent_tool_use_id.as_deref(),
+        )
+    };
     dispatcher.send(
         event,
         "streaming tool result callback failed",
@@ -1155,6 +1218,40 @@ fn emit_claude_tool_result(
             ("tool_use_id", tool_use.id.clone()),
         ],
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_claude_subagent_update(
+    dispatcher: &StreamingEventDispatcher,
+    builder: &ResponsesEventBuilder,
+    tool_use_id: &str,
+    status: &str,
+    output: Option<&str>,
+    summary: Option<&str>,
+    parent_tool_use_id: Option<&str>,
+    task_id: &str,
+    subtask_id: &str,
+) {
+    let event = builder.response_subagent_block_updated(
+        tool_use_id,
+        Some(status),
+        output,
+        summary,
+        parent_tool_use_id,
+    );
+    dispatcher.send(
+        event,
+        "streaming child agent status callback failed",
+        vec![
+            ("task_id", task_id.to_owned()),
+            ("subtask_id", subtask_id.to_owned()),
+            ("tool_use_id", tool_use_id.to_owned()),
+        ],
+    );
+}
+
+fn is_claude_subagent_tool(name: &str) -> bool {
+    name.eq_ignore_ascii_case("Task") || name.eq_ignore_ascii_case("Agent")
 }
 
 fn emit_reasoning_chunks(
