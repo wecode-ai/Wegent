@@ -41,6 +41,7 @@ interface CodexStreamDebugState {
 
 let codexStreamDebugEnabled: boolean | null = null
 let codexStreamDebugLoad: Promise<void> | null = null
+let collapsedDebugPanelPosition: { left: number; top: number } | null = null
 
 export function installDeveloperCommandMenu() {
   window.addEventListener(
@@ -297,15 +298,19 @@ function renderDebugPanelShell(root: HTMLElement, expanded: boolean) {
   emitDebugPanelVisibility(expanded)
   const snapshot = getWorkbenchDebugSnapshot()
   root.innerHTML = ''
+  if (expanded) root.removeAttribute('style')
   root.className = expanded
     ? 'fixed inset-0 z-[2147483647] flex items-stretch justify-center bg-black/30 p-4'
-    : 'fixed bottom-4 right-4 z-[2147483647]'
+    : 'fixed z-[2147483647]'
   root.setAttribute('role', 'presentation')
 
   if (!expanded) {
+    applyCollapsedDebugPanelPosition(root)
     root.onclick = null
     root.onkeydown = null
-    root.appendChild(createCollapsedDebugPanel(snapshot, () => renderDebugPanelShell(root, true)))
+    root.appendChild(
+      createCollapsedDebugPanel(root, snapshot, () => renderDebugPanelShell(root, true))
+    )
     return
   }
 
@@ -382,14 +387,33 @@ function renderDebugPanelBody(container: HTMLElement, snapshot: WorkbenchDebugSn
   )
 }
 
-function createCollapsedDebugPanel(snapshot: WorkbenchDebugSnapshot, onExpand: () => void) {
+function applyCollapsedDebugPanelPosition(root: HTMLElement) {
+  if (collapsedDebugPanelPosition) {
+    root.style.left = `${collapsedDebugPanelPosition.left}px`
+    root.style.top = `${collapsedDebugPanelPosition.top}px`
+    root.style.right = 'auto'
+    root.style.bottom = 'auto'
+    return
+  }
+
+  root.style.left = 'auto'
+  root.style.top = 'auto'
+  root.style.right = '16px'
+  root.style.bottom = '16px'
+}
+
+function createCollapsedDebugPanel(
+  root: HTMLElement,
+  snapshot: WorkbenchDebugSnapshot,
+  onExpand: () => void
+) {
   const button = document.createElement('button')
   button.type = 'button'
   button.dataset.testid = 'debug-panel-collapsed'
   button.className =
-    'flex max-w-[min(420px,calc(100vw-2rem))] items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-left text-xs text-text-primary shadow-2xl hover:bg-muted focus:bg-muted focus:outline-none'
+    'group flex h-8 max-w-[calc(100vw-2rem)] cursor-grab items-center overflow-hidden rounded-md border border-border bg-background px-[11px] text-xs font-medium text-text-primary shadow-2xl transition-[width,background-color] hover:bg-muted focus:bg-muted focus:outline-none active:cursor-grabbing'
   button.setAttribute('aria-label', 'Expand debug panel')
-  button.addEventListener('click', onExpand)
+  button.title = `Debug Panel - ${formatRunningStateLabel(snapshot)}`
 
   const dot = document.createElement('span')
   dot.className = snapshot.workbench?.runningState.activeTaskRunning
@@ -397,14 +421,48 @@ function createCollapsedDebugPanel(snapshot: WorkbenchDebugSnapshot, onExpand: (
     : 'h-2 w-2 shrink-0 rounded-full bg-border'
 
   const text = document.createElement('span')
-  text.className = 'min-w-0 truncate'
-  text.textContent = `Debug Panel collapsed - ${formatRunningStateLabel(snapshot)}`
+  text.className =
+    'max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-[max-width,margin,opacity] group-hover:ml-2 group-hover:max-w-20 group-hover:opacity-100 group-focus-visible:ml-2 group-focus-visible:max-w-20 group-focus-visible:opacity-100'
+  text.textContent = 'Debug'
 
-  const hint = document.createElement('span')
-  hint.className = 'shrink-0 text-text-muted'
-  hint.textContent = 'Expand'
+  let dragged = false
+  button.addEventListener('click', event => {
+    if (dragged) {
+      event.preventDefault()
+      dragged = false
+      return
+    }
+    onExpand()
+  })
+  button.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return
+    const startX = event.clientX
+    const startY = event.clientY
+    const startRect = root.getBoundingClientRect()
 
-  button.append(dot, text, hint)
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX
+      const deltaY = moveEvent.clientY - startY
+      if (!dragged && Math.hypot(deltaX, deltaY) < 4) return
+      dragged = true
+      const maxLeft = Math.max(0, window.innerWidth - startRect.width)
+      const maxTop = Math.max(0, window.innerHeight - startRect.height)
+      collapsedDebugPanelPosition = {
+        left: Math.min(maxLeft, Math.max(0, startRect.left + deltaX)),
+        top: Math.min(maxTop, Math.max(0, startRect.top + deltaY)),
+      }
+      applyCollapsedDebugPanelPosition(root)
+    }
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+  })
+
+  button.append(dot, text)
   return button
 }
 
