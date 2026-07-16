@@ -55,6 +55,7 @@ from app.api.endpoints.admin.router import router as admin_router
 from app.api.router import api_router
 from app.core.config import settings
 from wecode.api.admin_published_apps import router as admin_published_apps_router
+from wecode.api.agent_usage import router as agent_usage_router
 from wecode.api.apikey import router as apikey_router
 from wecode.api.auth import router as auth_router
 from wecode.api.cloud_devices import router as cloud_devices_router
@@ -130,6 +131,11 @@ def _register_unavailable_external_knowledge_provider(name: str, reason: str) ->
 _register_ap_external_knowledge_provider()
 
 api_router.include_router(apikey_router, prefix="/internal/apikey", tags=["internal"])
+api_router.include_router(
+    agent_usage_router,
+    prefix="/wecode/agent-usage",
+    tags=["wecode", "agent-usage"],
+)
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
 api_router.include_router(
     department_search_router,
