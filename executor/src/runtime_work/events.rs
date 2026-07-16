@@ -8,6 +8,7 @@ use serde_json::{json, Map, Value};
 use tokio::sync::broadcast;
 
 use crate::{
+    agents::codex::mcp_server_elicitation_request_user_input_params,
     codex_phase::CodexAgentMessagePhaseTracker, logging::log_executor_event,
     protocol::ExecutionRequest,
 };
@@ -239,6 +240,20 @@ impl CodexNotificationEventMapper {
                     message.get("id"),
                 );
             }
+            "mcpServer/elicitation/request" => {
+                if let Some(params) =
+                    mcp_server_elicitation_request_user_input_params(notification.params)
+                {
+                    emit_request_user_input(
+                        event_tx,
+                        device_id,
+                        local_task_id,
+                        request,
+                        &params,
+                        message.get("id"),
+                    );
+                }
+            }
             "item/tool/outputDelta"
             | "item/commandExecution/outputDelta"
             | "process/outputDelta"
@@ -416,6 +431,13 @@ impl CodexNotificationEventMapper {
                 );
             }
             _ => {
+                log_unhandled_codex_raw_message(
+                    local_task_id,
+                    &request.task_id,
+                    &request.subtask_id,
+                    &notification.method,
+                    &message,
+                );
                 debug_ignored_codex_notification(
                     &message,
                     &notification.method,
@@ -997,6 +1019,27 @@ impl CodexNotificationEventMapper {
         };
         stream_thread_id(params).is_some_and(|thread_id| thread_id != root_thread_id)
     }
+}
+
+fn log_unhandled_codex_raw_message(
+    local_task_id: &str,
+    task_id: &str,
+    subtask_id: &str,
+    method: &str,
+    message: &Value,
+) {
+    let raw = serde_json::to_string(message)
+        .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>"));
+    log_executor_event(
+        "codex unhandled raw message",
+        &[
+            ("local_task_id", local_task_id.to_owned()),
+            ("task_id", task_id.to_owned()),
+            ("subtask_id", subtask_id.to_owned()),
+            ("method", method.to_owned()),
+            ("raw", raw),
+        ],
+    );
 }
 
 fn emit_goal_continuation_event(context: &EventEmitContext<'_>, params: &Value, status: &str) {
