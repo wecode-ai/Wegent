@@ -228,8 +228,6 @@ async def cleanup_orphan_pods(
         older_than_hours: minimum pod age to scan (default 48h = 2 days)
         stale_hours: inactive_hours passed to cleanup_stale_task_executor (default 24h)
     """
-    from wecode.config.orphan_pod_config import ORPHAN_POD_MIN_TASK_ID
-
     logger.info(
         f"+++ [executor_job] Starting orphan pod cleanup older_than_hours={older_than_hours} stale_hours={stale_hours} dry_run={dry_run}"
     )
