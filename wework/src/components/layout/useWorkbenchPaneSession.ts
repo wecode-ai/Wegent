@@ -111,6 +111,7 @@ interface GuidanceSplitBoundary {
 const runtimePaneMessageSeeds = new Map<string, WorkbenchMessage[]>()
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
+export const RUNTIME_TASK_STATUS_PROBE_IDLE_MS = 15_000
 const MAX_CACHED_RUNTIME_PANE_MESSAGES = 3
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 const noopSetInput = () => undefined
@@ -125,6 +126,8 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     setRuntimeGoal,
     clearRuntimeGoal,
     markRuntimeTaskStarted,
+    markRuntimeTaskSettled,
+    probeRuntimeTaskRunning,
     sendRuntimePaneMessage,
     sendRuntimePaneGuidance,
     compactRuntimePaneTask,
@@ -540,8 +543,9 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
           const bufferedActions = bufferedTranscriptActionsRef.current
           bufferedTranscriptActionsRef.current = []
           bufferedActions.forEach(dispatchMessages)
-          if (hasSettledAssistantMessage(nextMessages)) {
+          if (!transcript.running && hasSettledAssistantMessage(nextMessages)) {
             setSendPhase('idle')
+            markRuntimeTaskSettled(address)
           }
           clearRuntimePaneMessageSeed(address)
         }
@@ -575,8 +579,127 @@ export function useWorkbenchPaneSession({ currentRuntimeTask }: WorkbenchPaneSes
     return () => {
       cancelled = true
     }
-  }, [dispatchMessages, markRuntimeTaskStarted, runtimeTaskLoadTarget])
+  }, [dispatchMessages, markRuntimeTaskSettled, markRuntimeTaskStarted, runtimeTaskLoadTarget])
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (
+      !paneActive ||
+      !runtimeTaskLoadTarget ||
+      transcriptLoading ||
+      rebuildingTranscriptRef.current ||
+      !hasUnsettledRuntimePaneState(messages, sendPhase)
+    ) {
+      return
+    }
+
+    const { address, identityKey } = runtimeTaskLoadTarget
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const scheduleProbe = () => {
+      timer = setTimeout(() => {
+        void probeAndReconcile()
+      }, RUNTIME_TASK_STATUS_PROBE_IDLE_MS)
+    }
+    const probeAndReconcile = async () => {
+      if (
+        cancelled ||
+        rebuildingTranscriptRef.current ||
+        runtimeTaskLoadTargetRef.current?.identityKey !== identityKey
+      ) {
+        return
+      }
+
+      const startedAt = Date.now()
+      try {
+        const running = await probeRuntimeTaskRunning(address)
+        if (
+          cancelled ||
+          runtimeTaskLoadTargetRef.current?.identityKey !== identityKey ||
+          rebuildingTranscriptRef.current
+        ) {
+          return
+        }
+        console.debug('[Wework] Runtime task status probe completed', {
+          address: runtimeAddressDebug(address),
+          elapsedMs: Date.now() - startedAt,
+          running,
+        })
+        if (running !== false) {
+          scheduleProbe()
+          return
+        }
+
+        const transcriptStartedAt = Date.now()
+        const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          refresh: true,
+        })
+        if (
+          cancelled ||
+          runtimeTaskLoadTargetRef.current?.identityKey !== identityKey ||
+          rebuildingTranscriptRef.current
+        ) {
+          return
+        }
+        if (transcript.running) {
+          console.info('[Wework] Runtime task status probe contradicted transcript', {
+            address: runtimeAddressDebug(address),
+            transcriptElapsedMs: Date.now() - transcriptStartedAt,
+            messageCount: transcript.messages.length,
+          })
+          markRuntimeTaskStarted(address)
+          scheduleProbe()
+          return
+        }
+
+        const nextMessages =
+          transcript.messages.length > 0 ? transcript.messages : messagesRef.current
+        console.info('[Wework] Runtime pane recovered terminal state from transcript', {
+          address: runtimeAddressDebug(address),
+          statusProbeElapsedMs: transcriptStartedAt - startedAt,
+          transcriptElapsedMs: Date.now() - transcriptStartedAt,
+          previousMessageCount: messagesRef.current.length,
+          transcriptMessageCount: transcript.messages.length,
+        })
+        setTranscriptFullContent(transcript.fullContent === true)
+        setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
+        setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
+        setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
+        setTurnNavigation(transcript.turnNavigation ?? [])
+        dispatchMessages({ type: 'reset', messages: nextMessages })
+        setStreamSettled(true)
+        setSendPhase('idle')
+        setSubagentStatuses(markRuntimeSubagentsSettled)
+        markRuntimeTaskSettled(address)
+      } catch (error) {
+        if (cancelled) return
+        console.error('[Wework] Runtime task terminal fallback failed', {
+          address: runtimeAddressDebug(address),
+          elapsedMs: Date.now() - startedAt,
+          error,
+        })
+        scheduleProbe()
+      }
+    }
+
+    scheduleProbe()
+    return () => {
+      cancelled = true
+      if (timer !== null) clearTimeout(timer)
+    }
+  }, [
+    dispatchMessages,
+    markRuntimeTaskSettled,
+    markRuntimeTaskStarted,
+    messages,
+    paneActive,
+    probeRuntimeTaskRunning,
+    runtimeTaskLoadTarget,
+    sendPhase,
+    transcriptLoading,
+  ])
 
   /* eslint-disable react-hooks/set-state-in-effect -- Queued runtime messages are advanced when the active runtime response becomes idle. */
   useEffect(() => {
@@ -2536,6 +2659,21 @@ function updateRuntimeSubagentStatuses(
     const rightTime = right.updatedAtMs ?? 0
     return rightTime - leftTime
   })
+}
+
+function hasUnsettledRuntimePaneState(
+  messages: WorkbenchMessage[],
+  sendPhase: RuntimePaneSendPhase
+): boolean {
+  if (sendPhase !== 'idle') return true
+  return messages.some(
+    message =>
+      message.status === 'streaming' ||
+      message.status === 'pending' ||
+      message.blocks?.some(block =>
+        ['generating_arguments', 'pending', 'streaming'].includes(block.status)
+      )
+  )
 }
 
 function markRuntimeSubagentsSettled(current: RuntimeSubagentStatus[]): RuntimeSubagentStatus[] {

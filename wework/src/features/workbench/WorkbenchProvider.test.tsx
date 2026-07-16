@@ -12,7 +12,10 @@ import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
-import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
+import {
+  RUNTIME_TASK_STATUS_PROBE_IDLE_MS,
+  useWorkbenchPaneSession,
+} from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
@@ -5951,6 +5954,146 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('running')
     )
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
+  })
+
+  test('loads the transcript fallback only after a status probe confirms the task stopped', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const runningWork = createRuntimeWork({
+      projects: [
+        {
+          project: { id: 7, name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              id: 22,
+              projectId: 7,
+              deviceId: 'device-1',
+              deviceName: 'Project Device',
+              deviceStatus: 'online',
+              workspacePath: '/workspace/project-alpha',
+              mapped: true,
+              available: true,
+              tasks: [
+                {
+                  taskId: 'runtime-a',
+                  workspacePath: '/workspace/project-alpha',
+                  title: 'Runtime A',
+                  runtime: 'codex',
+                  running: true,
+                },
+              ],
+            },
+          ],
+          totalTasks: 1,
+        },
+      ],
+      totalTasks: 1,
+    })
+    const stoppedWork = createRuntimeWork({
+      projects: runningWork.projects.map(project => ({
+        ...project,
+        deviceWorkspaces: project.deviceWorkspaces.map(workspace => ({
+          ...workspace,
+          tasks: workspace.tasks.map(task => ({ ...task, running: false })),
+        })),
+      })),
+    })
+    const listRuntimeWork = vi
+      .fn()
+      .mockResolvedValueOnce(runningWork)
+      .mockResolvedValueOnce(runningWork)
+      .mockResolvedValue(stoppedWork)
+    const getRuntimeTranscript = vi
+      .fn()
+      .mockResolvedValueOnce({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        running: true,
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: '执行命令' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            subtaskId: '101',
+            blocks: [
+              {
+                id: 'exec-1',
+                type: 'tool',
+                tool_name: 'exec_command',
+                status: 'streaming',
+                timestamp: 1780000000000,
+              },
+            ],
+          },
+        ],
+      })
+      .mockResolvedValue({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        running: false,
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: '执行命令' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: '执行完成',
+            status: 'done',
+            subtaskId: '101',
+            blocks: [
+              {
+                id: 'exec-1',
+                type: 'tool',
+                tool_name: 'exec_command',
+                tool_output: 'ok',
+                status: 'done',
+                timestamp: 1780000000000,
+              },
+            ],
+          },
+        ],
+      })
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork,
+      getRuntimeTranscript,
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeOpenProbe />, services)
+
+    await userEvent.click(await screen.findByText('open runtime a'))
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
+        'tool:exec_command:streaming'
+      )
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUNTIME_TASK_STATUS_PROBE_IDLE_MS)
+    })
+    expect(listRuntimeWork).toHaveBeenCalledTimes(2)
+    expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RUNTIME_TASK_STATUS_PROBE_IDLE_MS)
+    })
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
+    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
+      deviceId: 'device-1',
+      taskId: 'runtime-a',
+      workspacePath: '/workspace/project-alpha',
+      limit: 50,
+      refresh: true,
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('tool:exec_command:done')
+    )
+    expect(screen.getByTestId('runtime-message-statuses')).toHaveTextContent('assistant:done')
+    expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
   })
 
   test('resumes a paused runtime goal when editing and sending its objective', async () => {

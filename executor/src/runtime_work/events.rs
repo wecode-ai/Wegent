@@ -42,7 +42,18 @@ pub(crate) fn emit_response_event(
     request: &ExecutionRequest,
     data: Value,
 ) {
+    let terminal = is_terminal_response_event(event);
     let Some(event_tx) = event_tx else {
+        if terminal {
+            log_terminal_response_delivery(
+                event,
+                local_task_id,
+                request,
+                0,
+                0,
+                "sender_unavailable",
+            );
+        }
         return;
     };
     let mut payload = json!({
@@ -62,7 +73,57 @@ pub(crate) fn emit_response_event(
             payload_object.insert("source".to_owned(), source.clone());
         }
     }
-    let _ = event_tx.send(payload);
+    let receiver_count = event_tx.receiver_count();
+    let delivery = event_tx.send(payload);
+    if terminal {
+        match delivery {
+            Ok(delivered_receivers) => log_terminal_response_delivery(
+                event,
+                local_task_id,
+                request,
+                receiver_count,
+                delivered_receivers,
+                "broadcast",
+            ),
+            Err(_) => log_terminal_response_delivery(
+                event,
+                local_task_id,
+                request,
+                receiver_count,
+                0,
+                "no_receivers",
+            ),
+        }
+    }
+}
+
+fn is_terminal_response_event(event: &str) -> bool {
+    matches!(
+        event,
+        "response.completed" | "response.failed" | "response.incomplete"
+    )
+}
+
+fn log_terminal_response_delivery(
+    event: &str,
+    local_task_id: &str,
+    request: &ExecutionRequest,
+    receiver_count: usize,
+    delivered_receivers: usize,
+    delivery: &str,
+) {
+    log_executor_event(
+        "runtime terminal response event emitted",
+        &[
+            ("event", event.to_owned()),
+            ("local_task_id", local_task_id.to_owned()),
+            ("task_id", request.task_id.to_string()),
+            ("subtask_id", request.subtask_id.to_string()),
+            ("receiver_count", receiver_count.to_string()),
+            ("delivered_receivers", delivered_receivers.to_string()),
+            ("delivery", delivery.to_owned()),
+        ],
+    );
 }
 
 #[cfg(test)]

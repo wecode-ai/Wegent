@@ -276,6 +276,7 @@ interface RuntimeWorkIpcOptions {
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
   adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
+  transportLabel?: 'Local' | 'Cloud'
 }
 
 function cloudConnectionRequired(name: string): never {
@@ -1578,6 +1579,7 @@ export function createRuntimeWorkApiFromIpc(
   getDefaultDeviceId: () => Promise<string>,
   options: RuntimeWorkIpcOptions = {}
 ) {
+  const transportLabel = options.transportLabel ?? 'Local'
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
   const adaptListResponse = options.adaptListResponse ?? adaptRuntimeWorkListResponse
@@ -1599,14 +1601,14 @@ export function createRuntimeWorkApiFromIpc(
     const debugTranscript = method === 'runtime.tasks.transcript' && isRuntimeDebugEnabled()
     try {
       if (debugTranscript) {
-        console.debug('[Wework] Local runtime IPC transcript request', {
+        console.debug(`[Wework] ${transportLabel} runtime IPC transcript request`, {
           address: runtimeAddressDebug(normalizedData),
           runtimeHandle: runtimeHandleDebug(normalizedData),
         })
       }
       const response = await request<TResponse>(method, normalizedData, deviceId)
       if (debugTranscript) {
-        console.debug('[Wework] Local runtime IPC transcript response', {
+        console.debug(`[Wework] ${transportLabel} runtime IPC transcript response`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
           messageCount: runtimeTranscriptMessageCount(response),
@@ -1615,7 +1617,7 @@ export function createRuntimeWorkApiFromIpc(
       return response
     } catch (error) {
       if (method === 'runtime.tasks.transcript') {
-        console.error('[Wework] Local runtime IPC transcript failed', {
+        console.error(`[Wework] ${transportLabel} runtime IPC transcript failed`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
           error,
@@ -1634,7 +1636,7 @@ export function createRuntimeWorkApiFromIpc(
         const runtimeWork = adaptListResponse(response, localDeviceId)
         return runtimeWork
       } catch (error) {
-        console.error('[Wework] Local runtime IPC list failed', {
+        console.error(`[Wework] ${transportLabel} runtime IPC list failed`, {
           elapsedMs: Math.round(nowMs() - startedAt),
           error,
         })

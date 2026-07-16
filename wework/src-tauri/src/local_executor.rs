@@ -1649,6 +1649,32 @@ fn handle_executor_line_inner(
         }
         ExecutorLine::Event(event) => {
             update_ready_event_inner(inner, &event);
+            let terminal = is_terminal_response_event(&event.event);
+            let terminal_event = event.event.clone();
+            let terminal_task_id = event
+                .payload
+                .get("taskId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let terminal_subtask_id = event
+                .payload
+                .get("subtaskId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let terminal_device_id = event
+                .payload
+                .get("deviceId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if terminal {
+                log::info!(
+                    "Received runtime terminal event from executor: event={}, task_id={:?}, subtask_id={:?}, device_id={:?}",
+                    terminal_event,
+                    terminal_task_id,
+                    terminal_subtask_id,
+                    terminal_device_id
+                );
+            }
             if event.event == "runtime.plan.updated" {
                 log::info!(
                     "Forwarding runtime task plan event to frontend: task_id={:?}, device_id={:?}",
@@ -1656,12 +1682,39 @@ fn handle_executor_line_inner(
                     event.payload.get("deviceId")
                 );
             }
-            app.emit(LOCAL_EXECUTOR_EVENT, event)
-                .map_err(|error| error.to_string())?;
+            if let Err(error) = app.emit(LOCAL_EXECUTOR_EVENT, event) {
+                if terminal {
+                    log::warn!(
+                        "Failed to forward runtime terminal event to frontend: event={}, task_id={:?}, subtask_id={:?}, device_id={:?}, error={}",
+                        terminal_event,
+                        terminal_task_id,
+                        terminal_subtask_id,
+                        terminal_device_id,
+                        error
+                    );
+                }
+                return Err(error.to_string());
+            }
+            if terminal {
+                log::info!(
+                    "Forwarded runtime terminal event to frontend event bus: event={}, task_id={:?}, subtask_id={:?}, device_id={:?}",
+                    terminal_event,
+                    terminal_task_id,
+                    terminal_subtask_id,
+                    terminal_device_id
+                );
+            }
         }
     }
 
     Ok(())
+}
+
+fn is_terminal_response_event(event: &str) -> bool {
+    matches!(
+        event,
+        "response.completed" | "response.failed" | "response.incomplete"
+    )
 }
 
 fn connect_sidecar_socket() -> Result<TcpStream, String> {

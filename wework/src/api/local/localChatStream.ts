@@ -51,7 +51,14 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
             deviceId: stringField(asRecord(event.payload), 'deviceId') ?? null,
           })
         }
-        for (const [subscriptionId, subscription] of Array.from(subscriptions)) {
+        const subscriptionEntries = Array.from(subscriptions)
+        if (shouldLogLocalChatStreamEvent(event.event)) {
+          const matchedSubscriptionCount = subscriptionEntries.filter(([, subscription]) =>
+            isLocalExecutorEventInScope(event, subscription.handlers.scope)
+          ).length
+          logLocalChatTerminalEvent(event, matchedSubscriptionCount, subscriptionEntries.length)
+        }
+        for (const [subscriptionId, subscription] of subscriptionEntries) {
           const inScope = isLocalExecutorEventInScope(event, subscription.handlers.scope)
           if (!inScope && event.event !== 'runtime.plan.updated') {
             continue
@@ -97,6 +104,10 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
       })
       .catch(error => {
         nativeSubscribePromise = null
+        console.error('[Wework] Local chat stream native listener failed', {
+          error: error instanceof Error ? error.message : String(error),
+          activeSubscriptions: activeLocalChatStreamSubscriptions,
+        })
         logLocalChatStreamNativeSubscription('native-listener-failed', {
           error: error instanceof Error ? error.message : String(error),
         })
@@ -159,6 +170,22 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
       }
     },
   }
+}
+
+function logLocalChatTerminalEvent(
+  event: LocalExecutorEvent,
+  matchedSubscriptionCount: number,
+  subscriptionCount: number
+): void {
+  const payload = asRecord(event.payload)
+  console.info('[Wework] Local chat stream terminal event received', {
+    event: event.event,
+    taskId: stringField(payload, 'taskId') ?? null,
+    subtaskId: stringField(payload, 'subtaskId') ?? null,
+    deviceId: stringField(payload, 'deviceId') ?? null,
+    subscriptionCount,
+    matchedSubscriptionCount,
+  })
 }
 
 function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean {
