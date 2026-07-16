@@ -68,7 +68,7 @@ jobs:
           NEXT_TELEMETRY_DISABLED: 1
           RUNTIME_INTERNAL_API_URL: http://localhost:8000
           RUNTIME_SOCKET_DIRECT_URL: http://localhost:8000
-        run: pnpm exec next build
+        run: pnpm run build
 
       - name: Archive frontend E2E build
         run: .github/scripts/archive-frontend-e2e-build.sh

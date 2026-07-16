@@ -10,7 +10,6 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
-  Grid3X3,
   Loader2,
   MessageSquarePlus,
   Pin,
@@ -27,8 +26,10 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEventHandler,
   ReactNode,
+  RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TextInputDialog } from '@/components/common/TextInputDialog'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
@@ -56,7 +57,11 @@ import {
 } from '@/lib/device-capabilities'
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { isTauriRuntime } from '@/lib/runtime-environment'
-import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
+import {
+  runtimeProjectToProject,
+  runtimeProjectUiId,
+  standaloneRuntimeProjectKey,
+} from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
 import type {
   DeviceInfo,
@@ -83,6 +88,7 @@ import type {
 } from '@/features/workbench/workbenchContextTypes'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 import { DesktopWindowControls } from './DesktopWindowControls'
+import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
 import { SidebarSortableList } from './SidebarSortableList'
 import { SidebarHoverCard } from './SidebarHoverCard'
@@ -120,7 +126,7 @@ interface DesktopSidebarProps {
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   unreadRuntimeTaskKeys?: ReadonlySet<string>
   preferredDeviceId?: string | null
-  activeItem?: 'chat' | 'plugins' | 'automation'
+  activeItem?: 'chat' | 'todo' | 'plugins' | 'automation'
   collapsed?: boolean
   containerTestId?: string
   hideResizeHandle?: boolean
@@ -130,6 +136,7 @@ interface DesktopSidebarProps {
   onPointerLeave?: PointerEventHandler<HTMLElement>
   onToggleSidebar?: () => void
   onOpenWorkbench?: () => void
+  onOpenTodo?: () => void
   onOpenApps?: () => void
   onNewChat: () => void
   onOpenSearch?: () => void
@@ -245,10 +252,6 @@ const PROJECT_APPEARANCE_COLOR_VALUES: Record<string, string> = {
   yellow: '#eab308',
 }
 const MACOS_WINDOW_CONTROLS_SAFE_AREA_CLASS = 'left-[92px]'
-const SIDEBAR_CHROME_TAB_BUTTON_CLASS =
-  'group relative flex h-8 w-8 min-w-0 items-center justify-center rounded-lg px-0 text-center text-[13px] font-medium leading-none transition-colors'
-const SIDEBAR_CHROME_TAB_TOOLTIP_CLASS =
-  'pointer-events-none absolute left-1/2 top-[calc(100%+0.375rem)] z-popover -translate-x-1/2 whitespace-nowrap rounded-md border border-border bg-background px-2 py-1 text-xs font-medium leading-none text-text-primary opacity-0 shadow-[0_8px_20px_rgba(0,0,0,0.14)] transition-opacity group-hover:opacity-100'
 
 function getSidebarAccountSummary(user: UserProfile | null, fallback: string) {
   const userName = user?.user_name?.trim()
@@ -311,7 +314,8 @@ function standaloneRuntimeProjectWork(
   const deviceStatus = deviceState?.status ?? 'unavailable'
   return {
     project: {
-      key: `${resolvedDeviceId}:${normalizedWorkspacePath}`,
+      key: standaloneRuntimeProjectKey(normalizedWorkspacePath),
+      stateDeviceId: resolvedDeviceId,
       name: getSidebarPathBasename(normalizedWorkspacePath),
       description: normalizedWorkspacePath,
       color: null,
@@ -493,8 +497,8 @@ function useSidebarWindowFocus(): boolean {
     let disposed = false
     let unlisten: (() => void) | undefined
     let browserFallbackActive = false
-    void import('@tauri-apps/api/window')
-      .then(async ({ getCurrentWindow }) => {
+    void Promise.resolve()
+      .then(async () => {
         const currentWindow = getCurrentWindow()
         if (
           typeof currentWindow?.isFocused !== 'function' ||
@@ -701,9 +705,7 @@ function getDeviceRouteTitle(deviceState: SidebarDeviceState): string {
 
 function getDisplayableNetworkHost(value?: string | null): string | null {
   if (!value) return null
-  const host = extractNetworkHost(value.trim())
-  if (!host || isLoopbackNetworkHost(host)) return null
-  return host
+  return extractNetworkHost(value.trim()) || null
 }
 
 function extractNetworkHost(value: string): string {
@@ -714,11 +716,6 @@ function extractNetworkHost(value: string): string {
     return colonParts[0]
   }
   return value
-}
-
-function isLoopbackNetworkHost(host: string): boolean {
-  const normalized = host.trim().toLowerCase()
-  return normalized === 'localhost' || normalized === '::1' || normalized.startsWith('127.')
 }
 
 function getRuntimeProjectDeviceState(
@@ -1007,6 +1004,7 @@ function GlobalImNotificationBell({
   devices,
   imNotificationSettings,
   menuOpen,
+  menuContainerRef,
   onMenuOpenChange,
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
@@ -1016,6 +1014,10 @@ function GlobalImNotificationBell({
   devices: DeviceInfo[]
   imNotificationSettings?: RuntimeIMNotificationSettingsResponse | null
   menuOpen: boolean
+  // Portal target covering the full-width account area. The bell trigger lives
+  // inside a narrow 32px icon group, so the menu must anchor to this wider
+  // relative container for `left-4 right-4` to resolve against the sidebar.
+  menuContainerRef: RefObject<HTMLDivElement | null>
   onMenuOpenChange: (open: boolean) => void
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
@@ -1025,6 +1027,12 @@ function GlobalImNotificationBell({
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
   const [cloudDialogOpen, setCloudDialogOpen] = useState(false)
+  // Resolve the portal target from the ref into state. Reading the ref's
+  // `.current` during render is disallowed, so we mirror it into state here.
+  const [menuContainer, setMenuContainer] = useState<HTMLDivElement | null>(null)
+  useEffect(() => {
+    setMenuContainer(menuContainerRef.current)
+  }, [menuContainerRef])
   const targetLabel = getImNotificationSessionLabel(imNotificationSettings)
   const enabled = Boolean(imNotificationSettings?.global.enabled)
   const connecting = cloud.status === 'connecting'
@@ -1115,91 +1123,94 @@ function GlobalImNotificationBell({
         )}
       </button>
 
-      {menuOpen && (
-        <div
-          data-testid="sidebar-global-im-notification-menu"
-          className="absolute bottom-[68px] left-4 right-4 z-30 rounded-xl border border-border bg-background p-3 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
-        >
-          <div className="flex items-start gap-3">
-            <div
-              className={cn(
-                'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary',
-                notifying && 'bg-primary/10 text-primary',
-                needsSession && 'bg-amber-400/15 text-amber-600'
-              )}
-            >
-              <NotificationIcon className={cn('h-4 w-4', notifying && 'fill-current')} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold leading-5">
-                {notifying
-                  ? t('workbench.away_im_reminder_on', '离开电脑提醒已开启')
-                  : t('workbench.away_im_reminder_title', '离开电脑提醒')}
-              </div>
-              <p className="mt-1 text-xs leading-5 text-text-secondary">
-                {t(
-                  'workbench.away_im_reminder_description',
-                  '所有任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
-                )}
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-3 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-text-secondary">
-                {t('workbench.away_im_reminder_target', '投递到')}
-              </span>
-              <span className="min-w-0 truncate font-medium text-text-primary">
-                {targetLabel ?? t('workbench.away_im_reminder_no_target', '未选择 IM 会话')}
-              </span>
-            </div>
-            {requiresCloudLogin && (
-              <div className="mt-1 text-text-secondary">
-                {t(
-                  'workbench.global_im_notifications_requires_cloud_login',
-                  '登录云端后可开启离开电脑提醒'
-                )}
-              </div>
-            )}
-            {cloudConnectionErrorMessage && (
+      {menuOpen &&
+        menuContainer &&
+        createPortal(
+          <div
+            data-testid="sidebar-global-im-notification-menu"
+            className="absolute bottom-[68px] left-4 right-4 z-30 rounded-xl border border-border bg-background p-3 text-text-primary shadow-[0_16px_44px_rgba(0,0,0,0.16)]"
+          >
+            <div className="flex items-start gap-3">
               <div
-                data-testid="sidebar-global-im-notification-error"
-                className="mt-1 min-w-0 break-words text-red-500 [overflow-wrap:anywhere]"
+                className={cn(
+                  'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-text-secondary',
+                  notifying && 'bg-primary/10 text-primary',
+                  needsSession && 'bg-amber-400/15 text-amber-600'
+                )}
               >
-                {cloudConnectionErrorMessage}
+                <NotificationIcon className={cn('h-4 w-4', notifying && 'fill-current')} />
               </div>
-            )}
-          </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold leading-5">
+                  {notifying
+                    ? t('workbench.away_im_reminder_on', '离开电脑提醒已开启')
+                    : t('workbench.away_im_reminder_title', '离开电脑提醒')}
+                </div>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">
+                  {t(
+                    'workbench.away_im_reminder_description',
+                    '所有任务进展会推送到 IM，不会改变任务的 IM 会话归属。'
+                  )}
+                </p>
+              </div>
+            </div>
 
-          <div className="mt-3 flex items-center justify-end gap-2">
-            {cloud.isConnected && onOpenGlobalImNotificationSettings && (
+            <div className="mt-3 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-text-secondary">
+                  {t('workbench.away_im_reminder_target', '投递到')}
+                </span>
+                <span className="min-w-0 truncate font-medium text-text-primary">
+                  {targetLabel ?? t('workbench.away_im_reminder_no_target', '未选择 IM 会话')}
+                </span>
+              </div>
+              {requiresCloudLogin && (
+                <div className="mt-1 text-text-secondary">
+                  {t(
+                    'workbench.global_im_notifications_requires_cloud_login',
+                    '登录云端后可开启离开电脑提醒'
+                  )}
+                </div>
+              )}
+              {cloudConnectionErrorMessage && (
+                <div
+                  data-testid="sidebar-global-im-notification-error"
+                  className="mt-1 min-w-0 break-words text-red-500 [overflow-wrap:anywhere]"
+                >
+                  {cloudConnectionErrorMessage}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 flex items-center justify-end gap-2">
+              {cloud.isConnected && onOpenGlobalImNotificationSettings && (
+                <button
+                  type="button"
+                  data-testid="sidebar-global-im-notification-settings-button"
+                  onClick={openSessionSettings}
+                  className="h-8 rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                >
+                  {t('workbench.away_im_reminder_change_session', '更换会话')}
+                </button>
+              )}
               <button
                 type="button"
-                data-testid="sidebar-global-im-notification-settings-button"
-                onClick={openSessionSettings}
-                className="h-8 rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                data-testid="sidebar-global-im-notification-primary-button"
+                disabled={connecting}
+                onClick={handlePrimaryAction}
+                className={cn(
+                  'h-8 shrink-0 whitespace-nowrap rounded-md px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-55',
+                  enabled
+                    ? 'bg-muted text-text-primary hover:bg-muted/80'
+                    : 'bg-text-primary text-background hover:bg-text-primary/90'
+                )}
               >
-                {t('workbench.away_im_reminder_change_session', '更换会话')}
+                {primaryActionLabel}
               </button>
-            )}
-            <button
-              type="button"
-              data-testid="sidebar-global-im-notification-primary-button"
-              disabled={connecting}
-              onClick={handlePrimaryAction}
-              className={cn(
-                'h-8 rounded-md px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-55',
-                enabled
-                  ? 'bg-muted text-text-primary hover:bg-muted/80'
-                  : 'bg-text-primary text-background hover:bg-text-primary/90'
-              )}
-            >
-              {primaryActionLabel}
-            </button>
-          </div>
-        </div>
-      )}
+            </div>
+          </div>,
+          menuContainer
+        )}
 
       {cloudDialogOpen && (
         <CloudConnectionDialog
@@ -1591,6 +1602,7 @@ function RuntimeTaskRow({
     <>
       <SidebarHoverCard
         testId={`runtime-local-task-hover-card-${task.taskId}`}
+        interactive
         content={
           <TaskSidebarHoverCardContent
             taskId={task.taskId}
@@ -2047,6 +2059,8 @@ function ProjectItem({
     try {
       await onRemoveProject(project.id)
       setRemoveConfirmOpen(false)
+    } catch (error) {
+      console.error('[Wework project removal] failed', error)
     } finally {
       setRemovingProject(false)
     }
@@ -2448,6 +2462,7 @@ export function DesktopSidebar({
   onPointerLeave,
   onToggleSidebar,
   onOpenWorkbench,
+  onOpenTodo,
   onOpenApps,
 }: DesktopSidebarProps) {
   useSidebarRelativeTimeRefresh()
@@ -2472,8 +2487,6 @@ export function DesktopSidebar({
         usesCloudAccount ? cloud.user : user,
         t('workbench.account_fallback', '当前账号')
       )
-  const workbenchAppLabel = t('workbench.app_wework')
-  const appsAppLabel = t('workbench.apps')
   const windowFocused = useSidebarWindowFocus()
 
   const storageScope = getDesktopSidebarStorageScope(user)
@@ -2952,36 +2965,16 @@ export function DesktopSidebar({
                 onToggleSidebar={onToggleSidebar}
                 className="gap-1"
               />
-              <button
-                type="button"
-                data-testid="chrome-tab-wework"
-                onClick={onOpenWorkbench}
-                title={workbenchAppLabel}
-                aria-label={workbenchAppLabel}
-                className={cn(
-                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
-                  'bg-black/[0.045] text-text-primary'
-                )}
-              >
-                <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-                <span className="sr-only">{workbenchAppLabel}</span>
-                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{workbenchAppLabel}</span>
-              </button>
-              <button
-                type="button"
-                data-testid="chrome-tab-apps"
-                onClick={onOpenApps}
-                title={appsAppLabel}
-                aria-label={appsAppLabel}
-                className={cn(
-                  SIDEBAR_CHROME_TAB_BUTTON_CLASS,
-                  'text-text-secondary hover:bg-black/[0.04]'
-                )}
-              >
-                <Grid3X3 aria-hidden="true" className="h-4 w-4 shrink-0 stroke-[1.8]" />
-                <span className="sr-only">{appsAppLabel}</span>
-                <span className={SIDEBAR_CHROME_TAB_TOOLTIP_CLASS}>{appsAppLabel}</span>
-              </button>
+              <DesktopAppSwitcher
+                activeApp={
+                  activeItem === 'todo' ? 'todo' : activeItem === 'plugins' ? 'apps' : 'wework'
+                }
+                onNavigate={app => {
+                  if (app === 'wework') onOpenWorkbench?.()
+                  if (app === 'todo') onOpenTodo?.()
+                  if (app === 'apps') onOpenApps?.()
+                }}
+              />
             </div>
           )}
           <nav className="space-y-0.5">
@@ -3515,6 +3508,7 @@ export function DesktopSidebar({
                   devices={devices}
                   imNotificationSettings={imNotificationSettings}
                   menuOpen={imNotificationMenuOpen}
+                  menuContainerRef={settingsMenuRef}
                   onMenuOpenChange={open => {
                     if (open) setSettingsMenuOpen(false)
                     setImNotificationMenuOpen(open)

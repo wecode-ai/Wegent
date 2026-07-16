@@ -18,6 +18,7 @@ import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
 
 const BOTTOM_THRESHOLD = 48
+const SCROLLED_TO_BOTTOM_THRESHOLD = 8
 const STABLE_SCROLL_DELAYS = [0, 50]
 const MAX_SCROLL_SNAPSHOTS = 50
 const MESSAGE_ANCHOR_SELECTOR = '[data-message-id]'
@@ -86,6 +87,8 @@ interface ScrollableMessageAreaProps {
   canEditLastUserMessage?: boolean
   hideRequestUserInputBlocks?: boolean
   hiddenRequestUserInputIds?: ReadonlySet<string>
+  onAddSelectionToConversation?: (text: string) => void
+  onAskSelectionInSidebar?: (text: string) => void
   autoScrollSuspended?: boolean
   onLoadMoreBefore?: () => Promise<void> | void
   onLoadFullTranscript?: () => Promise<void> | void
@@ -153,6 +156,12 @@ function areScrollableMessageAreaPropsEqual(
     previous.hiddenRequestUserInputIds !== next.hiddenRequestUserInputIds
       ? 'hiddenRequestUserInputIds'
       : null,
+    previous.onAddSelectionToConversation !== next.onAddSelectionToConversation
+      ? 'onAddSelectionToConversation'
+      : null,
+    previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
+      ? 'onAskSelectionInSidebar'
+      : null,
     previous.autoScrollSuspended !== next.autoScrollSuspended ? 'autoScrollSuspended' : null,
     previous.onLoadMoreBefore !== next.onLoadMoreBefore ? 'onLoadMoreBefore' : null,
     previous.onLoadFullTranscript !== next.onLoadFullTranscript ? 'onLoadFullTranscript' : null,
@@ -198,6 +207,8 @@ function ScrollableMessagePaneContent({
   canEditLastUserMessage,
   hideRequestUserInputBlocks,
   hiddenRequestUserInputIds,
+  onAddSelectionToConversation,
+  onAskSelectionInSidebar,
   autoScrollSuspended = false,
   onLoadMoreBefore,
   onLoadFullTranscript,
@@ -362,7 +373,7 @@ function ScrollableMessagePaneContent({
       const overflow = element.scrollHeight > element.clientHeight + 8
       const distanceToBottom = element.scrollHeight - element.clientHeight - element.scrollTop
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
-      const isScrolledToBottom = distanceToBottom <= 1
+      const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
       isAtBottomRef.current = isAtBottom
       if (isScrolledToBottom) {
         userScrollPausedAutoFollowRef.current = false
@@ -434,7 +445,7 @@ function ScrollableMessagePaneContent({
       const overflow = element.scrollHeight > element.clientHeight + 8
       const distanceToBottom = element.scrollHeight - element.clientHeight - nextScrollTop
       const isAtBottom = distanceToBottom <= BOTTOM_THRESHOLD
-      const isScrolledToBottom = distanceToBottom <= 1
+      const isScrolledToBottom = distanceToBottom <= SCROLLED_TO_BOTTOM_THRESHOLD
       isAtBottomRef.current = isAtBottom
       userScrollPausedAutoFollowRef.current = !isScrolledToBottom
       setShowScrollButton(overflow && !isAtBottom)
@@ -768,6 +779,8 @@ function ScrollableMessagePaneContent({
                 loadingFullTranscript={loadingFullTranscript}
                 hideRequestUserInputBlocks={hideRequestUserInputBlocks}
                 hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                onAddSelectionToConversation={onAddSelectionToConversation}
+                onAskSelectionInSidebar={onAskSelectionInSidebar}
                 renderGapAfterMessage={renderTranscriptGapAfterMessage}
               />
             </>

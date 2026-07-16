@@ -218,9 +218,26 @@ const codexModel = {
   isActive: true,
 }
 
+const chatCompletionsModel = {
+  name: 'chat-completions-model',
+  type: 'public',
+  displayName: 'Chat Completions Model',
+  config: { protocol: 'openai-chat-completions' },
+  runtime: { family: 'openai.openai-chat-completions' },
+  isActive: true,
+}
+
+const responsesModel = {
+  name: 'responses-model',
+  type: 'public',
+  displayName: 'Responses Model',
+  config: { wire_api: 'responses' },
+  runtime: { family: 'openai' },
+  isActive: true,
+}
+
 function createServices() {
   return createHybridWorkbenchServices({
-    backendUrl: 'https://cloud.example.com',
     apiBaseUrl: 'https://cloud.example.com/api',
     socketBaseUrl: 'https://cloud.example.com',
     socketPath: '/socket.io',
@@ -313,18 +330,31 @@ describe('createHybridWorkbenchServices', () => {
     })
   })
 
-  it('gives local and cloud Codex models unique UI names', async () => {
+  it('keeps local model identity while giving cloud Codex models unique UI names', async () => {
     const services = createServices()
     const response = await services.modelApi.listModels()
 
-    expect(response.data.map(model => model.name)).toEqual([
-      'local:runtime:gpt-5.5',
-      'cloud:runtime:gpt-5.5',
-    ])
+    expect(response.data.map(model => model.name)).toEqual(['gpt-5.5', 'cloud:runtime:gpt-5.5'])
     expect(response.data.map(model => getModelExecutionOverride(model)?.modelName)).toEqual([
       'gpt-5.5',
       'gpt-5.5',
     ])
+  })
+
+  it('only displays Backend models that explicitly support the Responses API', async () => {
+    mocks.localListModels.mockResolvedValue({ data: [chatCompletionsModel] })
+    mocks.cloudListModels.mockResolvedValue({
+      data: [chatCompletionsModel, responsesModel],
+    })
+    const services = createServices()
+
+    const response = await services.modelApi.listModels()
+
+    expect(response.data.map(model => model.name)).toEqual([
+      'chat-completions-model',
+      'cloud:public:responses-model',
+    ])
+    expect(getModelExecutionOverride(response.data[1])?.source).toBe('cloud')
   })
 
   it('keeps default team and skills on the local services', async () => {

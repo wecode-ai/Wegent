@@ -93,7 +93,7 @@ The migration scope is executor-only:
 
 | Legacy Python behavior | Rust status | Rust coverage |
 | --- | --- | --- |
-| Run extension scripts from the task-scoped `.claude/skills/<extension>` directory | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
+| Run extension scripts from task-scoped or global `.claude/skills/<extension>` directories | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
 | Reject extension script path escapes and path meta extension names | Migrated | `executor/tests/local_backend_device_migration_contract.rs` |
 
 ## Not Ported

@@ -618,6 +618,13 @@ async fn runtime_tasks_send_ephemeral_codex_thread_uses_loaded_thread_directly()
     assert_eq!(
         calls
             .iter()
+            .filter(|call| call["method"] == "thread/unsubscribe")
+            .count(),
+        0
+    );
+    assert_eq!(
+        calls
+            .iter()
             .filter(|call| call["method"] == "turn/start")
             .count(),
         2

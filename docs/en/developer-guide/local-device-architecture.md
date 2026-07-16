@@ -57,6 +57,8 @@ flowchart LR
 
 Tauri first connects to `~/.wegent-executor/app-ipc.sock`. If the local executor sidecar is not running yet, the App starts the executor with no arguments and retries the socket connection. Sidecars started by the App are owned by the Tauri process: on macOS/Linux they run in an isolated process group, and App close or restart sends `SIGTERM` before using `SIGKILL` for remaining child processes. The dev-mode reload supervisor and the executor it launches are included in that cleanup scope. When no remote Backend address is configured, the executor only starts the local socket and does not connect to Backend. The App and executor only use newline-delimited JSON over the local socket. Executor logs are written to `~/.wegent-executor/logs/executor.log`, not to the protocol channel. The Wework renderer sends `runtime.*` and `device.execute_command` requests through Tauri commands and subscribes to Responses stream events emitted by the sidecar.
 
+Every 10 seconds, Tauri sends an `executor.health` request over the same connection to verify both directions of the IPC transport. If the request does not receive a response within 5 seconds or the transport fails, the App explicitly closes the old socket and reconnects to the still-running executor sidecar. Recovery does not restart the executor or terminate tasks that are running in the background. After the new connection is established, task events continue to flow to the WebView. This mechanism recovers half-open connections whose handles remain present but can no longer deliver events after system sleep or another transport failure.
+
 Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend WebSocket channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App over the local socket and Backend over WebSocket. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
 
 ### Runtime Task and Goal State
@@ -64,6 +66,8 @@ Backend connectivity is optional, not a required dependency for the local app. W
 The runtime task `running` field represents only whether a model turn is currently executing. After a turn completes, fails, or is cancelled, the executor must settle that field to `false`. Wework uses it to decide whether to render the stop control and running indicator, and whether a new message can be sent directly.
 
 Goals have an independent lifecycle. An `active` goal means that its objective can continue in later turns; it does not mean that a model turn is currently executing. Keeping an active goal while a task is idle must not mark the task as running again. A user's next message creates a new turn directly instead of being sent as guidance to an in-progress turn.
+
+Codex guidance is sent to the active turn through the shared app-server. If that turn finishes or changes while guidance is being sent, the executor reports the race as `no_active_turn`; Wework then sends the same content as a normal follow-up message so user input is preserved without a misleading send failure.
 
 ### Backend Device Chat Task REST Entrypoint
 
@@ -170,6 +174,13 @@ the local device currently registers and handles:
 - `runtime:rpc`
 - `device:upgrade`
 - `device:run_extension`
+
+The `extension_scope` field of `device:run_extension` accepts `task` or
+`global` and defaults to `task` when omitted. Task-scoped extensions run from
+the current task's `.claude/skills/<extension>` directory; global extensions
+run from `~/.claude/skills/<extension>` for the user running the executor. The
+script path must remain inside the selected extension directory, and other
+scope values are rejected.
 
 The migration coverage matrix is tracked in
 `executor/docs/LOCAL_DEVICE_PYTHON_MIGRATION_TESTS.md`. When adding a local

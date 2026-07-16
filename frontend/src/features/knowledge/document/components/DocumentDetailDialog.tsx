@@ -14,6 +14,7 @@ import {
   Save,
   Eye,
   Code,
+  Download,
   Maximize2,
   Minimize2,
 } from 'lucide-react'
@@ -39,10 +40,13 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useDocumentDetail } from '../hooks/useDocumentDetail'
 import { ChunksSection } from './ChunksSection'
 import { DocumentSummarySection } from './DocumentSummarySection'
 import { DocumentContentViewer } from './DocumentContentViewer'
+import { KnowledgeSourcePreview } from './KnowledgeSourcePreview'
+import { downloadAttachment, formatFileSize } from '@/apis/attachments'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
@@ -58,6 +62,7 @@ import {
 import { formatDateTime } from '@/utils/dateTime'
 import { parseUTCDate } from '@/lib/utils'
 import { isDocumentEditable } from '../utils/documentUtils'
+import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
@@ -113,6 +118,14 @@ export function DocumentDetailDialog({
   const editStartContentRef = useRef<string>('')
   // View mode: 'preview' for markdown rendering/formatted JSON, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
+  const [contentSourceMode, setContentSourceMode] = useState<'parsed' | 'source'>(() =>
+    document && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
+  )
+  const [isSummaryOpen, setIsSummaryOpen] = useState(contentSourceMode === 'parsed')
+  const summaryManuallyToggledRef = useRef(false)
+  const [openedDocumentId, setOpenedDocumentId] = useState<number | null>(
+    open ? (document?.id ?? null) : null
+  )
   // Fullscreen mode for editing
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Chunk storage configuration - controls whether chunks section is visible
@@ -151,25 +164,29 @@ export function DocumentDetailDialog({
     () => isDocumentEditable(document?.source_type, document?.file_extension, canEdit),
     [document?.source_type, document?.file_extension, canEdit]
   )
+  const canPreviewSource = useMemo(
+    () => Boolean(document && isKnowledgeSourcePreviewSupported(document)),
+    [document]
+  )
+  const isSourceView = contentSourceMode === 'source' && canPreviewSource
 
   // Track if content has changed (compare against content at edit start)
   const hasChanges = editedContent !== (editStartContentRef.current || fullContent || '')
 
-  // Reset editing state when dialog closes or document changes
-  useEffect(() => {
-    if (!open) {
+  // Reset before rendering children on each open cycle or document switch.
+  const activeDocumentId = open ? (document?.id ?? null) : null
+  if (openedDocumentId !== activeDocumentId) {
+    setOpenedDocumentId(activeDocumentId)
+    if (activeDocumentId !== null) {
+      const nextContentSourceMode = canPreviewSource ? 'source' : 'parsed'
       setIsEditing(false)
       setEditedContent('')
       setIsFullscreen(false)
+      setContentSourceMode(nextContentSourceMode)
+      summaryManuallyToggledRef.current = false
+      setIsSummaryOpen(nextContentSourceMode === 'parsed')
     }
-  }, [open])
-
-  // Reset fullscreen when exiting edit mode
-  useEffect(() => {
-    if (!isEditing) {
-      setIsFullscreen(false)
-    }
-  }, [isEditing])
+  }
 
   // Build the full accessible URL using virtual path
   const documentFullUrl = document
@@ -207,6 +224,15 @@ export function DocumentDetailDialog({
     refresh()
   }
 
+  const handleSourceDownload = useCallback(async () => {
+    if (!document?.attachment_id) return
+    try {
+      await downloadAttachment(document.attachment_id, document.name)
+    } catch {
+      toast.error(t('document.document.detail.sourcePreview.downloadFailed'))
+    }
+  }, [document?.attachment_id, document?.name, t])
+
   const handleEdit = useCallback(async () => {
     if (!isEditable) return
 
@@ -242,7 +268,7 @@ export function DocumentDetailDialog({
     // Store the content at edit start for accurate change detection
     editStartContentRef.current = contentToEdit
     setIsEditing(true)
-  }, [isEditable, hasMoreContent, loadAllContent, fullContent])
+  }, [document?.file_extension, isEditable, hasMoreContent, loadAllContent, fullContent])
 
   const handleSave = async () => {
     if (!document || !isEditable) return
@@ -252,6 +278,7 @@ export function DocumentDetailDialog({
       await knowledgeBaseApi.updateDocumentContent(document.id, editedContent)
       toast.success(t('document.document.detail.saveSuccess'))
       setIsEditing(false)
+      setIsFullscreen(false)
       // Refresh to get the updated content
       refresh()
     } catch (err) {
@@ -294,12 +321,14 @@ export function DocumentDetailDialog({
       setShowDiscardDialog(true)
     } else {
       setIsEditing(false)
+      setIsFullscreen(false)
     }
   }, [hasChanges])
 
   const handleDiscardChanges = () => {
     setShowDiscardDialog(false)
     setIsEditing(false)
+    setIsFullscreen(false)
     setEditedContent('')
     editStartContentRef.current = ''
   }
@@ -318,34 +347,126 @@ export function DocumentDetailDialog({
             'flex flex-col p-0',
             isFullscreen
               ? 'max-w-[100vw] w-[100vw] max-h-[100vh] h-[100vh] rounded-none'
-              : 'max-w-4xl max-h-[85vh]'
+              : canPreviewSource
+                ? 'max-w-6xl w-[96vw] max-h-[90vh] h-[90vh]'
+                : 'max-w-4xl max-h-[85vh]'
           )}
           hideCloseButton={isFullscreen}
-          preventEscapeClose={isEditing}
+          preventEscapeClose={isEditing || isFullscreen}
           preventOutsideClick={true}
         >
-          {/* Header - hidden in fullscreen mode */}
-          {!isFullscreen && (
-            <DialogHeader className="px-6 py-4 border-b border-border flex-shrink-0">
-              <div className="flex items-start gap-3">
-                <div className="p-2 bg-primary/10 rounded-lg flex-shrink-0 mt-0.5">
-                  <FileText className="w-5 h-5 text-primary" />
+          {/* Keep source controls available so fullscreen always has an exit path. */}
+          {(!isFullscreen || isSourceView) && (
+            <DialogHeader
+              className={cn(
+                'flex-shrink-0 border-b border-border',
+                isFullscreen ? 'px-4 py-2' : 'py-4 pl-6 pr-12'
+              )}
+            >
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="mt-0.5 flex-shrink-0 rounded-lg bg-primary/10 p-2">
+                    <FileText className="h-5 w-5 text-primary" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <DialogTitle className="truncate text-base font-medium text-text-primary">
+                      {document.name}
+                    </DialogTitle>
+                    {!isFullscreen && (
+                      <DialogDescription className="mt-1 flex items-center gap-2 text-xs text-text-muted">
+                        <span>{document.file_extension.toUpperCase()}</span>
+                        <span>•</span>
+                        <span>{formatFileSize(document.file_size)}</span>
+                        <span>•</span>
+                        <span>
+                          {new Date(document.created_at).toLocaleDateString(getCurrentLanguage(), {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                          })}
+                        </span>
+                      </DialogDescription>
+                    )}
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <DialogTitle className="text-base font-medium text-text-primary truncate">
-                    {document.name}
-                  </DialogTitle>
-                  <DialogDescription className="flex items-center gap-2 mt-1 text-xs text-text-muted">
-                    <span>{document.file_extension.toUpperCase()}</span>
-                    <span>•</span>
-                    <span>
-                      {new Date(document.created_at).toLocaleDateString(getCurrentLanguage(), {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                      })}
-                    </span>
-                  </DialogDescription>
+
+                <div className="flex flex-shrink-0 items-center gap-2 max-md:w-full">
+                  {!isEditing && canPreviewSource && (
+                    <div
+                      className={cn(
+                        'flex flex-shrink-0 items-center gap-2',
+                        !isSourceView && 'invisible pointer-events-none'
+                      )}
+                      aria-hidden={!isSourceView}
+                      data-testid="knowledge-source-preview-actions"
+                    >
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={handleSourceDownload}
+                        className="max-md:min-h-[44px] max-md:min-w-[44px]"
+                        aria-label={t('document.document.detail.sourcePreview.download')}
+                        data-testid="knowledge-source-preview-download"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        <span className="hidden md:inline">
+                          {t('document.document.detail.sourcePreview.download')}
+                        </span>
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsFullscreen(!isFullscreen)}
+                        className="max-md:min-h-[44px] max-md:min-w-[44px]"
+                        aria-label={
+                          isFullscreen
+                            ? t('document.document.detail.exitFullscreen')
+                            : t('document.document.detail.fullscreen')
+                        }
+                        data-testid="knowledge-source-preview-fullscreen"
+                      >
+                        {isFullscreen ? (
+                          <Minimize2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <Maximize2 className="h-3.5 w-3.5" />
+                        )}
+                      </Button>
+                    </div>
+                  )}
+
+                  {!isFullscreen && !isEditing && canPreviewSource && (
+                    <Tabs
+                      value={contentSourceMode}
+                      onValueChange={value => {
+                        const nextMode = value as 'parsed' | 'source'
+                        setContentSourceMode(nextMode)
+                        setIsFullscreen(false)
+                        if (!summaryManuallyToggledRef.current) {
+                          setIsSummaryOpen(nextMode === 'parsed')
+                        }
+                      }}
+                      className="max-md:flex-1"
+                    >
+                      <TabsList className="h-8 max-md:grid max-md:h-11 max-md:w-full max-md:grid-cols-2">
+                        <TabsTrigger
+                          value="source"
+                          className="h-7 px-3 text-xs max-md:min-h-[44px]"
+                          data-testid="knowledge-document-source-tab"
+                        >
+                          {t('document.document.detail.sourceFile')}
+                        </TabsTrigger>
+                        <TabsTrigger
+                          value="parsed"
+                          className="h-7 px-3 text-xs max-md:min-h-[44px]"
+                          data-testid="knowledge-document-parsed-tab"
+                        >
+                          {t('document.document.detail.parsedContent')}
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  )}
                 </div>
               </div>
             </DialogHeader>
@@ -354,12 +475,38 @@ export function DocumentDetailDialog({
           {/* Content */}
           <div
             className={cn(
-              'flex-1 px-6 py-4',
-              isEditing && isFullscreen ? 'flex flex-col overflow-hidden' : 'overflow-y-auto',
+              'flex-1 min-h-0 px-6 py-4',
+              isSourceView || (isEditing && isFullscreen)
+                ? 'flex flex-col overflow-hidden'
+                : 'overflow-y-auto',
               isEditing && !isFullscreen && 'flex flex-col'
             )}
           >
-            {loading ? (
+            {!isEditing && !isFullscreen && detail?.summary && (
+              <DocumentSummarySection
+                summary={detail.summary}
+                onRefresh={handleRefresh}
+                open={isSummaryOpen}
+                onOpenChange={nextOpen => {
+                  summaryManuallyToggledRef.current = true
+                  setIsSummaryOpen(nextOpen)
+                }}
+                className="mb-4 flex-shrink-0"
+                contentClassName={isSourceView ? 'max-h-[35vh] overflow-y-auto pr-1' : undefined}
+              />
+            )}
+
+            {canPreviewSource && (
+              <KnowledgeSourcePreview
+                key={`${document.id}:${document.attachment_id}`}
+                document={document}
+                active={open}
+                onDownload={handleSourceDownload}
+                className={cn(!isSourceView && 'hidden')}
+              />
+            )}
+
+            {isSourceView ? null : loading ? (
               <div className="flex items-center justify-center py-12">
                 <Spinner />
               </div>
@@ -377,11 +524,6 @@ export function DocumentDetailDialog({
                   isEditing && !isFullscreen && 'flex-1 flex flex-col space-y-6'
                 )}
               >
-                {/* Summary Section - only show when not editing */}
-                {!isEditing && detail?.summary && (
-                  <DocumentSummarySection summary={detail.summary} onRefresh={handleRefresh} />
-                )}
-
                 {/* Chunks Section - only show when not editing and chunk storage is enabled */}
                 {!isEditing && document && chunkStorageEnabled && (
                   <ChunksSection documentId={document.id} enabled={open && !loading} />

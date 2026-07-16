@@ -525,6 +525,7 @@ export interface RuntimeTranscriptResponse {
   taskId?: string
   workspacePath: string
   runtime: RuntimeName
+  running?: boolean
   title?: string | null
   messages: NormalizedRuntimeMessage[]
   contextUsage?: RuntimeContextUsage | null
@@ -2006,6 +2007,7 @@ export interface UnifiedModel {
   provider?: string | null
   modelId?: string | null
   namespace?: string
+  resourceUserId?: number
   config?: Record<string, unknown>
   runtime?: ModelRuntime | null
   isActive?: boolean
@@ -2059,6 +2061,9 @@ export interface Attachment {
   created_at: string
   local_preview_url?: string
   local_path?: string
+  ui_group_id?: string
+  ui_group_role?: 'primary' | 'companion'
+  ui_kind?: 'appshot'
 }
 
 export interface AttachmentUploadProgress {

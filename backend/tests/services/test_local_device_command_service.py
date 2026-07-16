@@ -2082,7 +2082,7 @@ async def test_execute_configured_device_command_routes_cloud_directory_command_
 
 
 @pytest.mark.asyncio
-async def test_execute_configured_device_command_routes_remote_directory_command(
+async def test_execute_configured_device_command_routes_remote_home_directory_command(
     monkeypatch,
 ):
     """Remote devices should use their submitted device ID for dispatch."""
@@ -2093,7 +2093,7 @@ async def test_execute_configured_device_command_routes_remote_directory_command
         return_value={
             "success": True,
             "exit_code": 0,
-            "stdout": "/srv/repo\n",
+            "stdout": "/home/ubuntu\n",
             "stderr": "",
             "duration": 0.02,
             "timed_out": False,
@@ -2123,16 +2123,17 @@ async def test_execute_configured_device_command_routes_remote_directory_command
         db=object(),
         user_id=7,
         device_id="remote-device",
-        command_key="pwd",
+        command_key="home_dir",
     )
 
-    assert result["stdout"] == "/srv/repo\n"
+    assert result["stdout"] == "/home/ubuntu\n"
     online_mock.assert_awaited_once_with(
         7,
         "remote-device",
         DeviceType.REMOTE,
     )
     assert execute_mock.await_args.kwargs["device_id"] == "remote-device"
+    assert execute_mock.await_args.kwargs["command"] == "printenv HOME"
 
 
 @pytest.mark.asyncio

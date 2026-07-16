@@ -86,14 +86,22 @@ describe('ChromeTitlebar', () => {
     render(<ChromeTitlebar tabs={appTabs} activeKey="wework" onNavigate={vi.fn()} iconOnlyTabs />)
 
     const weworkTab = screen.getByTestId('chrome-tab-wework')
+    const todoTab = screen.getByTestId('chrome-tab-todo')
     const appsTab = screen.getByTestId('chrome-tab-apps')
 
     expect(weworkTab).toHaveClass('w-8', 'min-w-0', 'px-0')
+    expect(todoTab).toHaveClass('w-8', 'min-w-0', 'px-0')
     expect(appsTab).toHaveClass('w-8', 'min-w-0', 'px-0')
     expect(weworkTab).toHaveAttribute('title', 'WeWork')
+    expect(todoTab).toHaveAttribute('title', 'TODO')
     expect(appsTab).toHaveAttribute('title', '应用')
     expect(weworkTab.querySelector('.sr-only')).toHaveTextContent('WeWork')
+    expect(todoTab.querySelector('.sr-only')).toHaveTextContent('TODO')
     expect(appsTab.querySelector('.sr-only')).toHaveTextContent('应用')
+    expect(
+      weworkTab.compareDocumentPosition(todoTab) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(todoTab.compareDocumentPosition(appsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   test('renders after-tabs content between tabs and titlebar actions', () => {
@@ -159,7 +167,7 @@ describe('ChromeTitlebar', () => {
     enableTauri()
     render(<ChromeTitlebar tabs={mockTabs} activeKey="wework" onNavigate={vi.fn()} />)
     const dragRegion = screen.getByTestId('macos-traffic-light-spacer')
-    expect(dragRegion.className).toContain('w-[95px]')
+    expect(dragRegion.className).toContain('w-[92px]')
     expect(dragRegion).toHaveClass('self-stretch')
     expect(within(dragRegion).getByTestId('macos-titlebar-drag-region')).toHaveAttribute(
       'data-tauri-drag-region'

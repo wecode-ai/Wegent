@@ -588,6 +588,40 @@ describe('workbench project chat hooks', () => {
     expect(revokeObjectUrl).toHaveBeenCalledWith('blob:second-preview')
   })
 
+  test('removes an Appshot image and its hidden text context together', async () => {
+    const appshot: Attachment = {
+      id: -10,
+      filename: 'appshot.png',
+      file_size: 1200,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-07-15T00:00:00.000Z',
+      ui_group_id: 'appshot-capture-1',
+      ui_group_role: 'primary',
+      ui_kind: 'appshot',
+    }
+    const textContext: Attachment = {
+      ...appshot,
+      id: -11,
+      filename: 'appshot-context.txt',
+      mime_type: 'text/plain',
+      file_extension: '.txt',
+      ui_group_role: 'companion',
+    }
+    const remove = vi.fn().mockResolvedValue(undefined)
+    const { result } = renderHook(() => useWorkbenchAttachments({ deleteAttachment: remove }))
+
+    act(() => {
+      result.current.addExistingAttachment(appshot)
+      result.current.addExistingAttachment(textContext)
+    })
+    await act(async () => result.current.removeAttachment(appshot.id))
+
+    expect(result.current.attachments).toEqual([])
+    expect(remove).not.toHaveBeenCalled()
+  })
+
   test('uploads attachments without restricting file extensions', async () => {
     const attachment: Attachment = {
       id: 43,

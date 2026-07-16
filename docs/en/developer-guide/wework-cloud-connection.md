@@ -61,6 +61,8 @@ Packaged release builds of Wework must keep one active app paired with one local
 
 Debug builds do not enable this single-instance or cleanup policy. Local development may run multiple Wework debug instances at the same time, each with its own `app-runtime/wework-.../app-ipc.sock` socket. Release cleanup must also inspect each candidate executor process environment and terminate only executors using the release fixed socket, so it does not kill executors owned by debug instances.
 
+Closing to the tray destroys only the current WebView; the Wework process, executor, and Codex app-server keep running. After the window is recreated, the `running` field returned by `runtime.tasks.transcript` restores task execution state. That field is authoritative only when backed by an in-memory executor task or the Codex app-server's live thread status; it must not be inferred from stale `streaming` messages in transcript history. After a normal or abnormal full app exit, the new executor has no activity state from the previous process, so old messages cannot mark an interrupted task as running again.
+
 ## Local CLI Entry
 
 On macOS, the Wework desktop app installs a user-level `wework` launcher at `~/.local/bin/wework` during startup. Wework generates and owns this file instead of symlinking it to build output or app resources, so debug target cleanup, release app updates, and bundle path changes do not leave a broken command. If that path already exists and is not a Wework-managed launcher, Wework leaves it untouched and writes an explicit warning to the app log.

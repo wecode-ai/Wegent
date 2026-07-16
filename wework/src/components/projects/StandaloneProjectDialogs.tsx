@@ -57,11 +57,7 @@ function getRemoteDeviceNetworkLabel(device: DeviceInfo): string | null {
 }
 
 function getRemoteDeviceLabel(device: DeviceInfo): string {
-  const networkLabel = getRemoteDeviceNetworkLabel(device)
-  const deviceLabel = getStandaloneDeviceLabel(device)
-  if (!networkLabel) return deviceLabel
-  if (networkLabel === deviceLabel) return networkLabel
-  return `${networkLabel} · ${deviceLabel}`
+  return getRemoteDeviceNetworkLabel(device) ?? getStandaloneDeviceLabel(device)
 }
 
 function getUsableStandaloneDevices(
@@ -393,6 +389,7 @@ export function StandaloneFolderProjectDialog({
     isLocalDevice(activeDevice) &&
     preferNativeLocalPicker &&
     !nativePickerFallback
+  const nativePickerDeviceId = activeDevice?.device_id ?? null
 
   useEffect(() => {
     if (!open || !showStartupCommand || startupCommand || startupCommandError) return undefined
@@ -433,27 +430,22 @@ export function StandaloneFolderProjectDialog({
       nativePickerStartedRef.current = false
       return undefined
     }
-    if (!shouldUseNativeLocalPicker || !activeDevice) return undefined
+    if (!shouldUseNativeLocalPicker || !nativePickerDeviceId) return undefined
     if (nativePickerStartedRef.current) return undefined
 
-    nativePickerStartedRef.current = true
-    let cancelled = false
-
-    void (async () => {
-      try {
-        await Promise.resolve()
-        if (cancelled) return
-        setNativePickerError(null)
-        const selectedPath = await openNativeProjectDirectoryPicker()
-        if (cancelled) return
-        if (!selectedPath) {
+    const openPickerTimer = window.setTimeout(() => {
+      nativePickerStartedRef.current = true
+      void (async () => {
+        try {
+          setNativePickerError(null)
+          const selectedPath = await openNativeProjectDirectoryPicker()
+          if (!selectedPath) {
+            closeDialog()
+            return
+          }
+          await onOpenStandaloneWorkspace?.(nativePickerDeviceId, selectedPath)
           closeDialog()
-          return
-        }
-        await onOpenStandaloneWorkspace?.(activeDevice.device_id, selectedPath)
-        if (!cancelled) closeDialog()
-      } catch (error) {
-        if (!cancelled) {
+        } catch (error) {
           console.error('[Wework project] native picker failed', error)
           setNativePickerError(
             error instanceof Error
@@ -461,19 +453,17 @@ export function StandaloneFolderProjectDialog({
               : t('workbench.project_directory_select_failed', '项目打开失败')
           )
         }
-      }
-    })()
+      })()
+    }, 0)
 
     return () => {
-      cancelled = true
+      window.clearTimeout(openPickerTimer)
     }
   }, [
-    activeDevice,
     closeDialog,
-    mode,
+    nativePickerDeviceId,
     onOpenStandaloneWorkspace,
     open,
-    preferNativeLocalPicker,
     shouldUseNativeLocalPicker,
     t,
   ])
@@ -538,7 +528,13 @@ export function StandaloneFolderProjectDialog({
   }
 
   return createPortal(
-    <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
+    <div
+      data-testid="standalone-folder-project-dialog-overlay"
+      onClick={event => {
+        if (event.target === event.currentTarget) closeDialog()
+      }}
+      className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
+    >
       <div
         role="dialog"
         aria-modal="true"
@@ -546,7 +542,7 @@ export function StandaloneFolderProjectDialog({
         className={[
           'max-h-[92vh] w-full overflow-y-auto shadow-2xl',
           usesRemoteFolderPicker
-            ? 'max-w-[720px] rounded-[28px] border border-[#3a3a3a] bg-[#262626] p-6 text-white'
+            ? 'max-w-[520px] rounded-[24px] border border-[#3a3a3a] bg-[#262626] p-5 text-white'
             : 'max-w-[760px] rounded-2xl border border-border bg-surface p-6 text-text-primary',
         ].join(' ')}
       >
@@ -555,7 +551,7 @@ export function StandaloneFolderProjectDialog({
             <h2
               className={
                 usesRemoteFolderPicker
-                  ? 'text-3xl font-semibold leading-9'
+                  ? 'text-xl font-semibold leading-7'
                   : 'text-2xl font-semibold leading-8'
               }
             >
@@ -564,7 +560,7 @@ export function StandaloneFolderProjectDialog({
             <p
               className={
                 usesRemoteFolderPicker
-                  ? 'mt-3 max-w-[620px] text-lg leading-7 text-[#9a9a9a]'
+                  ? 'mt-2 max-w-[440px] text-sm leading-5 text-[#9a9a9a]'
                   : 'mt-2 max-w-[560px] text-sm leading-6 text-text-secondary'
               }
             >
@@ -577,7 +573,7 @@ export function StandaloneFolderProjectDialog({
             onClick={closeDialog}
             className={
               usesRemoteFolderPicker
-                ? 'flex h-10 min-w-[40px] shrink-0 items-center justify-center rounded-lg text-[#b8b8b8] hover:bg-white/10 hover:text-white'
+                ? 'flex h-8 min-w-[32px] shrink-0 items-center justify-center rounded-lg text-[#b8b8b8] hover:bg-white/10 hover:text-white'
                 : 'flex h-10 min-w-[40px] shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted'
             }
             aria-label={t('workbench.close_dialog', '关闭')}
@@ -587,17 +583,17 @@ export function StandaloneFolderProjectDialog({
         </div>
 
         {usesRemoteFolderPicker && selectableDevices.length > 0 && !addingRemoteDevice && (
-          <label className="mt-7 block">
-            <span className="text-lg font-semibold text-white">
+          <label className="mt-5 block">
+            <span className="text-sm font-medium text-white">
               {t('workbench.remote_host', '远程主机')}
             </span>
-            <span className="mt-3 flex h-14 items-center gap-3 rounded-[16px] border border-[#454545] bg-[#2b2b2b] px-4">
-              <Globe2 className="h-5 w-5 text-cyan-400" />
+            <span className="mt-2 flex h-10 items-center gap-2.5 rounded-[10px] border border-[#454545] bg-[#2b2b2b] px-3">
+              <Globe2 className="h-4 w-4 text-cyan-400" />
               <select
                 data-testid="standalone-remote-device-select"
                 value={activeDevice?.device_id ?? ''}
                 onChange={event => setActiveDeviceId(event.target.value)}
-                className="min-w-0 flex-1 bg-transparent text-lg text-white outline-none"
+                className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none"
               >
                 {selectableDevices.map(device => (
                   <option key={device.device_id} value={device.device_id}>
@@ -755,9 +751,9 @@ export function StandaloneFolderProjectDialog({
             </p>
           )
         ) : (
-          <div className="mt-7">
+          <div className="mt-5">
             {usesRemoteFolderPicker && (
-              <h3 className="mb-3 text-lg font-semibold text-white">
+              <h3 className="mb-2 text-sm font-medium text-white">
                 {t('workbench.project_directory_path', '文件夹路径')}
               </h3>
             )}
@@ -779,7 +775,7 @@ export function StandaloneFolderProjectDialog({
               }}
             />
             {usesRemoteFolderPicker && (
-              <p className="mt-5 text-base leading-6 text-[#9a9a9a]">
+              <p className="mt-4 text-[13px] leading-5 text-[#9a9a9a]">
                 {t(
                   'workbench.remote_project_directory_note',
                   '此远程文件夹将作为单独项目显示在侧边栏中。'

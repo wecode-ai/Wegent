@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { StrictMode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { createDeviceApi } from '@/api/devices'
@@ -978,7 +979,7 @@ describe('DesktopWorkbenchLayout', () => {
       sendRuntimePaneMessage: vi.fn().mockResolvedValue(true),
       cancelRuntimePaneTask: vi.fn().mockResolvedValue(true),
       sendCurrentInput: props.onSend ?? baseProps.onSend,
-      retryFailedMessage: vi.fn().mockResolvedValue(undefined),
+      retryFailedMessage: vi.fn().mockResolvedValue(true),
       pauseCurrentResponse: vi.fn().mockResolvedValue(undefined),
       loadTurnFileChangesDiff: vi.fn().mockResolvedValue(''),
       revertTurnFileChanges: vi.fn().mockResolvedValue({ changed_files: [] }),
@@ -1021,6 +1022,7 @@ describe('DesktopWorkbenchLayout', () => {
       loadTranscriptTurnNavigationItem: vi.fn().mockResolvedValue(undefined),
       loadTranscriptGap: vi.fn().mockResolvedValue(undefined),
       send: props.onSend ?? baseProps.onSend,
+      retryFailedMessage: vi.fn().mockResolvedValue(true),
       sendRequestUserInputResponse:
         props.onRequestUserInputSubmit ?? baseProps.onRequestUserInputSubmit,
       ignoreRequestUserInput: vi.fn(),
@@ -1533,7 +1535,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const desktopContent = screen.getByTestId('desktop-workbench-content')
-    expect(desktopContent).toHaveClass('pt-11')
+    expect(desktopContent).toHaveClass('overflow-y-auto', 'pt-11')
     expect(desktopContent.style.getPropertyValue('--desktop-floating-composer-clearance')).toBe('')
     expect(screen.getByTestId('desktop-chat-scroll')).toHaveClass(
       'h-full',
@@ -2254,6 +2256,9 @@ describe('DesktopWorkbenchLayout', () => {
       screen.getByTestId('chrome-tab-wework')
     )
     expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
+      screen.getByTestId('chrome-tab-todo')
+    )
+    expect(screen.getByTestId('desktop-sidebar-chrome-controls')).toContainElement(
       screen.getByTestId('chrome-tab-apps')
     )
     expect(screen.getByTestId('chrome-tab-wework')).toHaveClass('h-8', 'w-8', 'bg-black/[0.045]')
@@ -2326,6 +2331,12 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workbench-main-header-left-controls')).toContainElement(
       screen.getByTestId('expand-sidebar-button')
     )
+    const collapsedHeaderControls = within(
+      screen.getByTestId('workbench-main-header-left-controls')
+    )
+    expect(collapsedHeaderControls.getByTestId('chrome-tab-wework')).toBeInTheDocument()
+    expect(collapsedHeaderControls.getByTestId('chrome-tab-todo')).toBeInTheDocument()
+    expect(collapsedHeaderControls.getByTestId('chrome-tab-apps')).toBeInTheDocument()
     expect(screen.getByTestId('workbench-pane-task-title')).toHaveClass(
       'relative',
       'h-full',
@@ -2591,6 +2602,13 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.getByRole('heading', { name: '我们该做什么？' })).toBe(composerHeading)
     expect(composerHeading).toBeVisible()
+  })
+
+  test('does not show a page scrollbar for the empty task launcher', () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    expect(screen.getByTestId('desktop-workbench-content')).toHaveClass('overflow-hidden')
+    expect(screen.getByTestId('desktop-workbench-content')).not.toHaveClass('overflow-y-auto')
   })
 
   test('closes the settings menu when clicking outside it', async () => {
@@ -2869,6 +2887,7 @@ describe('DesktopWorkbenchLayout', () => {
               device_type: 'remote',
               bind_shell: 'claudecode',
               executor_version: '1.8.5',
+              client_ip: '127.0.0.1',
             },
           ],
         }}
@@ -2879,8 +2898,10 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
 
     const select = screen.getByTestId('standalone-remote-device-select')
-    expect(select).toHaveTextContent('10.201.3.200 · Cloud Device')
-    expect(select).toHaveTextContent('Remote Device')
+    expect(select).toHaveTextContent('10.201.3.200')
+    expect(select).toHaveTextContent('127.0.0.1')
+    expect(select).not.toHaveTextContent('Cloud Device')
+    expect(select).not.toHaveTextContent('Remote Device')
     expect(select).not.toHaveTextContent('Local Device')
   })
 
@@ -3042,6 +3063,17 @@ describe('DesktopWorkbenchLayout', () => {
     expect(document.body).toContainElement(overlay)
     expect(document.querySelector('aside')).not.toContainElement(overlay)
     expect(overlay).toHaveClass('fixed', 'inset-0')
+    expect(dialog).toHaveClass('max-w-[520px]', 'rounded-[24px]', 'p-5')
+  })
+
+  test('closes the standalone remote project dialog on backdrop click', async () => {
+    render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-remote-option'))
+    await userEvent.click(screen.getByTestId('standalone-folder-project-dialog-overlay'))
+
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
   })
 
   test('opens blank project dialog from the project work menu add option', async () => {
@@ -3110,20 +3142,66 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(onRefreshDevices).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'New remote project' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '新建远程项目' })).toBeInTheDocument()
   })
 
   test('opens a standalone Codex workspace from an existing local folder selected in Finder', async () => {
+    const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/Users/alice')
     const onOpenStandaloneWorkspace = vi.fn()
-    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(async () => {
-      expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
-      return '/Users/alice/repo'
-    })
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(
+      async initialDirectory => {
+        expect(initialDirectory).toBeUndefined()
+        expect(screen.queryByTestId('projects-create-button-menu')).not.toBeInTheDocument()
+        return '/Users/alice/repo'
+      }
+    )
+
+    render(
+      <StrictMode>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          state={{
+            ...baseProps.state,
+            devices: [
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'sifang-executor',
+                status: 'online',
+                is_default: true,
+                bind_shell: 'claudecode',
+                device_type: 'local',
+                executor_version: '1.8.5',
+              },
+            ],
+          }}
+        />
+      </StrictMode>
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+    expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
+    )
+    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  })
+
+  test('opens Finder without waiting for the local executor home directory', async () => {
+    const onGetDeviceHomeDirectory = vi.fn(() => new Promise<string>(() => undefined))
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
-        onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+        onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
         state={{
           ...baseProps.state,
           devices: [
@@ -3148,10 +3226,105 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
     )
+    expect(onGetDeviceHomeDirectory).not.toHaveBeenCalled()
+  })
+
+  test('opens the native folder picker under React StrictMode', async () => {
+    const onOpenStandaloneWorkspace = vi.fn()
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(
+      '/Users/alice/repo'
+    )
+
+    render(
+      <StrictMode>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          onOpenStandaloneWorkspace={onOpenStandaloneWorkspace}
+          state={{
+            ...baseProps.state,
+            devices: [
+              {
+                id: 1,
+                device_id: 'device-1',
+                name: 'sifang-executor',
+                status: 'online',
+                is_default: true,
+                bind_shell: 'claudecode',
+                device_type: 'local',
+                executor_version: '1.8.5',
+              },
+            ],
+          }}
+        />
+      </StrictMode>
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
     await waitFor(() =>
       expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
     )
-    expect(screen.queryByTestId('standalone-folder-project-dialog')).not.toBeInTheDocument()
+  })
+
+  test('keeps the native folder picker active while callback identities change', async () => {
+    const onOpenStandaloneWorkspace = vi.fn()
+    let resolvePicker: (path: string) => void = () => undefined
+    nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolvePicker = resolve
+        })
+    )
+    const props = {
+      ...baseProps,
+      state: {
+        ...baseProps.state,
+        devices: [
+          {
+            id: 1,
+            device_id: 'device-1',
+            name: 'sifang-executor',
+            status: 'online' as const,
+            is_default: true,
+            bind_shell: 'claudecode' as const,
+            device_type: 'local' as const,
+            executor_version: '1.8.5',
+          },
+        ],
+      },
+    }
+    const view = render(
+      <DesktopWorkbenchLayout
+        {...props}
+        onOpenStandaloneWorkspace={(deviceId, workspacePath) =>
+          onOpenStandaloneWorkspace(deviceId, workspacePath)
+        }
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('projects-create-button'))
+    await userEvent.click(screen.getByTestId('project-create-existing-option'))
+    await waitFor(() =>
+      expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).toHaveBeenCalledTimes(1)
+    )
+
+    view.rerender(
+      <DesktopWorkbenchLayout
+        {...props}
+        onOpenStandaloneWorkspace={(deviceId, workspacePath) =>
+          onOpenStandaloneWorkspace(deviceId, workspacePath)
+        }
+      />
+    )
+    resolvePicker('/Users/alice/repo')
+
+    await waitFor(() =>
+      expect(onOpenStandaloneWorkspace).toHaveBeenCalledWith('device-1', '/Users/alice/repo')
+    )
   })
 
   test('does not open the in-app folder dialog when the native folder picker is cancelled', async () => {
@@ -3258,7 +3431,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => expect(onGetDeviceHomeDirectory).toHaveBeenCalledWith('device-1'))
     expect(screen.getByTestId('standalone-folder-project-dialog')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'New remote project' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '新建远程项目' })).toBeInTheDocument()
     expect(screen.getByTestId('standalone-remote-device-select')).toHaveValue('device-1')
     expect(nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker).not.toHaveBeenCalled()
   })
@@ -3389,6 +3562,57 @@ describe('DesktopWorkbenchLayout', () => {
       '192.0.2.10'
     )
     expect(within(projectRow).getByTestId('project-new-conversation-button')).not.toBeDisabled()
+  })
+
+  test('shows a loopback IP instead of the device ID for a remote project', () => {
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          devices: [
+            {
+              id: 1,
+              device_id: '9d317900-0c00-4000-8000-000000000000',
+              name: 'Remote Device',
+              status: 'online' as const,
+              is_default: false,
+              device_type: 'remote' as const,
+              bind_shell: 'claudecode',
+              client_ip: '127.0.0.1',
+            },
+            {
+              id: 2,
+              device_id: 'local-device',
+              name: 'Local Device',
+              status: 'online' as const,
+              is_default: true,
+              device_type: 'local' as const,
+              bind_shell: 'claudecode',
+            },
+          ],
+          projects: [
+            {
+              id: 7,
+              name: 'hello',
+              config: {
+                execution: {
+                  targetType: 'remote',
+                  deviceId: '9d317900-0c00-4000-8000-000000000000',
+                },
+              },
+              tasks: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    const status = within(screen.getByTestId('project-row-7')).getByTestId(
+      'project-device-status-7'
+    )
+    expect(status).toHaveTextContent('127.0.0.1')
+    expect(status).not.toHaveTextContent('9d317900')
   })
 
   test('hides project device network status when only one device exists', () => {
@@ -3874,6 +4098,20 @@ describe('DesktopWorkbenchLayout', () => {
       'https://weibo.com/'
     )
     expect(screen.getByTestId('workspace-browser-frame')).toHaveClass('bg-background')
+  })
+
+  test('deactivates the right workspace browser while settings are open', async () => {
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-browser-option'))
+    expect(screen.getByTestId('workspace-browser-panel')).not.toHaveClass('hidden')
+
+    await userEvent.click(screen.getByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveClass('hidden')
   })
 
   test('preserves the browser tab after closing and reopening the right workspace area', async () => {
@@ -5340,6 +5578,88 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
     expect(listWorkspaceEntries).toHaveBeenCalledTimes(1)
     expect(readWorkspaceTextFile).toHaveBeenCalledTimes(1)
+  })
+
+  test('workspace file panel edits and saves an editable text file', async () => {
+    const user = userEvent.setup()
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [
+        {
+          name: 'README.md',
+          path: '/workspace/project/README.md',
+          isDirectory: false,
+          size: 5,
+          modifiedAt: null,
+        },
+      ],
+    })
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'hello',
+      editable: true,
+      revision: 'sha256:old',
+      truncated: false,
+      size: 5,
+      modifiedAt: null,
+    })
+    const writeWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: '/workspace/project/README.md',
+      name: 'README.md',
+      content: 'hello world',
+      editable: true,
+      revision: 'sha256:new',
+      truncated: false,
+      size: 11,
+      modifiedAt: null,
+    })
+
+    render(
+      <FileWorkspacePanel
+        target={{
+          deviceId: 'workspace-cloud-device',
+          path: '/workspace/project',
+          source: 'project',
+          workspaceSource: 'remote',
+        }}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+          writeWorkspaceTextFile,
+        }}
+        onAddCodeComment={vi.fn()}
+      />
+    )
+
+    await user.click(await screen.findByText('README.md'))
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
+    )
+
+    await user.click(screen.getByTestId('workspace-file-edit-button'))
+    const editor = screen.getByTestId('workspace-file-editor')
+    const codeMirrorContent = editor.querySelector('.cm-content')
+    expect(codeMirrorContent).toBeInstanceOf(HTMLElement)
+
+    await user.click(codeMirrorContent as HTMLElement)
+    await user.keyboard('{Control>}a{/Control}hello world')
+    await user.click(screen.getByTestId('workspace-file-save-button'))
+
+    await waitFor(() =>
+      expect(writeWorkspaceTextFile).toHaveBeenCalledWith(
+        'workspace-cloud-device',
+        '/workspace/project/README.md',
+        'hello world',
+        'sha256:old'
+      )
+    )
+    await waitFor(() => {
+      expect(screen.queryByTestId('workspace-file-editor')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('workspace-file-save-button')).not.toBeInTheDocument()
+      expect(screen.getByTestId('workspace-file-edit-button')).toBeInTheDocument()
+      expect(screen.getByTestId('workspace-file-preview-code-view')).toBeInTheDocument()
+    })
   })
 
   test('workspace file preview renders file contents with Pierre file viewer', async () => {

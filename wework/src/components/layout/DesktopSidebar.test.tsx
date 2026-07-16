@@ -358,6 +358,19 @@ describe('DesktopSidebar', () => {
     expect(content).not.toHaveTextContent('创建时间')
     expect(content).not.toHaveTextContent('done')
     expect(content).not.toHaveTextContent('local-device /Users/alice/repo/Wegent')
+
+    fireEvent.mouseLeave(taskRow)
+    fireEvent.pointerMove(content)
+    await act(async () => vi.advanceTimersByTime(120))
+    expect(content).toBeInTheDocument()
+
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(60))
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(60))
+    expect(
+      screen.queryByTestId('runtime-local-task-hover-content-hover-task')
+    ).not.toBeInTheDocument()
   })
 
   test('keeps the account settings trigger and notification bell inside the sidebar width', () => {
@@ -2344,6 +2357,54 @@ describe('DesktopSidebar', () => {
     await user.click(screen.getByTestId('sidebar-global-im-notification-primary-button'))
 
     expect(onToggleGlobalImNotification).toHaveBeenCalledTimes(1)
+  })
+
+  test('anchors the away reminder menu to the full-width account area', async () => {
+    // Regression guard (POPOVER-CONTAINING-BLOCK-MISMATCH): the menu must portal
+    // into the full-width account/settings container (group/account), not remain
+    // a child of the narrow 32px icon-action group, otherwise `left-4 right-4`
+    // resolves against the icon group and the panel collapses to a sliver.
+    const user = userEvent.setup()
+
+    renderSidebar({
+      imNotificationSettings: {
+        global: {
+          enabled: false,
+          sessionKey: 'session-telegram',
+          session: {
+            sessionKey: 'session-telegram',
+            channelType: 'telegram',
+            channelLabel: 'Telegram',
+            channelId: 9,
+            conversationId: 'telegram-1',
+            senderId: '100200300',
+            displayName: 'Alice',
+          },
+        },
+        runtimeTaskSubscriptions: [],
+      },
+      onToggleGlobalImNotification: vi.fn(),
+    })
+
+    await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
+
+    const menu = screen.getByTestId('sidebar-global-im-notification-menu')
+
+    // The menu DOM owner must be the account area, reachable through the
+    // group/account container — never the icon-action group wrapper.
+    const accountArea = menu.closest('.group\\/account')
+    expect(accountArea, 'menu must be portalled into the account area').not.toBeNull()
+
+    const iconGroup = screen.getByTestId('sidebar-global-im-notification-button').parentElement
+    expect(
+      iconGroup?.contains(menu),
+      'menu must NOT stay inside the narrow icon-action group'
+    ).toBe(false)
+
+    // jsdom does not compute CSS layout, so a numeric width floor is not
+    // enforceable here; the DOM-ownership assertions above are the durable
+    // guard against the containing-block regression.
+    expect(menu).toBeInTheDocument()
   })
 
   test('opens away reminder channel settings from the bell menu', async () => {

@@ -2,23 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, env, future::Future, path::PathBuf, pin::Pin, sync::Arc};
-
-#[cfg(unix)]
+#[cfg(windows)]
+use std::path::Path;
 use std::{
-    fs, io,
-    path::Path,
-    time::{Duration, Instant},
+    collections::HashMap, env, future::Future, net::SocketAddr, path::PathBuf, pin::Pin, sync::Arc,
 };
 
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
-
-#[cfg(unix)]
 use tokio::{
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    net::{UnixListener, UnixStream},
-    sync::mpsc,
+    net::{TcpListener, TcpStream},
+    sync::{broadcast, mpsc},
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -26,17 +21,22 @@ use crate::{
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
     local::git_commit_message::generate_commit_message,
     local::local_skills::list_local_skills,
-    local::workspace_files::{execute_workspace_file_command, is_workspace_file_command},
+    local::workspace_files::{
+        execute_workspace_file_command_with_input, is_workspace_file_command,
+    },
     logging::{format_executor_log, write_executor_log_line},
     runtime_work::RuntimeWorkRpcHandler,
     version::get_version,
 };
 
+#[cfg(windows)]
+use crate::local::command::build_env;
+
 const DEFAULT_DEVICE_ID: &str = "local-device";
-const DEFAULT_SOCKET_NAME: &str = "app-ipc.sock";
+const DEFAULT_APP_IPC_ADDR: &str = "127.0.0.1:0";
+const APP_IPC_ADDR_FILE_NAME: &str = "app-ipc.addr";
 const DEFAULT_TIMEOUT_SECONDS: f64 = 60.0;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-#[cfg(unix)]
 const APP_IPC_REQUEST_TIMEOUT_SECONDS: u64 = 75;
 const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
 if [ -z "$branch" ]; then
@@ -343,6 +343,10 @@ impl AppIpcServer {
     }
 
     pub async fn dispatch(&self, method: &str, params: Value) -> Result<Value, AppIpcError> {
+        if method == "executor.health" {
+            return Ok(json!({"status": "healthy"}));
+        }
+
         if method == "device.execute_command" {
             return self.handle_device_command(params).await;
         }
@@ -406,32 +410,25 @@ impl AppIpcServer {
         self.event_message("executor.ready", payload)
     }
 
-    #[cfg(unix)]
-    pub async fn serve_forever(&self, socket_path: PathBuf) -> Result<(), String> {
-        prepare_socket_path(&socket_path).map_err(|error| {
-            format!(
-                "failed to prepare app IPC socket {}: {error}",
-                socket_path.display()
-            )
-        })?;
-        let listener = UnixListener::bind(&socket_path).map_err(|error| {
-            format!(
-                "failed to bind app IPC socket {}: {error}",
-                socket_path.display()
-            )
-        })?;
-        set_socket_permissions(&socket_path);
+    pub async fn serve_forever(&self) -> Result<(), String> {
+        let addr = local_app_ipc_addr();
+        let listener = TcpListener::bind(&addr)
+            .await
+            .map_err(|error| format!("failed to bind app IPC TCP socket {addr}: {error}"))?;
+        let local_addr = listener
+            .local_addr()
+            .map_err(|error| format!("failed to read app IPC TCP local address: {error}"))?;
+        if let Err(error) = write_app_ipc_addr_file(local_addr) {
+            eprintln!("failed to write app IPC address file: {error}");
+        }
         write_executor_log_line(&app_ipc_listening_log_line(
             &self.device_id,
-            &socket_path.display().to_string(),
+            &local_addr.to_string(),
         ));
 
         loop {
             let (stream, _) = listener.accept().await.map_err(|error| {
-                format!(
-                    "failed to accept app IPC client on {}: {error}",
-                    socket_path.display()
-                )
+                format!("failed to accept app IPC client on {local_addr}: {error}")
             })?;
             let server = self.clone();
             tokio::spawn(async move {
@@ -442,13 +439,7 @@ impl AppIpcServer {
         }
     }
 
-    #[cfg(not(unix))]
-    pub async fn serve_forever(&self, _socket_path: PathBuf) -> Result<(), String> {
-        Err("app IPC sidecar requires Unix socket support".to_owned())
-    }
-
-    #[cfg(unix)]
-    async fn handle_stream(&self, stream: UnixStream) -> Result<(), String> {
+    async fn handle_stream(&self, stream: TcpStream) -> Result<(), String> {
         let (reader, writer) = stream.into_split();
         let (write_tx, mut write_rx) = mpsc::channel::<Value>(512);
         let mut writer_task = tokio::spawn(async move {
@@ -610,15 +601,23 @@ impl AppIpcServer {
         let env = string_env(params.get("env"))?;
         if is_workspace_file_command(command_key) {
             return serde_json::to_value(
-                execute_workspace_file_command(
+                execute_workspace_file_command_with_input(
                     command_key,
                     string_field(&params, "path").or_else(|| string_field(&params, "cwd")),
                     args,
                     env,
+                    string_field(&params, "stdin"),
                 )
                 .await,
             )
             .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
+        if let Some((result, post_processor)) =
+            handle_builtin_device_command(command_key, &params).await
+        {
+            return serde_json::to_value(apply_post_processor(result, post_processor))
+                .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
         }
 
         let command = local_app_command(command_key).ok_or_else(|| {
@@ -655,17 +654,217 @@ impl AppIpcServer {
     }
 }
 
-pub fn app_ipc_listening_log_line(device_id: &str, socket_path: &str) -> String {
+#[cfg(windows)]
+async fn handle_builtin_device_command(
+    command_key: &str,
+    params: &Value,
+) -> Option<(CommandResult, Option<PostProcessor>)> {
+    match command_key {
+        "home_dir" => Some((
+            CommandResult::ok(
+                dirs::home_dir()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| ".".to_string()),
+            ),
+            None,
+        )),
+        "pwd" => Some((
+            CommandResult::ok(
+                std::env::current_dir()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|_| ".".to_string()),
+            ),
+            None,
+        )),
+        "project_workspace_root" => match project_workspace_root_path() {
+            Ok(path) => Some((CommandResult::ok(path), None)),
+            Err(error) => Some((CommandResult::error(error, 0.0, false), None)),
+        },
+        "mkdir_p" => {
+            let args = string_list(params.get("args")).ok()?;
+            let path = args.first()?;
+            Some((
+                match std::fs::create_dir_all(path) {
+                    Ok(()) => CommandResult::ok(""),
+                    Err(error) => CommandResult::error(
+                        format!("Failed to create directory {path}: {error}"),
+                        0.0,
+                        false,
+                    ),
+                },
+                None,
+            ))
+        }
+        "path_exists" => {
+            let args = string_list(params.get("args")).ok()?;
+            let path = args.first()?;
+            Some((
+                CommandResult::ok(if Path::new(path).exists() { "true" } else { "" }),
+                None,
+            ))
+        }
+        "ls_dirs" => {
+            let path = string_field(params, "path").or_else(|| string_field(params, "cwd"))?;
+            Some((
+                match std::fs::read_dir(&path) {
+                    Ok(entries) => {
+                        let mut output = String::new();
+                        for entry in entries.flatten() {
+                            if let Ok(metadata) = entry.metadata() {
+                                let name = entry.file_name().to_string_lossy().to_string();
+                                if metadata.is_dir() {
+                                    output.push_str(&name);
+                                    output.push('/');
+                                } else {
+                                    output.push_str(&name);
+                                }
+                                output.push('\n');
+                            }
+                        }
+                        CommandResult::ok(output)
+                    }
+                    Err(error) => CommandResult::error(
+                        format!("Failed to list directory {path}: {error}"),
+                        0.0,
+                        false,
+                    ),
+                },
+                Some(PostProcessor::DirectoryList),
+            ))
+        }
+        "runtime_auth_status" => {
+            let codex_home = env::var("CODEX_HOME")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    dirs::home_dir()
+                        .unwrap_or_else(|| PathBuf::from("."))
+                        .join(".codex")
+                });
+            let target = codex_home.join("auth.json");
+            let mut result = json!({
+                "runtime": "codex",
+                "target_path": target.display().to_string(),
+                "exists": target.exists() && target.is_file(),
+                "updated_at": Value::Null,
+                "sha256": Value::Null,
+                "size_bytes": Value::Null,
+                "error": Value::Null,
+            });
+            if target.exists() && target.is_file() {
+                match std::fs::metadata(&target) {
+                    Ok(metadata) => {
+                        if let Ok(updated_at) = metadata.modified() {
+                            let datetime = chrono::DateTime::<chrono::Utc>::from(updated_at);
+                            result["updated_at"] = Value::String(datetime.to_rfc3339());
+                        }
+                        result["size_bytes"] = Value::Number(metadata.len().into());
+                        match std::fs::read(&target) {
+                            Ok(content) => {
+                                use sha2::{Digest, Sha256};
+                                let hash = Sha256::digest(&content);
+                                result["sha256"] = Value::String(format!("{hash:x}"));
+                            }
+                            Err(error) => {
+                                result["error"] = Value::String(error.to_string());
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        result["error"] = Value::String(error.to_string());
+                    }
+                }
+            }
+            Some((
+                CommandResult::ok(result.to_string()),
+                Some(PostProcessor::Json),
+            ))
+        }
+        "git_is_worktree" => {
+            let args = string_list(params.get("args")).ok()?;
+            let path = args.first()?;
+            Some((
+                CommandResult::ok(if git_is_worktree(path) { "true" } else { "" }),
+                None,
+            ))
+        }
+        _ => None,
+    }
+}
+
+#[cfg(not(windows))]
+async fn handle_builtin_device_command(
+    _command_key: &str,
+    _params: &Value,
+) -> Option<(CommandResult, Option<PostProcessor>)> {
+    None
+}
+
+#[cfg(windows)]
+fn git_is_worktree(path: &str) -> bool {
+    git_stdout(path, &["rev-parse", "--is-inside-work-tree"])
+        .map(|output| output.trim() == "true")
+        .unwrap_or(false)
+        || git_stdout(path, &["rev-parse", "--git-dir"]).is_some()
+}
+
+#[cfg(windows)]
+fn git_stdout(path: &str, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .env_clear()
+        .envs(build_env(&HashMap::new()))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(windows)]
+fn project_workspace_root_path() -> Result<String, String> {
+    if let Ok(value) = env::var("WEGENT_EXECUTOR_PROJECTS_DIR") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_owned());
+        }
+    }
+    if let Ok(value) = env::var("WECODE_HOME") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Ok(PathBuf::from(trimmed)
+                .join("wegent-executor")
+                .join("workspace")
+                .join("projects")
+                .display()
+                .to_string());
+        }
+    }
+    let home = dirs::home_dir().ok_or_else(|| "Home directory is not available".to_string())?;
+    Ok(home
+        .join(".wecode")
+        .join("wegent-executor")
+        .join("workspace")
+        .join("projects")
+        .display()
+        .to_string())
+}
+
+pub fn app_ipc_listening_log_line(device_id: &str, addr: &str) -> String {
     format_executor_log(
         "app IPC listening",
         &[
             ("device_id", device_id.to_owned()),
-            ("socket_path", socket_path.to_owned()),
+            ("addr", addr.to_owned()),
         ],
     )
 }
 
-#[cfg(unix)]
 fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>) {
     match serde_json::from_str::<Value>(line) {
         Ok(Value::Object(message)) => {
@@ -685,7 +884,6 @@ fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-#[cfg(unix)]
 fn log_app_ipc_request(
     event: &str,
     request_id: Option<&str>,
@@ -737,21 +935,6 @@ fn log_app_ipc_response_error(
     write_executor_log_line(&format_executor_log("app IPC request failed", &fields));
 }
 
-pub fn app_ipc_socket_path() -> PathBuf {
-    if let Ok(path) = env::var("WEGENT_EXECUTOR_APP_IPC_SOCKET") {
-        let path = path.trim();
-        if !path.is_empty() {
-            return expand_home(path);
-        }
-    }
-
-    let home = env::var("WEGENT_EXECUTOR_HOME")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "~/.wegent-executor".to_owned());
-    expand_home(&home).join(DEFAULT_SOCKET_NAME)
-}
-
 pub async fn serve_app_ipc_sidecar(
     device_id: String,
     runtime_instance_id: String,
@@ -760,7 +943,7 @@ pub async fn serve_app_ipc_sidecar(
         .with_device_id(normalize_device_id(device_id))
         .with_runtime_instance_id(runtime_instance_id)
         .with_local_runtime_work_handler(resolve_codex_binary());
-    server.serve_forever(app_ipc_socket_path()).await
+    server.serve_forever().await
 }
 
 pub fn normalize_device_id(device_id: impl Into<String>) -> String {
@@ -1142,6 +1325,52 @@ fn stdout_string(result: &CommandResult) -> String {
         .unwrap_or_else(|| result.stdout.to_string())
 }
 
+pub fn app_ipc_socket_path() -> PathBuf {
+    local_app_ipc_addr_file_path()
+}
+
+pub fn local_app_ipc_addr_file_path() -> PathBuf {
+    let home = env::var("WEGENT_EXECUTOR_HOME")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| expand_home(&value))
+        .unwrap_or_else(|| home_dir().join(".wegent-executor"));
+    home.join(APP_IPC_ADDR_FILE_NAME)
+}
+
+fn local_app_ipc_addr() -> SocketAddr {
+    if let Ok(value) = env::var("WEGENT_EXECUTOR_APP_IPC_ADDR") {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            if let Ok(addr) = trimmed.parse::<SocketAddr>() {
+                return addr;
+            }
+            if let Ok(port) = trimmed.parse::<u16>() {
+                if let Ok(addr) = format!("127.0.0.1:{port}").parse::<SocketAddr>() {
+                    return addr;
+                }
+            }
+        }
+    }
+    DEFAULT_APP_IPC_ADDR
+        .parse()
+        .expect("default address is valid")
+}
+
+fn write_app_ipc_addr_file(addr: SocketAddr) -> std::io::Result<()> {
+    let path = local_app_ipc_addr_file_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, addr.to_string())
+}
+
+pub fn read_app_ipc_addr_file() -> Option<SocketAddr> {
+    let path = local_app_ipc_addr_file_path();
+    let content = std::fs::read_to_string(&path).ok()?;
+    content.trim().parse::<SocketAddr>().ok()
+}
+
 fn expand_home(path: &str) -> PathBuf {
     if path == "~" {
         return home_dir();
@@ -1153,32 +1382,10 @@ fn expand_home(path: &str) -> PathBuf {
 }
 
 fn home_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
-#[cfg(unix)]
-fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
-    if let Some(parent) = socket_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    match fs::remove_file(socket_path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(unix)]
-fn set_socket_permissions(socket_path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-
-    let _ = fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600));
-}
-
-#[cfg(unix)]
-async fn write_message<W>(writer: &mut W, message: &Value) -> io::Result<()>
+async fn write_message<W>(writer: &mut W, message: &Value) -> std::io::Result<()>
 where
     W: AsyncWrite + Unpin,
 {
