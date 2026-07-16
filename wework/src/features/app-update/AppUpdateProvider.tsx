@@ -114,9 +114,17 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     try {
       await installPendingWeworkUpdate(setDownloadProgress)
     } catch (caughtError) {
-      setStatus('error')
+      const installError = messageFor(caughtError)
       setDownloadProgress(null)
-      setError(messageFor(caughtError))
+      setError(installError)
+
+      try {
+        const refreshedUpdate = await checkForWeworkUpdate()
+        setAvailableUpdate(refreshedUpdate)
+        setStatus(refreshedUpdate ? 'available' : 'error')
+      } catch {
+        setStatus('error')
+      }
     }
   }, [availableUpdate, status])
 
