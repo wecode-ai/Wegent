@@ -27,7 +27,7 @@ import type {
   RuntimeWorkListResponse,
   User as UserProfile,
 } from '@/types/api'
-import { TodoCreateDialog, type TodoCreateValues } from './TodoCreateDialog'
+import type { TodoCreateValues } from './TodoCreateDialog'
 import { TodoDetailPanel, type TodoDetailItem, type TodoViewState } from './TodoDetailPanel'
 import {
   ProjectSwitcherOverlay,
@@ -37,6 +37,7 @@ import {
   type TodoProjectView,
 } from './TodoNavigation'
 import { TodoOverview } from './TodoOverview'
+import { TodoMyWork } from './TodoMyWork'
 import { TodoWorkItems } from './TodoWorkItems'
 import { projectColor } from './todoProject'
 import {
@@ -48,6 +49,20 @@ import {
   type TodoLayout,
 } from './todoViewSettings'
 import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
+import {
+  createLocalWorkItemId,
+  ensureTodoWorkDirectory,
+  ensureTodoWorkspace,
+  hydrateLocalWorkItems,
+  loadLocalWorkItems,
+  loadTodoWorkflow,
+  saveLocalWorkItems,
+  saveTodoWorkflow,
+  type TodoWorkflowConfig,
+  writeTodoWorkspaceFile,
+  type LocalWorkItem,
+} from './todoModel'
+import { TodoWorkflowDialog } from './TodoWorkflowDialog'
 
 type TodoState = TodoViewState
 
@@ -58,7 +73,6 @@ interface TodoWorkspaceProps {
   currentProjectId?: number | null
   services?: WorkbenchServices
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
-  modelName?: string | null
   onRunTodo?: (request: TodoRunRequest) => Promise<RuntimeTaskAddress | false>
 }
 
@@ -67,33 +81,19 @@ export interface TodoRunRequest {
   message: string
   goal?: string
   attachments: Attachment[]
+  collaborationMode?: 'default' | 'plan'
 }
 
 type TodoItem = TodoDetailItem
 
-interface TodoDraft {
-  id: string
-  projectId: number
-  state: TodoState
-  title: string
-  markdown: string
-  goal: string
-  priority: TodoCreateValues['priority']
-  assignee: TodoCreateValues['assignee']
-  launchMode: TodoCreateValues['launchMode']
-  dueDate?: string
-  attachments: Attachment[]
-  createdAt: string
-  updatedAt: string
-}
-
 const TODO_PROJECT_STORAGE_KEY = 'wework:todo:selected-project'
-const TODO_DRAFTS_STORAGE_KEY = 'wework:todo:drafts'
 const TODO_VIEW_STORAGE_KEY = 'wework:todo:view'
 
 function collectProjects(
   projects: ProjectWithTasks[],
-  runtimeWork: RuntimeWorkListResponse | null
+  runtimeWork: RuntimeWorkListResponse | null,
+  localProjectName: string,
+  localProjectDescription: string
 ): TodoProject[] {
   const entries = new Map<number, TodoProject>()
   projects.forEach(project => entries.set(project.id, { project, workspaces: [] }))
@@ -105,6 +105,17 @@ function collectProjects(
       workspaces: projectWork.deviceWorkspaces,
     })
   })
+  if (entries.size === 0) {
+    entries.set(-1, {
+      project: {
+        id: -1,
+        name: localProjectName,
+        description: localProjectDescription,
+        client_origin: 'wework',
+      },
+      workspaces: [],
+    })
+  }
   return [...entries.values()]
 }
 
@@ -124,6 +135,15 @@ function resolveTodoState(task: RuntimeTaskSummary): TodoState {
     return 'backlog'
   }
   return 'completed'
+}
+
+function deriveRootState(current: TodoState, children: LocalWorkItem[]): TodoState {
+  if (current === 'completed' || children.length === 0) return current
+  if (children.every(child => child.state === 'completed')) return 'review'
+  if (children.some(child => ['started', 'review', 'completed'].includes(child.state))) {
+    return 'started'
+  }
+  return current === 'inbox' ? 'backlog' : current
 }
 
 function buildTodoItems(project: TodoProject | null): TodoItem[] {
@@ -156,17 +176,6 @@ function buildTodoItems(project: TodoProject | null): TodoItem[] {
       },
       task,
     }))
-}
-
-function loadTodoDrafts(userId: number | undefined): TodoDraft[] {
-  try {
-    const raw = window.localStorage.getItem(`${TODO_DRAFTS_STORAGE_KEY}:${userId ?? 'local'}`)
-    if (!raw) return []
-    const value = JSON.parse(raw) as TodoDraft[]
-    return Array.isArray(value) ? value : []
-  } catch {
-    return []
-  }
 }
 
 function deriveTodoTitle(markdown: string): string {
@@ -229,13 +238,14 @@ export function TodoWorkspace({
   currentProjectId,
   services,
   onOpenRuntimeTask,
-  modelName,
   onRunTodo,
 }: TodoWorkspaceProps) {
   const { t } = useTranslation('common')
+  const localProjectName = t('todo.local_project', '本地事项')
+  const localProjectDescription = t('todo.local_project_description', '仅存储在这台设备上的事项')
   const projectEntries = useMemo(
-    () => collectProjects(projects, runtimeWork),
-    [projects, runtimeWork]
+    () => collectProjects(projects, runtimeWork, localProjectName, localProjectDescription),
+    [localProjectDescription, localProjectName, projects, runtimeWork]
   )
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(() =>
     loadSelectedProjectId(
@@ -246,6 +256,7 @@ export function TodoWorkspace({
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [projectView, setProjectView] = useState<TodoProjectView>('work-items')
+  const [workScope, setWorkScope] = useState<'items' | 'mine'>('items')
   const [expandedProjectId, setExpandedProjectId] = useState<number | null>(selectedProjectId)
   const initialViewSettings = loadTodoViewSettings(user?.id, selectedProjectId)
   const [layout, setLayout] = useState<TodoLayout>(initialViewSettings.layout)
@@ -257,60 +268,129 @@ export function TodoWorkspace({
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [projectSearch, setProjectSearch] = useState('')
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null)
-  const [createDialogState, setCreateDialogState] = useState<TodoState | null>(null)
-  const [drafts, setDrafts] = useState<TodoDraft[]>(() => loadTodoDrafts(user?.id))
+  const [quickCreateRequest, setQuickCreateRequest] = useState<{
+    state: TodoState
+    token: number
+  } | null>(null)
+  const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false)
+  const [workItems, setWorkItems] = useState<LocalWorkItem[]>(() => loadLocalWorkItems(user?.id))
   const usesOverlayTitlebar = isTauriRuntime()
   const selectedProject =
     projectEntries.find(entry => entry.project.id === selectedProjectId) ??
     projectEntries[0] ??
     null
-  const runtimeItems = useMemo(() => buildTodoItems(selectedProject), [selectedProject])
-  const draftItems = useMemo<TodoItem[]>(
-    () =>
-      drafts
-        .filter(draft => draft.projectId === selectedProject?.project.id)
-        .map(draft => ({
-          id: draft.id,
-          kind: 'draft',
-          code: `TODO-${draft.id.slice(-4).toUpperCase()}`,
-          title: draft.title,
-          state: draft.state,
-          runtime: draft.assignee === 'human' ? t('todo.assignee_human', '员工') : 'TODO',
-          workspace: selectedProject?.project.name ?? '',
-          description: draft.markdown,
-          objective: draft.goal,
-          priority:
-            draft.priority === 'none'
-              ? t('todo.priority_none_short', '无')
-              : t(`todo.priority_${draft.priority}`, draft.priority),
-          priorityValue: draft.priority,
-          assignee:
-            draft.assignee === 'human'
-              ? t('todo.assignee_human', '员工')
-              : draft.assignee === 'ai'
-                ? t('todo.assignee_ai', 'AI 智能体')
-                : t('todo.assignee_unassigned_short', '未指定'),
-          assigneeType: draft.assignee,
-          dueDate: draft.dueDate,
-          attachments: draft.attachments,
-          createdAt: draft.createdAt,
-          updatedAt: draft.updatedAt,
-        })),
-    [drafts, selectedProject?.project.id, selectedProject?.project.name, t]
+  const [workflowConfig, setWorkflowConfig] = useState<TodoWorkflowConfig>(() =>
+    loadTodoWorkflow(selectedProjectId)
   )
-  const items = useMemo(() => [...draftItems, ...runtimeItems], [draftItems, runtimeItems])
+  const runtimeItems = useMemo(() => {
+    const linkedTaskIds = new Set(
+      workItems.flatMap(item => item.runtimeRefs.map(ref => ref.taskId))
+    )
+    return buildTodoItems(selectedProject).filter(item => !linkedTaskIds.has(item.id))
+  }, [selectedProject, workItems])
+  const localItems = useMemo<TodoItem[]>(
+    () =>
+      workItems
+        .filter(item => item.projectId === selectedProject?.project.id && !item.parentId)
+        .map(item => {
+          const children = workItems.filter(child => child.parentId === item.id)
+          const derivedState = deriveRootState(item.state, children)
+          const blockedChild = children.find(child => child.blocker)
+          const currentChild =
+            children.find(child => child.state === 'started') ??
+            children.find(child => child.state !== 'completed')
+          return {
+            id: item.id,
+            kind: 'draft',
+            code: `TODO-${item.id.slice(-4).toUpperCase()}`,
+            title: item.title,
+            state: derivedState,
+            runtime: item.assignee.type === 'human' ? t('todo.assignee_human', '员工') : 'TODO',
+            workspace: selectedProject?.project.name ?? '',
+            description: item.description,
+            objective: item.objective,
+            priority:
+              item.priority === 'none'
+                ? t('todo.priority_none_short', '无')
+                : t(`todo.priority_${item.priority}`, item.priority),
+            priorityValue: item.priority,
+            assignee:
+              item.assignee.name ||
+              (item.assignee.type === 'human'
+                ? t('todo.assignee_human', '员工')
+                : item.assignee.type === 'ai'
+                  ? t('todo.assignee_ai', 'AI 智能体')
+                  : t('todo.assignee_unassigned_short', '未指定')),
+            assigneeType: item.assignee.type,
+            dueDate: item.dueDate,
+            attachments: item.attachments,
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+            events: item.events,
+            blocker: item.blocker || blockedChild?.blocker,
+            nextAction: item.nextAction || currentChild?.nextAction,
+            collaborators: item.collaborators,
+            confirmer: item.confirmer?.name,
+            workspaceItemId: item.id,
+            address: item.runtimeRefs.at(-1),
+            children: children.map(child => {
+              const waitingFor = (child.workTypeSnapshot?.dependsOn ?? []).flatMap(key => {
+                const dependency = children.find(candidate => candidate.workTypeKey === key)
+                if (dependency?.state === 'completed') return []
+                return [workflowConfig.workTypes.find(type => type.key === key)?.name ?? key]
+              })
+              return {
+                id: child.id,
+                parentId: child.parentId,
+                kind: 'draft' as const,
+                code: `TODO-${child.id.slice(-4).toUpperCase()}`,
+                title: child.title,
+                state: child.state,
+                runtime: child.assignee.name || child.assignee.type,
+                workspace: selectedProject?.project.name ?? '',
+                description: child.description,
+                objective: child.objective,
+                priorityValue: child.priority,
+                assignee: child.assignee.name,
+                assigneeType: child.assignee.type,
+                workTypeKey: child.workTypeKey,
+                workTypeName: child.workTypeSnapshot?.name,
+                blocker: child.blocker,
+                nextAction: child.nextAction,
+                workspaceItemId: item.id,
+                createdAt: child.createdAt,
+                updatedAt: child.updatedAt,
+                waitingFor,
+                events: child.events,
+                address: child.runtimeRefs.at(-1),
+              }
+            }),
+          }
+        }),
+    [
+      workItems,
+      selectedProject?.project.id,
+      selectedProject?.project.name,
+      t,
+      workflowConfig.workTypes,
+    ]
+  )
+  const items = useMemo(() => [...localItems, ...runtimeItems], [localItems, runtimeItems])
   const projectItemCounts = useMemo(
     () =>
       Object.fromEntries(
         projectEntries.map(entry => [
           entry.project.id,
           entry.workspaces.reduce((total, workspace) => total + workspace.tasks.length, 0) +
-            drafts.filter(draft => draft.projectId === entry.project.id).length,
+            workItems.filter(item => item.projectId === entry.project.id && !item.parentId).length,
         ])
       ),
-    [drafts, projectEntries]
+    [workItems, projectEntries]
   )
-  const selectedItem = items.find(item => item.id === selectedItemId) ?? null
+  const selectedItem =
+    items
+      .flatMap(item => [item, ...(item.children ?? [])])
+      .find(item => item.id === selectedItemId) ?? null
   const selectProject = (projectId: number) => {
     setSelectedProjectId(projectId)
     setExpandedProjectId(projectId)
@@ -321,6 +401,7 @@ export function TodoWorkspace({
     const viewSettings = loadTodoViewSettings(user?.id, projectId)
     setLayout(viewSettings.layout)
     setDisplay(viewSettings.display)
+    setWorkflowConfig(loadTodoWorkflow(projectId))
     try {
       window.localStorage.setItem(
         `${TODO_PROJECT_STORAGE_KEY}:${user?.id ?? 'local'}`,
@@ -332,15 +413,12 @@ export function TodoWorkspace({
   }
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        `${TODO_DRAFTS_STORAGE_KEY}:${user?.id ?? 'local'}`,
-        JSON.stringify(drafts)
-      )
-    } catch {
-      // Drafts remain available for the current session.
-    }
-  }, [drafts, user?.id])
+    void hydrateLocalWorkItems(user?.id).then(items => {
+      if (items.length > 0) setWorkItems(items)
+    })
+  }, [user?.id])
+
+  useEffect(() => saveLocalWorkItems(user?.id, workItems), [user?.id, workItems])
 
   useEffect(() => {
     if (selectedProjectId == null) return
@@ -354,77 +432,114 @@ export function TodoWorkspace({
     }
   }, [display, layout, selectedProjectId, user?.id])
 
-  const uploadFiles = async (files: File[]): Promise<Attachment[]> => {
-    if (files.length === 0) return []
-    if (!services?.attachmentApi) {
-      throw new Error(t('todo.attachments_unavailable', '附件服务当前不可用'))
-    }
-    return Promise.all(files.map(file => services.attachmentApi!.uploadAttachment(file)))
-  }
-
   const createDraft = (values: TodoCreateValues, attachments: Attachment[]) => {
     const now = new Date().toISOString()
-    const draft: TodoDraft = {
-      id: `draft-${crypto.randomUUID()}`,
+    const draft: LocalWorkItem = {
+      id: createLocalWorkItemId(),
       projectId: values.projectId,
       state: values.state,
       title: deriveTodoTitle(values.markdown),
-      markdown: values.markdown.trim(),
-      goal: values.goal.trim(),
+      description: values.markdown.trim(),
+      objective: values.goal.trim(),
       priority: values.priority,
-      assignee: values.assignee,
-      launchMode: values.launchMode,
+      assignee: { type: values.assignee },
+      collaborators: [],
+      blocker: '',
+      nextAction: '',
       dueDate: values.dueDate,
       attachments,
+      runtimeRefs: [],
+      events: [
+        { id: createLocalWorkItemId(), type: 'created', summary: '事项已创建', createdAt: now },
+      ],
+      sortOrder: 0,
       createdAt: now,
       updatedAt: now,
     }
-    setDrafts(current => [draft, ...current])
+    const stages: LocalWorkItem[] = workflowConfig.workTypes.map((workType, index) => ({
+      id: createLocalWorkItemId(),
+      projectId: values.projectId,
+      parentId: draft.id,
+      title: `${draft.title} · ${workType.name}`,
+      objective: draft.objective,
+      description: '',
+      state: 'backlog',
+      workTypeKey: workType.key,
+      workTypeSnapshot: workType,
+      assignee: workType.defaultAssignee,
+      collaborators: [],
+      blocker: '',
+      nextAction: '',
+      priority: draft.priority,
+      attachments: [],
+      runtimeRefs: [],
+      events: [
+        {
+          id: createLocalWorkItemId(),
+          type: 'created',
+          summary: '由项目流程自动创建',
+          createdAt: now,
+        },
+      ],
+      sortOrder: index,
+      createdAt: now,
+      updatedAt: now,
+    }))
+    setWorkItems(current => [draft, ...stages, ...current])
+    void ensureTodoWorkspace(draft).then(() =>
+      Promise.all(
+        values.files.map(file =>
+          writeTodoWorkspaceFile(
+            draft.id,
+            `context/${file.name.replaceAll('/', '_').replaceAll('\\', '_')}`,
+            file
+          )
+        )
+      )
+    )
+    stages.forEach(stage => {
+      if (stage.workTypeKey) void ensureTodoWorkDirectory(draft.id, stage.workTypeKey)
+    })
     selectProject(values.projectId)
     return draft
   }
 
-  const submitTodo = async (values: TodoCreateValues, runImmediately: boolean) => {
-    const project = projectEntries.find(entry => entry.project.id === values.projectId)?.project
-    if (!project) throw new Error(t('todo.no_project', '未选择项目'))
-    if (runImmediately && values.assignee === 'unassigned') {
-      throw new Error(t('todo.executor_required', '请先选择员工或 AI 智能体作为执行者'))
-    }
-    const attachments = await uploadFiles(values.files)
-
-    if (!runImmediately || values.assignee === 'human') {
-      createDraft(
-        {
-          ...values,
-          state: runImmediately && values.assignee === 'human' ? 'started' : values.state,
-        },
-        attachments
-      )
-      setCreateDialogState(null)
-      return
-    }
-    if (!onRunTodo) throw new Error(t('todo.run_unavailable', '运行服务当前不可用'))
-    const address = await onRunTodo({
-      project,
-      message: values.markdown.trim(),
-      goal: values.goal.trim() || undefined,
-      attachments,
-    })
-    if (!address) throw new Error(t('todo.create_failed', 'TODO 创建失败'))
-    selectProject(values.projectId)
-    setCreateDialogState(null)
+  const quickCreate = (state: TodoState, title: string) => {
+    createDraft(
+      {
+        projectId: selectedProject?.project.id ?? -1,
+        state,
+        goal: '',
+        markdown: title,
+        priority: 'none',
+        assignee: 'unassigned',
+        launchMode: 'manual',
+        dueDate: '',
+        files: [],
+      },
+      []
+    )
   }
 
   const runDraft = async (item: TodoItem) => {
-    const draft = drafts.find(entry => entry.id === item.id)
+    const draft = workItems.find(entry => entry.id === item.id)
     if (!draft) return
+    if (draft.parentId && draft.workTypeSnapshot?.dependsOn.length) {
+      const siblings = workItems.filter(entry => entry.parentId === draft.parentId)
+      const incomplete = draft.workTypeSnapshot.dependsOn.filter(
+        key => !siblings.some(entry => entry.workTypeKey === key && entry.state === 'completed')
+      )
+      if (incomplete.length > 0) {
+        throw new Error(t('todo.dependencies_incomplete', '前置阶段尚未完成'))
+      }
+    }
     const project = projectEntries.find(entry => entry.project.id === draft.projectId)?.project
     if (!project || !onRunTodo) throw new Error(t('todo.run_unavailable', '运行服务当前不可用'))
-    if (draft.assignee === 'unassigned') {
+    if (draft.assignee.type === 'unassigned') {
       throw new Error(t('todo.executor_required', '请先选择员工或 AI 智能体作为执行者'))
     }
-    if (draft.assignee === 'human') {
-      setDrafts(current =>
+    if (draft.assignee.type === 'human') {
+      setWorkItems(current =>
         current.map(entry =>
           entry.id === draft.id
             ? { ...entry, state: 'started', updatedAt: new Date().toISOString() }
@@ -436,28 +551,96 @@ export function TodoWorkspace({
     }
     const address = await onRunTodo({
       project,
-      message: draft.markdown,
-      goal: draft.goal || undefined,
+      message: draft.description,
+      goal: draft.objective || undefined,
       attachments: draft.attachments,
+      collaborationMode: draft.runtimeRefs.length === 0 ? 'plan' : 'default',
     })
     if (!address) throw new Error(t('todo.create_failed', 'TODO 创建失败'))
-    setDrafts(current => current.filter(entry => entry.id !== draft.id))
+    setWorkItems(current =>
+      current.map(entry =>
+        entry.id === draft.id
+          ? {
+              ...entry,
+              state: 'started',
+              runtimeRefs: [...entry.runtimeRefs, address],
+              events: [
+                ...entry.events,
+                {
+                  id: createLocalWorkItemId(),
+                  type: 'run-linked',
+                  summary: '已关联 AI 执行会话',
+                  createdAt: new Date().toISOString(),
+                },
+              ],
+              updatedAt: new Date().toISOString(),
+            }
+          : entry
+      )
+    )
     setSelectedItemId(null)
   }
 
   const updateDraftAttachments = (draftId: string, attachments: Attachment[]) => {
-    setDrafts(current =>
-      current.map(draft =>
-        draft.id === draftId
-          ? { ...draft, attachments, updatedAt: new Date().toISOString() }
-          : draft
+    setWorkItems(current =>
+      current.map(item =>
+        item.id === draftId ? { ...item, attachments, updatedAt: new Date().toISOString() } : item
       )
     )
   }
 
   const deleteDraft = (draftId: string) => {
-    setDrafts(current => current.filter(draft => draft.id !== draftId))
+    setWorkItems(current =>
+      current.filter(item => item.id !== draftId && item.parentId !== draftId)
+    )
     setSelectedItemId(null)
+  }
+
+  const addChildWorkItem = (parentId: string, workTypeKey: string, workTypeName: string) => {
+    const parent = workItems.find(item => item.id === parentId)
+    if (!parent) return
+    if (workItems.some(item => item.parentId === parentId && item.workTypeKey === workTypeKey))
+      return
+    const now = new Date().toISOString()
+    const child: LocalWorkItem = {
+      id: createLocalWorkItemId(),
+      projectId: parent.projectId,
+      parentId,
+      title: `${parent.title} · ${workTypeName}`,
+      objective: parent.objective,
+      description: '',
+      state: 'backlog',
+      workTypeKey,
+      workTypeSnapshot: workflowConfig.workTypes.find(type => type.key === workTypeKey) ?? {
+        key: workTypeKey,
+        name: workTypeName,
+        dependsOn: [],
+        defaultAssignee: { type: 'unassigned' },
+      },
+      assignee:
+        workflowConfig.workTypes.find(type => type.key === workTypeKey)?.defaultAssignee ??
+        ({ type: 'unassigned' } as const),
+      collaborators: [],
+      blocker: '',
+      nextAction: '',
+      priority: parent.priority,
+      attachments: [],
+      runtimeRefs: [],
+      events: [
+        { id: createLocalWorkItemId(), type: 'created', summary: '执行任务已创建', createdAt: now },
+      ],
+      sortOrder: workItems.filter(item => item.parentId === parentId).length,
+      createdAt: now,
+      updatedAt: now,
+    }
+    setWorkItems(current => [...current, child])
+    void ensureTodoWorkDirectory(parentId, workTypeKey)
+  }
+
+  const applyWorkflowToItem = (parentId: string) => {
+    workflowConfig.workTypes.forEach(workType => {
+      addChildWorkItem(parentId, workType.key, workType.name)
+    })
   }
 
   const openWeworkProjects = (createProject = false) => {
@@ -504,10 +687,11 @@ export function TodoWorkspace({
           setExpandedProjectId(current => (current === projectId ? null : projectId))
         }
         onSelectView={setProjectView}
-        onCreate={() => setCreateDialogState('backlog')}
+        onCreate={() => setQuickCreateRequest({ state: 'inbox', token: Date.now() })}
         onSearch={() => setSearchOpen(true)}
         onAddProject={() => openWeworkProjects(true)}
         onOpenProjects={() => openWeworkProjects(false)}
+        onConfigureWorkflow={() => setWorkflowDialogOpen(true)}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col bg-[#F7F8F9] dark:bg-background">
@@ -626,16 +810,49 @@ export function TodoWorkspace({
             <button
               type="button"
               data-testid="todo-create-button"
-              onClick={() => setCreateDialogState('backlog')}
+              onClick={() => setQuickCreateRequest({ state: 'inbox', token: Date.now() })}
               className="flex h-8 items-center gap-1.5 rounded-md bg-[#14B8A6] px-3 text-[12px] font-semibold text-white hover:bg-[#0FA797]"
             >
               <Plus className="h-3.5 w-3.5" />
               {t('todo.create_action', '新建 TODO')}
             </button>
           </div>
+          {projectView === 'work-items' && (
+            <div
+              data-testid="todo-scope-switcher"
+              className="absolute left-1/2 top-0 flex h-[38px] -translate-x-1/2 items-end gap-5"
+            >
+              <button
+                type="button"
+                data-testid="todo-scope-items"
+                onClick={() => setWorkScope('items')}
+                className={cn(
+                  'h-8 border-b-2 px-1 text-[12px] font-medium',
+                  workScope === 'items'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-text-secondary hover:text-text-primary'
+                )}
+              >
+                {t('todo.items_scope', '事项')}
+              </button>
+              <button
+                type="button"
+                data-testid="todo-scope-mine"
+                onClick={() => setWorkScope('mine')}
+                className={cn(
+                  'h-8 border-b-2 px-1 text-[12px] font-medium',
+                  workScope === 'mine'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-text-secondary hover:text-text-primary'
+                )}
+              >
+                {t('todo.my_work', '我的工作')}
+              </button>
+            </div>
+          )}
         </header>
 
-        {projectView === 'work-items' ? (
+        {projectView === 'work-items' && workScope === 'items' ? (
           <TodoWorkItems
             items={items}
             layout={layout}
@@ -647,8 +864,20 @@ export function TodoWorkspace({
             onDisplayChange={setDisplay}
             onCloseDisplay={() => setDisplayOpen(false)}
             onSelectItem={item => setSelectedItemId(item.id)}
-            onCreate={state => setCreateDialogState(state)}
+            onCreate={quickCreate}
+            createRequest={quickCreateRequest}
+            onMoveItem={(itemId, state) =>
+              setWorkItems(current =>
+                current.map(item =>
+                  item.id === itemId
+                    ? { ...item, state, updatedAt: new Date().toISOString() }
+                    : item
+                )
+              )
+            }
           />
+        ) : projectView === 'work-items' ? (
+          <TodoMyWork items={items} onSelectItem={item => setSelectedItemId(item.id)} />
         ) : (
           <TodoOverview
             projectName={selectedProject?.project.name ?? t('todo.no_project', '未选择项目')}
@@ -700,17 +929,97 @@ export function TodoWorkspace({
                 ? attachments => updateDraftAttachments(selectedItem.id, attachments)
                 : undefined
             }
+            onAddChild={
+              selectedItem.kind === 'draft' && !selectedItem.parentId
+                ? (workTypeKey, workTypeName) =>
+                    addChildWorkItem(selectedItem.id, workTypeKey, workTypeName)
+                : undefined
+            }
+            workTypes={workflowConfig.workTypes}
+            onApplyWorkflow={
+              selectedItem.kind === 'draft' && !selectedItem.parentId
+                ? () => applyWorkflowToItem(selectedItem.id)
+                : undefined
+            }
+            onConfigureWorkflow={() => setWorkflowDialogOpen(true)}
+            onSelectChild={child => setSelectedItemId(child.id)}
+            onUpdateItem={
+              selectedItem.kind === 'draft'
+                ? patch =>
+                    setWorkItems(current =>
+                      current.map(item =>
+                        item.id === selectedItem.id
+                          ? {
+                              ...item,
+                              ...(patch.state &&
+                              !(
+                                patch.state === 'started' &&
+                                selectedItem.waitingFor &&
+                                selectedItem.waitingFor.length > 0
+                              )
+                                ? { state: patch.state }
+                                : {}),
+                              ...(patch.assigneeType
+                                ? { assignee: { type: patch.assigneeType } }
+                                : {}),
+                              ...(patch.blocker !== undefined ? { blocker: patch.blocker } : {}),
+                              ...(patch.nextAction !== undefined
+                                ? { nextAction: patch.nextAction }
+                                : {}),
+                              events: [
+                                ...item.events,
+                                {
+                                  id: createLocalWorkItemId(),
+                                  type: 'updated' as const,
+                                  summary: '事项信息已更新',
+                                  createdAt: new Date().toISOString(),
+                                },
+                              ],
+                              updatedAt: new Date().toISOString(),
+                            }
+                          : item
+                      )
+                    )
+                : undefined
+            }
+            onConfirm={
+              selectedItem.kind === 'draft' && !selectedItem.parentId
+                ? () =>
+                    setWorkItems(current =>
+                      current.map(item =>
+                        item.id === selectedItem.id
+                          ? {
+                              ...item,
+                              state: 'completed',
+                              events: [
+                                ...item.events,
+                                {
+                                  id: createLocalWorkItemId(),
+                                  type: 'confirmed' as const,
+                                  summary: '事项已确认完成',
+                                  createdAt: new Date().toISOString(),
+                                },
+                              ],
+                              updatedAt: new Date().toISOString(),
+                            }
+                          : item
+                      )
+                    )
+                : undefined
+            }
           />
         )}
       </main>
-      {createDialogState && selectedProject && (
-        <TodoCreateDialog
-          projects={projectEntries.map(entry => entry.project)}
-          initialProjectId={selectedProject.project.id}
-          initialState={createDialogState}
-          modelName={modelName}
-          onClose={() => setCreateDialogState(null)}
-          onSubmit={submitTodo}
+      {workflowDialogOpen && selectedProject && (
+        <TodoWorkflowDialog
+          projectName={selectedProject.project.name}
+          initialConfig={workflowConfig}
+          onClose={() => setWorkflowDialogOpen(false)}
+          onSave={config => {
+            setWorkflowConfig(config)
+            saveTodoWorkflow(selectedProject.project.id, config)
+            setWorkflowDialogOpen(false)
+          }}
         />
       )}
     </div>

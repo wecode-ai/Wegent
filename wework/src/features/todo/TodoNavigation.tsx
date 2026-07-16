@@ -9,6 +9,7 @@ import {
   ListTodo,
   Plus,
   Search,
+  Settings2,
   UserRound,
 } from 'lucide-react'
 import { DesktopAppSwitcher } from '@/components/layout/DesktopAppSwitcher'
@@ -247,6 +248,7 @@ export function TodoSidebar({
   onSearch,
   onAddProject,
   onOpenProjects,
+  onConfigureWorkflow,
 }: {
   user: UserProfile | null
   projects: TodoProject[]
@@ -263,6 +265,7 @@ export function TodoSidebar({
   onSearch: () => void
   onAddProject: () => void
   onOpenProjects: () => void
+  onConfigureWorkflow: () => void
 }) {
   const { t } = useTranslation('common')
   const [projectActionsOpen, setProjectActionsOpen] = useState(false)
@@ -409,6 +412,13 @@ export function TodoSidebar({
                     count={projectItemCount(selectedProject)}
                     active={activeView === 'work-items'}
                     onClick={() => onSelectView('work-items')}
+                  />
+                  <ProjectNav
+                    testId="todo-sidebar-workflow-settings"
+                    icon={Settings2}
+                    label={t('todo.workflow_settings', '工作流配置')}
+                    active={false}
+                    onClick={onConfigureWorkflow}
                   />
                 </>
               )}

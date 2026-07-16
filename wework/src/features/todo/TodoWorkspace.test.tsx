@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -60,8 +60,29 @@ const runtimeWork: RuntimeWorkListResponse = {
 describe('TodoWorkspace V4-01', () => {
   beforeEach(() => window.localStorage.clear())
 
+  async function quickCreate(title: string, state = 'inbox') {
+    await userEvent.click(screen.getByTestId(`todo-column-add-${state}`))
+    const input = screen.getByTestId(`todo-quick-create-${state}`)
+    await userEvent.type(input, `${title}{enter}`)
+    expect(await screen.findByText(title)).toBeInTheDocument()
+  }
+
   afterEach(() => {
     delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+  })
+
+  it('provides a local project when no backend project exists', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={[]}
+        runtimeWork={{ projects: [], chats: [], totalTasks: 0 }}
+      />
+    )
+
+    expect(screen.getAllByText('本地事项').length).toBeGreaterThan(0)
+    await quickCreate('Offline item')
+    expect(window.localStorage.getItem('wework:todo:work-items:1')).toContain('Offline item')
   })
 
   it('renders the four Pencil V4 kanban columns and maps runtime states', () => {
@@ -78,8 +99,8 @@ describe('TodoWorkspace V4-01', () => {
     expect(screen.getByTestId('todo-column-started')).toHaveTextContent('1')
     expect(screen.getByTestId('todo-column-review')).toHaveTextContent('1')
     expect(screen.getByTestId('todo-column-completed')).toHaveTextContent('1')
-    expect(screen.getByTestId('todo-board-scroll')).toHaveClass('overflow-auto')
-    expect(screen.getByTestId('todo-board-grid')).toHaveClass('min-w-[900px]', 'flex')
+    expect(screen.getByTestId('todo-board-scroll')).toHaveClass('overflow-auto', 'bg-[#F7F8F9]')
+    expect(screen.getByTestId('todo-board-grid')).toHaveClass('min-w-[1100px]', 'flex')
     expect(screen.getByText('Synchronize runtime state')).toBeInTheDocument()
   })
 
@@ -232,7 +253,7 @@ describe('TodoWorkspace V4-01', () => {
     expect(screen.queryByTestId('todo-detail-panel')).not.toBeInTheDocument()
   })
 
-  it('opens the V4-04 dialog from a board column and creates a persisted TODO draft', async () => {
+  it('creates a persisted TODO inline from a board column', async () => {
     render(
       <TodoWorkspace
         user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
@@ -242,23 +263,27 @@ describe('TodoWorkspace V4-01', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('todo-column-add-review'))
-
-    expect(screen.getByTestId('todo-create-dialog')).toBeInTheDocument()
-    expect(screen.getByTestId('todo-create-state')).toHaveValue('review')
-    await userEvent.type(screen.getByTestId('todo-create-goal'), 'Keep login stable')
-    await userEvent.type(
-      screen.getByTestId('todo-create-markdown'),
-      '## Fix login redirect\n\nPreserve the original route.'
-    )
-    await userEvent.click(screen.getByTestId('todo-create-submit'))
-
-    await waitFor(() => expect(screen.queryByTestId('todo-create-dialog')).not.toBeInTheDocument())
-    expect(screen.getByText('Fix login redirect')).toBeInTheDocument()
+    await quickCreate('Fix login redirect', 'review')
     expect(screen.getByTestId('todo-sidebar-work-items')).toHaveTextContent('4')
-    expect(window.localStorage.getItem('wework:todo:drafts:1')).toContain('Keep login stable')
+    expect(window.localStorage.getItem('wework:todo:work-items:1')).toContain('Fix login redirect')
   })
 
+  it('opens inline creation from the global create action', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('todo-create-button'))
+    expect(screen.getByTestId('todo-quick-create-inbox')).toHaveFocus()
+    await userEvent.type(screen.getByTestId('todo-quick-create-inbox'), 'Mouse-created item')
+    await userEvent.click(screen.getByTestId('todo-quick-create-submit-inbox'))
+    expect(await screen.findByText('Mouse-created item')).toBeInTheDocument()
+  })
   it('creates and runs a TODO through the existing Wework runtime flow', async () => {
     const onRunTodo = vi.fn(async () => ({
       deviceId: 'local',
@@ -275,22 +300,26 @@ describe('TodoWorkspace V4-01', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('todo-create-button'))
-    await userEvent.type(screen.getByTestId('todo-create-goal'), 'Ship a verified fix')
-    await userEvent.type(screen.getByTestId('todo-create-markdown'), 'Investigate and fix the bug')
-    await userEvent.selectOptions(screen.getByTestId('todo-create-executor'), 'ai')
-    await userEvent.click(screen.getByTestId('todo-create-and-run'))
+    await quickCreate('Investigate and fix the bug')
+    await userEvent.click(screen.getByText('Investigate and fix the bug'))
+    await userEvent.selectOptions(screen.getByTestId('todo-detail-assignee-select'), 'ai')
+    await userEvent.click(screen.getByTestId('todo-detail-run'))
 
     await waitFor(() => expect(onRunTodo).toHaveBeenCalledTimes(1))
     expect(onRunTodo).toHaveBeenCalledWith(
       expect.objectContaining({
         project: expect.objectContaining({ id: 7 }),
         message: 'Investigate and fix the bug',
-        goal: 'Ship a verified fix',
+        goal: undefined,
         attachments: [],
+        collaborationMode: 'plan',
       })
     )
-    await waitFor(() => expect(screen.queryByTestId('todo-create-dialog')).not.toBeInTheDocument())
+    await waitFor(() => {
+      const stored = window.localStorage.getItem('wework:todo:work-items:1')
+      expect(stored).toContain('created-task')
+      expect(stored).toContain('已关联 AI 执行会话')
+    })
   })
 
   it('switches between the board and list layouts', async () => {
@@ -390,10 +419,8 @@ describe('TodoWorkspace V4-01', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('todo-create-button'))
-    await userEvent.type(screen.getByTestId('todo-create-markdown'), 'Unassigned draft')
-    await userEvent.click(screen.getByTestId('todo-create-submit'))
-    await userEvent.click(await screen.findByText('Unassigned draft'))
+    await quickCreate('Unassigned draft')
+    await userEvent.click(screen.getByText('Unassigned draft'))
     await userEvent.click(screen.getByTestId('todo-detail-run'))
 
     expect(await screen.findByTestId('todo-detail-run-error')).toHaveTextContent(
@@ -413,10 +440,8 @@ describe('TodoWorkspace V4-01', () => {
       />
     )
 
-    await userEvent.click(screen.getByTestId('todo-create-button'))
-    await userEvent.type(screen.getByTestId('todo-create-markdown'), 'Disposable draft')
-    await userEvent.click(screen.getByTestId('todo-create-submit'))
-    await userEvent.click(await screen.findByText('Disposable draft'))
+    await quickCreate('Disposable draft')
+    await userEvent.click(screen.getByText('Disposable draft'))
 
     await userEvent.click(screen.getByTestId('todo-detail-preview-mode'))
     expect(screen.getByTestId('todo-detail-panel')).toHaveClass('left-0', 'w-full')
@@ -425,5 +450,144 @@ describe('TodoWorkspace V4-01', () => {
     expect(screen.getByTestId('todo-detail-more-menu')).toBeInTheDocument()
     await userEvent.click(screen.getByTestId('todo-detail-menu-delete'))
     expect(screen.queryByText('Disposable draft')).not.toBeInTheDocument()
+  })
+
+  it('configures a reusable project flow and assigns each role independently', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('todo-sidebar-workflow-settings'))
+    await userEvent.click(screen.getByTestId('todo-workflow-template-software'))
+    await userEvent.clear(screen.getByTestId('todo-workflow-name-discovery'))
+    await userEvent.type(screen.getByTestId('todo-workflow-name-discovery'), '产品澄清')
+    await userEvent.type(screen.getByTestId('todo-workflow-assignee-name-discovery'), '王产品')
+    await userEvent.type(screen.getByTestId('todo-workflow-assignee-name-implementation'), 'Codex')
+    await userEvent.click(screen.getByTestId('todo-workflow-save'))
+
+    expect(window.localStorage.getItem('wework:todo:workflow:7')).toContain('产品澄清')
+    expect(window.localStorage.getItem('wework:todo:workflow:7')).toContain('王产品')
+    await quickCreate('新版登录流程上线')
+    await userEvent.click(screen.getByText('新版登录流程上线'))
+    expect(screen.getByTestId('todo-detail-workflow')).toHaveTextContent('产品澄清')
+    expect(screen.getByTestId('todo-detail-workflow')).toHaveTextContent('实现')
+    expect(window.localStorage.getItem('wework:todo:work-items:1')).toContain('Codex')
+  })
+
+  it('explains an empty workflow and lets an existing item apply the configured project flow', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await quickCreate('既有事项')
+    await userEvent.click(screen.getByText('既有事项'))
+    expect(screen.getByTestId('todo-detail-workflow')).toHaveTextContent(
+      '当前项目还没有设置事项流程'
+    )
+
+    await userEvent.click(screen.getByTestId('todo-configure-workflow'))
+    await userEvent.click(screen.getByTestId('todo-workflow-template-software'))
+    await userEvent.click(screen.getByTestId('todo-workflow-save'))
+    expect(screen.getByTestId('todo-detail-workflow')).toHaveTextContent(
+      '这个事项还没有应用项目流程'
+    )
+
+    await userEvent.click(screen.getByTestId('todo-apply-workflow'))
+    expect(screen.getByTestId('todo-detail-workflow')).toHaveTextContent('既有事项 · 需求')
+    expect(screen.getByTestId('todo-detail-workflow')).toHaveTextContent('既有事项 · 实现')
+  })
+
+  it('adds an execution task below a complete item without adding another board card', async () => {
+    window.localStorage.setItem(
+      'wework:todo:workflow:7',
+      JSON.stringify({
+        version: 1,
+        statuses: [
+          { key: 'inbox', name: '收集箱' },
+          { key: 'backlog', name: '待开始' },
+          { key: 'started', name: '进行中' },
+          { key: 'review', name: '待确认' },
+          { key: 'completed', name: '已完成' },
+        ],
+        workTypes: [
+          {
+            key: 'discovery',
+            name: '需求',
+            dependsOn: [],
+            defaultAssignee: { type: 'human', name: '王产品' },
+          },
+          {
+            key: 'implementation',
+            name: '实现',
+            dependsOn: ['discovery'],
+            defaultAssignee: { type: 'ai', name: 'Codex' },
+          },
+        ],
+      })
+    )
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await quickCreate('新版登录流程上线')
+    await userEvent.click(screen.getByText('新版登录流程上线'))
+    expect(screen.getByTestId('todo-detail-workflow')).toHaveTextContent('新版登录流程上线 · 实现')
+    expect(screen.getAllByTestId(/todo-card-/)).toHaveLength(4)
+    expect(window.localStorage.getItem('wework:todo:work-items:1')).toContain('"parentId"')
+
+    await userEvent.click(screen.getByText('新版登录流程上线 · 实现'))
+    await userEvent.selectOptions(screen.getByTestId('todo-detail-state-select'), 'started')
+    await userEvent.selectOptions(screen.getByTestId('todo-detail-assignee-select'), 'ai')
+    await userEvent.type(screen.getByTestId('todo-detail-blocker-input'), '等待 API 定稿')
+    fireEvent.blur(screen.getByTestId('todo-detail-blocker-input'))
+
+    await waitFor(() => {
+      const stored = window.localStorage.getItem('wework:todo:work-items:1')
+      expect(stored).toContain('等待 API 定稿')
+      expect(stored).toContain('"state":"backlog"')
+      expect(stored).toContain('"type":"ai"')
+    })
+    expect(screen.getByTestId('todo-detail-dependency-warning')).toHaveTextContent('需求')
+  })
+
+  it('groups human work and supports explicit completion confirmation', async () => {
+    render(
+      <TodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@wework.local' }}
+        projects={projects}
+        runtimeWork={runtimeWork}
+        currentProjectId={7}
+      />
+    )
+
+    await quickCreate('确认发布范围')
+    await userEvent.click(screen.getByText('确认发布范围'))
+    await userEvent.selectOptions(screen.getByTestId('todo-detail-assignee-select'), 'human')
+    await userEvent.click(screen.getByTestId('todo-detail-close'))
+
+    await userEvent.click(screen.getByTestId('todo-scope-mine'))
+    expect(screen.getByTestId('todo-my-work')).toHaveTextContent('确认发布范围')
+    await userEvent.click(screen.getByText('确认发布范围'))
+    await userEvent.selectOptions(screen.getByTestId('todo-detail-state-select'), 'review')
+    await userEvent.click(screen.getByTestId('todo-detail-confirm'))
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem('wework:todo:work-items:1')).toContain('事项已确认完成')
+    })
   })
 })

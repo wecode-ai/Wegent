@@ -4,6 +4,7 @@ mod embedded_browser;
 mod local_executor;
 mod local_terminal;
 mod process_environment;
+mod todo_store;
 
 use std::collections::{HashMap, HashSet};
 #[cfg(desktop)]
@@ -3787,6 +3788,15 @@ pub fn run() {
             open_local_workspace,
             read_dropped_files,
             save_local_attachment_file,
+            todo_store::ensure_todo_work_directory,
+            todo_store::ensure_todo_workspace,
+            todo_store::get_todo_workspace_path,
+            todo_store::list_todo_workspace,
+            todo_store::load_todo_store,
+            todo_store::save_todo_store,
+            todo_store::delete_todo_workspace_entry,
+            todo_store::rename_todo_workspace_entry,
+            todo_store::write_todo_workspace_file,
             local_terminal::resize_local_terminal,
             local_terminal::start_local_terminal,
             local_terminal::write_local_terminal

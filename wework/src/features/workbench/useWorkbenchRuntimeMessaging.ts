@@ -448,6 +448,7 @@ export function useWorkbenchRuntimeMessaging({
         SendCurrentInputOptions,
         'initialGoal' | 'onError' | 'onRuntimeTaskOptimisticOpen'
       > & {
+        collaborationMode?: 'default' | 'plan'
         ephemeral?: boolean
         openInMainPane?: boolean
         refreshWorkListsOnResolve?: boolean
@@ -543,7 +544,12 @@ export function useWorkbenchRuntimeMessaging({
         title: buildRuntimeTaskTitle(displayMessage, payload.title),
         modelId: payload.force_override_bot_model,
         modelType: payload.force_override_bot_model_type ?? null,
-        modelOptions: payload.model_options ?? {},
+        modelOptions: {
+          ...(payload.model_options ?? {}),
+          ...(options && 'collaborationMode' in options && options.collaborationMode
+            ? { collaborationMode: options.collaborationMode }
+            : {}),
+        },
         additionalSkills: payload.additional_skills ?? [],
         attachmentIds: payload.attachment_ids ?? [],
         attachments: payload.attachments ?? [],
@@ -1056,6 +1062,7 @@ export function useWorkbenchRuntimeMessaging({
 
       return sendPreparedRuntimeMessage(message, prepared.payload, prepared.activeDeviceId, {
         initialGoal: options.initialGoal,
+        collaborationMode: options.collaborationMode,
         onError: options.onError,
         openInMainPane: false,
       })

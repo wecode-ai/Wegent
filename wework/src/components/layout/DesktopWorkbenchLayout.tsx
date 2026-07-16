@@ -44,7 +44,6 @@ export function DesktopWorkbenchLayout() {
   const { logout: onLogout } = useAuth()
   const {
     state,
-    projectChat,
     cloudWorkStatus,
     upgradingDevices,
     selectProject: onSelectProject,
@@ -599,12 +598,12 @@ export function DesktopWorkbenchLayout() {
             runtimeWork={state.runtimeWork}
             currentProjectId={state.currentProject?.id}
             services={services}
-            modelName={projectChat.selectedModel?.displayName ?? projectChat.selectedModel?.name}
-            onRunTodo={({ project, message, goal, attachments }) =>
+            onRunTodo={({ project, message, goal, attachments, collaborationMode }) =>
               onCreateProjectRuntimeTask(message, {
                 project,
                 attachments,
                 initialGoal: goal ? { objective: goal } : null,
+                collaborationMode,
               })
             }
             onOpenRuntimeTask={async address => {
