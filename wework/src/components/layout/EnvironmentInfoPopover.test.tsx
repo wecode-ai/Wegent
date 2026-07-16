@@ -1,5 +1,7 @@
 import { render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, test } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { EnvironmentInfoPopover } from './EnvironmentInfoPopover'
 
@@ -36,7 +38,8 @@ describe('EnvironmentInfoPopover', () => {
           },
         ]}
         popoverContainer={popoverContainer}
-        defaultOpen
+        open
+        onOpenChange={vi.fn()}
       />
     )
 
@@ -44,5 +47,39 @@ describe('EnvironmentInfoPopover', () => {
     expect(popover).toHaveTextContent('10.201.3.200 已离线，恢复在线后可继续对话')
     expect(popover).not.toHaveTextContent('executor-offline:')
     expect(popover).not.toHaveTextContent('9562a3b4-61a3-4217-9655-0341b231eb06')
+  })
+
+  test('delegates open state to the app shell without writing browser storage', async () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    function ControlledPopover() {
+      const [open, setOpen] = useState(true)
+      return (
+        <EnvironmentInfoPopover
+          info={{
+            additions: '',
+            deletions: '',
+            executionTarget: 'local',
+          }}
+          popoverContainer={popoverContainer}
+          open={open}
+          onOpenChange={setOpen}
+        />
+      )
+    }
+
+    const first = render(<ControlledPopover />)
+
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    expect(localStorage.getItem('wework.desktop.environmentInfo.open')).toBeNull()
+
+    first.unmount()
+    render(<ControlledPopover />)
+    expect(screen.getByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(localStorage.getItem('wework.desktop.environmentInfo.open')).toBeNull()
   })
 })

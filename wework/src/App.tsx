@@ -23,6 +23,7 @@ import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
+import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import {
   requestDesktopSidebarToggle,
   useDesktopSidebarCollapsed,
@@ -192,6 +193,12 @@ export default function App() {
 function AppShell() {
   const path = useCurrentPath()
   const { user, isLoading } = useAuth()
+  const cloudConnection = useCloudConnection()
+  const initialCloudConnection = {
+    backendUrl: cloudConnection.backendUrl,
+    isConnected: cloudConnection.isConnected,
+    token: cloudConnection.token,
+  }
   const { activeAppKey, tabs, navigateToApp } = useChromeTabs(path)
   const isTauri = isTauriRuntime()
   const titlebarOverlaysContent = isTauri && activeAppKey === 'wework'
@@ -344,7 +351,7 @@ function AppShell() {
 
   if (isLoading) {
     return (
-      <LocalRuntimeInitializer startupReady={false}>
+      <LocalRuntimeInitializer initialCloudConnection={initialCloudConnection} startupReady={false}>
         <div />
       </LocalRuntimeInitializer>
     )
@@ -357,6 +364,7 @@ function AppShell() {
   return (
     <CodexHomeInitializer>
       <LocalRuntimeInitializer
+        initialCloudConnection={initialCloudConnection}
         startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}
       >
         <div

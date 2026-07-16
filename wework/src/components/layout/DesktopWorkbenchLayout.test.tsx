@@ -5814,7 +5814,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-info-popover')).not.toHaveClass(
       'shadow-[0_18px_44px_rgba(0,0,0,0.24)]'
     )
-    expect(screen.getByText('环境信息')).toBeInTheDocument()
+    expect(screen.getByText('环境')).toBeInTheDocument()
     expect(screen.getByText('变更')).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('+173')).toBeInTheDocument())
     const deviceSection = screen.getByTestId('environment-device-section')
@@ -5846,8 +5846,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(gitSection).toHaveTextContent('human/narwhal-20260528-073440')
     expect(gitSection).toHaveTextContent('提交')
     expect(gitSection).toHaveTextContent('创建拉取请求')
-    expect(gitSection).toHaveTextContent('来源')
-    expect(gitSection).toHaveTextContent('暂无来源')
+    expect(gitSection).not.toHaveTextContent('来源')
 
     await userEvent.click(deviceButton)
 
@@ -5868,6 +5867,78 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
     expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(false)
     expect(environmentInfoPanel).toHaveClass('overflow-hidden')
+  })
+
+  test('shares the pinned summary state across tasks and resets it on app-shell remount', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const secondTask = {
+      ...activeProjectRuntimeTask,
+      taskId: 'runtime-project-2',
+    }
+    const renderTask = (task: typeof activeProjectRuntimeTask) => (
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: task,
+        }}
+      />
+    )
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const view = render(renderTask(activeProjectRuntimeTask))
+
+    expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    await userEvent.click(activePane().getByTestId('environment-info-button'))
+    expect(activePane().queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    view.rerender(renderTask(secondTask))
+
+    await waitFor(() =>
+      expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      )
+    )
+    expect(activePane().queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+
+    view.unmount()
+    render(renderTask(secondTask))
+
+    expect(activePane().getByTestId('environment-info-button')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(activePane().getByTestId('environment-info-popover')).toBeInTheDocument()
+  })
+
+  test('keeps the overlay summary state separate from the pinned summary state', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
+    )
+
+    expect(screen.getByTestId('environment-info-popover')).not.toHaveClass('fixed')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByTestId('environment-info-button'))
+    expect(screen.getByTestId('environment-info-popover')).toHaveClass('fixed')
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('environment-info-popover')).not.toHaveClass('fixed')
+    )
+    expect(screen.getByTestId('environment-info-button')).toHaveAttribute('aria-expanded', 'true')
   })
 
   test('opens environment changes review in the right workspace panel', async () => {
