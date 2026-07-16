@@ -39,6 +39,7 @@ const LOCAL_EXECUTOR_DEVICE_ID: &str = "local-device";
 const LOCAL_EXECUTOR_ADDR_FILE_NAME: &str = "app-ipc.addr";
 const LOCAL_EXECUTOR_DEFAULT_ADDR: &str = "127.0.0.1:0";
 const LOCAL_EXECUTOR_LOG_FILE_NAME: &str = "executor.log";
+const LOCAL_EXECUTOR_SIGNAL_AUDIT_FILE_NAME: &str = "wework-executor-signal-audit.log";
 const LOCAL_EXECUTOR_RUNTIME_DIR_NAME: &str = "app-runtime";
 const LOCAL_EXECUTOR_LOG_TAIL_BYTES: u64 = 200 * 1024;
 const LOCAL_EXECUTOR_LOG_TAIL_LINES: usize = 20;
@@ -141,7 +142,17 @@ impl LocalExecutorChild {
     fn kill(self) {
         match self {
             LocalExecutorChild::Tauri(child) => {
-                let _ = child.kill();
+                let child_pid = child.pid();
+                audit_local_executor_signal(format!(
+                    "event=child_kill_requested sender_pid={} target_pid={} child_kind=tauri signal=SIGKILL",
+                    std::process::id(), child_pid
+                ));
+                if let Err(error) = child.kill() {
+                    audit_local_executor_signal(format!(
+                        "event=child_kill_failed sender_pid={} target_pid={} child_kind=tauri error={error}",
+                        std::process::id(), child_pid
+                    ));
+                }
             }
             LocalExecutorChild::Process(child) => child.kill(),
         }
@@ -175,6 +186,12 @@ impl ManagedProcessChild {
     fn kill(mut self) {
         #[cfg(unix)]
         {
+            audit_local_executor_signal(format!(
+                "event=process_group_kill_requested sender_pid={} target_pid={} target_pgid={}",
+                std::process::id(),
+                self.child.id(),
+                self.process_group_id
+            ));
             terminate_process_group(self.process_group_id);
             let _ = self.child.wait();
         }
@@ -205,12 +222,20 @@ fn configure_managed_process_group(_command: &mut Command) {}
 
 #[cfg(unix)]
 fn terminate_process_group(process_group_id: u32) {
+    audit_local_executor_signal(format!(
+        "event=process_group_termination_started sender_pid={} target_pgid={process_group_id}",
+        std::process::id()
+    ));
     send_process_group_signal(process_group_id, libc::SIGTERM);
     wait_for_process_group_exit(
         process_group_id,
         Duration::from_millis(LOCAL_EXECUTOR_PROCESS_GROUP_GRACE_MS),
     );
     send_process_group_signal(process_group_id, libc::SIGKILL);
+    audit_local_executor_signal(format!(
+        "event=process_group_termination_finished sender_pid={} target_pgid={process_group_id}",
+        std::process::id()
+    ));
 }
 
 #[cfg(unix)]
@@ -226,18 +251,30 @@ fn wait_for_process_group_exit(process_group_id: u32, timeout: Duration) {
 
 #[cfg(unix)]
 fn process_group_exists(process_group_id: u32) -> bool {
-    unsafe { libc::kill(-(process_group_id as libc::pid_t), 0) == 0 }
+    let result = unsafe { libc::kill(-(process_group_id as libc::pid_t), 0) };
+    log::debug!(
+        "Tauri process-group signal probe: sender_pid={}, target_pgid={process_group_id}, signal=0, result={result}",
+        std::process::id()
+    );
+    result == 0
 }
 
 #[cfg(unix)]
 fn send_process_group_signal(process_group_id: u32, signal: libc::c_int) {
-    unsafe {
-        let _ = libc::kill(-(process_group_id as libc::pid_t), signal);
-    }
+    let result = unsafe { libc::kill(-(process_group_id as libc::pid_t), signal) };
+    let error = (result != 0).then(std::io::Error::last_os_error);
+    audit_local_executor_signal(format!(
+        "event=process_group_signal_sent sender_pid={} target_pgid={process_group_id} signal={signal} result={result} error={error:?}",
+        std::process::id()
+    ));
 }
 
 #[cfg(unix)]
 fn terminate_process(process_id: u32) -> Result<(), String> {
+    audit_local_executor_signal(format!(
+        "event=stale_process_termination_started sender_pid={} target_pid={process_id}",
+        std::process::id()
+    ));
     terminate_process_group(process_id);
     if !process_exists(process_id) {
         return Ok(());
@@ -251,6 +288,10 @@ fn terminate_process(process_id: u32) -> Result<(), String> {
     if process_exists(process_id) {
         send_process_signal(process_id, libc::SIGKILL)?;
     }
+    audit_local_executor_signal(format!(
+        "event=stale_process_termination_finished sender_pid={} target_pid={process_id}",
+        std::process::id()
+    ));
     Ok(())
 }
 
@@ -267,18 +308,28 @@ fn wait_for_process_exit(process_id: u32, timeout: Duration) {
 
 #[cfg(unix)]
 fn process_exists(process_id: u32) -> bool {
-    unsafe { libc::kill(process_id as libc::pid_t, 0) == 0 }
+    let result = unsafe { libc::kill(process_id as libc::pid_t, 0) };
+    log::debug!(
+        "Tauri process signal probe: sender_pid={}, target_pid={process_id}, signal=0, result={result}",
+        std::process::id()
+    );
+    result == 0
 }
 
 #[cfg(unix)]
 fn send_process_signal(process_id: u32, signal: libc::c_int) -> Result<(), String> {
     let result = unsafe { libc::kill(process_id as libc::pid_t, signal) };
-    if result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+    let error = (result != 0).then(std::io::Error::last_os_error);
+    audit_local_executor_signal(format!(
+        "event=process_signal_sent sender_pid={} target_pid={process_id} signal={signal} result={result} error={error:?}",
+        std::process::id()
+    ));
+    if result == 0 || error.as_ref().and_then(std::io::Error::raw_os_error) == Some(libc::ESRCH) {
         Ok(())
     } else {
         Err(format!(
             "Failed to signal stale local executor process {process_id}: {}",
-            std::io::Error::last_os_error()
+            error.expect("failed kill should capture errno")
         ))
     }
 }
@@ -298,7 +349,11 @@ impl Default for LocalExecutorState {
     }
 }
 
-pub fn shutdown_local_executor(state: &LocalExecutorState) {
+pub fn shutdown_local_executor(state: &LocalExecutorState, reason: &str) {
+    audit_local_executor_signal(format!(
+        "event=executor_shutdown_entered sender_pid={} reason={reason}",
+        std::process::id()
+    ));
     state.keepalive.enabled.store(false, Ordering::SeqCst);
     let child = state.inner.lock().ok().and_then(|mut inner| {
         inner.running = false;
@@ -311,9 +366,18 @@ pub fn shutdown_local_executor(state: &LocalExecutorState) {
 
     if let Some(child) = child {
         child.kill();
+    } else {
+        audit_local_executor_signal(format!(
+            "event=executor_shutdown_no_owned_child sender_pid={} reason={reason}",
+            std::process::id()
+        ));
     }
 
     fail_pending_requests_inner(&state.inner, "Local executor stopped".to_string());
+    audit_local_executor_signal(format!(
+        "event=executor_shutdown_finished sender_pid={} reason={reason}",
+        std::process::id()
+    ));
 }
 
 #[derive(Debug, Deserialize)]
@@ -605,6 +669,30 @@ pub(crate) fn local_executor_log_dir_path() -> Result<PathBuf, String> {
         .map(PathBuf::from)
         .map(Ok)
         .unwrap_or_else(|| local_executor_runtime_dir_path().map(|path| path.join("logs")))
+}
+
+fn audit_local_executor_signal(message: String) {
+    log::warn!("Tauri local executor signal audit: {message}");
+
+    let Ok(log_dir) = local_executor_log_dir_path() else {
+        return;
+    };
+    if fs::create_dir_all(&log_dir).is_err() {
+        return;
+    }
+
+    let timestamp_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    let audit_path = log_dir.join(LOCAL_EXECUTOR_SIGNAL_AUDIT_FILE_NAME);
+    if let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(audit_path)
+    {
+        let _ = writeln!(file, "timestamp_ms={timestamp_ms} {message}");
+    }
 }
 
 fn read_local_executor_log_tail(
@@ -1623,9 +1711,12 @@ fn mark_child_terminated_inner(inner: &SharedExecutorInner, message: String) {
     }
 }
 
-fn update_ready_event_inner(inner: &SharedExecutorInner, event: &ExecutorEvent) {
+fn update_ready_event_inner(
+    inner: &SharedExecutorInner,
+    event: &ExecutorEvent,
+) -> Option<(String, String)> {
     if event.event != "executor.ready" {
-        return;
+        return None;
     }
 
     let ready = event
@@ -1652,6 +1743,12 @@ fn update_ready_event_inner(inner: &SharedExecutorInner, event: &ExecutorEvent) 
         .map(str::to_string);
 
     if let Ok(mut inner) = inner.lock() {
+        let replaced_runtime = inner
+            .runtime_instance_id
+            .as_ref()
+            .zip(runtime_instance_id.as_ref())
+            .filter(|(previous, current)| previous != current)
+            .map(|(previous, current)| (previous.clone(), current.clone()));
         inner.running = true;
         inner.ready = ready;
         if device_id.is_some() {
@@ -1666,7 +1763,10 @@ fn update_ready_event_inner(inner: &SharedExecutorInner, event: &ExecutorEvent) 
         if ready {
             inner.error = None;
         }
+        return replaced_runtime;
     }
+
+    None
 }
 
 fn handle_executor_line_inner(
@@ -1683,7 +1783,26 @@ fn handle_executor_line_inner(
             resolve_response_inner(inner, response);
         }
         ExecutorLine::Event(event) => {
-            update_ready_event_inner(inner, &event);
+            if let Some((previous_runtime_instance_id, runtime_instance_id)) =
+                update_ready_event_inner(inner, &event)
+            {
+                log::warn!(
+                    "Local executor runtime replaced: previous_runtime_instance_id={}, runtime_instance_id={}",
+                    previous_runtime_instance_id,
+                    runtime_instance_id
+                );
+                app.emit(
+                    LOCAL_EXECUTOR_EVENT,
+                    ExecutorEvent {
+                        event: "executor.runtime_replaced".to_string(),
+                        payload: json!({
+                            "previousRuntimeInstanceId": previous_runtime_instance_id,
+                            "runtimeInstanceId": runtime_instance_id,
+                        }),
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            }
             let terminal = is_terminal_response_event(&event.event);
             let terminal_event = event.event.clone();
             let terminal_task_id = event
@@ -3120,7 +3239,7 @@ command = "example"
             }),
         };
 
-        update_ready_event_inner(&inner, &event);
+        let _ = update_ready_event_inner(&inner, &event);
 
         let status = inner.lock().expect("state should lock");
         assert!(status.running);

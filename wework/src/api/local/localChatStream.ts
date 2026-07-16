@@ -59,6 +59,14 @@ export function createLocalChatStream(deps: LocalChatStreamDeps) {
           logLocalChatTerminalEvent(event, matchedSubscriptionCount, subscriptionEntries.length)
         }
         for (const [subscriptionId, subscription] of subscriptionEntries) {
+          if (event.event === 'executor.runtime_replaced') {
+            const payload = runtimeTransportReplacedPayload(event.payload)
+            if (payload) {
+              subscription.state = createResponseApiStreamState()
+              subscription.handlers.onRuntimeTransportReplaced?.(payload)
+            }
+            continue
+          }
           const inScope = isLocalExecutorEventInScope(event, subscription.handlers.scope)
           if (!inScope && event.event !== 'runtime.plan.updated') {
             continue
@@ -200,8 +208,19 @@ function hasLocalExecutorResponseHandlers(handlers: ChatStreamHandlers): boolean
     handlers.onRuntimeGoalUpdated ||
     handlers.onRuntimeGoalCleared ||
     handlers.onRuntimePlanUpdated ||
-    handlers.onGuidanceApplied
+    handlers.onGuidanceApplied ||
+    handlers.onRuntimeTransportReplaced
   )
+}
+
+function runtimeTransportReplacedPayload(
+  value: unknown
+): { previousRuntimeInstanceId: string; runtimeInstanceId: string } | null {
+  const payload = asRecord(value)
+  const previousRuntimeInstanceId = stringField(payload, 'previousRuntimeInstanceId')
+  const runtimeInstanceId = stringField(payload, 'runtimeInstanceId')
+  if (!previousRuntimeInstanceId || !runtimeInstanceId) return null
+  return { previousRuntimeInstanceId, runtimeInstanceId }
 }
 
 function streamScopeDebug(scope: ChatStreamHandlers['scope']): Record<string, unknown> {

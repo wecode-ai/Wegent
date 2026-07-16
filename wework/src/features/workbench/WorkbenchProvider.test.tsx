@@ -12,10 +12,7 @@ import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
-import {
-  RUNTIME_TASK_STATUS_PROBE_IDLE_MS,
-  useWorkbenchPaneSession,
-} from '@/components/layout/useWorkbenchPaneSession'
+import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
 import { findRuntimeTask } from './workbenchRuntimeHelpers'
@@ -5956,8 +5953,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
   })
 
-  test('loads the transcript fallback only after a status probe confirms the task stopped', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
+  test('restores partial output only after the local runtime transport is replaced', async () => {
     const runningWork = createRuntimeWork({
       projects: [
         {
@@ -5988,20 +5984,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       ],
       totalTasks: 1,
     })
-    const stoppedWork = createRuntimeWork({
-      projects: runningWork.projects.map(project => ({
-        ...project,
-        deviceWorkspaces: project.deviceWorkspaces.map(workspace => ({
-          ...workspace,
-          tasks: workspace.tasks.map(task => ({ ...task, running: false })),
-        })),
-      })),
-    })
-    const listRuntimeWork = vi
-      .fn()
-      .mockResolvedValueOnce(runningWork)
-      .mockResolvedValueOnce(runningWork)
-      .mockResolvedValue(stoppedWork)
     const getRuntimeTranscript = vi
       .fn()
       .mockResolvedValueOnce({
@@ -6014,18 +5996,9 @@ describe('WorkbenchProvider runtime tasks', () => {
           {
             id: 'runtime-a:assistant:1',
             role: 'assistant',
-            content: '',
+            content: '已经输出的中间内容',
             status: 'streaming',
             subtaskId: '101',
-            blocks: [
-              {
-                id: 'exec-1',
-                type: 'tool',
-                tool_name: 'exec_command',
-                status: 'streaming',
-                timestamp: 1780000000000,
-              },
-            ],
           },
         ],
       })
@@ -6039,48 +6012,43 @@ describe('WorkbenchProvider runtime tasks', () => {
           {
             id: 'runtime-a:assistant:1',
             role: 'assistant',
-            content: '执行完成',
-            status: 'done',
+            content: '已经输出的中间内容',
+            status: 'streaming',
             subtaskId: '101',
-            blocks: [
-              {
-                id: 'exec-1',
-                type: 'tool',
-                tool_name: 'exec_command',
-                tool_output: 'ok',
-                status: 'done',
-                timestamp: 1780000000000,
-              },
-            ],
           },
         ],
       })
+    let streamHandlers: ChatStreamHandlers = {}
+    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
+      if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
+      return vi.fn()
+    })
     const runtimeWorkApi = createRuntimeWorkApiMock({
-      listRuntimeWork,
+      listRuntimeWork: vi.fn().mockResolvedValue(runningWork),
       getRuntimeTranscript,
     })
     const services = createWorkbenchServices({
       runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+      chatStream: { subscribe } as WorkbenchServices['chatStream'],
     })
 
     renderWorkbench(<RuntimeOpenProbe />, services)
 
     await userEvent.click(await screen.findByText('open runtime a'))
     await waitFor(() =>
-      expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent(
-        'tool:exec_command:streaming'
+      expect(screen.getByTestId('runtime-message-statuses')).toHaveTextContent(
+        'assistant:streaming'
       )
     )
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(RUNTIME_TASK_STATUS_PROBE_IDLE_MS)
-    })
-    expect(listRuntimeWork).toHaveBeenCalledTimes(2)
     expect(getRuntimeTranscript).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(RUNTIME_TASK_STATUS_PROBE_IDLE_MS)
+      streamHandlers.onRuntimeTransportReplaced?.({
+        previousRuntimeInstanceId: 'runtime-instance-a',
+        runtimeInstanceId: 'runtime-instance-b',
+      })
     })
+
     await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
     expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
       deviceId: 'device-1',
@@ -6090,9 +6058,9 @@ describe('WorkbenchProvider runtime tasks', () => {
       refresh: true,
     })
     await waitFor(() =>
-      expect(screen.getByTestId('runtime-open-blocks')).toHaveTextContent('tool:exec_command:done')
+      expect(screen.getByTestId('runtime-message-statuses')).toHaveTextContent('assistant:done')
     )
-    expect(screen.getByTestId('runtime-message-statuses')).toHaveTextContent('assistant:done')
+    expect(screen.getByText('已经输出的中间内容')).toBeInTheDocument()
     expect(screen.getByTestId('current-runtime-task-running')).toHaveTextContent('idle')
   })
 

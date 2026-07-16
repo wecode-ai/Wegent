@@ -767,18 +767,9 @@ export function WorkbenchProvider({
     (address: RuntimeTaskAddress) => dispatch({ type: 'runtime_task_settled', address }),
     [dispatch]
   )
-  const probeRuntimeTaskRunning = useCallback(
-    async (address: RuntimeTaskAddress): Promise<boolean | null> => {
-      const runtimeWork = await executorClient.runtime.listRuntimeWork()
-      const task = findRuntimeTask(runtimeWork, address)
-      return typeof task?.running === 'boolean' ? task.running : null
-    },
-    [executorClient]
-  )
   const stableSetWorkbenchError = useStableEvent(setWorkbenchError)
   const stableMarkRuntimeTaskStarted = useStableEvent(markRuntimeTaskStarted)
   const stableMarkRuntimeTaskSettled = useStableEvent(markRuntimeTaskSettled)
-  const stableProbeRuntimeTaskRunning = useStableEvent(probeRuntimeTaskRunning)
   const stableSetProjectWorktreeBranch = useStableEvent(setProjectWorktreeBranch)
   const stableSelectProjectWorkspace = useStableEvent(selectProjectWorkspace)
   const stableSelectStandaloneDevice = useStableEvent(selectStandaloneDevice)
@@ -1188,7 +1179,6 @@ export function WorkbenchProvider({
     clearRuntimeGoal: runtimeTasks.clearRuntimeGoal,
     markRuntimeTaskStarted,
     markRuntimeTaskSettled,
-    probeRuntimeTaskRunning,
     listImPrivateSessions,
     bindRuntimeTaskToImSessions,
     getImNotificationSettings,
@@ -1274,7 +1264,6 @@ export function WorkbenchProvider({
       clearRuntimeGoal: stableClearRuntimeGoal,
       markRuntimeTaskStarted: stableMarkRuntimeTaskStarted,
       markRuntimeTaskSettled: stableMarkRuntimeTaskSettled,
-      probeRuntimeTaskRunning: stableProbeRuntimeTaskRunning,
       listImPrivateSessions: stableListImPrivateSessions,
       bindRuntimeTaskToImSessions: stableBindRuntimeTaskToImSessions,
       getImNotificationSettings: stableGetImNotificationSettings,
@@ -1368,7 +1357,6 @@ export function WorkbenchProvider({
       stableLoadTurnFileChangesDiff,
       stableMarkRuntimeTaskStarted,
       stableMarkRuntimeTaskSettled,
-      stableProbeRuntimeTaskRunning,
       stableOpenRuntimeTask,
       stableOpenStandaloneWorkspace,
       stablePauseCurrentResponse,

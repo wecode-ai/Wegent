@@ -2197,7 +2197,7 @@ fn hide_main_window_on_close<R: tauri::Runtime>(
         let preferences = read_app_preferences_impl(window.app_handle());
         if !preferences.close_to_tray_enabled {
             api.prevent_close();
-            shutdown_local_executor_for_app(window.app_handle());
+            shutdown_local_executor_for_app(window.app_handle(), "main_window_close_without_tray");
             window.app_handle().exit(0);
             return true;
         }
@@ -2272,20 +2272,20 @@ fn open_task_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>, task_id: &s
 
 #[cfg(desktop)]
 fn quit_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    shutdown_local_executor_for_app(app);
+    shutdown_local_executor_for_app(app, "tray_quit");
     app.exit(0);
 }
 
 #[cfg(desktop)]
-fn shutdown_local_executor_for_app<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+fn shutdown_local_executor_for_app<R: tauri::Runtime>(app: &tauri::AppHandle<R>, reason: &str) {
     let state = app.state::<local_executor::LocalExecutorState>();
-    local_executor::shutdown_local_executor(&state);
+    local_executor::shutdown_local_executor(&state, reason);
 }
 
 #[cfg(desktop)]
 fn install_shutdown_signal_handler(app: tauri::AppHandle) -> Result<(), String> {
     ctrlc::set_handler(move || {
-        shutdown_local_executor_for_app(&app);
+        shutdown_local_executor_for_app(&app, "app_shutdown_signal");
         app.exit(130);
     })
     .map_err(|error| format!("Failed to install shutdown signal handler: {error}"))
@@ -3799,10 +3799,10 @@ pub fn run() {
                         .store(false, Ordering::SeqCst);
                     return;
                 }
-                shutdown_local_executor_for_app(app_handle);
+                shutdown_local_executor_for_app(app_handle, "run_event_exit_requested");
             }
             tauri::RunEvent::Exit => {
-                shutdown_local_executor_for_app(app_handle);
+                shutdown_local_executor_for_app(app_handle, "run_event_exit");
             }
             _ => {}
         }
