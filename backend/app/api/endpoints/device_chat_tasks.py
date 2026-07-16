@@ -25,8 +25,14 @@ router = APIRouter()
 @router.post("/tasks", response_model=DeviceChatTaskResponse)
 async def create_device_chat_task(
     payload: DeviceChatTaskRequest,
-    authorization: Annotated[str | None, Header()] = None,
-    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    authorization: Annotated[
+        str | None,
+        Header(include_in_schema=False),
+    ] = None,
+    x_api_key: Annotated[
+        str | None,
+        Header(alias="X-API-Key", include_in_schema=False),
+    ] = None,
     current_user: User = Depends(security.get_current_user_flexible_for_executor),
     db: Session = Depends(get_db),
 ) -> DeviceChatTaskResponse:
@@ -46,13 +52,4 @@ def _request_auth_token(
 ) -> str:
     if x_api_key and is_api_key(x_api_key):
         return x_api_key
-    return _bearer_token(authorization)
-
-
-def _bearer_token(authorization: str | None) -> str:
-    if not authorization:
-        return ""
-    prefix = "Bearer "
-    if authorization.startswith(prefix):
-        return authorization[len(prefix) :].strip()
-    return ""
+    return security.extract_authorization_token(authorization)

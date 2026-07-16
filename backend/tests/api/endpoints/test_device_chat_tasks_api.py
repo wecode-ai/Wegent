@@ -83,6 +83,40 @@ def test_create_device_chat_task_endpoint_dispatches_payload(
     assert service_mock.await_args.kwargs["auth_token"] == test_token
 
 
+def test_create_device_chat_task_endpoint_accepts_case_insensitive_bearer_jwt(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    service_mock = _mock_create_device_chat_task(monkeypatch)
+
+    response = test_client.post(
+        "/api/device-chat/tasks",
+        headers={"Authorization": f"bEaReR {test_token}"},
+        json={"teamId": 1289, "message": "Run pwd"},
+    )
+
+    assert response.status_code == 200
+    assert service_mock.await_args.kwargs["auth_token"] == test_token
+
+
+def test_create_device_chat_task_endpoint_forwards_plain_jwt(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    service_mock = _mock_create_device_chat_task(monkeypatch)
+
+    response = test_client.post(
+        "/api/device-chat/tasks",
+        headers={"Authorization": test_token},
+        json={"teamId": 1289, "message": "Run pwd"},
+    )
+
+    assert response.status_code == 200
+    assert service_mock.await_args.kwargs["auth_token"] == test_token
+
+
 def test_create_device_chat_task_endpoint_accepts_x_api_key(
     test_client,
     test_api_key,
@@ -121,13 +155,32 @@ def test_create_device_chat_task_endpoint_accepts_bearer_api_key(
     assert service_mock.await_args.kwargs["auth_token"] == raw_key
 
 
-def test_create_device_chat_task_endpoint_prefers_x_api_key_for_forwarding(
+def test_create_device_chat_task_endpoint_forwards_plain_api_key(
     test_client,
-    test_token,
     test_api_key,
     monkeypatch,
 ):
-    raw_key, _ = test_api_key
+    raw_key, api_key_record = test_api_key
+    service_mock = _mock_create_device_chat_task(monkeypatch)
+
+    response = test_client.post(
+        "/api/device-chat/tasks",
+        headers={"Authorization": raw_key},
+        json={"teamId": 1289, "message": "Run pwd"},
+    )
+
+    assert response.status_code == 200
+    assert service_mock.await_args.kwargs["user"].id == api_key_record.user_id
+    assert service_mock.await_args.kwargs["auth_token"] == raw_key
+
+
+def test_create_device_chat_task_endpoint_prefers_x_api_key_for_forwarding(
+    test_client,
+    test_token,
+    test_admin_api_key,
+    monkeypatch,
+):
+    raw_key, api_key_record = test_admin_api_key
     service_mock = _mock_create_device_chat_task(monkeypatch)
 
     response = test_client.post(
@@ -140,7 +193,48 @@ def test_create_device_chat_task_endpoint_prefers_x_api_key_for_forwarding(
     )
 
     assert response.status_code == 200
+    assert service_mock.await_args.kwargs["user"].id == api_key_record.user_id
     assert service_mock.await_args.kwargs["auth_token"] == raw_key
+
+
+def test_create_device_chat_task_endpoint_rejects_invalid_x_api_key_over_valid_jwt(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    service_mock = _mock_create_device_chat_task(monkeypatch)
+
+    response = test_client.post(
+        "/api/device-chat/tasks",
+        headers={
+            "Authorization": f"Bearer {test_token}",
+            "X-API-Key": "wg-invalid-api-key",
+        },
+        json={"teamId": 1289, "message": "Run pwd"},
+    )
+
+    assert response.status_code == 401
+    service_mock.assert_not_awaited()
+
+
+def test_create_device_chat_task_endpoint_ignores_non_api_key_x_header(
+    test_client,
+    test_token,
+    monkeypatch,
+):
+    service_mock = _mock_create_device_chat_task(monkeypatch)
+
+    response = test_client.post(
+        "/api/device-chat/tasks",
+        headers={
+            "Authorization": f"Bearer {test_token}",
+            "X-API-Key": "not-an-api-key",
+        },
+        json={"teamId": 1289, "message": "Run pwd"},
+    )
+
+    assert response.status_code == 200
+    assert service_mock.await_args.kwargs["auth_token"] == test_token
 
 
 def test_create_device_chat_task_endpoint_rejects_invalid_api_key(
@@ -157,3 +251,12 @@ def test_create_device_chat_task_endpoint_rejects_invalid_api_key(
 
     assert response.status_code == 401
     service_mock.assert_not_awaited()
+
+
+def test_create_device_chat_task_endpoint_documents_authentication_schemes(
+    test_client,
+):
+    operation = test_client.app.openapi()["paths"]["/api/device-chat/tasks"]["post"]
+
+    assert {"OAuth2PasswordBearer": []} in operation["security"]
+    assert {"APIKeyHeader": []} in operation["security"]

@@ -8,7 +8,7 @@ sidebar_position: 1
 
 **Goal:** Allow `POST /api/device-chat/tasks` to authenticate with the same personal API Key headers as existing executor-facing endpoints while preserving JWT behavior and downstream credential forwarding.
 
-**Architecture:** Reuse `security.get_current_user_flexible_for_executor` at the endpoint boundary instead of adding new authentication logic. Keep downstream service interfaces unchanged and select the forwarded credential with the same `X-API-Key`-before-Authorization priority as the authentication dependency.
+**Architecture:** Reuse `security.get_current_user_flexible_for_executor` at the endpoint boundary and centralize Authorization parsing in the shared security module. Keep downstream service interfaces unchanged, select the forwarded credential with the same `X-API-Key`-before-Authorization priority as the authentication dependency, and publish OAuth2/API Key OpenAPI security declarations.
 
 **Tech Stack:** FastAPI dependencies and headers, SQLAlchemy-backed personal API Key verification, pytest, FastAPI TestClient
 
@@ -17,6 +17,7 @@ sidebar_position: 1
 ## File Structure
 
 - Modify `backend/tests/api/endpoints/test_device_chat_tasks_api.py` to add endpoint-level API Key authentication and credential-forwarding regression coverage.
+- Modify `backend/app/core/security.py` to share case-insensitive Bearer/plain-token parsing and expose both authentication schemes in OpenAPI.
 - Modify `backend/app/api/endpoints/device_chat_tasks.py` to reuse flexible authentication and forward the credential selected by that authentication path.
 
 ### Task 1: Add failing Device Chat API Key endpoint tests
@@ -164,12 +165,38 @@ Expected: all three tests fail for the missing feature. The first two receive `4
 
 **Files:**
 
+- Modify: `backend/app/core/security.py`
 - Modify: `backend/app/api/endpoints/device_chat_tasks.py`
 - Test: `backend/tests/api/endpoints/test_device_chat_tasks_api.py`
 
 - [ ] **Step 1: Use the existing flexible authentication dependency**
 
-Import the existing API Key detector:
+Add shared Authorization parsing and expose the existing optional OAuth2/API Key
+schemes from the flexible dependency:
+
+```python
+def extract_authorization_token(authorization: Optional[str]) -> str:
+    """Extract a case-insensitive Bearer credential or return a plain token."""
+    scheme, token = get_authorization_scheme_param(authorization)
+    if scheme.lower() == "bearer":
+        return token
+    return authorization or ""
+
+
+def get_current_user_flexible_for_executor(
+    db: Session = Depends(get_db),
+    oauth2_token: Optional[str] = Security(oauth2_scheme_optional),
+    x_api_key_security: Optional[str] = Security(api_key_header_optional),
+    authorization: str = Header(default="", include_in_schema=False),
+    x_api_key: str = Header(
+        default="",
+        alias="X-API-Key",
+        include_in_schema=False,
+    ),
+) -> User:
+```
+
+Import the existing API Key detector in the endpoint:
 
 ```python
 from app.core.auth_utils import is_api_key
@@ -180,8 +207,14 @@ Update the endpoint parameters and dependency:
 ```python
 async def create_device_chat_task(
     payload: DeviceChatTaskRequest,
-    authorization: Annotated[str | None, Header()] = None,
-    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    authorization: Annotated[
+        str | None,
+        Header(include_in_schema=False),
+    ] = None,
+    x_api_key: Annotated[
+        str | None,
+        Header(alias="X-API-Key", include_in_schema=False),
+    ] = None,
     current_user: User = Depends(
         security.get_current_user_flexible_for_executor
     ),
@@ -202,7 +235,7 @@ return await device_chat_task_service.create_device_chat_task(
 )
 ```
 
-Add the helper before `_bearer_token`:
+Add the helper using the same shared Authorization parser as the dependency:
 
 ```python
 def _request_auth_token(
@@ -211,7 +244,7 @@ def _request_auth_token(
 ) -> str:
     if x_api_key and is_api_key(x_api_key):
         return x_api_key
-    return _bearer_token(authorization)
+    return security.extract_authorization_token(authorization)
 ```
 
 This mirrors the existing authentication priority and prevents an arbitrary
@@ -225,7 +258,9 @@ Run:
 cd backend && uv run pytest tests/api/endpoints/test_device_chat_tasks_api.py -q
 ```
 
-Expected: all Device Chat Tasks endpoint tests pass, including JWT, both API Key header forms, priority, missing credentials, and invalid credentials.
+Expected: all Device Chat Tasks endpoint tests pass, including JWT compatibility,
+both API Key header forms, plain credentials, priority, OpenAPI security, missing
+credentials, and invalid credentials.
 
 - [ ] **Step 4: Run related authentication regression tests**
 
@@ -235,6 +270,7 @@ Run:
 cd backend && uv run pytest \
   tests/api/endpoints/test_device_chat_tasks_api.py \
   tests/api/test_executor_api_key_auth.py \
+  tests/core/test_security.py \
   tests/core/test_auth_utils.py \
   -q
 ```
@@ -247,9 +283,11 @@ Run:
 
 ```bash
 cd backend && uv run black --check \
+  app/core/security.py \
   app/api/endpoints/device_chat_tasks.py \
   tests/api/endpoints/test_device_chat_tasks_api.py
 cd backend && uv run isort --check-only \
+  app/core/security.py \
   app/api/endpoints/device_chat_tasks.py \
   tests/api/endpoints/test_device_chat_tasks_api.py
 git diff --check
@@ -262,6 +300,7 @@ Expected: formatting checks and `git diff --check` exit successfully; the diff i
 
 ```bash
 git add \
+  backend/app/core/security.py \
   backend/app/api/endpoints/device_chat_tasks.py \
   backend/tests/api/endpoints/test_device_chat_tasks_api.py
 git commit -m "fix(auth): support API keys for device chat tasks"
