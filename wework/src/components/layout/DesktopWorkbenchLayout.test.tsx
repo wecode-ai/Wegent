@@ -2222,6 +2222,8 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerEnter(screen.getByTestId('desktop-sidebar-hover-edge'))
 
     expect(preview).toHaveClass('pointer-events-auto', 'translate-x-0', 'opacity-100')
+    expect(preview).toHaveClass('h-full')
+    expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveClass('h-full')
     expect(screen.getByTestId('desktop-sidebar-preview-panel')).toHaveStyle({ width: '240px' })
     expect(main).not.toHaveClass('ml-1.5')
 

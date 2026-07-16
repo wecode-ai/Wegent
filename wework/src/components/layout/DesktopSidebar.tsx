@@ -2934,7 +2934,7 @@ export function DesktopSidebar({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       className={cn(
-        'relative z-popover shrink-0 overflow-visible border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150 transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
+        'relative z-popover h-full shrink-0 overflow-visible border-r border-black/[0.08] bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150 transition-[width,background-color] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none will-change-[width] dark:border-white/[0.08]',
         !windowFocused && 'bg-[rgb(var(--color-sidebar-unfocused))]',
         resizing && 'transition-none',
         collapsed && 'pointer-events-none'
