@@ -232,35 +232,23 @@ frontend/src/__tests__/
 
 ### 工作流任务
 
-1. **test-backend**：Python 后端测试
-   - 矩阵策略：Python 3.10 和 3.11
-   - 覆盖率报告上传至 Codecov
-   - 依赖缓存以加快构建速度
+常规 PR 测试必须覆盖各模块测试，不能用 E2E 任务代替：
 
-2. **test-executor**：执行器引擎测试
-   - Python 3.10
-   - agents 模块的覆盖率
-   - 测试 AI agent 工厂和基础类
+1. **test-backend**：使用 Python 3.11 和 `uv run pytest` 运行 Backend 测试。
+2. **test-executor**：运行 Rust Executor 的 `cargo fmt --check`、
+   `cargo test --all-features` 和 Clippy。该任务把 `CARGO_TARGET_DIR` 设置到 runner
+   临时目录，避免共享构建目录污染或占满工作区。
+3. **test-executor-manager**、**test-shared** 和 **test-knowledge-engine**：使用
+   `uv run pytest` 运行对应 Python 模块测试。
+4. **test-frontend**：运行 Chat Core 与 Frontend 单元测试。
+5. **test-wework**：使用 Vitest 运行 Wework 单元测试并生成覆盖率。
+6. **test-wegent-cli** 与 **test-wegent-cli-integration**：分别运行 CLI 单元测试，
+   以及依赖 MySQL、Redis 和真实 Backend 的集成测试。
+7. **test-summary**：始终运行并依赖以上所有任务；任何模块测试失败时，汇总任务必须失败。
 
-3. **test-executor-manager**：任务管理器测试
-   - Python 3.10
-   - executors 模块的覆盖率
-   - 测试 Docker 执行器和调度器
-
-4. **test-shared**：共享工具库测试
-   - Python 3.10
-   - utils 模块的覆盖率
-   - 测试加密和数据脱敏
-
-5. **test-frontend**：前端测试（Node.js 20.x）
-   - 使用 React Testing Library 的 Jest
-   - 使用 `--passWithNoTests` 标志运行
-   - 覆盖率上传至 Codecov
-
-6. **test-summary**：汇总结果
-   - 依赖于所有测试任务
-   - 如果任何测试任务失败则失败
-   - 始终运行，无论单个任务的状态如何
+E2E 使用独立 workflow：`.github/workflows/e2e-tests.yml` 覆盖产品端到端流程，
+`.github/workflows/wework-e2e.yml` 覆盖 Wework 流程。它们提供额外的跨模块验证，
+不会替代 `.github/workflows/test.yml` 中的模块测试。
 
 ### 覆盖率报告
 

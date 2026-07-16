@@ -22,7 +22,7 @@ async fn main() {
 fn install_termination_signal_diagnostics() {
     unsafe {
         let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = termination_signal_handler as usize;
+        action.sa_sigaction = termination_signal_handler as *const () as usize;
         action.sa_flags = libc::SA_SIGINFO;
         libc::sigemptyset(&mut action.sa_mask);
         libc::sigaction(libc::SIGTERM, &action, std::ptr::null_mut());
@@ -46,7 +46,11 @@ extern "C" fn termination_signal_handler(
     let process_id = unsafe { libc::getpid() };
     let mut line = [0_u8; 128];
     let mut length = 0;
-    append_signal_text(&mut line, &mut length, b"wegent-executor received SIGTERM sender_pid=");
+    append_signal_text(
+        &mut line,
+        &mut length,
+        b"wegent-executor received SIGTERM sender_pid=",
+    );
     append_signal_number(&mut line, &mut length, sender_pid);
     append_signal_text(&mut line, &mut length, b" process_id=");
     append_signal_number(&mut line, &mut length, process_id);

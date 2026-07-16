@@ -630,7 +630,7 @@ mod tests {
     #[tokio::test]
     async fn exposes_expected_browser_tools() {
         let request = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
-        let response = handle_request(&reqwest::Client::new(), &request)
+        let response = handle_request(&reqwest::Client::new(), &request, 1, Instant::now())
             .await
             .unwrap();
         let names = response["result"]["tools"]

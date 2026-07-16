@@ -6,11 +6,10 @@ use std::{
     fs,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
 };
 
 use serde_json::{json, Value};
-use tokio::sync::{Mutex as AsyncMutex, MutexGuard as AsyncMutexGuard};
 use wegent_executor::local::{
     app_ipc::{
         app_ipc_listening_log_line, read_app_ipc_addr_file, AppIpcError, AppIpcServer,
@@ -37,9 +36,18 @@ const LOCAL_GIT_ENV_VARS: &[&str] = &[
     "GIT_COMMON_DIR",
 ];
 
-async fn env_lock() -> AsyncMutexGuard<'static, ()> {
-    static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| AsyncMutex::new(())).lock().await
+struct EnvLockGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+async fn env_lock() -> EnvLockGuard {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    EnvLockGuard {
+        _guard: LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("environment lock should be available"),
+    }
 }
 
 struct EnvGuard {
@@ -868,6 +876,7 @@ async fn app_ipc_addr_can_be_overridden() {
     }
 
     task.abort();
+    let _ = task.await;
     let _ = std::fs::remove_file(&addr_file);
     let _ = std::fs::remove_dir_all(addr_file.parent().unwrap());
 
@@ -955,6 +964,7 @@ async fn app_ipc_socket_serves_ready_event_and_responses() {
     assert_eq!(response["error"]["code"], "unsupported_method");
 
     task.abort();
+    let _ = task.await;
     let _ = std::fs::remove_file(&addr_file);
     let _ = std::fs::remove_dir_all(addr_file.parent().unwrap());
 }
