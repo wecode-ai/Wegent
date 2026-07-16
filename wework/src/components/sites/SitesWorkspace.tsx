@@ -80,7 +80,7 @@ function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowPro
       <div className="flex min-w-0 items-center gap-4">
         <SiteThumbnail site={site} />
         <div className="min-w-0">
-          <h2 className="truncate text-[14px] font-medium leading-5 text-text-primary">
+          <h2 className="truncate text-base font-medium leading-5 text-text-primary">
             {site.name}
           </h2>
           <button
@@ -88,7 +88,7 @@ function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowPro
             data-testid={`site-internal-url-${site.siteid}`}
             aria-label={t('open_internal', { name: site.name })}
             onClick={() => openUrl(site.internal_url)}
-            className="mt-1 flex max-w-full items-center gap-1 text-left text-[13px] leading-5 text-text-secondary transition-colors hover:text-text-primary"
+            className="mt-1 flex max-w-full items-center gap-1 text-left text-sm leading-5 text-text-secondary transition-colors hover:text-text-primary"
           >
             <span className="truncate">{site.internal_url}</span>
             <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -104,20 +104,20 @@ function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowPro
               data-testid={`site-external-url-${site.siteid}`}
               aria-label={t('open_external', { name: site.name })}
               onClick={() => openUrl(site.external_url!)}
-              className="flex max-w-full items-center gap-1 text-left text-[13px] leading-5 text-text-secondary transition-colors hover:text-text-primary"
+              className="flex max-w-full items-center gap-1 text-left text-sm leading-5 text-text-secondary transition-colors hover:text-text-primary"
             >
               <span className="truncate">{site.external_url}</span>
               <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             </button>
           ) : isFailed ? (
-            <span className="flex items-center gap-1.5 text-[13px] text-danger">
+            <span className="flex items-center gap-1.5 text-sm text-danger">
               <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <span className="truncate">
                 {site.last_publish_error || t('publish_failed', '发布失败')}
               </span>
             </span>
           ) : (
-            <span className="text-[13px] text-text-muted">—</span>
+            <span className="text-sm text-text-muted">—</span>
           )}
         </div>
         <button
@@ -125,7 +125,7 @@ function SiteRow({ site, publishing, deleting, onPublish, onDelete }: SiteRowPro
           data-testid={`site-publish-${site.siteid}`}
           disabled={isPublished || isPublishing || deleting}
           onClick={() => onPublish(site)}
-          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-[13px] font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-default disabled:text-text-secondary disabled:opacity-70"
+          className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-default disabled:text-text-secondary disabled:opacity-70"
         >
           {isPublishing ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -316,10 +316,10 @@ export function SitesWorkspace({
 
         <div className="mx-auto flex w-full max-w-[920px] flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4">
           <section className="space-y-1.5">
-            <h1 className="text-[30px] font-normal leading-9 text-text-primary">
+            <h1 className="text-xl font-normal leading-9 text-text-primary">
               {t('title', '站点')}
             </h1>
-            <p className="text-[16px] leading-6 text-text-secondary">
+            <p className="text-lg leading-6 text-text-secondary">
               {t('subtitle', '将你的想法变成真实网站')}
             </p>
           </section>
@@ -363,7 +363,7 @@ export function SitesWorkspace({
               data-testid="sites-create-button"
               disabled={creating}
               onClick={() => void onCreate()}
-              className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-[13px] font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-wait disabled:opacity-60"
+              className="flex h-8 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition-colors hover:bg-surface disabled:cursor-wait disabled:opacity-60"
             >
               {creating ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -378,10 +378,8 @@ export function SitesWorkspace({
 
       <div className="mx-auto flex w-full max-w-[920px] flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4">
         <section className="space-y-1.5">
-          <h1 className="text-[30px] font-normal leading-9 text-text-primary">
-            {t('title', '站点')}
-          </h1>
-          <p className="text-[16px] leading-6 text-text-secondary">
+          <h1 className="text-xl font-normal leading-9 text-text-primary">{t('title', '站点')}</h1>
+          <p className="text-lg leading-6 text-text-secondary">
             {t('subtitle', '将你的想法变成真实网站')}
           </p>
         </section>
@@ -394,7 +392,7 @@ export function SitesWorkspace({
             onChange={event => setQuery(event.target.value)}
             data-testid="sites-search-input"
             placeholder={t('search', '搜索站点')}
-            className="h-9 w-full rounded-full border border-border bg-background pl-10 pr-4 text-[14px] text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-text-muted"
+            className="h-9 w-full rounded-full border border-border bg-background pl-10 pr-4 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-text-muted"
           />
         </label>
 
@@ -404,7 +402,7 @@ export function SitesWorkspace({
             role="alert"
             data-testid="sites-create-error"
           >
-            <span className="flex min-w-0 items-center gap-2 text-[13px] text-text-secondary">
+            <span className="flex min-w-0 items-center gap-2 text-sm text-text-secondary">
               <AlertCircle className="h-4 w-4 shrink-0 text-danger" aria-hidden="true" />
               <span className="truncate">{createError}</span>
             </span>
@@ -413,7 +411,7 @@ export function SitesWorkspace({
                 type="button"
                 data-testid="sites-open-plugins-button"
                 onClick={onOpenPlugins}
-                className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-[13px] text-text-primary hover:bg-muted"
+                className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-sm text-text-primary hover:bg-muted"
               >
                 {t('open_plugins', '查看插件')}
               </button>
@@ -422,7 +420,7 @@ export function SitesWorkspace({
         )}
 
         <div className="mt-8">
-          <div className="hidden grid-cols-[minmax(0,1fr)_minmax(240px,0.55fr)] gap-8 border-b border-border px-0 pb-3 text-[12px] text-text-muted md:grid">
+          <div className="hidden grid-cols-[minmax(0,1fr)_minmax(240px,0.55fr)] gap-8 border-b border-border px-0 pb-3 text-xs text-text-muted md:grid">
             <span>{t('site_column', '站点')}</span>
             <span>{t('external_column', '外网发布')}</span>
           </div>
@@ -444,7 +442,7 @@ export function SitesWorkspace({
                 type="button"
                 data-testid="sites-retry-button"
                 onClick={() => void loadFirstPage()}
-                className="h-8 rounded-lg border border-border px-3 text-[13px] hover:bg-surface"
+                className="h-8 rounded-lg border border-border px-3 text-sm hover:bg-surface"
               >
                 {t('retry', '重试')}
               </button>
@@ -452,8 +450,8 @@ export function SitesWorkspace({
           ) : sites.length === 0 ? (
             <div className="flex min-h-56 flex-col items-center justify-center text-center">
               <Globe2 className="h-7 w-7 text-text-muted" aria-hidden="true" />
-              <h2 className="mt-4 text-[15px] font-medium">{t('empty_title', '还没有站点')}</h2>
-              <p className="mt-1 text-[13px] text-text-secondary">
+              <h2 className="mt-4 text-base font-medium">{t('empty_title', '还没有站点')}</h2>
+              <p className="mt-1 text-sm text-text-secondary">
                 {t('empty_description', '通过 Sites 创建你的第一个站点')}
               </p>
             </div>
@@ -473,7 +471,7 @@ export function SitesWorkspace({
           )}
 
           {loadError && sites.length > 0 && (
-            <p className="mt-3 text-center text-[13px] text-danger" role="alert">
+            <p className="mt-3 text-center text-sm text-danger" role="alert">
               {loadError}
             </p>
           )}
@@ -484,7 +482,7 @@ export function SitesWorkspace({
                 data-testid="sites-load-more-button"
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
-                className="flex h-8 items-center gap-2 rounded-lg border border-border px-3 text-[13px] text-text-primary transition-colors hover:bg-surface disabled:cursor-wait disabled:opacity-60"
+                className="flex h-8 items-center gap-2 rounded-lg border border-border px-3 text-sm text-text-primary transition-colors hover:bg-surface disabled:cursor-wait disabled:opacity-60"
               >
                 {loadingMore && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 {t('load_more', '加载更多')}
