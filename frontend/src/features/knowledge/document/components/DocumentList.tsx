@@ -268,14 +268,6 @@ export function DocumentList({
   // Full tree index (all folders) — used for selection scope and breadcrumb
   const fullTree = useMemo(() => buildKnowledgeResourceTree(folders, []), [folders])
 
-  // Direct child folders for the current folder (with children cleared for display)
-  const directFolders = useMemo(() => {
-    if (isExpandAllView) return folders
-    if (currentFolderId === 0) return folders.map(f => ({ ...f, children: [] }))
-    const parentFolder = fullTree.index.folderById.get(currentFolderId)
-    return (parentFolder?.children ?? []).map(f => ({ ...f, children: [] }))
-  }, [folders, currentFolderId, isExpandAllView, fullTree.index])
-
   // Breadcrumb path from root to currentFolderId
   const folderBreadcrumb = useMemo(() => {
     if (currentFolderId === 0) return []
@@ -308,12 +300,38 @@ export function DocumentList({
     knowledgeBaseId: knowledgeBase.id,
     paginationEnabled,
     loadAll: isExpandAllView,
-    folderId: isExpandAllView ? undefined : currentFolderId,
+    folderId: isExpandAllView || searchQuery ? undefined : currentFolderId,
     includeSubfolders: false,
     keyword: searchQuery,
     sortBy: sortField,
     sortOrder,
   })
+
+  // When searching, build a filtered folder tree containing only ancestors of matching documents.
+  // This lets deep documents show their full path without showing irrelevant folder rows.
+  const searchResultFolders = useMemo(() => {
+    if (!searchQuery || documents.length === 0) return null
+    const relevantIds = new Set<number>()
+    for (const doc of documents) {
+      const pathIds = fullTree.index.folderPathIds.get(doc.folder_id ?? 0) ?? []
+      pathIds.forEach(id => relevantIds.add(id))
+    }
+    function filterFolders(list: KnowledgeFolder[]): KnowledgeFolder[] {
+      return list
+        .filter(f => relevantIds.has(f.id))
+        .map(f => ({ ...f, children: filterFolders(f.children) }))
+    }
+    return filterFolders(folders)
+  }, [searchQuery, documents, folders, fullTree.index])
+
+  // Direct child folders for display
+  const directFolders = useMemo(() => {
+    if (isExpandAllView) return folders
+    if (searchQuery) return searchResultFolders ?? []
+    if (currentFolderId === 0) return folders.map(f => ({ ...f, children: [] }))
+    const parentFolder = fullTree.index.folderById.get(currentFolderId)
+    return (parentFolder?.children ?? []).map(f => ({ ...f, children: [] }))
+  }, [folders, currentFolderId, isExpandAllView, searchQuery, searchResultFolders, fullTree.index])
 
   // Display tree: direct children only in layered nav, full tree in expand-all
   const resourceTree = useMemo(
@@ -1113,11 +1131,12 @@ export function DocumentList({
                     onChange={e => setSearchQuery(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === 'Escape') {
+                        setSearchQuery('')
                         setShowSearchPopover(false)
                       }
                     }}
                     onBlur={() => {
-                      // Delay to allow click events to fire
+                      // Delay to allow click events to fire before closing popover
                       setTimeout(() => setShowSearchPopover(false), 150)
                     }}
                   />
