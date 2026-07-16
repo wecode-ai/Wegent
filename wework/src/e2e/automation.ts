@@ -11,6 +11,10 @@ import {
   normalizeCloudBackendUrl,
   saveStoredCloudConnection,
 } from '@/features/cloud-connection/cloudConnectionStorage'
+import {
+  LOCAL_MODEL_SETTINGS_CHANGED_EVENT,
+  saveLocalModelConfig,
+} from '@/features/model-settings/localModelSettings'
 import { invoke } from '@tauri-apps/api/core'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
@@ -23,6 +27,7 @@ type DesktopControlAction =
   | 'click'
   | 'clickWhenEnabled'
   | 'closeMainWindowToTray'
+  | 'dispatchLocalModelSettingsChanged'
   | 'fill'
   | 'getText'
   | 'hover'
@@ -206,6 +211,13 @@ function seedDesktopE2ECloudConnection() {
       email: 'desktop-e2e@wework.local',
     },
     connectedAt: new Date().toISOString(),
+  })
+  saveLocalModelConfig({
+    id: 'desktop-e2e-local',
+    displayName: 'Desktop E2E Local',
+    modelId: 'desktop-e2e-local-model',
+    baseUrl: backendUrl,
+    enabled: true,
   })
 }
 
@@ -433,6 +445,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           console.error('[Wework] Failed to close the main window during E2E verification:', error)
         })
       }, 100)
+      return ''
+    case 'dispatchLocalModelSettingsChanged':
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
       return ''
     case 'waitFor':
       return waitForDesktopControlElement(command)

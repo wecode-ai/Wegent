@@ -31,6 +31,7 @@ const MODEL_ID = 'gpt-5.4'
 const MODEL_LABEL = 'GPT 5.4'
 const DEFAULT_MODEL_ID = 'gpt-5.4-mini'
 const DEFAULT_MODEL_LABEL = 'GPT 5.4 Mini'
+const LOCAL_MODEL_ID = 'local-model:desktop-e2e-local'
 const BLOCKED_CLOUD_MODEL_PATH = '/api/models/unified'
 const FRESH_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT: confirm this is a new conversation.'
 const FRESH_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FRESH_CHAT_COMPLETE'
@@ -187,6 +188,9 @@ async function selectE2EModel(control, modelId = MODEL_ID, modelLabel = MODEL_LA
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('waitFor', `[data-testid="model-option-${modelId}"]`, {
+    timeoutMs: UI_TIMEOUT_MS,
+  })
+  await control.command('waitFor', `[data-testid="model-option-${LOCAL_MODEL_ID}"]`, {
     timeoutMs: UI_TIMEOUT_MS,
   })
   await control.command('click', `[data-testid="model-option-${modelId}"]`)
@@ -349,7 +353,9 @@ class DesktopE2EServer {
     this.blockedCloudRequests = []
     this.blockedCloudResponses = new Set()
     this.blockedCloudWaiters = []
-    this.blockCloudModels = true
+    this.failCloudModels = false
+    this.failedCloudModelRequests = 0
+    this.failedCloudModelWaiter = null
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.toolLessPrewarmHandled = false
@@ -420,10 +426,19 @@ class DesktopE2EServer {
     this.blockedCloudWaiters = remainingWaiters
   }
 
-  releaseBlockedCloudModels() {
-    this.blockCloudModels = false
-    for (const response of this.blockedCloudResponses) json(response, 200, [])
+  failBlockedCloudModels() {
+    this.failCloudModels = true
+    for (const response of this.blockedCloudResponses) {
+      json(response, 503, { error: 'Desktop E2E intentional cloud model failure' })
+    }
     this.blockedCloudResponses.clear()
+  }
+
+  awaitFailedCloudModelRequest() {
+    if (this.failedCloudModelRequests > 0) return Promise.resolve()
+    return new Promise(resolvePromise => {
+      this.failedCloudModelWaiter = resolvePromise
+    })
   }
 
   setScenario(scenario) {
@@ -532,11 +547,14 @@ class DesktopE2EServer {
     }
 
     if (request.method === 'GET' && url.pathname === BLOCKED_CLOUD_MODEL_PATH) {
-      if (this.blockCloudModels) {
-        this.blockCloudRequest(request, response, url)
-      } else {
-        json(response, 200, [])
+      if (this.failCloudModels) {
+        this.failedCloudModelRequests += 1
+        this.failedCloudModelWaiter?.()
+        this.failedCloudModelWaiter = null
+        json(response, 503, { error: 'Desktop E2E intentional cloud model failure' })
+        return
       }
+      this.blockCloudRequest(request, response, url)
       return
     }
 
@@ -895,6 +913,18 @@ async function main() {
     await control.command('waitFor', '[data-testid="projects-create-button"]', {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    await selectE2EModel(control)
+    control.failBlockedCloudModels()
+    const failedCloudModelRequest = control.awaitFailedCloudModelRequest()
+    for (let attempt = 0; attempt < 5 && control.failedCloudModelRequests === 0; attempt += 1) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      await control.command('dispatchLocalModelSettingsChanged', '')
+    }
+    await withTimeout(
+      failedCloudModelRequest,
+      UI_TIMEOUT_MS,
+      'The connected desktop app did not retry models after the cloud endpoint began failing'
+    )
 
     phase = 'remote-project-dialog'
     await control.command('click', '[data-testid="projects-create-button"]')
@@ -991,7 +1021,6 @@ async function main() {
       timeoutMs: UI_TIMEOUT_MS,
     })
 
-    control.releaseBlockedCloudModels()
     await selectE2EModel(control)
     phase = 'initial-task'
     await sendPrompt(control, composerSelector, TASK_PROMPT)
