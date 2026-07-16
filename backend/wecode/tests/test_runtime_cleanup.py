@@ -910,7 +910,7 @@ async def test_cleanup_stale_orphan_sandbox_not_deleted():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_cleanup_stale_orphan_sandbox_redis_cleared_but_pod_alive():
-    """redis_cleared=True but deleted=False means pod is still alive — treated as failed."""
+    """redis_cleared=True but deleted=False: fallback to direct K8s pod delete."""
     job_service_instance = JobService(Mock())
 
     with patch(
@@ -924,6 +924,9 @@ async def test_cleanup_stale_orphan_sandbox_redis_cleared_but_pod_alive():
                 "reason": "sandbox_metadata_cleared",
             }
         )
+        ek_service.delete_pod_by_name_async = AsyncMock(
+            return_value={"status": "success"}
+        )
 
         result = await job_service_instance._cleanup_stale_orphan_sandbox(
             task_id=5003,
@@ -932,9 +935,117 @@ async def test_cleanup_stale_orphan_sandbox_redis_cleared_but_pod_alive():
             sandbox_payload={"last_activity_at": 0},
         )
 
+    assert result["deleted"] is True
+    assert result["skipped"] is False
+    assert result["reason"] == "pod_deleted"
+    ek_service.delete_pod_by_name_async.assert_awaited_once_with("sandbox-5003-aaa")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_orphan_sandbox_redis_cleared_fallback_fails():
+    """Fallback delete_pod_by_name_async raising leaves pod alive as delete_failed."""
+    job_service_instance = JobService(Mock())
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as ek_service:
+        ek_service.cleanup_sandbox_by_task_id_async = AsyncMock(
+            return_value={
+                "deleted": False,
+                "redis_cleared": True,
+                "archived": False,
+                "reason": "sandbox_metadata_cleared",
+            }
+        )
+        ek_service.delete_pod_by_name_async = AsyncMock(
+            side_effect=Exception("k8s unreachable")
+        )
+
+        result = await job_service_instance._cleanup_stale_orphan_sandbox(
+            task_id=5004,
+            pod_name="sandbox-5004-bbb",
+            inactive_hours=24,
+            sandbox_payload={"last_activity_at": 0},
+        )
+
     assert result["deleted"] is False
     assert result["skipped"] is False
-    assert result["reason"] == "pod_delete_failed_metadata_cleared"
+    assert result["reason"] == "delete_failed"
+    assert "k8s_status" not in result
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_orphan_sandbox_redis_cleared_fallback_not_found():
+    """Fallback returning not_found is treated as success (pod already gone)."""
+    job_service_instance = JobService(Mock())
+
+    with patch(
+        "app.services.adapters.executor_job.executor_kinds_service"
+    ) as ek_service:
+        ek_service.cleanup_sandbox_by_task_id_async = AsyncMock(
+            return_value={
+                "deleted": False,
+                "redis_cleared": True,
+                "archived": False,
+                "reason": "sandbox_metadata_cleared",
+            }
+        )
+        ek_service.delete_pod_by_name_async = AsyncMock(
+            return_value={"status": "not_found"}
+        )
+
+        result = await job_service_instance._cleanup_stale_orphan_sandbox(
+            task_id=5005,
+            pod_name="sandbox-5005-ccc",
+            inactive_hours=24,
+            sandbox_payload={"last_activity_at": 0},
+        )
+
+    assert result["deleted"] is True
+    assert result["skipped"] is False
+    assert result["reason"] == "pod_deleted"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cleanup_stale_orphan_executor_fallback_uses_shared_helper():
+    """executor_not_found triggers direct pod delete via shared fallback helper."""
+    job_service_instance = JobService(Mock())
+
+    with (
+        patch.object(
+            job_service_instance,
+            "cleanup_stale_task_executor",
+            new_callable=AsyncMock,
+            return_value={
+                "task_id": 6000,
+                "deleted": False,
+                "skipped": False,
+                "reason": "executor_not_found",
+                "executors": [],
+            },
+        ),
+        patch(
+            "app.services.adapters.executor_job.executor_kinds_service"
+        ) as ek_service,
+    ):
+        ek_service.delete_pod_by_name_async = AsyncMock(
+            return_value={"status": "success"}
+        )
+
+        result = await job_service_instance._cleanup_stale_orphan_executor(
+            task_id=6000,
+            pod_name="wegent-task-6000-abc",
+            inactive_hours=24,
+            db=AsyncMock(),
+        )
+
+    assert result["deleted"] is True
+    assert result["skipped"] is False
+    assert result["reason"] == "pod_deleted"
+    ek_service.delete_pod_by_name_async.assert_awaited_once_with("wegent-task-6000-abc")
 
 
 @pytest.mark.unit

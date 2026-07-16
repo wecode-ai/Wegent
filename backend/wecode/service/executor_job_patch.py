@@ -33,6 +33,50 @@ except Exception:
     JobService = None  # type: ignore
 
 
+async def _fallback_delete_pod_by_name(
+    *,
+    task_id: int,
+    pod_name: str,
+    trigger_reason: str,
+) -> Dict[str, object]:
+    """Fallback: delete K8s pod by name directly when upstream cleanup left it alive.
+
+    Mirrors shell pipeline step 3 (delete_notfound_pods.sh). Used by both
+    _cleanup_stale_orphan_executor (executor_not_found) and
+    _cleanup_stale_orphan_sandbox (pod_delete_failed_metadata_cleared).
+    """
+    logger.info(
+        f"+++ [executor_job] Falling back to direct pod delete task_id={task_id} pod_name={pod_name} trigger_reason={trigger_reason}"
+    )
+    result: Dict[str, object] = {
+        "task_id": task_id,
+        "pod_name": pod_name,
+        "deleted": False,
+        "skipped": False,
+        "reason": "delete_failed",
+    }
+
+    ek_service = _executor_job_mod.executor_kinds_service
+    try:
+        k8s_result = await ek_service.delete_pod_by_name_async(pod_name)
+    except Exception as exc:
+        logger.warning(
+            f"+++ [executor_job] Failed to delete orphan pod task_id={task_id} pod_name={pod_name} error={exc}"
+        )
+        return result
+
+    k8s_status = k8s_result.get("status")
+    if k8s_status in ("success", "not_found"):
+        logger.info(
+            f"+++ [executor_job] Deleted orphan pod task_id={task_id} pod_name={pod_name} k8s_status={k8s_status}"
+        )
+        result["deleted"] = True
+        result["reason"] = "pod_deleted"
+        return result
+    result["k8s_status"] = k8s_status
+    return result
+
+
 async def _cleanup_stale_orphan_executor(
     self,
     *,
@@ -47,8 +91,6 @@ async def _cleanup_stale_orphan_executor(
     Step 2: on executor_not_found, delete K8s pod by pod_name directly
             (matches script delete_notfound_pods.sh / kubectl delete pod)
     """
-    ek_service = _executor_job_mod.executor_kinds_service
-
     # Step 1: try the normal stale cleanup path (patched version, handles 404)
     cleanup_result = await self.cleanup_stale_task_executor(
         db, task_id=task_id, inactive_hours=inactive_hours, dry_run=False
@@ -77,44 +119,11 @@ async def _cleanup_stale_orphan_executor(
         }
 
     # Step 2: fallback — delete K8s pod by name directly
-    logger.info(
-        f"+++ [executor_job] Falling back to direct pod delete task_id={task_id} pod_name={pod_name} cleanup_result={cleanup_result}"
+    return await _fallback_delete_pod_by_name(
+        task_id=task_id,
+        pod_name=pod_name,
+        trigger_reason=cleanup_result.get("reason", "executor_not_found"),
     )
-    try:
-        result = await ek_service.delete_pod_by_name_async(pod_name)
-    except Exception as exc:
-        logger.warning(
-            f"+++ [executor_job] Failed to delete orphan pod task_id={task_id} pod_name={pod_name} error={exc}"
-        )
-        return {
-            "task_id": task_id,
-            "pod_name": pod_name,
-            "deleted": False,
-            "skipped": False,
-            "reason": "delete_failed",
-        }
-
-    k8s_status = result.get("status")
-    if k8s_status in ("success", "not_found"):
-        logger.info(
-            f"+++ [executor_job] Deleted orphan pod task_id={task_id} pod_name={pod_name} k8s_status={k8s_status}"
-        )
-        return {
-            "task_id": task_id,
-            "pod_name": pod_name,
-            "deleted": True,
-            "skipped": False,
-            "reason": "pod_deleted",
-        }
-
-    return {
-        "task_id": task_id,
-        "pod_name": pod_name,
-        "deleted": False,
-        "skipped": False,
-        "reason": "delete_failed",
-        "k8s_status": k8s_status,
-    }
 
 
 async def _cleanup_stale_orphan_sandbox(
@@ -178,8 +187,18 @@ async def _cleanup_stale_orphan_sandbox(
         result["skipped"] = False
         result["reason"] = reason or "sandbox_deleted"
     elif redis_cleared:
-        result["skipped"] = False
-        result["reason"] = "pod_delete_failed_metadata_cleared"
+        # Redis metadata cleared but pod still alive — fallback to direct K8s delete,
+        # mirroring shell pipeline step 3 (delete_notfound_pods.sh).
+        fallback = await _fallback_delete_pod_by_name(
+            task_id=task_id,
+            pod_name=pod_name,
+            trigger_reason="pod_delete_failed_metadata_cleared",
+        )
+        result["deleted"] = fallback["deleted"]
+        result["skipped"] = fallback["skipped"]
+        result["reason"] = fallback["reason"]
+        if "k8s_status" in fallback:
+            result["k8s_status"] = fallback["k8s_status"]
     else:
         result["reason"] = reason or "sandbox_cleanup_skipped"
 
