@@ -203,6 +203,7 @@ export function KnowledgeFolderNavView({
               onCheckedChange={checked => onSelect?.(document, checked === true)}
               onClick={event => event.stopPropagation()}
               className="data-[state=checked]:bg-primary data-[state=checked]:border-primary disabled:opacity-60"
+              data-testid={`document-checkbox-${document.id}`}
             />
           )
         },
@@ -823,6 +824,9 @@ export function KnowledgeFolderNavView({
               : `bg-base hover:bg-surface group ${onViewDetail ? 'cursor-pointer' : ''}`
           }`}
           style={{ gridTemplateColumns }}
+          data-testid={
+            isFolder ? `folder-row-${item.folder.id}` : `document-row-${item.document.id}`
+          }
           onClick={() => {
             if (isFolder) {
               onNavigateFolder(item.folder.id)

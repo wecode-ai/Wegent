@@ -32,7 +32,7 @@ export function KnowledgeFolderBreadcrumb({
 
   return (
     <nav
-      className="flex items-center gap-1 px-4 h-9 border-b border-border bg-surface/50 overflow-hidden"
+      className="flex items-center gap-1 px-4 h-11 md:h-9 border-b border-border bg-surface/50 overflow-hidden"
       aria-label="folder navigation breadcrumb"
     >
       {visibleBreadcrumbs.map((item, index) => {
@@ -52,7 +52,7 @@ export function KnowledgeFolderBreadcrumb({
             ) : (
               <button
                 onClick={() => onNavigate(item.id)}
-                className="flex items-center gap-1 text-sm text-text-secondary hover:text-primary truncate max-w-[150px] transition-colors"
+                className="flex items-center gap-1 text-sm text-text-secondary hover:text-primary truncate max-w-[150px] transition-colors min-h-[44px] md:min-h-0"
                 data-testid={`breadcrumb-${item.id ?? 'root'}`}
               >
                 {index === 0 && <Home className="h-3.5 w-3.5 flex-shrink-0" />}

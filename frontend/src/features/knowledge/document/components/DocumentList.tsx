@@ -503,7 +503,7 @@ export function DocumentList({
 
   useEffect(() => {
     resetSelection()
-  }, [activeFolderId, searchQuery, sortField, sortOrder, resetSelection])
+  }, [activeFolderId, navFolderId, searchQuery, sortField, sortOrder, resetSelection])
 
   useEffect(() => {
     if (!folderTreeContainsId(folders, activeFolderId)) {

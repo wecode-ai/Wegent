@@ -292,6 +292,7 @@ function FolderRow({
             : undefined
         }
         title={node.name}
+        data-testid={canActivate ? `folder-nav-row-${node.id}` : undefined}
       >
         {folderCheckbox}
         {!folderNavMode &&
@@ -349,6 +350,7 @@ function FolderRow({
             }
           : undefined
       }
+      data-testid={canActivate ? `folder-nav-row-${node.id}` : undefined}
     >
       {folderCheckbox}
       {expanded ? (
