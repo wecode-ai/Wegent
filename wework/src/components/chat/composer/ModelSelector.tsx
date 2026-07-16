@@ -1,7 +1,8 @@
-import { Check, ChevronRight, Search, X } from 'lucide-react'
+import { Check, ChevronRight, Cloud, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getModelExecutionOverride } from '@/features/cloud-connection/modelExecution'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import {
@@ -58,6 +59,10 @@ const SUBMENU_MAX_HEIGHT = 448
 const SUBMENU_VIEWPORT_VERTICAL_GAP = 128
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
 type DesktopSubmenuTarget = { type: 'models' } | { type: 'control'; id: string } | { type: 'none' }
+
+function isCloudModel(model: UnifiedModel): boolean {
+  return getModelExecutionOverride(model)?.source === 'cloud'
+}
 
 export function ModelSelector({
   models,
@@ -672,11 +677,23 @@ export function ModelSelector({
                         <span className="min-w-0 flex-1">
                           <span
                             className={[
-                              'block truncate text-sm font-semibold',
+                              'flex items-center gap-1.5 truncate text-sm font-semibold',
                               modelDisabled ? 'text-text-muted' : 'text-text-primary',
                             ].join(' ')}
                           >
-                            {getModelDisplayLabel(model, selectedModelOptions, resolveControlLabel)}
+                            <span className="truncate">
+                              {getModelDisplayLabel(
+                                model,
+                                selectedModelOptions,
+                                resolveControlLabel
+                              )}
+                            </span>
+                            {isCloudModel(model) && (
+                              <Cloud
+                                aria-label={t('workbench.environment_cloud', '云端')}
+                                className="h-3.5 w-3.5 shrink-0 text-text-muted"
+                              />
+                            )}
                           </span>
                           <span className="mt-0.5 block truncate text-xs text-text-muted">
                             {disabledMessage || model.displayName || model.modelId || model.name}
@@ -937,9 +954,9 @@ export function ModelSelector({
                               : 'text-text-primary hover:bg-muted',
                           ].join(' ')}
                         >
-                          <span className="min-w-0 flex-1 truncate font-medium">
+                          <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate font-medium">
                             {disabledMessage ? (
-                              <>
+                              <span className="min-w-0 flex-1 truncate">
                                 <span className="block truncate">
                                   {getModelDisplayLabel(
                                     model,
@@ -950,9 +967,19 @@ export function ModelSelector({
                                 <span className="mt-0.5 block truncate text-xs font-normal text-text-muted">
                                   {disabledMessage}
                                 </span>
-                              </>
+                              </span>
+                            ) : isCloudModel(model) ? (
+                              <span className="min-w-0 flex-1 truncate">
+                                {getModelDisplayLabel(model, {}, resolveControlLabel)}
+                              </span>
                             ) : (
                               getModelDisplayLabel(model, {}, resolveControlLabel)
+                            )}
+                            {isCloudModel(model) && (
+                              <Cloud
+                                aria-label={t('workbench.environment_cloud', '云端')}
+                                className="h-3.5 w-3.5 shrink-0 text-text-muted"
+                              />
                             )}
                           </span>
                           {selected && <Check className="h-4 w-4 shrink-0 text-text-secondary" />}
