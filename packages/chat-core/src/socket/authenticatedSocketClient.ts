@@ -261,6 +261,9 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
     const socket = io(joinNamespace(socketBaseUrl, this.options.namespace), {
       path: this.options.path,
       auth: { ...this.options.auth, token },
+      // The internal L7 load balancer needs the signed JWT during the WebSocket
+      // handshake to route grey users before Socket.IO auth is available.
+      query: { token },
       autoConnect: false,
       reconnection: false,
       transports: this.options.transports,

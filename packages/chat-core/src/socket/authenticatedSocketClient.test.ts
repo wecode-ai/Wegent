@@ -58,7 +58,7 @@ describe('createAuthenticatedSocketClient', () => {
     mockIo.mockReset()
   })
 
-  test('creates a manual fresh namespace socket with auth instead of query auth', async () => {
+  test('creates a manual fresh namespace socket with auth and routing query', async () => {
     const rawSocket = createMockSocket()
     mockIo.mockReturnValue(rawSocket.socket)
     const client = createAuthenticatedSocketClient({
@@ -75,6 +75,7 @@ describe('createAuthenticatedSocketClient', () => {
       expect.objectContaining({
         path: '/socket.io',
         auth: { token: 'token' },
+        query: { token: 'token' },
         autoConnect: false,
         reconnection: false,
         forceNew: true,
@@ -83,7 +84,6 @@ describe('createAuthenticatedSocketClient', () => {
         timeout: 20000,
       })
     )
-    expect(mockIo.mock.calls[0][1]).not.toHaveProperty('query')
     expect(rawSocket.socket.connect).toHaveBeenCalledTimes(1)
   })
 
@@ -134,6 +134,7 @@ describe('createAuthenticatedSocketClient', () => {
     expect(mockIo.mock.calls[1][1]).toEqual(
       expect.objectContaining({
         auth: { token: 'token' },
+        query: { token: 'token' },
         autoConnect: false,
         reconnection: false,
         forceNew: true,
@@ -141,7 +142,6 @@ describe('createAuthenticatedSocketClient', () => {
         transports: ['websocket'],
       })
     )
-    expect(mockIo.mock.calls[1][1]).not.toHaveProperty('query')
     expect(secondSocket.socket.connect).toHaveBeenCalledTimes(1)
   })
 
